@@ -1,0 +1,60 @@
+From fbeef85fd2ccdd61568c86fe33d6ad6b79851a53 Mon Sep 17 00:00:00 2001
+From: "Chen, Gong" <gong.chen@linux.intel.com>
+Date: Fri, 18 Oct 2013 14:30:21 -0700
+Subject: ACPI, APEI, CPER: Enhance memory reporting capability
+Git-commit: fbeef85fd2cc
+References: fate#315508
+Patch-mainline: 3.13-rc1
+
+After H/W error happens under FFM enabled mode, lots of information
+are shown but new fields added by UEFI 2.4 (e.g. DIMM location) need to
+be added.
+
+Original-author: Tony Luck <tony.luck@intel.com>
+Signed-off-by: Chen, Gong <gong.chen@linux.intel.com>
+Acked-by: Naveen N. Rao <naveen.n.rao@linux.vnet.ibm.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+Reviewed-by: Mauro Carvalho Chehab <m.chehab@samsung.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+---
+ drivers/acpi/apei/cper.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/acpi/apei/cper.c b/drivers/acpi/apei/cper.c
+index 946ef520186f..b1a8a55915d9 100644
+--- a/drivers/acpi/apei/cper.c
++++ b/drivers/acpi/apei/cper.c
+@@ -28,6 +28,7 @@
+ #include <linux/module.h>
+ #include <linux/time.h>
+ #include <linux/cper.h>
++#include <linux/dmi.h>
+ #include <linux/acpi.h>
+ #include <linux/pci.h>
+ #include <linux/aer.h>
+@@ -210,6 +211,8 @@ static void cper_print_mem(const char *pfx, const struct cper_sec_mem_err *mem)
+ 		printk("%s""card: %d\n", pfx, mem->card);
+ 	if (mem->validation_bits & CPER_MEM_VALID_MODULE)
+ 		printk("%s""module: %d\n", pfx, mem->module);
++	if (mem->validation_bits & CPER_MEM_VALID_RANK_NUMBER)
++		printk("%s""rank: %d\n", pfx, mem->rank);
+ 	if (mem->validation_bits & CPER_MEM_VALID_BANK)
+ 		printk("%s""bank: %d\n", pfx, mem->bank);
+ 	if (mem->validation_bits & CPER_MEM_VALID_DEVICE)
+@@ -232,6 +235,15 @@ static void cper_print_mem(const char *pfx, const struct cper_sec_mem_err *mem)
+ 		       etype < ARRAY_SIZE(cper_mem_err_type_strs) ?
+ 		       cper_mem_err_type_strs[etype] : "unknown");
+ 	}
++	if (mem->validation_bits & CPER_MEM_VALID_MODULE_HANDLE) {
++		const char *bank = NULL, *device = NULL;
++		dmi_memdev_name(mem->mem_dev_handle, &bank, &device);
++		if (bank != NULL && device != NULL)
++			printk("%s""DIMM location: %s %s", pfx, bank, device);
++		else
++			printk("%s""DIMM DMI handle: 0x%.4x",
++			       pfx, mem->mem_dev_handle);
++	}
+ }
+ 
+ static const char *cper_pcie_port_type_strs[] = {
+
