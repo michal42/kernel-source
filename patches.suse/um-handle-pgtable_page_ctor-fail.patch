@@ -1,0 +1,37 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:44 -0800
+Subject: [PATCH] um: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 647f884e67dd920e01046a1ae87aa2c2d315479a
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Jeff Dike <jdike@addtoit.com>
+Cc: Richard Weinberger <richard@nod.at>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/um/kernel/mem.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
+index 7ddb64b..8636e90 100644
+--- a/arch/um/kernel/mem.c
++++ b/arch/um/kernel/mem.c
+@@ -279,8 +279,12 @@ pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long address)
+ 	struct page *pte;
+ 
+ 	pte = alloc_page(GFP_KERNEL|__GFP_REPEAT|__GFP_ZERO);
+-	if (pte)
+-		pgtable_page_ctor(pte);
++	if (!pte)
++		return NULL;
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
++		return NULL;
++	}
+ 	return pte;
+ }
+ 
