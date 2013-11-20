@@ -1,0 +1,80 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Wed, 28 Aug 2013 11:44:39 +0200
+Subject: [PATCH] sched/fair: Fix group power_orig computation
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 863bffc80898b8df295ebac111af2335ec05f85d
+
+When looking at the code I noticed we don't actually compute
+sgp->power_orig correctly for groups, fix that.
+
+Currently the only consumer of that value is fix_small_capacity()
+which is only used on POWER7+ and that code excludes this case by
+being limited to SD_SHARE_CPUPOWER which is only ever set on the SMT
+domain which must be the lowest domain and this has singleton groups.
+
+So nothing should be affected by this change.
+
+Cc: Michael Neuling <mikey@neuling.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/n/tip-db2pe0vxwunv37plc7onnugj@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 89a905c..8062912 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -4450,7 +4450,7 @@ void update_group_power(struct sched_domain *sd, int cpu)
+ {
+ 	struct sched_domain *child = sd->child;
+ 	struct sched_group *group, *sdg = sd->groups;
+-	unsigned long power;
++	unsigned long power, power_orig;
+ 	unsigned long interval;
+ 
+ 	interval = msecs_to_jiffies(sd->balance_interval);
+@@ -4462,7 +4462,7 @@ void update_group_power(struct sched_domain *sd, int cpu)
+ 		return;
+ 	}
+ 
+-	power = 0;
++	power_orig = power = 0;
+ 
+ 	if (child->flags & SD_OVERLAP) {
+ 		/*
+@@ -4470,8 +4470,12 @@ void update_group_power(struct sched_domain *sd, int cpu)
+ 		 * span the current group.
+ 		 */
+ 
+-		for_each_cpu(cpu, sched_group_cpus(sdg))
+-			power += power_of(cpu);
++		for_each_cpu(cpu, sched_group_cpus(sdg)) {
++			struct sched_group *sg = cpu_rq(cpu)->sd->groups;
++
++			power_orig += sg->sgp->power_orig;
++			power += sg->sgp->power;
++		}
+ 	} else  {
+ 		/*
+ 		 * !SD_OVERLAP domains can assume that child groups
+@@ -4480,12 +4484,14 @@ void update_group_power(struct sched_domain *sd, int cpu)
+ 
+ 		group = child->groups;
+ 		do {
++			power_orig += group->sgp->power_orig;
+ 			power += group->sgp->power;
+ 			group = group->next;
+ 		} while (group != child->groups);
+ 	}
+ 
+-	sdg->sgp->power_orig = sdg->sgp->power = power;
++	sdg->sgp->power_orig = power_orig;
++	sdg->sgp->power = power;
+ }
+ 
+ /*
