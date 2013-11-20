@@ -1,0 +1,90 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Wed, 28 Aug 2013 10:32:32 +0200
+Subject: [PATCH] sched/fair: Reduce local_group logic
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: b72ff13ce6021b37459afacbccc0bc9b16989013
+
+Try and reduce the local_group logic by pulling most of it into
+update_sd_lb_stats.
+
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/n/tip-mgezl354xgyhiyrte78fdkpd@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 29 +++++++++++++++++------------
+ 1 file changed, 17 insertions(+), 12 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 8f07646..89a905c 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -4563,6 +4563,8 @@ static inline void update_sg_lb_stats(struct lb_env *env,
+ 	unsigned long load;
+ 	int i;
+ 
++	memset(sgs, 0, sizeof(*sgs));
++
+ 	for_each_cpu_and(i, sched_group_cpus(group), env->cpus) {
+ 		struct rq *rq = cpu_rq(i);
+ 
+@@ -4581,10 +4583,6 @@ static inline void update_sg_lb_stats(struct lb_env *env,
+ 			sgs->idle_cpus++;
+ 	}
+ 
+-	if (local_group && (env->idle != CPU_NEWLY_IDLE ||
+-			time_after_eq(jiffies, group->sgp->next_update)))
+-		update_group_power(env->sd, env->dst_cpu);
+-
+ 	/* Adjust by relative CPU power of the group */
+ 	sgs->group_power = group->sgp->power;
+ 	sgs->avg_load = (sgs->group_load*SCHED_POWER_SCALE) / sgs->group_power;
+@@ -4677,11 +4675,17 @@ static inline void update_sd_lb_stats(struct lb_env *env,
+ 		if (local_group) {
+ 			sds->local = sg;
+ 			sgs = &sds->local_stat;
++
++			if (env->idle != CPU_NEWLY_IDLE ||
++			    time_after_eq(jiffies, sg->sgp->next_update))
++				update_group_power(env->sd, env->dst_cpu);
+ 		}
+ 
+-		memset(sgs, 0, sizeof(*sgs));
+ 		update_sg_lb_stats(env, sg, load_idx, local_group, sgs);
+ 
++		if (local_group)
++			goto next_group;
++
+ 		/*
+ 		 * In case the child domain prefers tasks go to siblings
+ 		 * first, lower the sg capacity to one so that we'll try
+@@ -4692,19 +4696,20 @@ static inline void update_sd_lb_stats(struct lb_env *env,
+ 		 * heaviest group when it is already under-utilized (possible
+ 		 * with a large weight task outweighs the tasks on the system).
+ 		 */
+-		if (prefer_sibling && !local_group &&
+-				sds->local && sds->local_stat.group_has_capacity)
++		if (prefer_sibling && sds->local &&
++		    sds->local_stat.group_has_capacity)
+ 			sgs->group_capacity = min(sgs->group_capacity, 1U);
+ 
+-		/* Now, start updating sd_lb_stats */
+-		sds->total_load += sgs->group_load;
+-		sds->total_pwr += sgs->group_power;
+-
+-		if (!local_group && update_sd_pick_busiest(env, sds, sg, sgs)) {
++		if (update_sd_pick_busiest(env, sds, sg, sgs)) {
+ 			sds->busiest = sg;
+ 			sds->busiest_stat = *sgs;
+ 		}
+ 
++next_group:
++		/* Now, start updating sd_lb_stats */
++		sds->total_load += sgs->group_load;
++		sds->total_pwr += sgs->group_power;
++
+ 		sg = sg->next;
+ 	} while (sg != env->sd->groups);
+ }
