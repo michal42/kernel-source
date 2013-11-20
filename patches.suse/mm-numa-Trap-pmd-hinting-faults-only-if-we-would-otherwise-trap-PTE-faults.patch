@@ -1,0 +1,60 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Mon, 7 Oct 2013 11:29:14 +0100
+Subject: [PATCH] mm: numa: Trap pmd hinting faults only if we would otherwise
+ trap PTE faults
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 25cbbef1924299249756bc4030fcb2436c019813
+
+Base page PMD faulting is meant to batch handle NUMA hinting faults from
+PTEs. However, even is no PTE faults would ever be handled within a
+range the kernel still traps PMD hinting faults. This patch avoids the
+overhead.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Reviewed-by: Rik van Riel <riel@redhat.com>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1381141781-10992-37-git-send-email-mgorman@suse.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mprotect.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index f4ba1c7..1d3924e 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -148,6 +148,8 @@ static inline unsigned long change_pmd_range(struct vm_area_struct *vma,
+ 
+ 	pmd = pmd_offset(pud, addr);
+ 	do {
++		unsigned long this_pages;
++
+ 		next = pmd_addr_end(addr, end);
+ 		if (pmd_trans_huge(*pmd)) {
+ 			if (next - addr != HPAGE_PMD_SIZE)
+@@ -167,8 +169,9 @@ static inline unsigned long change_pmd_range(struct vm_area_struct *vma,
+ 		}
+ 		if (pmd_none_or_clear_bad(pmd))
+ 			continue;
+-		pages += change_pte_range(vma, pmd, addr, next, newprot,
++		this_pages = change_pte_range(vma, pmd, addr, next, newprot,
+ 				 dirty_accountable, prot_numa, &all_same_nidpid);
++		pages += this_pages;
+ 
+ 		/*
+ 		 * If we are changing protections for NUMA hinting faults then
+@@ -176,7 +179,7 @@ static inline unsigned long change_pmd_range(struct vm_area_struct *vma,
+ 		 * node. This allows a regular PMD to be handled as one fault
+ 		 * and effectively batches the taking of the PTL
+ 		 */
+-		if (prot_numa && all_same_nidpid)
++		if (prot_numa && this_pages && all_same_nidpid)
+ 			change_pmd_protnuma(vma->vm_mm, addr, pmd);
+ 	} while (pmd++, addr = next, addr != end);
+ 
