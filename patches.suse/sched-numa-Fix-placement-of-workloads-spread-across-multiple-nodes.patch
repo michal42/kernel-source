@@ -1,0 +1,52 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 7 Oct 2013 11:29:19 +0100
+Subject: [PATCH] sched/numa: Fix placement of workloads spread across multiple
+ nodes
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: e1dda8a797b59d7ec4b17e393152ec3273a552d5
+
+The load balancer will spread workloads across multiple NUMA nodes,
+in order to balance the load on the system. This means that sometimes
+a task's preferred node has available capacity, but moving the task
+there will not succeed, because that would create too large an imbalance.
+
+In that case, other NUMA nodes need to be considered.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1381141781-10992-42-git-send-email-mgorman@suse.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 11 +++++------
+ 1 file changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 09aac90..aa561c8 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1104,13 +1104,12 @@ static int task_numa_migrate(struct task_struct *p)
+ 	imp = task_faults(env.p, env.dst_nid) - faults;
+ 	update_numa_stats(&env.dst_stats, env.dst_nid);
+ 
+-	/*
+-	 * If the preferred nid has capacity then use it. Otherwise find an
+-	 * alternative node with relatively better statistics.
+-	 */
+-	if (env.dst_stats.has_capacity) {
++	/* If the preferred nid has capacity, try to use it. */
++	if (env.dst_stats.has_capacity)
+ 		task_numa_find_cpu(&env, imp);
+-	} else {
++
++	/* No space available on the preferred nid. Look elsewhere. */
++	if (env.best_cpu == -1) {
+ 		for_each_online_node(nid) {
+ 			if (nid == env.src_nid || nid == p->numa_preferred_nid)
+ 				continue;
