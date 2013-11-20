@@ -1,0 +1,41 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:26 -0800
+Subject: [PATCH] arm: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: affce5089a82a045274def17b44b13d10ab7c1d4
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Russell King <linux@arm.linux.org.uk>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/arm/include/asm/pgalloc.h | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm/include/asm/pgalloc.h b/arch/arm/include/asm/pgalloc.h
+index 943504f..78a7793 100644
+--- a/arch/arm/include/asm/pgalloc.h
++++ b/arch/arm/include/asm/pgalloc.h
+@@ -102,12 +102,14 @@ pte_alloc_one(struct mm_struct *mm, unsigned long addr)
+ #else
+ 	pte = alloc_pages(PGALLOC_GFP, 0);
+ #endif
+-	if (pte) {
+-		if (!PageHighMem(pte))
+-			clean_pte_table(page_address(pte));
+-		pgtable_page_ctor(pte);
++	if (!pte)
++		return NULL;
++	if (!PageHighMem(pte))
++		clean_pte_table(page_address(pte));
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
++		return NULL;
+ 	}
+-
+ 	return pte;
+ }
+ 
