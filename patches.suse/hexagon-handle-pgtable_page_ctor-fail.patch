@@ -1,0 +1,38 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:31 -0800
+Subject: [PATCH] hexagon: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 5de1423d8901bed12f1b96acef27ac133592eaeb
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Richard Kuo <rkuo@codeaurora.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/hexagon/include/asm/pgalloc.h | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/arch/hexagon/include/asm/pgalloc.h b/arch/hexagon/include/asm/pgalloc.h
+index 679bf6d..4c9d382 100644
+--- a/arch/hexagon/include/asm/pgalloc.h
++++ b/arch/hexagon/include/asm/pgalloc.h
+@@ -65,10 +65,12 @@ static inline struct page *pte_alloc_one(struct mm_struct *mm,
+ 	struct page *pte;
+ 
+ 	pte = alloc_page(GFP_KERNEL | __GFP_REPEAT | __GFP_ZERO);
+-
+-	if (pte)
+-		pgtable_page_ctor(pte);
+-
++	if (!pte)
++		return NULL;
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
++		return NULL;
++	}
+ 	return pte;
+ }
+ 
