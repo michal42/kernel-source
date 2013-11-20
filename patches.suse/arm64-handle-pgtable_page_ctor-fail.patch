@@ -1,0 +1,38 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:27 -0800
+Subject: [PATCH] arm64: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: d97a22913808b191c95fbfc51e6405c4504979e6
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Catalin Marinas <catalin.marinas@arm.com>
+Cc: Will Deacon <will.deacon@arm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/arm64/include/asm/pgalloc.h | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/include/asm/pgalloc.h b/arch/arm64/include/asm/pgalloc.h
+index f214069..9bea6e7 100644
+--- a/arch/arm64/include/asm/pgalloc.h
++++ b/arch/arm64/include/asm/pgalloc.h
+@@ -63,9 +63,12 @@ pte_alloc_one(struct mm_struct *mm, unsigned long addr)
+ 	struct page *pte;
+ 
+ 	pte = alloc_pages(PGALLOC_GFP, 0);
+-	if (pte)
+-		pgtable_page_ctor(pte);
+-
++	if (!pte)
++		return NULL;
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
++		return NULL;
++	}
+ 	return pte;
+ }
+ 
