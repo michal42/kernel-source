@@ -1,0 +1,77 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Thu, 14 Nov 2013 14:31:54 -0800
+Subject: [PATCH] lockref: use BLOATED_SPINLOCKS to avoid explicit config
+ dependencies
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 57f4257eae33e036125973858934730250d464e3
+
+Avoid the fragile Kconfig construct guestimating spinlock_t sizes; use a
+friendly compile-time test to determine this.
+
+[kirill.shutemov@linux.intel.com: drop CONFIG_CMPXCHG_LOCKREF]
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/lockref.h | 7 ++++++-
+ lib/Kconfig             | 7 -------
+ lib/lockref.c           | 2 +-
+ 3 files changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/include/linux/lockref.h b/include/linux/lockref.h
+index f279ed9..1117944 100644
+--- a/include/linux/lockref.h
++++ b/include/linux/lockref.h
+@@ -15,10 +15,15 @@
+  */
+ 
+ #include <linux/spinlock.h>
++#include <generated/bounds.h>
++
++#define USE_CMPXCHG_LOCKREF \
++	(IS_ENABLED(CONFIG_ARCH_USE_CMPXCHG_LOCKREF) && \
++	 IS_ENABLED(CONFIG_SMP) && !BLOATED_SPINLOCKS)
+ 
+ struct lockref {
+ 	union {
+-#ifdef CONFIG_CMPXCHG_LOCKREF
++#if USE_CMPXCHG_LOCKREF
+ 		aligned_u64 lock_count;
+ #endif
+ 		struct {
+diff --git a/lib/Kconfig b/lib/Kconfig
+index b3c8be0..a2992db 100644
+--- a/lib/Kconfig
++++ b/lib/Kconfig
+@@ -51,13 +51,6 @@ config PERCPU_RWSEM
+ config ARCH_USE_CMPXCHG_LOCKREF
+ 	bool
+ 
+-config CMPXCHG_LOCKREF
+-	def_bool y if ARCH_USE_CMPXCHG_LOCKREF
+-	depends on SMP
+-	depends on !GENERIC_LOCKBREAK
+-	depends on !DEBUG_SPINLOCK
+-	depends on !DEBUG_LOCK_ALLOC
+-
+ config CRC_CCITT
+ 	tristate "CRC-CCITT functions"
+ 	help
+diff --git a/lib/lockref.c b/lib/lockref.c
+index 6f9d434..304deb6 100644
+--- a/lib/lockref.c
++++ b/lib/lockref.c
+@@ -1,7 +1,7 @@
+ #include <linux/export.h>
+ #include <linux/lockref.h>
+ 
+-#ifdef CONFIG_CMPXCHG_LOCKREF
++#if USE_CMPXCHG_LOCKREF
+ 
+ /*
+  * Allow weakly-ordered memory architectures to provide barrier-less
