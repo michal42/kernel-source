@@ -1,0 +1,41 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:43 -0800
+Subject: [PATCH] tile: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 76b3aec332e74596c517e1198764a5aeb8ea8398
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Acked-by: Chris Metcalf <cmetcalf@tilera.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/tile/mm/pgtable.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/arch/tile/mm/pgtable.c b/arch/tile/mm/pgtable.c
+index 4fd9ec0..5e86eac 100644
+--- a/arch/tile/mm/pgtable.c
++++ b/arch/tile/mm/pgtable.c
+@@ -241,6 +241,11 @@ struct page *pgtable_alloc_one(struct mm_struct *mm, unsigned long address,
+ 	if (p == NULL)
+ 		return NULL;
+ 
++	if (!pgtable_page_ctor(p)) {
++		__free_pages(p, L2_USER_PGTABLE_ORDER);
++		return NULL;
++	}
++
+ 	/*
+ 	 * Make every page have a page_count() of one, not just the first.
+ 	 * We don't use __GFP_COMP since it doesn't look like it works
+@@ -251,7 +256,6 @@ struct page *pgtable_alloc_one(struct mm_struct *mm, unsigned long address,
+ 		inc_zone_page_state(p+i, NR_PAGETABLE);
+ 	}
+ 
+-	pgtable_page_ctor(p);
+ 	return p;
+ }
+ 
