@@ -1,0 +1,54 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:22 -0800
+Subject: [PATCH] mn10300: add missing pgtable_page_ctor/dtor calls
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 0470d4aa29eb0a49554fe71e986e6d6c38dd85cb
+
+It will fix NR_PAGETABLE accounting.  It's also required if the arch is
+going ever support split ptl.
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Acked-by: David Howells <dhowells@redhat.com>
+Cc: Koichi Yasutake <yasutake.koichi@jp.panasonic.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/mn10300/include/asm/pgalloc.h | 1 +
+ arch/mn10300/mm/pgtable.c          | 9 +++++++--
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/arch/mn10300/include/asm/pgalloc.h b/arch/mn10300/include/asm/pgalloc.h
+index 146bacf..0f25d5f 100644
+--- a/arch/mn10300/include/asm/pgalloc.h
++++ b/arch/mn10300/include/asm/pgalloc.h
+@@ -46,6 +46,7 @@ static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
+ 
+ static inline void pte_free(struct mm_struct *mm, struct page *pte)
+ {
++	pgtable_page_dtor(pte);
+ 	__free_page(pte);
+ }
+ 
+diff --git a/arch/mn10300/mm/pgtable.c b/arch/mn10300/mm/pgtable.c
+index bd9ada6..e77a7c7 100644
+--- a/arch/mn10300/mm/pgtable.c
++++ b/arch/mn10300/mm/pgtable.c
+@@ -78,8 +78,13 @@ struct page *pte_alloc_one(struct mm_struct *mm, unsigned long address)
+ #else
+ 	pte = alloc_pages(GFP_KERNEL|__GFP_REPEAT, 0);
+ #endif
+-	if (pte)
+-		clear_highpage(pte);
++	if (!pte)
++		return NULL;
++	clear_highpage(pte);
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
++		return NULL;
++	}
+ 	return pte;
+ }
+ 
