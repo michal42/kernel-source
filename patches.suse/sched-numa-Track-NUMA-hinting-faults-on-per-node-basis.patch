@@ -1,0 +1,121 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Mon, 7 Oct 2013 11:28:57 +0100
+Subject: [PATCH] sched/numa: Track NUMA hinting faults on per-node basis
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: f809ca9a554dda49fb264c79e31c722e0b063ff8
+
+This patch tracks what nodes numa hinting faults were incurred on.
+This information is later used to schedule a task on the node storing
+the pages most frequently faulted by the task.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Reviewed-by: Rik van Riel <riel@redhat.com>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1381141781-10992-20-git-send-email-mgorman@suse.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/sched.h |  2 ++
+ kernel/sched/core.c   |  3 +++
+ kernel/sched/fair.c   | 11 ++++++++++-
+ kernel/sched/sched.h  | 12 ++++++++++++
+ 4 files changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 6f8ea74..592f5ae 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1333,6 +1333,8 @@ struct task_struct {
+ 	unsigned int numa_scan_period_max;
+ 	u64 node_stamp;			/* migration stamp  */
+ 	struct callback_head numa_work;
++
++	unsigned long *numa_faults;
+ #endif /* CONFIG_NUMA_BALANCING */
+ 
+ 	struct rcu_head rcu;
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 79adbbb..c049ec4 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -1630,6 +1630,7 @@ static void __sched_fork(struct task_struct *p)
+ 	p->numa_migrate_seq = p->mm ? p->mm->numa_scan_seq - 1 : 0;
+ 	p->numa_scan_period = sysctl_numa_balancing_scan_delay;
+ 	p->numa_work.next = &p->numa_work;
++	p->numa_faults = NULL;
+ #endif /* CONFIG_NUMA_BALANCING */
+ }
+ 
+@@ -1891,6 +1892,8 @@ static void finish_task_switch(struct rq *rq, struct task_struct *prev)
+ 	if (mm)
+ 		mmdrop(mm);
+ 	if (unlikely(prev_state == TASK_DEAD)) {
++		task_numa_free(prev);
++
+ 		/*
+ 		 * Remove function-return probe instances associated with this
+ 		 * task and put them back on the free list.
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index c6c3302..0bb3e0a 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -902,7 +902,14 @@ void task_numa_fault(int node, int pages, bool migrated)
+ 	if (!numabalancing_enabled)
+ 		return;
+ 
+-	/* FIXME: Allocate task-specific structure for placement policy here */
++	/* Allocate buffer to track faults on a per-node basis */
++	if (unlikely(!p->numa_faults)) {
++		int size = sizeof(*p->numa_faults) * nr_node_ids;
++
++		p->numa_faults = kzalloc(size, GFP_KERNEL|__GFP_NOWARN);
++		if (!p->numa_faults)
++			return;
++	}
+ 
+ 	/*
+ 	 * If pages are properly placed (did not migrate) then scan slower.
+@@ -918,6 +925,8 @@ void task_numa_fault(int node, int pages, bool migrated)
+ 	}
+ 
+ 	task_numa_placement(p);
++
++	p->numa_faults[node] += pages;
+ }
+ 
+ static void reset_ptenuma_scan(struct task_struct *p)
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index e82484d..199099c 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -6,6 +6,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/stop_machine.h>
+ #include <linux/tick.h>
++#include <linux/slab.h>
+ 
+ #include "cpupri.h"
+ #include "cpuacct.h"
+@@ -555,6 +556,17 @@ static inline u64 rq_clock_task(struct rq *rq)
+ 	return rq->clock_task;
+ }
+ 
++#ifdef CONFIG_NUMA_BALANCING
++static inline void task_numa_free(struct task_struct *p)
++{
++	kfree(p->numa_faults);
++}
++#else /* CONFIG_NUMA_BALANCING */
++static inline void task_numa_free(struct task_struct *p)
++{
++}
++#endif /* CONFIG_NUMA_BALANCING */
++
+ #ifdef CONFIG_SMP
+ 
+ #define rcu_dereference_check_sched_domain(p) \
