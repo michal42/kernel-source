@@ -1,0 +1,48 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:23 -0800
+Subject: [PATCH] openrisc: add missing pgtable_page_ctor/dtor calls
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: b3d59c6eb49476110b4a76bfbae63daae1cda268
+
+It will fix NR_PAGETABLE accounting.  It's also required if the arch is
+going ever support split ptl.
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Jonas Bonn <jonas@southpole.se>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/openrisc/include/asm/pgalloc.h | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/arch/openrisc/include/asm/pgalloc.h b/arch/openrisc/include/asm/pgalloc.h
+index 05c39ec..21484e5 100644
+--- a/arch/openrisc/include/asm/pgalloc.h
++++ b/arch/openrisc/include/asm/pgalloc.h
+@@ -78,8 +78,13 @@ static inline struct page *pte_alloc_one(struct mm_struct *mm,
+ {
+ 	struct page *pte;
+ 	pte = alloc_pages(GFP_KERNEL|__GFP_REPEAT, 0);
+-	if (pte)
+-		clear_page(page_address(pte));
++	if (!pte)
++		return NULL;
++	clear_page(page_address(pte));
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
++		return NULL;
++	}
+ 	return pte;
+ }
+ 
+@@ -90,6 +95,7 @@ static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
+ 
+ static inline void pte_free(struct mm_struct *mm, struct page *pte)
+ {
++	pgtable_page_dtor(pte);
+ 	__free_page(pte);
+ }
+ 
