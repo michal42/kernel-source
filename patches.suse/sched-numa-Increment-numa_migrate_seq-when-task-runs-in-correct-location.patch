@@ -1,0 +1,49 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 7 Oct 2013 11:29:12 +0100
+Subject: [PATCH] sched/numa: Increment numa_migrate_seq when task runs in
+ correct location
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 06ea5e035b4e66cc77790457a89fc7e368060c4b
+
+When a task is already running on its preferred node, increment
+numa_migrate_seq to indicate that the task is settled if migration is
+temporarily disabled, and memory should migrate towards it.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+[ Only increment migrate_seq if migration temporarily disabled. ]
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1381141781-10992-35-git-send-email-mgorman@suse.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index f84ac3f..de9b4d8 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1016,8 +1016,16 @@ static void numa_migrate_preferred(struct task_struct *p)
+ {
+ 	/* Success if task is already running on preferred CPU */
+ 	p->numa_migrate_retry = 0;
+-	if (cpu_to_node(task_cpu(p)) == p->numa_preferred_nid)
++	if (cpu_to_node(task_cpu(p)) == p->numa_preferred_nid) {
++		/*
++		 * If migration is temporarily disabled due to a task migration
++		 * then re-enable it now as the task is running on its
++		 * preferred node and memory should migrate locally
++		 */
++		if (!p->numa_migrate_seq)
++			p->numa_migrate_seq++;
+ 		return;
++	}
+ 
+ 	/* This task has no NUMA fault statistics yet */
+ 	if (unlikely(p->numa_preferred_nid == -1))
