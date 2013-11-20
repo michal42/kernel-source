@@ -1,0 +1,42 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:46 -0800
+Subject: [PATCH] unicore32: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: e90bedbb8a847a0e6debe0e00b6f69b788fca92e
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Guan Xuetao <gxt@mprc.pku.edu.cn>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/unicore32/include/asm/pgalloc.h | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/arch/unicore32/include/asm/pgalloc.h b/arch/unicore32/include/asm/pgalloc.h
+index 0213e37..2e02d13 100644
+--- a/arch/unicore32/include/asm/pgalloc.h
++++ b/arch/unicore32/include/asm/pgalloc.h
+@@ -51,12 +51,14 @@ pte_alloc_one(struct mm_struct *mm, unsigned long addr)
+ 	struct page *pte;
+ 
+ 	pte = alloc_pages(PGALLOC_GFP, 0);
+-	if (pte) {
+-		if (!PageHighMem(pte)) {
+-			void *page = page_address(pte);
+-			clean_dcache_area(page, PTRS_PER_PTE * sizeof(pte_t));
+-		}
+-		pgtable_page_ctor(pte);
++	if (!pte)
++		return NULL;
++	if (!PageHighMem(pte)) {
++		void *page = page_address(pte);
++		clean_dcache_area(page, PTRS_PER_PTE * sizeof(pte_t));
++	}
++	if (!pgtable_page_ctor(pte)) {
++		__free_page(pte);
+ 	}
+ 
+ 	return pte;
