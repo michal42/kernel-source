@@ -1,0 +1,56 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 11 Nov 2013 19:29:25 -0500
+Subject: [PATCH] sched/numa: Fix NULL pointer dereference in
+ task_numa_migrate()
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 46a73e8a1c1720f7713b5e2df68e9dd272015b5d
+
+The cpusets code can split up the scheduler's domain tree into
+smaller domains.  Some of those smaller domains may not cross
+NUMA nodes at all, leading to a NULL pointer dereference on the
+per-cpu sd_numa pointer.
+
+Tasks cannot be migrated out of their domain, so the patch
+also sets p->numa_preferred_nid to whereever they are, to
+prevent the migration from being retried over and over again.
+
+Reported-by: Prarit Bhargava <prarit@redhat.com>
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Mel Gorman <mgorman@suse.de>
+Link: http://lkml.kernel.org/n/tip-oosqomw0Jput0Jkvoowhrqtu@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index a60d57c..3c3efeb 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1201,9 +1201,21 @@ static int task_numa_migrate(struct task_struct *p)
+ 	 */
+ 	rcu_read_lock();
+ 	sd = rcu_dereference(per_cpu(sd_numa, env.src_cpu));
+-	env.imbalance_pct = 100 + (sd->imbalance_pct - 100) / 2;
++	if (sd)
++		env.imbalance_pct = 100 + (sd->imbalance_pct - 100) / 2;
+ 	rcu_read_unlock();
+ 
++	/*
++	 * Cpusets can break the scheduler domain tree into smaller
++	 * balance domains, some of which do not cross NUMA boundaries.
++	 * Tasks that are "trapped" in such domains cannot be migrated
++	 * elsewhere, so there is no point in (re)trying.
++	 */
++	if (unlikely(!sd)) {
++		p->numa_preferred_nid = cpu_to_node(task_cpu(p));
++		return -EINVAL;
++	}
++
+ 	taskweight = task_weight(p, env.src_nid);
+ 	groupweight = group_weight(p, env.src_nid);
+ 	update_numa_stats(&env.src_stats, env.src_nid);
