@@ -1,0 +1,51 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:21 -0800
+Subject: [PATCH] microblaze: add missing pgtable_page_ctor/dtor calls
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 8abe73465660f12dee03871f681175f4dae62e7f
+
+It will fix NR_PAGETABLE accounting.  It's also required if the arch is
+going ever support split ptl.
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Michal Simek <monstr@monstr.eu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/microblaze/include/asm/pgalloc.h | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/arch/microblaze/include/asm/pgalloc.h b/arch/microblaze/include/asm/pgalloc.h
+index ebd3579..7fdf7fa 100644
+--- a/arch/microblaze/include/asm/pgalloc.h
++++ b/arch/microblaze/include/asm/pgalloc.h
+@@ -122,8 +122,13 @@ static inline struct page *pte_alloc_one(struct mm_struct *mm,
+ #endif
+ 
+ 	ptepage = alloc_pages(flags, 0);
+-	if (ptepage)
+-		clear_highpage(ptepage);
++	if (!ptepage)
++		return NULL;
++	clear_highpage(ptepage);
++	if (!pgtable_page_ctor(ptepage)) {
++		__free_page(ptepage);
++		return NULL;
++	}
+ 	return ptepage;
+ }
+ 
+@@ -158,8 +163,9 @@ extern inline void pte_free_slow(struct page *ptepage)
+ 	__free_page(ptepage);
+ }
+ 
+-extern inline void pte_free(struct mm_struct *mm, struct page *ptepage)
++static inline void pte_free(struct mm_struct *mm, struct page *ptepage)
+ {
++	pgtable_page_dtor(ptepage);
+ 	__free_page(ptepage);
+ }
+ 
