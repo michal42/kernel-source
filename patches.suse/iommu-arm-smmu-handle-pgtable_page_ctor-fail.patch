@@ -1,0 +1,35 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:49 -0800
+Subject: [PATCH] iommu/arm-smmu: handle pgtable_page_ctor() fail
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 01058e70767de7b846588ef651c4d66e862f6823
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Acked-by: Will Deacon <will.deacon@arm.com>
+Cc: Grant Likely <grant.likely@linaro.org>
+Cc: Rob Herring <rob.herring@calxeda.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ drivers/iommu/arm-smmu.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/iommu/arm-smmu.c b/drivers/iommu/arm-smmu.c
+index 181c9ba..2349d62 100644
+--- a/drivers/iommu/arm-smmu.c
++++ b/drivers/iommu/arm-smmu.c
+@@ -1212,7 +1212,10 @@ static int arm_smmu_alloc_init_pte(struct arm_smmu_device *smmu, pmd_t *pmd,
+ 
+ 		arm_smmu_flush_pgtable(smmu, page_address(table),
+ 				       ARM_SMMU_PTE_HWTABLE_SIZE);
+-		pgtable_page_ctor(table);
++		if (!pgtable_page_ctor(table)) {
++			__free_page(table);
++			return -ENOMEM;
++		}
+ 		pmd_populate(NULL, pmd, table);
+ 		arm_smmu_flush_pgtable(smmu, pmd, sizeof(*pmd));
+ 	}
