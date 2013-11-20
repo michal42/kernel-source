@@ -1,0 +1,42 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Mon, 7 Oct 2013 11:28:48 +0100
+Subject: [PATCH] mm: Do not flush TLB during protection change if !pte_present
+ && !migration_entry
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: e920e14ca29b0b2a981cfc90e4e20edd6f078d19
+
+NUMA PTE scanning is expensive both in terms of the scanning itself and
+the TLB flush if there are any updates. Currently non-present PTEs are
+accounted for as an update and incurring a TLB flush where it is only
+necessary for anonymous migration entries. This patch addresses the
+problem and should reduce TLB flushes.
+
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Reviewed-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1381141781-10992-11-git-send-email-mgorman@suse.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mprotect.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index 412ba2b..0424930 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -104,8 +104,8 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+ 				if (pte_swp_soft_dirty(oldpte))
+ 					newpte = pte_swp_mksoft_dirty(newpte);
+ 				set_pte_at(mm, addr, pte, newpte);
++				pages++;
+ 			}
+-			pages++;
+ 		}
+ 	} while (pte++, addr += PAGE_SIZE, addr != end);
+ 	arch_leave_lazy_mmu_mode();
