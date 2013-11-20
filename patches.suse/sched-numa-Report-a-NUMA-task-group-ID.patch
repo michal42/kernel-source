@@ -1,0 +1,100 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Mon, 7 Oct 2013 11:29:22 +0100
+Subject: [PATCH] sched/numa: Report a NUMA task group ID
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: e29cf08b05dc0b8151d65704d96d525a9e179a6b
+
+It is desirable to model from userspace how the scheduler groups tasks
+over time. This patch adds an ID to the numa_group and reports it via
+/proc/PID/status.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Reviewed-by: Rik van Riel <riel@redhat.com>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1381141781-10992-45-git-send-email-mgorman@suse.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ fs/proc/array.c       | 2 ++
+ include/linux/sched.h | 5 +++++
+ kernel/sched/fair.c   | 7 +++++++
+ 3 files changed, 14 insertions(+)
+
+diff --git a/fs/proc/array.c b/fs/proc/array.c
+index cbd0f1b..1bd2077 100644
+--- a/fs/proc/array.c
++++ b/fs/proc/array.c
+@@ -183,6 +183,7 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
+ 	seq_printf(m,
+ 		"State:\t%s\n"
+ 		"Tgid:\t%d\n"
++		"Ngid:\t%d\n"
+ 		"Pid:\t%d\n"
+ 		"PPid:\t%d\n"
+ 		"TracerPid:\t%d\n"
+@@ -190,6 +191,7 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
+ 		"Gid:\t%d\t%d\t%d\t%d\n",
+ 		get_task_state(p),
+ 		task_tgid_nr_ns(p, ns),
++		task_numa_group_id(p),
+ 		pid_nr_ns(pid, ns),
+ 		ppid, tpid,
+ 		from_kuid_munged(user_ns, cred->uid),
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 75fa574..e51669a 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1442,12 +1442,17 @@ struct task_struct {
+ 
+ #ifdef CONFIG_NUMA_BALANCING
+ extern void task_numa_fault(int last_node, int node, int pages, bool migrated);
++extern pid_t task_numa_group_id(struct task_struct *p);
+ extern void set_numabalancing_state(bool enabled);
+ #else
+ static inline void task_numa_fault(int last_node, int node, int pages,
+ 				   bool migrated)
+ {
+ }
++static inline pid_t task_numa_group_id(struct task_struct *p)
++{
++	return 0;
++}
+ static inline void set_numabalancing_state(bool enabled)
+ {
+ }
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 8556505..5bd309c 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -893,12 +893,18 @@ struct numa_group {
+ 
+ 	spinlock_t lock; /* nr_tasks, tasks */
+ 	int nr_tasks;
++	pid_t gid;
+ 	struct list_head task_list;
+ 
+ 	struct rcu_head rcu;
+ 	atomic_long_t faults[0];
+ };
+ 
++pid_t task_numa_group_id(struct task_struct *p)
++{
++	return p->numa_group ? p->numa_group->gid : 0;
++}
++
+ static inline int task_faults_idx(int nid, int priv)
+ {
+ 	return 2 * nid + priv;
+@@ -1265,6 +1271,7 @@ static void task_numa_group(struct task_struct *p, int cpupid)
+ 		atomic_set(&grp->refcount, 1);
+ 		spin_lock_init(&grp->lock);
+ 		INIT_LIST_HEAD(&grp->task_list);
++		grp->gid = p->pid;
+ 
+ 		for (i = 0; i < 2*nr_node_ids; i++)
+ 			atomic_long_set(&grp->faults[i], p->numa_faults[i]);
