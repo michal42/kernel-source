@@ -1,0 +1,87 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Wed, 9 Oct 2013 10:24:48 +0200
+Subject: [PATCH] sched/numa: Reflow task_numa_group() to avoid a compiler
+ warning
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 3354781a2184380046c8dd19144628d3c33991e6
+
+Reflow the function a bit because GCC gets confused:
+
+  kernel/sched/fair.c: In function ‘task_numa_fault’:
+  kernel/sched/fair.c:1448:3: warning: ‘my_grp’ may be used uninitialized in this function [-Wmaybe-uninitialized]
+  kernel/sched/fair.c:1463:27: note: ‘my_grp’ was declared here
+
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/n/tip-6ebt6x7u64pbbonq1khqu2z9@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 18 +++++++++++-------
+ 1 file changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index e914930..803e343 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1493,28 +1493,28 @@ static void task_numa_group(struct task_struct *p, int cpupid, int flags,
+ 	tsk = ACCESS_ONCE(cpu_rq(cpu)->curr);
+ 
+ 	if (!cpupid_match_pid(tsk, cpupid))
+-		goto unlock;
++		goto no_join;
+ 
+ 	grp = rcu_dereference(tsk->numa_group);
+ 	if (!grp)
+-		goto unlock;
++		goto no_join;
+ 
+ 	my_grp = p->numa_group;
+ 	if (grp == my_grp)
+-		goto unlock;
++		goto no_join;
+ 
+ 	/*
+ 	 * Only join the other group if its bigger; if we're the bigger group,
+ 	 * the other task will join us.
+ 	 */
+ 	if (my_grp->nr_tasks > grp->nr_tasks)
+-		goto unlock;
++		goto no_join;
+ 
+ 	/*
+ 	 * Tie-break on the grp address.
+ 	 */
+ 	if (my_grp->nr_tasks == grp->nr_tasks && my_grp > grp)
+-		goto unlock;
++		goto no_join;
+ 
+ 	/* Always join threads in the same process. */
+ 	if (tsk->mm == current->mm)
+@@ -1528,9 +1528,8 @@ static void task_numa_group(struct task_struct *p, int cpupid, int flags,
+ 	*priv = !join;
+ 
+ 	if (join && !get_numa_group(grp))
+-		join = false;
++		goto no_join;
+ 
+-unlock:
+ 	rcu_read_unlock();
+ 
+ 	if (!join)
+@@ -1555,6 +1554,11 @@ unlock:
+ 	rcu_assign_pointer(p->numa_group, grp);
+ 
+ 	put_numa_group(my_grp);
++	return;
++
++no_join:
++	rcu_read_unlock();
++	return;
+ }
+ 
+ void task_numa_free(struct task_struct *p)
