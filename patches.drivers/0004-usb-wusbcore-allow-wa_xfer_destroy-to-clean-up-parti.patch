@@ -1,0 +1,47 @@
+From beeb5cd9d8f3c1d32423a308a713257bdac4378c Mon Sep 17 00:00:00 2001
+From: Thomas Pugliese <thomas.pugliese@gmail.com>
+Date: Thu, 26 Sep 2013 14:08:13 -0500
+Patch-Mainline: v3.13
+References: bnc#852581
+Git-Commit: beeb5cd9d8f3c1d32423a308a713257bdac4378c
+Subject: [PATCH 04/24] usb: wusbcore: allow wa_xfer_destroy to clean up
+ partially constructed xfers
+
+If __wa_xfer_setup fails, it can leave a partially constructed wa_xfer
+object.  The error handling code eventually calls wa_xfer_destroy which
+does not check for NULL before dereferencing xfer->seg which could cause
+a kernel panic.  This change also makes sure to free xfer->seg which was
+being leaked for all transfers before this change.
+
+Signed-off-by: Thomas Pugliese <thomas.pugliese@gmail.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/wusbcore/wa-xfer.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/wusbcore/wa-xfer.c b/drivers/usb/wusbcore/wa-xfer.c
+index 47cbfdd..d2c7b2b 100644
+--- a/drivers/usb/wusbcore/wa-xfer.c
++++ b/drivers/usb/wusbcore/wa-xfer.c
+@@ -178,9 +178,15 @@ static void wa_xfer_destroy(struct kref *_xfer)
+ 	if (xfer->seg) {
+ 		unsigned cnt;
+ 		for (cnt = 0; cnt < xfer->segs; cnt++) {
+-			usb_free_urb(xfer->seg[cnt]->dto_urb);
+-			usb_free_urb(&xfer->seg[cnt]->tr_urb);
++			if (xfer->seg[cnt]) {
++				if (xfer->seg[cnt]->dto_urb) {
++					kfree(xfer->seg[cnt]->dto_urb->sg);
++					usb_free_urb(xfer->seg[cnt]->dto_urb);
++				}
++				usb_free_urb(&xfer->seg[cnt]->tr_urb);
++			}
+ 		}
++		kfree(xfer->seg);
+ 	}
+ 	kfree(xfer);
+ }
+-- 
+1.8.4
+
