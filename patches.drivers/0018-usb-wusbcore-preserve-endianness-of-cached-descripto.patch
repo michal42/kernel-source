@@ -1,0 +1,80 @@
+From a179a05702618f90df2aa32b6c9fc0eae1dd7162 Mon Sep 17 00:00:00 2001
+From: Thomas Pugliese <thomas.pugliese@gmail.com>
+Date: Mon, 7 Oct 2013 10:07:51 -0500
+Patch-Mainline: v3.13
+References: bnc#852581
+Git-Commit: a179a05702618f90df2aa32b6c9fc0eae1dd7162
+Subject: [PATCH 18/24] usb: wusbcore: preserve endianness of cached
+ descriptors
+
+Do not overwrite the multi-byte fields of usb_wa_descriptor with their
+cpu format values after reading the descriptor.  Leave the values as
+__le16 and swap on use.  This is more consistent with other uses of USB
+descriptors.
+
+Signed-off-by: Thomas Pugliese <thomas.pugliese@gmail.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/hwa-hc.c       | 10 +++-------
+ drivers/usb/wusbcore/wa-rpipe.c |  2 +-
+ include/linux/usb/wusb-wa.h     |  6 +++---
+ 3 files changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/usb/host/hwa-hc.c b/drivers/usb/host/hwa-hc.c
+index e58b924..e5fb3cf 100644
+--- a/drivers/usb/host/hwa-hc.c
++++ b/drivers/usb/host/hwa-hc.c
+@@ -570,14 +570,10 @@ found:
+ 		goto error;
+ 	}
+ 	wa->wa_descr = wa_descr = (struct usb_wa_descriptor *) hdr;
+-	/* Make LE fields CPU order */
+-	wa_descr->bcdWAVersion = le16_to_cpu(wa_descr->bcdWAVersion);
+-	wa_descr->wNumRPipes = le16_to_cpu(wa_descr->wNumRPipes);
+-	wa_descr->wRPipeMaxBlock = le16_to_cpu(wa_descr->wRPipeMaxBlock);
+-	if (wa_descr->bcdWAVersion > 0x0100)
++	if (le16_to_cpu(wa_descr->bcdWAVersion) > 0x0100)
+ 		dev_warn(dev, "Wire Adapter v%d.%d newer than groked v1.0\n",
+-			 wa_descr->bcdWAVersion & 0xff00 >> 8,
+-			 wa_descr->bcdWAVersion & 0x00ff);
++			 le16_to_cpu(wa_descr->bcdWAVersion) & 0xff00 >> 8,
++			 le16_to_cpu(wa_descr->bcdWAVersion) & 0x00ff);
+ 	result = 0;
+ error:
+ 	return result;
+diff --git a/drivers/usb/wusbcore/wa-rpipe.c b/drivers/usb/wusbcore/wa-rpipe.c
+index 50de1d2..1ed068a 100644
+--- a/drivers/usb/wusbcore/wa-rpipe.c
++++ b/drivers/usb/wusbcore/wa-rpipe.c
+@@ -480,7 +480,7 @@ error:
+  */
+ int wa_rpipes_create(struct wahc *wa)
+ {
+-	wa->rpipes = wa->wa_descr->wNumRPipes;
++	wa->rpipes = le16_to_cpu(wa->wa_descr->wNumRPipes);
+ 	wa->rpipe_bm = kzalloc(BITS_TO_LONGS(wa->rpipes)*sizeof(unsigned long),
+ 			       GFP_KERNEL);
+ 	if (wa->rpipe_bm == NULL)
+diff --git a/include/linux/usb/wusb-wa.h b/include/linux/usb/wusb-wa.h
+index 4ff744e..02009c6 100644
+--- a/include/linux/usb/wusb-wa.h
++++ b/include/linux/usb/wusb-wa.h
+@@ -258,11 +258,11 @@ struct wa_xfer_result {
+ struct usb_wa_descriptor {
+ 	u8	bLength;
+ 	u8	bDescriptorType;
+-	u16	bcdWAVersion;
++	__le16	bcdWAVersion;
+ 	u8	bNumPorts;		/* don't use!! */
+ 	u8	bmAttributes;		/* Reserved == 0 */
+-	u16	wNumRPipes;
+-	u16	wRPipeMaxBlock;
++	__le16	wNumRPipes;
++	__le16	wRPipeMaxBlock;
+ 	u8	bRPipeBlockSize;
+ 	u8	bPwrOn2PwrGood;
+ 	u8	bNumMMCIEs;
+-- 
+1.8.4
+
