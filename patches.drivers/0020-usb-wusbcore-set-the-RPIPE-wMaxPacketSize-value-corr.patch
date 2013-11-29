@@ -1,0 +1,40 @@
+From 64395e8340695b7aecf6194685f97424d6349a96 Mon Sep 17 00:00:00 2001
+From: Thomas Pugliese <thomas.pugliese@gmail.com>
+Date: Wed, 23 Oct 2013 14:44:26 -0500
+Patch-Mainline: v3.13
+References: bnc#852581
+Git-Commit: 64395e8340695b7aecf6194685f97424d6349a96
+Subject: [PATCH 20/24] usb: wusbcore: set the RPIPE wMaxPacketSize value
+ correctly
+
+For isochronous endpoints, set the RPIPE wMaxPacketSize value using
+wOverTheAirPacketSize from the endpoint companion descriptor instead of
+wMaxPacketSize from the normal endpoint descriptor.
+
+Signed-off-by: Thomas Pugliese <thomas.pugliese@gmail.com>
+Cc: stable <stable@vger.kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/wusbcore/wa-rpipe.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/wusbcore/wa-rpipe.c b/drivers/usb/wusbcore/wa-rpipe.c
+index 1ed068a..b48e74c 100644
+--- a/drivers/usb/wusbcore/wa-rpipe.c
++++ b/drivers/usb/wusbcore/wa-rpipe.c
+@@ -334,7 +334,10 @@ static int rpipe_aim(struct wa_rpipe *rpipe, struct wahc *wa,
+ 	/* FIXME: compute so seg_size > ep->maxpktsize */
+ 	rpipe->descr.wBlocks = cpu_to_le16(16);		/* given */
+ 	/* ep0 maxpktsize is 0x200 (WUSB1.0[4.8.1]) */
+-	rpipe->descr.wMaxPacketSize = cpu_to_le16(ep->desc.wMaxPacketSize);
++	if (usb_endpoint_xfer_isoc(&ep->desc))
++		rpipe->descr.wMaxPacketSize = epcd->wOverTheAirPacketSize;
++	else
++		rpipe->descr.wMaxPacketSize = ep->desc.wMaxPacketSize;
+ 
+ 	rpipe->descr.hwa_bMaxBurst = max(min_t(unsigned int,
+ 				epcd->bMaxBurst, 16U), 1U);
+-- 
+1.8.4
+
