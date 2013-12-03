@@ -1,0 +1,56 @@
+From 6e845343416667dc8f52364b4521efd975db1999 Mon Sep 17 00:00:00 2001
+From: Xenia Ragiadakou <burzalodowa@gmail.com>
+Date: Fri, 15 Nov 2013 03:18:07 +0200
+References: FATE#316422
+Patch-Mainline: v3.14
+Git-Commit: 0c052aabe66c495bf1248f301a8e745da66c6633
+Subject: [PATCH 05/15] xhci: fix incorrect type in assignment in
+ xhci_address_device()
+
+The field 'dev_info' in struct xhci_slot_ctx has type __le32 and it needs
+to be converted to CPU byteorder for the correct retrieval of its subfield
+'Context Entries'. This field is used by the trace event 'xhci_address_ctx'
+to trace only the contexts of valid endpoints.
+This bug was found using sparse.
+
+Signed-off-by: Xenia Ragiadakou <burzalodowa@gmail.com>
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/host/xhci.c b/drivers/usb/host/xhci.c
+index ab5de14..b71d2de 100644
+--- a/drivers/usb/host/xhci.c
++++ b/drivers/usb/host/xhci.c
+@@ -3774,7 +3774,7 @@ int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev)
+ 	xhci_dbg(xhci, "Slot ID %d Input Context:\n", udev->slot_id);
+ 	xhci_dbg_ctx(xhci, virt_dev->in_ctx, 2);
+ 	trace_xhci_address_ctx(xhci, virt_dev->in_ctx,
+-				slot_ctx->dev_info >> 27);
++				le32_to_cpu(slot_ctx->dev_info) >> 27);
+ 
+ 	spin_lock_irqsave(&xhci->lock, flags);
+ 	cmd_trb = xhci_find_next_enqueue(xhci->cmd_ring);
+@@ -3853,7 +3853,7 @@ int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev)
+ 	xhci_dbg(xhci, "Slot ID %d Input Context:\n", udev->slot_id);
+ 	xhci_dbg_ctx(xhci, virt_dev->in_ctx, 2);
+ 	trace_xhci_address_ctx(xhci, virt_dev->in_ctx,
+-				slot_ctx->dev_info >> 27);
++				le32_to_cpu(slot_ctx->dev_info) >> 27);
+ 	xhci_dbg(xhci, "Slot ID %d Output Context:\n", udev->slot_id);
+ 	xhci_dbg_ctx(xhci, virt_dev->out_ctx, 2);
+ 	/*
+@@ -3862,7 +3862,7 @@ int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev)
+ 	 */
+ 	slot_ctx = xhci_get_slot_ctx(xhci, virt_dev->out_ctx);
+ 	trace_xhci_address_ctx(xhci, virt_dev->out_ctx,
+-				slot_ctx->dev_info >> 27);
++				le32_to_cpu(slot_ctx->dev_info) >> 27);
+ 	/* Use kernel assigned address for devices; store xHC assigned
+ 	 * address locally. */
+ 	virt_dev->address = (le32_to_cpu(slot_ctx->dev_state) & DEV_ADDR_MASK)
+-- 
+1.8.4
+
