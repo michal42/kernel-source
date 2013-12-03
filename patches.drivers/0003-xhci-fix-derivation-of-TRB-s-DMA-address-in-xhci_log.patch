@@ -1,0 +1,42 @@
+From dd84bf9e59c49a396c5f5d640a85ded127d7a42a Mon Sep 17 00:00:00 2001
+From: Xenia Ragiadakou <burzalodowa@gmail.com>
+Date: Mon, 9 Sep 2013 21:03:11 +0300
+Git-Commit: f00466963817c8a240f022af864cdc39d482cdb7
+References: FATE#316422
+Patch-Mainline: v3.14
+Subject: [PATCH 03/15] xhci: fix derivation of TRB's DMA address in
+ xhci_log_event Trace Event Class
+
+This patch fixes the retrieval of the DMA address of the TRB that generated
+the event by converting the field[0] (low address bits) and field[1] (high
+address bits) to CPU byteorder and then typecasting field[1] to u64 so that
+the bitshift will not lead to overflow.
+In the original code, the typecasting of le32 to u64 was incorrect and the
+subsequent conversion to le64 reverts the low and high address parts.
+This bug was found using sparse.
+
+Signed-off-by: Xenia Ragiadakou <burzalodowa@gmail.com>
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci-trace.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/host/xhci-trace.h b/drivers/usb/host/xhci-trace.h
+index 20364cc..afe0933 100644
+--- a/drivers/usb/host/xhci-trace.h
++++ b/drivers/usb/host/xhci-trace.h
+@@ -120,8 +120,8 @@ DECLARE_EVENT_CLASS(xhci_log_event,
+ 	),
+ 	TP_fast_assign(
+ 		__entry->va = trb_va;
+-		__entry->dma = le64_to_cpu(((u64)ev->field[1]) << 32 |
+-						ev->field[0]);
++		__entry->dma = ((u64)le32_to_cpu(ev->field[1])) << 32 |
++					le32_to_cpu(ev->field[0]);
+ 		__entry->status = le32_to_cpu(ev->field[2]);
+ 		__entry->flags = le32_to_cpu(ev->field[3]);
+ 		memcpy(__get_dynamic_array(trb), trb_va,
+-- 
+1.8.4
+
