@@ -1,0 +1,124 @@
+From 0d37120525374b219eacdfbd0c17f44c7b5d50c1 Mon Sep 17 00:00:00 2001
+From: Oliver Neukum <oneukum@suse.de>
+Date: Mon, 18 Nov 2013 13:23:08 +0100
+Git-Commit: 0ada24a497c3f82cb806bb4b923a2edcf8ee7815
+Patch-Mainline: v3.14
+References: FATE#316422
+Subject: [PATCH 12/21] fusbh200: always build debugfs support
+
+This gets rid of conditional compilation.
+
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/usb/host/fusbh200-hcd.c | 31 -------------------------------
+ drivers/usb/host/fusbh200.h     |  8 --------
+ 2 files changed, 39 deletions(-)
+
+diff --git a/drivers/usb/host/fusbh200-hcd.c b/drivers/usb/host/fusbh200-hcd.c
+index 299253c..0220ba6 100644
+--- a/drivers/usb/host/fusbh200-hcd.c
++++ b/drivers/usb/host/fusbh200-hcd.c
+@@ -159,8 +159,6 @@ static inline void dbg_hcc_params (struct fusbh200_hcd *fusbh200, char *label) {
+ 
+ #endif
+ 
+-#ifdef	DEBUG
+-
+ static void __maybe_unused
+ dbg_qtd (const char *label, struct fusbh200_hcd *fusbh200, struct fusbh200_qtd *qtd)
+ {
+@@ -302,29 +300,6 @@ dbg_port_buf (char *buf, unsigned len, const char *label, int port, u32 status)
+ 		(status & PORT_CONNECT) ? " CONNECT" : "");
+ }
+ 
+-#else
+-static inline void __maybe_unused
+-dbg_qh (char *label, struct fusbh200_hcd *fusbh200, struct fusbh200_qh *qh)
+-{}
+-
+-static inline int __maybe_unused
+-dbg_status_buf (char *buf, unsigned len, const char *label, u32 status)
+-{ return 0; }
+-
+-static inline int __maybe_unused
+-dbg_command_buf (char *buf, unsigned len, const char *label, u32 command)
+-{ return 0; }
+-
+-static inline int __maybe_unused
+-dbg_intr_buf (char *buf, unsigned len, const char *label, u32 enable)
+-{ return 0; }
+-
+-static inline int __maybe_unused
+-dbg_port_buf (char *buf, unsigned len, const char *label, int port, u32 status)
+-{ return 0; }
+-
+-#endif	/* DEBUG */
+-
+ /* functions have the "wrong" filename when they're output... */
+ #define dbg_status(fusbh200, label, status) { \
+ 	char _buf [80]; \
+@@ -5936,13 +5911,11 @@ static int __init fusbh200_hcd_init(void)
+ 		 sizeof(struct fusbh200_qh), sizeof(struct fusbh200_qtd),
+ 		 sizeof(struct fusbh200_itd));
+ 
+-#ifdef DEBUG
+ 	fusbh200_debug_root = debugfs_create_dir("fusbh200", usb_debug_root);
+ 	if (!fusbh200_debug_root) {
+ 		retval = -ENOENT;
+ 		goto err_debug;
+ 	}
+-#endif
+ 
+ 	retval = platform_driver_register(&fusbh200_hcd_fusbh200_driver);
+ 	if (retval < 0)
+@@ -5951,11 +5924,9 @@ static int __init fusbh200_hcd_init(void)
+ 
+ 	platform_driver_unregister(&fusbh200_hcd_fusbh200_driver);
+ clean:
+-#ifdef DEBUG
+ 	debugfs_remove(fusbh200_debug_root);
+ 	fusbh200_debug_root = NULL;
+ err_debug:
+-#endif
+ 	clear_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
+ 	return retval;
+ }
+@@ -5964,9 +5935,7 @@ module_init(fusbh200_hcd_init);
+ static void __exit fusbh200_hcd_cleanup(void)
+ {
+ 	platform_driver_unregister(&fusbh200_hcd_fusbh200_driver);
+-#ifdef DEBUG
+ 	debugfs_remove(fusbh200_debug_root);
+-#endif
+ 	clear_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
+ }
+ module_exit(fusbh200_hcd_cleanup);
+diff --git a/drivers/usb/host/fusbh200.h b/drivers/usb/host/fusbh200.h
+index 797c9e8..5b73205 100644
+--- a/drivers/usb/host/fusbh200.h
++++ b/drivers/usb/host/fusbh200.h
+@@ -173,9 +173,7 @@ struct fusbh200_hcd {			/* one per controller */
+ #endif
+ 
+ 	/* debug files */
+-#ifdef DEBUG
+ 	struct dentry		*debug_dir;
+-#endif
+ };
+ 
+ /* convert between an HCD pointer and the corresponding FUSBH200_HCD */
+@@ -734,10 +732,4 @@ static inline unsigned fusbh200_read_frame_index(struct fusbh200_hcd *fusbh200)
+ })
+ /*-------------------------------------------------------------------------*/
+ 
+-#ifndef DEBUG
+-#define STUB_DEBUG_FILES
+-#endif	/* DEBUG */
+-
+-/*-------------------------------------------------------------------------*/
+-
+ #endif /* __LINUX_FUSBH200_H */
+-- 
+1.8.4
+
