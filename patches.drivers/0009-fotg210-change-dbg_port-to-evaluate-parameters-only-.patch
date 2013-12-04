@@ -1,0 +1,63 @@
+From ff369edcfcc0b2e46841c453f94bd09a112a94ed Mon Sep 17 00:00:00 2001
+From: Oliver Neukum <oneukum@suse.de>
+Date: Mon, 18 Nov 2013 13:23:05 +0100
+Git-Commit: f848a88d223cafa43cb318839a1171b498cf5ec8
+Patch-Mainline: v3.14
+References: FATE#316422
+Subject: [PATCH 09/21] fotg210: change dbg_port() to evaluate parameters only
+ if needed
+
+For dynamic debug the overhead for evaluating parameters must
+be sacrificed only if the message is actually printed
+
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/usb/host/fotg210-hcd.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/host/fotg210-hcd.c b/drivers/usb/host/fotg210-hcd.c
+index ada028a..d750a5b 100644
+--- a/drivers/usb/host/fotg210-hcd.c
++++ b/drivers/usb/host/fotg210-hcd.c
+@@ -254,8 +254,8 @@ dbg_command_buf(char *buf, unsigned len, const char *label, u32 command)
+ 		);
+ }
+ 
+-static int
+-dbg_port_buf(char *buf, unsigned len, const char *label, int port, u32 status)
++static char
++*dbg_port_buf(char *buf, unsigned len, const char *label, int port, u32 status)
+ {
+ 	char	*sig;
+ 
+@@ -275,7 +275,7 @@ dbg_port_buf(char *buf, unsigned len, const char *label, int port, u32 status)
+ 		break;
+ 	}
+ 
+-	return scnprintf(buf, len,
++	scnprintf(buf, len,
+ 		"%s%sport:%d status %06x %d "
+ 		"sig=%s%s%s%s%s%s%s%s",
+ 		label, label[0] ? " " : "", port, status,
+@@ -288,6 +288,7 @@ dbg_port_buf(char *buf, unsigned len, const char *label, int port, u32 status)
+ 		(status & PORT_PE) ? " PE" : "",
+ 		(status & PORT_CSC) ? " CSC" : "",
+ 		(status & PORT_CONNECT) ? " CONNECT" : "");
++	return buf;
+ }
+ 
+ /* functions have the "wrong" filename when they're output... */
+@@ -305,8 +306,7 @@ dbg_port_buf(char *buf, unsigned len, const char *label, int port, u32 status)
+ 
+ #define dbg_port(fotg210, label, port, status) { \
+ 	char _buf[80]; \
+-	dbg_port_buf(_buf, sizeof(_buf), label, port, status); \
+-	fotg210_dbg(fotg210, "%s\n", _buf); \
++	fotg210_dbg(fotg210, "%s\n", dbg_port_buf(_buf, sizeof(_buf), label, port, status) ); \
+ }
+ 
+ /*-------------------------------------------------------------------------*/
+-- 
+1.8.4
+
