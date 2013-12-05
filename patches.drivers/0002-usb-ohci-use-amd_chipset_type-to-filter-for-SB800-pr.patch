@@ -1,0 +1,97 @@
+From 2d14c27095694fed3c75de4e19511bf0fbafbfdf Mon Sep 17 00:00:00 2001
+From: Huang Rui <ray.huang@amd.com>
+Date: Thu, 3 Oct 2013 23:37:13 +0800
+Git-Commit: 02c123ee99c793f65af2dbda17d5fe87d448f808
+Patch-mainline: v3.13
+References: bnc#853497
+Subject: [PATCH 2/2] usb: ohci: use amd_chipset_type to filter for SB800
+ prefetch
+
+Commit "usb: pci-quirks: refactor AMD quirk to abstract AMD chipset types"
+introduced a new AMD chipset type to filter AMD platforms with different
+chipsets.
+
+According to a recent thread [1], this patch updates SB800 prefetch routine
+in AMD PLL quirk. And make it use the new chipset type to represent SB800
+generation.
+
+[1] http://marc.info/?l=linux-usb&m=138012321616452&w=2
+
+Signed-off-by: Huang Rui <ray.huang@amd.com>
+Acked-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/ohci-pci.c   | 14 +-------------
+ drivers/usb/host/pci-quirks.c |  8 ++++++++
+ drivers/usb/host/pci-quirks.h |  1 +
+ 3 files changed, 10 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/usb/host/ohci-pci.c b/drivers/usb/host/ohci-pci.c
+index ec337c2..659cde1 100644
+--- a/drivers/usb/host/ohci-pci.c
++++ b/drivers/usb/host/ohci-pci.c
+@@ -150,28 +150,16 @@ static int ohci_quirk_nec(struct usb_hcd *hcd)
+ static int ohci_quirk_amd700(struct usb_hcd *hcd)
+ {
+ 	struct ohci_hcd *ohci = hcd_to_ohci(hcd);
+-	struct pci_dev *amd_smbus_dev;
+-	u8 rev;
+ 
+ 	if (usb_amd_find_chipset_info())
+ 		ohci->flags |= OHCI_QUIRK_AMD_PLL;
+ 
+-	amd_smbus_dev = pci_get_device(PCI_VENDOR_ID_ATI,
+-			PCI_DEVICE_ID_ATI_SBX00_SMBUS, NULL);
+-	if (!amd_smbus_dev)
+-		return 0;
+-
+-	rev = amd_smbus_dev->revision;
+-
+ 	/* SB800 needs pre-fetch fix */
+-	if ((rev >= 0x40) && (rev <= 0x4f)) {
++	if (usb_amd_prefetch_quirk()) {
+ 		ohci->flags |= OHCI_QUIRK_AMD_PREFETCH;
+ 		ohci_dbg(ohci, "enabled AMD prefetch quirk\n");
+ 	}
+ 
+-	pci_dev_put(amd_smbus_dev);
+-	amd_smbus_dev = NULL;
+-
+ 	return 0;
+ }
+ 
+diff --git a/drivers/usb/host/pci-quirks.c b/drivers/usb/host/pci-quirks.c
+index 2d94d9e..c35fe75 100644
+--- a/drivers/usb/host/pci-quirks.c
++++ b/drivers/usb/host/pci-quirks.c
+@@ -275,6 +275,14 @@ bool usb_amd_hang_symptom_quirk(void)
+ }
+ EXPORT_SYMBOL_GPL(usb_amd_hang_symptom_quirk);
+ 
++bool usb_amd_prefetch_quirk(void)
++{
++	usb_amd_find_chipset_info();
++	/* SB800 needs pre-fetch fix */
++	return amd_chipset.sb_type.gen == AMD_CHIPSET_SB800;
++}
++EXPORT_SYMBOL_GPL(usb_amd_prefetch_quirk);
++
+ /*
+  * The hardware normally enables the A-link power management feature, which
+  * lets the system lower the power consumption in idle states.
+diff --git a/drivers/usb/host/pci-quirks.h b/drivers/usb/host/pci-quirks.h
+index 820f532..638e88f 100644
+--- a/drivers/usb/host/pci-quirks.h
++++ b/drivers/usb/host/pci-quirks.h
+@@ -6,6 +6,7 @@ void uhci_reset_hc(struct pci_dev *pdev, unsigned long base);
+ int uhci_check_and_reset_hc(struct pci_dev *pdev, unsigned long base);
+ int usb_amd_find_chipset_info(void);
+ bool usb_amd_hang_symptom_quirk(void);
++bool usb_amd_prefetch_quirk(void);
+ void usb_amd_dev_put(void);
+ void usb_amd_quirk_pll_disable(void);
+ void usb_amd_quirk_pll_enable(void);
+-- 
+1.8.4
+
