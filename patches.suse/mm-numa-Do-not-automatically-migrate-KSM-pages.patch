@@ -1,0 +1,39 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Fri, 1 Nov 2013 15:15:01 +0000
+Subject: [PATCH] mm: numa: Do not automatically migrate KSM pages
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (under testing and review)
+Git-commit: e605d0be56483159688178998bc674d2620cbdb7
+
+KSM pages can be shared between tasks that are not necessarily related
+to each other from a NUMA perspective. This patch causes those pages to
+be ignored by automatic NUMA balancing so they do not migrate and do not
+cause unrelated tasks to be grouped together.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mprotect.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index 494b160..b5a0c06 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -23,6 +23,7 @@
+ #include <linux/mmu_notifier.h>
+ #include <linux/migrate.h>
+ #include <linux/perf_event.h>
++#include <linux/ksm.h>
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+ #include <asm/cacheflush.h>
+@@ -63,7 +64,7 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+ 
+ 				ptent = *pte;
+ 				page = vm_normal_page(vma, addr, oldpte);
+-				if (page) {
++				if (page && !PageKsm(page)) {
+ 					if (!pte_numa(oldpte)) {
+ 						ptent = pte_mknuma(ptent);
+ 						updated = true;
