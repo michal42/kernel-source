@@ -1,0 +1,37 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 27 Nov 2013 20:01:06 +0000
+Subject: [PATCH] mm: numa: Ensure anon_vma is locked to prevent parallel THP
+ splits
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (under testing and review)
+Git-commit: efb152665154abf5b0edb0bb642477b683135145
+
+The anon_vma lock prevents parallel THP splits and any associated complexity
+that arises when handling splits during THP migration. This patch checks
+if the lock was successfully acquired and bails from THP migration if it
+failed for any reason.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/huge_memory.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index c1ded4f..acb968f 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1358,6 +1358,13 @@ int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		goto out_unlock;
+ 	}
+ 
++	/* Bail if we fail to protect against THP splits for any reason */
++	if (unlikely(!anon_vma)) {
++		put_page(page);
++		page_nid = -1;
++		goto clear_pmdnuma;
++	}
++
+ 	/*
+ 	 * Migrate the THP to the requested node, returns with page unlocked
+ 	 * and pmd_numa cleared.
