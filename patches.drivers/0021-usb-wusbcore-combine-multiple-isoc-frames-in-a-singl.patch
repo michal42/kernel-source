@@ -17,14 +17,12 @@ Signed-off-by: Thomas Pugliese <thomas.pugliese@gmail.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
- drivers/usb/wusbcore/wa-xfer.c | 366 ++++++++++++++++++++++++++++-------------
- 1 file changed, 255 insertions(+), 111 deletions(-)
+ drivers/usb/wusbcore/wa-xfer.c |  368 ++++++++++++++++++++++++++++-------------
+ 1 file changed, 256 insertions(+), 112 deletions(-)
 
-diff --git a/drivers/usb/wusbcore/wa-xfer.c b/drivers/usb/wusbcore/wa-xfer.c
-index f1e9a38..9325d27 100644
 --- a/drivers/usb/wusbcore/wa-xfer.c
 +++ b/drivers/usb/wusbcore/wa-xfer.c
-@@ -121,6 +121,9 @@ struct wa_seg {
+@@ -122,6 +122,9 @@ struct wa_seg {
  	struct list_head list_node;	/* for rpipe->req_list */
  	struct wa_xfer *xfer;		/* out xfer */
  	u8 index;			/* which segment we are */
@@ -34,7 +32,7 @@ index f1e9a38..9325d27 100644
  	enum wa_seg_status status;
  	ssize_t result;			/* bytes xfered or error */
  	struct wa_xfer_hdr xfer_hdr;
-@@ -154,12 +157,17 @@ struct wa_xfer {
+@@ -155,12 +158,17 @@ struct wa_xfer {
  	unsigned is_dma:1;
  	size_t seg_size;
  	int result;
@@ -52,7 +50,7 @@ index f1e9a38..9325d27 100644
  static inline void wa_xfer_init(struct wa_xfer *xfer)
  {
  	kref_init(&xfer->refcnt);
-@@ -463,6 +471,31 @@ error_kmalloc:
+@@ -464,6 +472,31 @@ error_kmalloc:
  }
  
  /*
@@ -84,7 +82,7 @@ index f1e9a38..9325d27 100644
   *
   * @returns < 0 on error, transfer segment request size if ok
   */
-@@ -505,8 +538,20 @@ static ssize_t __wa_xfer_setup_sizes(struct wa_xfer *xfer,
+@@ -506,8 +539,20 @@ static ssize_t __wa_xfer_setup_sizes(str
  
  	maxpktsize = le16_to_cpu(rpipe->descr.wMaxPacketSize);
  	if ((rpipe->descr.bmAttribute & 0x3) == USB_ENDPOINT_XFER_ISOC) {
@@ -106,11 +104,11 @@ index f1e9a38..9325d27 100644
  	} else {
  		xfer->seg_size = le16_to_cpu(rpipe->descr.wBlocks)
  			* 1 << (xfer->wa->wa_descr->bRPipeBlockSize - 1);
-@@ -523,20 +568,43 @@ static ssize_t __wa_xfer_setup_sizes(struct wa_xfer *xfer,
+@@ -524,20 +569,43 @@ static ssize_t __wa_xfer_setup_sizes(str
  		xfer->seg_size = (xfer->seg_size / maxpktsize) * maxpktsize;
  		xfer->segs = DIV_ROUND_UP(urb->transfer_buffer_length,
  						xfer->seg_size);
--		if (xfer->segs >= WA_SEGS_MAX) {
+-		if (xfer->segs > WA_SEGS_MAX) {
 -			dev_err(dev, "BUG? oops, number of segments %zu bigger than %d\n",
 -				(urb->transfer_buffer_length/xfer->seg_size),
 -				WA_SEGS_MAX);
@@ -121,7 +119,7 @@ index f1e9a38..9325d27 100644
  			xfer->segs = 1;
  	}
 +
-+	if (xfer->segs >= WA_SEGS_MAX) {
++	if (xfer->segs > WA_SEGS_MAX) {
 +		dev_err(dev, "BUG? oops, number of segments %zu bigger than %d\n",
 +			(urb->transfer_buffer_length/xfer->seg_size),
 +			WA_SEGS_MAX);
@@ -157,7 +155,7 @@ index f1e9a38..9325d27 100644
  /* Fill in the common request header and xfer-type specific data. */
  static void __wa_xfer_setup_hdr0(struct wa_xfer *xfer,
  				 struct wa_xfer_hdr *xfer_hdr0,
-@@ -544,8 +612,9 @@ static void __wa_xfer_setup_hdr0(struct wa_xfer *xfer,
+@@ -545,8 +613,9 @@ static void __wa_xfer_setup_hdr0(struct
  				 size_t xfer_hdr_size)
  {
  	struct wa_rpipe *rpipe = xfer->ep->hcpriv;
@@ -168,7 +166,7 @@ index f1e9a38..9325d27 100644
  	xfer_hdr0->bLength = xfer_hdr_size;
  	xfer_hdr0->bRequestType = xfer_type;
  	xfer_hdr0->wRPipe = rpipe->descr.wRPipeIndex;
-@@ -567,19 +636,11 @@ static void __wa_xfer_setup_hdr0(struct wa_xfer *xfer,
+@@ -568,19 +637,11 @@ static void __wa_xfer_setup_hdr0(struct
  			container_of(xfer_hdr0, struct wa_xfer_hwaiso, hdr);
  		struct wa_xfer_packet_info_hwaiso *packet_desc =
  			((void *)xfer_iso) + xfer_hdr_size;
@@ -192,7 +190,7 @@ index f1e9a38..9325d27 100644
  		break;
  	}
  	default:
-@@ -608,54 +669,112 @@ static void wa_seg_dto_cb(struct urb *urb)
+@@ -609,54 +670,112 @@ static void wa_seg_dto_cb(struct urb *ur
  	struct wa_rpipe *rpipe;
  	unsigned long flags;
  	unsigned rpipe_ready = 0;
@@ -337,7 +335,7 @@ index f1e9a38..9325d27 100644
  }
  
  /*
-@@ -686,8 +805,8 @@ static void wa_seg_iso_pack_desc_cb(struct urb *urb)
+@@ -687,8 +806,8 @@ static void wa_seg_iso_pack_desc_cb(stru
  		spin_lock_irqsave(&xfer->lock, flags);
  		wa = xfer->wa;
  		dev = &wa->usb_iface->dev;
@@ -348,7 +346,7 @@ index f1e9a38..9325d27 100644
  		if (xfer->is_inbound && seg->status < WA_SEG_PENDING)
  			seg->status = WA_SEG_PENDING;
  		spin_unlock_irqrestore(&xfer->lock, flags);
-@@ -700,8 +819,8 @@ static void wa_seg_iso_pack_desc_cb(struct urb *urb)
+@@ -701,8 +820,8 @@ static void wa_seg_iso_pack_desc_cb(stru
  		wa = xfer->wa;
  		dev = &wa->usb_iface->dev;
  		rpipe = xfer->ep->hcpriv;
@@ -359,7 +357,7 @@ index f1e9a38..9325d27 100644
  		if (edc_inc(&wa->nep_edc, EDC_MAX_ERRORS,
  			    EDC_ERROR_TIMEFRAME)){
  			dev_err(dev, "DTO: URB max acceptable errors exceeded, resetting device\n");
-@@ -885,8 +1004,8 @@ static struct scatterlist *wa_xfer_create_subset_sg(struct scatterlist *in_sg,
+@@ -886,8 +1005,8 @@ static struct scatterlist *wa_xfer_creat
  /*
   * Populate DMA buffer info for the isoc dto urb.
   */
@@ -370,7 +368,7 @@ index f1e9a38..9325d27 100644
  {
  	/*
  	 * dto urb buffer address and size pulled from
-@@ -960,13 +1079,14 @@ static int __wa_populate_dto_urb(struct wa_xfer *xfer,
+@@ -961,13 +1080,14 @@ static int __wa_populate_dto_urb(struct
   */
  static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
  {
@@ -387,15 +385,11 @@ index f1e9a38..9325d27 100644
  
  	result = -ENOMEM;
  	xfer->seg = kcalloc(xfer->segs, sizeof(xfer->seg[0]), GFP_ATOMIC);
-@@ -974,24 +1094,30 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
+@@ -975,24 +1095,30 @@ static int __wa_xfer_setup_segs(struct w
  		goto error_segs_kzalloc;
  	buf_itr = 0;
  	buf_size = xfer->urb->transfer_buffer_length;
-+	iso_frame_offset = 0;
-+	for (cnt = 0; cnt < xfer->segs; cnt++) {
-+		size_t iso_pkt_descr_size = 0;
-+		int seg_isoc_frame_count = 0, seg_isoc_size = 0;
- 
+-
 -	if (usb_pipeisoc(xfer->urb->pipe)) {
 -		/*
 -		 * This calculation assumes one isoc packet per xfer segment.
@@ -405,13 +399,18 @@ index f1e9a38..9325d27 100644
 -			sizeof(__le16);
 -		alloc_size += iso_pkt_descr_size;
 -	}
+-
++	iso_frame_offset = 0;
+ 	for (cnt = 0; cnt < xfer->segs; cnt++) {
+-		seg = xfer->seg[cnt] = kmalloc(alloc_size, GFP_ATOMIC);
++		size_t iso_pkt_descr_size = 0;
++		int seg_isoc_frame_count = 0, seg_isoc_size = 0;
++
 +		if (usb_pipeisoc(xfer->urb->pipe)) {
 +			seg_isoc_frame_count =
 +				__wa_seg_calculate_isoc_frame_count(xfer,
 +					xfer_isoc_frame_offset, &seg_isoc_size);
- 
--	for (cnt = 0; cnt < xfer->segs; cnt++) {
--		seg = xfer->seg[cnt] = kmalloc(alloc_size, GFP_ATOMIC);
++
 +			iso_pkt_descr_size =
 +				sizeof(struct wa_xfer_packet_info_hwaiso) +
 +				(seg_isoc_frame_count * sizeof(__le16));
@@ -429,7 +428,7 @@ index f1e9a38..9325d27 100644
  		usb_fill_bulk_urb(&seg->tr_urb, usb_dev,
  				  usb_sndbulkpipe(usb_dev,
  						  dto_epd->bEndpointAddress),
-@@ -1029,8 +1155,16 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
+@@ -1030,8 +1156,16 @@ static int __wa_xfer_setup_segs(struct w
  					iso_pkt_descr_size,
  					wa_seg_iso_pack_desc_cb, seg);
  
@@ -448,7 +447,7 @@ index f1e9a38..9325d27 100644
  			} else {
  				/* fill in the xfer buffer information. */
  				result = __wa_populate_dto_urb(xfer, seg,
-@@ -1099,28 +1233,23 @@ static int __wa_xfer_setup(struct wa_xfer *xfer, struct urb *urb)
+@@ -1100,28 +1234,23 @@ static int __wa_xfer_setup(struct wa_xfe
  	xfer_hdr = xfer_hdr0;
  	if (xfer_type == WA_XFER_TYPE_ISO) {
  		xfer_hdr0->dwTransferLength =
@@ -486,7 +485,7 @@ index f1e9a38..9325d27 100644
  		}
  	} else {
  		transfer_size = urb->transfer_buffer_length;
-@@ -1175,6 +1304,13 @@ static int __wa_seg_submit(struct wa_rpipe *rpipe, struct wa_xfer *xfer,
+@@ -1176,6 +1305,13 @@ static int __wa_seg_submit(struct wa_rpi
  			       __func__, xfer, seg->index, result);
  			goto error_iso_pack_desc_submit;
  		}
@@ -500,7 +499,7 @@ index f1e9a38..9325d27 100644
  	}
  	/* submit the out data if this is an out request. */
  	if (seg->dto_urb) {
-@@ -1196,6 +1332,7 @@ error_iso_pack_desc_submit:
+@@ -1197,6 +1333,7 @@ error_iso_pack_desc_submit:
  error_seg_submit:
  	seg->status = WA_SEG_ERROR;
  	seg->result = result;
@@ -508,7 +507,7 @@ index f1e9a38..9325d27 100644
  	return result;
  }
  
-@@ -1306,9 +1443,6 @@ static int __wa_xfer_submit(struct wa_xfer *xfer)
+@@ -1307,9 +1444,6 @@ static int __wa_xfer_submit(struct wa_xf
  		available = atomic_read(&rpipe->segs_available);
  		empty = list_empty(&rpipe->seg_list);
  		seg = xfer->seg[cnt];
@@ -518,7 +517,7 @@ index f1e9a38..9325d27 100644
  		if (available && empty) {
  			/*
  			 * Only attempt to acquire DTO if we have a segment
-@@ -1319,6 +1453,9 @@ static int __wa_xfer_submit(struct wa_xfer *xfer)
+@@ -1320,6 +1454,9 @@ static int __wa_xfer_submit(struct wa_xf
  				delay_seg = 0;
  				result = __wa_seg_submit(rpipe, xfer, seg,
  							&dto_done);
@@ -528,7 +527,7 @@ index f1e9a38..9325d27 100644
  				if (dto_done)
  					__wa_dto_put(rpipe->wa);
  
-@@ -1330,6 +1467,8 @@ static int __wa_xfer_submit(struct wa_xfer *xfer)
+@@ -1331,6 +1468,8 @@ static int __wa_xfer_submit(struct wa_xf
  		}
  
  		if (delay_seg) {
@@ -537,7 +536,7 @@ index f1e9a38..9325d27 100644
  			seg->status = WA_SEG_DELAYED;
  			list_add_tail(&seg->list_node, &rpipe->seg_list);
  		}
-@@ -2031,29 +2170,19 @@ static void wa_process_iso_packet_status(struct wahc *wa, struct urb *urb)
+@@ -2032,29 +2171,19 @@ static void wa_process_iso_packet_status
  {
  	struct device *dev = &wa->usb_iface->dev;
  	struct wa_xfer_packet_status_hwaiso *packet_status;
@@ -570,7 +569,7 @@ index f1e9a38..9325d27 100644
  	if (packet_status->bPacketType != WA_XFER_ISO_PACKET_STATUS) {
  		dev_err(dev, "DTI Error: isoc packet status--bad type 0x%02x\n",
  			packet_status->bPacketType);
-@@ -2070,13 +2199,28 @@ static void wa_process_iso_packet_status(struct wahc *wa, struct urb *urb)
+@@ -2071,13 +2200,28 @@ static void wa_process_iso_packet_status
  		goto error_bad_seg;
  	seg = xfer->seg[wa->dti_isoc_xfer_seg];
  	rpipe = xfer->ep->hcpriv;
@@ -606,6 +605,3 @@ index f1e9a38..9325d27 100644
  
  	if (!xfer->is_inbound) {
  		/* OUT transfer, complete it -- */
--- 
-1.8.4
-

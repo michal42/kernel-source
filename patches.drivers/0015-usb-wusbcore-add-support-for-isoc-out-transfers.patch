@@ -28,12 +28,10 @@ Signed-off-by: Thomas Pugliese <thomas.pugliese@gmail.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
- drivers/usb/wusbcore/wa-hc.h   |  15 ++
- drivers/usb/wusbcore/wa-xfer.c | 493 ++++++++++++++++++++++++++++++++---------
+ drivers/usb/wusbcore/wa-hc.h   |   15 +
+ drivers/usb/wusbcore/wa-xfer.c |  493 ++++++++++++++++++++++++++++++++---------
  2 files changed, 406 insertions(+), 102 deletions(-)
 
-diff --git a/drivers/usb/wusbcore/wa-hc.h b/drivers/usb/wusbcore/wa-hc.h
-index ab39934..b44aca3 100644
 --- a/drivers/usb/wusbcore/wa-hc.h
 +++ b/drivers/usb/wusbcore/wa-hc.h
 @@ -122,6 +122,11 @@ struct wa_rpipe {
@@ -64,7 +62,7 @@ index ab39934..b44aca3 100644
  	struct urb *dti_urb;		/* URB for reading xfer results */
  	struct urb *buf_in_urb;		/* URB for reading data in */
  	struct edc dti_edc;		/* DTI error density counter */
-@@ -247,6 +261,7 @@ static inline void wa_init(struct wahc *wa)
+@@ -247,6 +261,7 @@ static inline void wa_init(struct wahc *
  {
  	edc_init(&wa->nep_edc);
  	atomic_set(&wa->notifs_queued, 0);
@@ -72,11 +70,9 @@ index ab39934..b44aca3 100644
  	wa_rpipe_init(wa);
  	edc_init(&wa->dti_edc);
  	INIT_LIST_HEAD(&wa->xfer_list);
-diff --git a/drivers/usb/wusbcore/wa-xfer.c b/drivers/usb/wusbcore/wa-xfer.c
-index 13faac0..e097da3 100644
 --- a/drivers/usb/wusbcore/wa-xfer.c
 +++ b/drivers/usb/wusbcore/wa-xfer.c
-@@ -115,6 +115,7 @@ static void wa_xfer_delayed_run(struct wa_rpipe *);
+@@ -116,6 +116,7 @@ static void wa_xfer_delayed_run(struct w
   */
  struct wa_seg {
  	struct urb tr_urb;		/* transfer request urb. */
@@ -84,7 +80,7 @@ index 13faac0..e097da3 100644
  	struct urb *dto_urb;		/* for data output. */
  	struct list_head list_node;	/* for rpipe->req_list */
  	struct wa_xfer *xfer;		/* out xfer */
-@@ -122,7 +123,6 @@ struct wa_seg {
+@@ -123,7 +124,6 @@ struct wa_seg {
  	enum wa_seg_status status;
  	ssize_t result;			/* bytes xfered or error */
  	struct wa_xfer_hdr xfer_hdr;
@@ -92,7 +88,7 @@ index 13faac0..e097da3 100644
  };
  
  static inline void wa_seg_init(struct wa_seg *seg)
-@@ -169,7 +169,7 @@ static inline void wa_xfer_init(struct wa_xfer *xfer)
+@@ -170,7 +170,7 @@ static inline void wa_xfer_init(struct w
  /*
   * Destroy a transfer structure
   *
@@ -101,7 +97,7 @@ index 13faac0..e097da3 100644
   * xfer->seg[cnt] memory that was allocated by __wa_xfer_setup_segs.
   */
  static void wa_xfer_destroy(struct kref *_xfer)
-@@ -178,12 +178,14 @@ static void wa_xfer_destroy(struct kref *_xfer)
+@@ -179,12 +179,14 @@ static void wa_xfer_destroy(struct kref
  	if (xfer->seg) {
  		unsigned cnt;
  		for (cnt = 0; cnt < xfer->segs; cnt++) {
@@ -121,7 +117,7 @@ index 13faac0..e097da3 100644
  			}
  		}
  		kfree(xfer->seg);
-@@ -291,7 +293,8 @@ static unsigned __wa_xfer_is_done(struct wa_xfer *xfer)
+@@ -292,7 +294,8 @@ static unsigned __wa_xfer_is_done(struct
  				goto out;
  			}
  			urb->actual_length += seg->result;
@@ -131,7 +127,7 @@ index 13faac0..e097da3 100644
  			    && cnt != xfer->segs-1)
  				found_short = 1;
  			dev_dbg(dev, "xfer %p ID %08X#%u: DONE short %d "
-@@ -429,39 +432,53 @@ static ssize_t __wa_xfer_setup_sizes(struct wa_xfer *xfer,
+@@ -430,39 +433,53 @@ static ssize_t __wa_xfer_setup_sizes(str
  		result = sizeof(struct wa_xfer_bi);
  		break;
  	case USB_ENDPOINT_XFER_ISOC:
@@ -170,7 +166,7 @@ index 13faac0..e097da3 100644
 -	}
 -	xfer->seg_size = (xfer->seg_size / maxpktsize) * maxpktsize;
 -	xfer->segs = DIV_ROUND_UP(urb->transfer_buffer_length, xfer->seg_size);
--	if (xfer->segs >= WA_SEGS_MAX) {
+-	if (xfer->segs > WA_SEGS_MAX) {
 -		dev_err(dev, "BUG? ops, number of segments %d bigger than %d\n",
 -			(int)(urb->transfer_buffer_length / xfer->seg_size),
 -			WA_SEGS_MAX);
@@ -195,7 +191,7 @@ index 13faac0..e097da3 100644
 +		xfer->seg_size = (xfer->seg_size / maxpktsize) * maxpktsize;
 +		xfer->segs = DIV_ROUND_UP(urb->transfer_buffer_length,
 +						xfer->seg_size);
-+		if (xfer->segs >= WA_SEGS_MAX) {
++		if (xfer->segs > WA_SEGS_MAX) {
 +			dev_err(dev, "BUG? oops, number of segments %d bigger than %d\n",
 +				(urb->transfer_buffer_length/xfer->seg_size),
 +				WA_SEGS_MAX);
@@ -210,7 +206,7 @@ index 13faac0..e097da3 100644
  error:
  	return result;
  }
-@@ -491,8 +508,26 @@ static void __wa_xfer_setup_hdr0(struct wa_xfer *xfer,
+@@ -492,8 +509,26 @@ static void __wa_xfer_setup_hdr0(struct
  	}
  	case WA_XFER_TYPE_BI:
  		break;
@@ -239,7 +235,7 @@ index 13faac0..e097da3 100644
  	default:
  		BUG();
  	};
-@@ -570,6 +605,72 @@ static void wa_seg_dto_cb(struct urb *urb)
+@@ -571,6 +606,72 @@ static void wa_seg_dto_cb(struct urb *ur
  }
  
  /*
@@ -312,7 +308,7 @@ index 13faac0..e097da3 100644
   * Callback for the segment request
   *
   * If successful transition state (unless already transitioned or
-@@ -583,7 +684,7 @@ static void wa_seg_dto_cb(struct urb *urb)
+@@ -584,7 +685,7 @@ static void wa_seg_dto_cb(struct urb *ur
   * We have to check before setting the status to WA_SEG_PENDING
   * because sometimes the xfer result callback arrives before this
   * callback (geeeeeeze), so it might happen that we are already in
@@ -321,7 +317,7 @@ index 13faac0..e097da3 100644
   * as in that case, wa_seg_dto_cb will do it when the OUT data phase
   * finishes.
   */
-@@ -603,8 +704,11 @@ static void wa_seg_tr_cb(struct urb *urb)
+@@ -604,8 +705,11 @@ static void wa_seg_tr_cb(struct urb *urb
  		spin_lock_irqsave(&xfer->lock, flags);
  		wa = xfer->wa;
  		dev = &wa->usb_iface->dev;
@@ -335,7 +331,7 @@ index 13faac0..e097da3 100644
  			seg->status = WA_SEG_PENDING;
  		spin_unlock_irqrestore(&xfer->lock, flags);
  		break;
-@@ -626,6 +730,7 @@ static void wa_seg_tr_cb(struct urb *urb)
+@@ -627,6 +731,7 @@ static void wa_seg_tr_cb(struct urb *urb
  				"exceeded, resetting device\n");
  			wa_reset_all(wa);
  		}
@@ -343,7 +339,7 @@ index 13faac0..e097da3 100644
  		usb_unlink_urb(seg->dto_urb);
  		seg->status = WA_SEG_ERROR;
  		seg->result = urb->status;
-@@ -724,6 +829,25 @@ static struct scatterlist *wa_xfer_create_subset_sg(struct scatterlist *in_sg,
+@@ -725,6 +830,25 @@ static struct scatterlist *wa_xfer_creat
  }
  
  /*
@@ -369,7 +365,7 @@ index 13faac0..e097da3 100644
   * Populate buffer ptr and size, DMA buffer or SG list for the dto urb.
   */
  static int __wa_populate_dto_urb(struct wa_xfer *xfer,
-@@ -788,7 +912,7 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
+@@ -789,7 +913,7 @@ static int __wa_xfer_setup_segs(struct w
  	struct usb_device *usb_dev = xfer->wa->usb_dev;
  	const struct usb_endpoint_descriptor *dto_epd = xfer->wa->dto_epd;
  	struct wa_seg *seg;
@@ -378,7 +374,7 @@ index 13faac0..e097da3 100644
  
  	result = -ENOMEM;
  	xfer->seg = kcalloc(xfer->segs, sizeof(xfer->seg[0]), GFP_ATOMIC);
-@@ -796,6 +920,17 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
+@@ -797,6 +921,17 @@ static int __wa_xfer_setup_segs(struct w
  		goto error_segs_kzalloc;
  	buf_itr = 0;
  	buf_size = xfer->urb->transfer_buffer_length;
@@ -396,7 +392,7 @@ index 13faac0..e097da3 100644
  	for (cnt = 0; cnt < xfer->segs; cnt++) {
  		seg = xfer->seg[cnt] = kmalloc(alloc_size, GFP_ATOMIC);
  		if (seg == NULL)
-@@ -820,16 +955,40 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
+@@ -821,16 +956,40 @@ static int __wa_xfer_setup_segs(struct w
  						dto_epd->bEndpointAddress),
  				NULL, 0, wa_seg_dto_cb, seg);
  
@@ -422,9 +418,7 @@ index 13faac0..e097da3 100644
 +						xfer_hdr_size,
 +					iso_pkt_descr_size,
 +					wa_seg_iso_pack_desc_cb, seg);
- 
--			if (result < 0)
--				goto error_seg_outbound_populate;
++
 +				/* fill in the xfer buffer information. */
 +				__wa_populate_dto_urb_iso(xfer, seg, cnt);
 +			} else {
@@ -433,7 +427,9 @@ index 13faac0..e097da3 100644
 +							buf_itr, buf_itr_size);
 +				if (result < 0)
 +					goto error_seg_outbound_populate;
-+
+ 
+-			if (result < 0)
+-				goto error_seg_outbound_populate;
 +				buf_itr += buf_itr_size;
 +				buf_size -= buf_itr_size;
 +			}
@@ -444,7 +440,7 @@ index 13faac0..e097da3 100644
  	}
  	return 0;
  
-@@ -838,6 +997,7 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
+@@ -839,6 +998,7 @@ static int __wa_xfer_setup_segs(struct w
  	 * Use the fact that cnt is left at were it failed.  The remaining
  	 * segments will be cleaned up by wa_xfer_destroy.
  	 */
@@ -452,7 +448,7 @@ index 13faac0..e097da3 100644
  error_seg_outbound_populate:
  	usb_free_urb(xfer->seg[cnt]->dto_urb);
  error_dto_alloc:
-@@ -881,21 +1041,50 @@ static int __wa_xfer_setup(struct wa_xfer *xfer, struct urb *urb)
+@@ -882,21 +1042,50 @@ static int __wa_xfer_setup(struct wa_xfe
  	wa_xfer_id_init(xfer);
  	__wa_xfer_setup_hdr0(xfer, xfer_hdr0, xfer_type, xfer_hdr_size);
  
@@ -516,7 +512,7 @@ index 13faac0..e097da3 100644
  	}
  	xfer_hdr->bTransferSegment |= 0x80;	/* this is the last segment */
  	result = 0;
-@@ -916,16 +1105,25 @@ static int __wa_seg_submit(struct wa_rpipe *rpipe, struct wa_xfer *xfer,
+@@ -917,16 +1106,25 @@ static int __wa_seg_submit(struct wa_rpi
  	/* submit the transfer request. */
  	result = usb_submit_urb(&seg->tr_urb, GFP_ATOMIC);
  	if (result < 0) {
@@ -546,7 +542,7 @@ index 13faac0..e097da3 100644
  			goto error_dto_submit;
  		}
  	}
-@@ -934,6 +1132,8 @@ static int __wa_seg_submit(struct wa_rpipe *rpipe, struct wa_xfer *xfer,
+@@ -935,6 +1133,8 @@ static int __wa_seg_submit(struct wa_rpi
  	return 0;
  
  error_dto_submit:
@@ -555,7 +551,7 @@ index 13faac0..e097da3 100644
  	usb_unlink_urb(&seg->tr_urb);
  error_seg_submit:
  	seg->status = WA_SEG_ERROR;
-@@ -1565,7 +1765,12 @@ static void wa_xfer_result_chew(struct wahc *wa, struct wa_xfer *xfer,
+@@ -1566,7 +1766,12 @@ static void wa_xfer_result_chew(struct w
  	/* FIXME: we ignore warnings, tally them for stats */
  	if (usb_status & 0x40) 		/* Warning?... */
  		usb_status = 0;		/* ... pass */
@@ -569,7 +565,7 @@ index 13faac0..e097da3 100644
  		seg->status = WA_SEG_DTI_PENDING;
  		BUG_ON(wa->buf_in_urb->status == -EINPROGRESS);
  		/* this should always be 0 before a resubmit. */
-@@ -1694,6 +1899,85 @@ segment_aborted:
+@@ -1695,6 +1900,85 @@ segment_aborted:
  }
  
  /*
@@ -655,7 +651,7 @@ index 13faac0..e097da3 100644
   * Callback for the IN data phase
   *
   * If successful transition state; otherwise, take a note of the
-@@ -1799,51 +2083,56 @@ static void wa_dti_cb(struct urb *urb)
+@@ -1800,51 +2084,56 @@ static void wa_dti_cb(struct urb *urb)
  	int result;
  	struct wahc *wa = urb->context;
  	struct device *dev = &wa->usb_iface->dev;
@@ -750,6 +746,3 @@ index 13faac0..e097da3 100644
  		break;
  	case -ENOENT:		/* (we killed the URB)...so, no broadcast */
  	case -ESHUTDOWN:	/* going away! */
--- 
-1.8.4
-
