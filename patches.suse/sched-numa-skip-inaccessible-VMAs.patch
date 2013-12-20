@@ -1,0 +1,38 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 18 Dec 2013 17:08:40 -0800
+Subject: [PATCH] sched: numa: skip inaccessible VMAs
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 3c67f474558748b604e247d92b55dfe89654c81d
+
+Inaccessible VMA should not be trapping NUMA hint faults. Skip them.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Reviewed-by: Rik van Riel <riel@redhat.com>
+Cc: Alex Thorlton <athorlton@sgi.com>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ kernel/sched/fair.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 04c6306..ba31025 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1752,6 +1752,13 @@ void task_numa_work(struct callback_head *work)
+ 		    (vma->vm_file && (vma->vm_flags & (VM_READ|VM_WRITE)) == (VM_READ)))
+ 			continue;
+ 
++		/*
++		 * Skip inaccessible VMAs to avoid any confusion between
++		 * PROT_NONE and NUMA hinting ptes
++		 */
++		if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
++			continue;
++
+ 		do {
+ 			start = max(start, vma->vm_start);
+ 			end = ALIGN(start + (pages << PAGE_SHIFT), HPAGE_SIZE);
