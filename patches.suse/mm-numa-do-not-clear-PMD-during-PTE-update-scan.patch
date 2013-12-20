@@ -1,0 +1,36 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 18 Dec 2013 17:08:36 -0800
+Subject: [PATCH] mm: numa: do not clear PMD during PTE update scan
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+Git-commit: 5a6dac3ec5f583cc8ee7bc53b5500a207c4ca433
+
+If the PMD is flushed then a parallel fault in handle_mm_fault() will
+enter the pmd_none and do_huge_pmd_anonymous_page() path where it'll
+attempt to insert a huge zero page.  This is wasteful so the patch
+avoids clearing the PMD when setting pmd_numa.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Reviewed-by: Rik van Riel <riel@redhat.com>
+Cc: Alex Thorlton <athorlton@sgi.com>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/huge_memory.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index bec2e3b..c1ded4f 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1528,7 +1528,7 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+ 			 */
+ 			if (!is_huge_zero_page(page) &&
+ 			    !pmd_numa(*pmd)) {
+-				entry = pmdp_get_and_clear(mm, addr, pmd);
++				entry = *pmd;
+ 				entry = pmd_mknuma(entry);
+ 				ret = HPAGE_PMD_NR;
+ 			}
