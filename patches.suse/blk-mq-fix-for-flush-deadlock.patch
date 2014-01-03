@@ -1,0 +1,108 @@
+From 3228f48be2d19b2dd90db96ec16a40187a2946f3 Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@lst.de>
+Date: Mon, 28 Oct 2013 13:33:58 -0600
+Subject: [PATCH] blk-mq: fix for flush deadlock
+Git-commit: 3228f48be2d19b2dd90db96ec16a40187a2946f3
+Patch-mainline: v3.13-rc1
+References: fate#315209
+
+The flush state machine takes in a struct request, which then is
+submitted multiple times to the underling driver.  The old block code
+requeses the same request for each of those, so it does not have an
+issue with tapping into the request pool.  The new one on the other hand
+allocates a new request for each of the actualy steps of the flush
+sequence. If have already allocated all of the tags for IO, we will
+fail allocating the flush request.
+
+Set aside a reserved request just for flushes.
+
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ block/blk-core.c       |    2 +-
+ block/blk-flush.c      |    2 +-
+ block/blk-mq.c         |   14 ++++++++++++--
+ include/linux/blk-mq.h |    2 +-
+ 4 files changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/block/blk-core.c b/block/blk-core.c
+index 579f1ff..ffcebdc 100644
+--- a/block/blk-core.c
++++ b/block/blk-core.c
+@@ -1112,7 +1112,7 @@ static struct request *blk_old_get_request(struct request_queue *q, int rw,
+ struct request *blk_get_request(struct request_queue *q, int rw, gfp_t gfp_mask)
+ {
+ 	if (q->mq_ops)
+-		return blk_mq_alloc_request(q, rw, gfp_mask);
++		return blk_mq_alloc_request(q, rw, gfp_mask, false);
+ 	else
+ 		return blk_old_get_request(q, rw, gfp_mask);
+ }
+diff --git a/block/blk-flush.c b/block/blk-flush.c
+index 3e4cc9c..331e627 100644
+--- a/block/blk-flush.c
++++ b/block/blk-flush.c
+@@ -286,7 +286,7 @@ static void mq_flush_work(struct work_struct *work)
+ 
+ 	/* We don't need set REQ_FLUSH_SEQ, it's for consistency */
+ 	rq = blk_mq_alloc_request(q, WRITE_FLUSH|REQ_FLUSH_SEQ,
+-		__GFP_WAIT|GFP_ATOMIC);
++		__GFP_WAIT|GFP_ATOMIC, true);
+ 	rq->cmd_type = REQ_TYPE_FS;
+ 	rq->end_io = flush_end_io;
+ 
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index ac804c6..2dc8de8 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -210,14 +210,15 @@ static struct request *blk_mq_alloc_request_pinned(struct request_queue *q,
+ 	return rq;
+ }
+ 
+-struct request *blk_mq_alloc_request(struct request_queue *q, int rw, gfp_t gfp)
++struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
++		gfp_t gfp, bool reserved)
+ {
+ 	struct request *rq;
+ 
+ 	if (blk_mq_queue_enter(q))
+ 		return NULL;
+ 
+-	rq = blk_mq_alloc_request_pinned(q, rw, gfp, false);
++	rq = blk_mq_alloc_request_pinned(q, rw, gfp, reserved);
+ 	blk_mq_put_ctx(rq->mq_ctx);
+ 	return rq;
+ }
+@@ -1327,6 +1328,15 @@ struct request_queue *blk_mq_init_queue(struct blk_mq_reg *reg,
+ 		reg->queue_depth = BLK_MQ_MAX_DEPTH;
+ 	}
+ 
++	/*
++	 * Set aside a tag for flush requests.  It will only be used while
++	 * another flush request is in progress but outside the driver.
++	 *
++	 * TODO: only allocate if flushes are supported
++	 */
++	reg->queue_depth++;
++	reg->reserved_tags++;
++
+ 	if (reg->queue_depth < (reg->reserved_tags + BLK_MQ_TAG_MIN))
+ 		return ERR_PTR(-EINVAL);
+ 
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index 3368b97..ab0e9b2 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -124,7 +124,7 @@ void blk_mq_insert_request(struct request_queue *, struct request *, bool);
+ void blk_mq_run_queues(struct request_queue *q, bool async);
+ void blk_mq_free_request(struct request *rq);
+ bool blk_mq_can_queue(struct blk_mq_hw_ctx *);
+-struct request *blk_mq_alloc_request(struct request_queue *q, int rw, gfp_t gfp);
++struct request *blk_mq_alloc_request(struct request_queue *q, int rw, gfp_t gfp, bool reserved);
+ struct request *blk_mq_alloc_reserved_request(struct request_queue *q, int rw, gfp_t gfp);
+ struct request *blk_mq_rq_from_tag(struct request_queue *q, unsigned int tag);
+ 
+-- 
+1.6.0.2
+
