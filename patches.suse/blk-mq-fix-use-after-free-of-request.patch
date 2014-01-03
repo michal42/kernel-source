@@ -1,0 +1,40 @@
+From 0d11e6aca396e679c07b2dd6af5dc8b7f041fbbd Mon Sep 17 00:00:00 2001
+From: Ming Lei <tom.leiming@gmail.com>
+Date: Thu, 5 Dec 2013 10:50:39 -0700
+Subject: [PATCH] blk-mq: fix use-after-free of request
+Git-commit: 0d11e6aca396e679c07b2dd6af5dc8b7f041fbbd
+Patch-mainline: v3.13-rc3
+References: fate#315209
+
+If accounting is on, we will do the IO completion accounting after
+we have freed the request. Fix that by moving it sooner instead.
+
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ block/blk-mq.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index a93826f..7d8d727 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -312,12 +312,12 @@ void blk_mq_complete_request(struct request *rq, int error)
+ 
+ 	blk_account_io_completion(rq, bytes);
+ 
++	blk_account_io_done(rq);
++
+ 	if (rq->end_io)
+ 		rq->end_io(rq, error);
+ 	else
+ 		blk_mq_free_request(rq);
+-
+-	blk_account_io_done(rq);
+ }
+ 
+ void __blk_mq_end_io(struct request *rq, int error)
+-- 
+1.6.0.2
+
