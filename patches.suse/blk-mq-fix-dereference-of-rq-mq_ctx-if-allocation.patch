@@ -1,0 +1,62 @@
+From 959a35f13eb785f982d79b1aaa75872d05c821da Mon Sep 17 00:00:00 2001
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Dec 2013 14:23:00 -0700
+Subject: [PATCH] blk-mq: fix dereference of rq->mq_ctx if allocation fails
+Git-commit: 959a35f13eb785f982d79b1aaa75872d05c821da
+Patch-mainline: v3.13-rc3
+References: fate#315209
+
+If __GFP_WAIT isn't set and we fail allocating, when we go
+to drop the reference on the ctx, we will attempt to dereference
+the NULL rq. Fix that.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ block/blk-mq.c |   12 ++++++++----
+ 1 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 008f2fb..a93826f 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -202,10 +202,12 @@ static struct request *blk_mq_alloc_request_pinned(struct request_queue *q,
+ 		if (rq) {
+ 			blk_mq_rq_ctx_init(q, ctx, rq, rw);
+ 			break;
+-		} else if (!(gfp & __GFP_WAIT))
+-			break;
++		}
+ 
+ 		blk_mq_put_ctx(ctx);
++		if (!(gfp & __GFP_WAIT))
++			break;
++
+ 		__blk_mq_run_hw_queue(hctx);
+ 		blk_mq_wait_for_tags(hctx->tags);
+ 	} while (1);
+@@ -222,7 +224,8 @@ struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
+ 		return NULL;
+ 
+ 	rq = blk_mq_alloc_request_pinned(q, rw, gfp, reserved);
+-	blk_mq_put_ctx(rq->mq_ctx);
++	if (rq)
++		blk_mq_put_ctx(rq->mq_ctx);
+ 	return rq;
+ }
+ 
+@@ -235,7 +238,8 @@ struct request *blk_mq_alloc_reserved_request(struct request_queue *q, int rw,
+ 		return NULL;
+ 
+ 	rq = blk_mq_alloc_request_pinned(q, rw, gfp, true);
+-	blk_mq_put_ctx(rq->mq_ctx);
++	if (rq)
++		blk_mq_put_ctx(rq->mq_ctx);
+ 	return rq;
+ }
+ EXPORT_SYMBOL(blk_mq_alloc_reserved_request);
+-- 
+1.6.0.2
+
