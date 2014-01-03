@@ -1,0 +1,63 @@
+From 1dddc01af0d42b21058e0cb9c1ca9e8d5204d9b0 Mon Sep 17 00:00:00 2001
+From: Shaohua Li <shli@kernel.org>
+Date: Tue, 15 Oct 2013 09:05:03 +0800
+Subject: [PATCH] percpu_ida: add an API to return free tags
+Git-commit: 1dddc01af0d42b21058e0cb9c1ca9e8d5204d9b0
+Patch-mainline: v3.13-rc1
+References: fate#315209
+
+Add an API to return free tags, blk-mq-tag will use it.
+
+Note, this just returns a snapshot of free tags number. blk-mq-tag has
+two usages of it. One is for info output for diagnosis. The other is to
+quickly check if there are free tags for request dispatch checking.
+Neither requires very precise.
+
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Shaohua Li <shli@fusionio.com>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ include/linux/percpu_ida.h |    1 +
+ lib/percpu_ida.c           |   17 +++++++++++++++++
+ 2 files changed, 18 insertions(+), 0 deletions(-)
+
+diff --git a/include/linux/percpu_ida.h b/include/linux/percpu_ida.h
+index 63510ae..1900bd0 100644
+--- a/include/linux/percpu_ida.h
++++ b/include/linux/percpu_ida.h
+@@ -77,4 +77,5 @@ typedef int (*percpu_ida_cb)(unsigned, void *);
+ int percpu_ida_for_each_free(struct percpu_ida *pool, percpu_ida_cb fn,
+ 	void *data);
+ 
++unsigned percpu_ida_free_tags(struct percpu_ida *pool, int cpu);
+ #endif /* __PERCPU_IDA_H__ */
+diff --git a/lib/percpu_ida.c b/lib/percpu_ida.c
+index 0f51c1b..b0698ea 100644
+--- a/lib/percpu_ida.c
++++ b/lib/percpu_ida.c
+@@ -371,3 +371,20 @@ out:
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(percpu_ida_for_each_free);
++
++/**
++ * percpu_ida_free_tags - return free tags number of a specific cpu or global pool
++ * @pool: pool related
++ * @cpu: specific cpu or global pool if @cpu == nr_cpu_ids
++ *
++ * Note: this just returns a snapshot of free tags number.
++ */
++unsigned percpu_ida_free_tags(struct percpu_ida *pool, int cpu)
++{
++	struct percpu_ida_cpu *remote;
++	if (cpu == nr_cpu_ids)
++		return pool->nr_free;
++	remote = per_cpu_ptr(pool->tag_cpu, cpu);
++	return remote->nr_free;
++}
++EXPORT_SYMBOL_GPL(percpu_ida_free_tags);
+-- 
+1.6.0.2
+
