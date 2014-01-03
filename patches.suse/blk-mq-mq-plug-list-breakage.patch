@@ -1,0 +1,60 @@
+From 92f399c72af2d8cbb9d4f60e11d0d67ca738147f Mon Sep 17 00:00:00 2001
+From: Shaohua Li <shli@fusionio.com>
+Date: Tue, 29 Oct 2013 12:01:03 -0600
+Subject: [PATCH] blk-mq: mq plug list breakage
+Git-commit: 92f399c72af2d8cbb9d4f60e11d0d67ca738147f
+Patch-mainline: v3.13-rc1
+References: fate#315209
+
+We switched to plug mq_list for mq, but some code are still using old list.
+
+Signed-off-by: Shaohua Li <shli@fusionio.com>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ block/blk-core.c |    8 +++++++-
+ block/blk-mq.c   |    2 +-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/block/blk-core.c b/block/blk-core.c
+index ffcebdc..8fff29c 100644
+--- a/block/blk-core.c
++++ b/block/blk-core.c
+@@ -1411,13 +1411,19 @@ bool blk_attempt_plug_merge(struct request_queue *q, struct bio *bio,
+ 	struct blk_plug *plug;
+ 	struct request *rq;
+ 	bool ret = false;
++	struct list_head *plug_list;
+ 
+ 	plug = current->plug;
+ 	if (!plug)
+ 		goto out;
+ 	*request_count = 0;
+ 
+-	list_for_each_entry_reverse(rq, &plug->list, queuelist) {
++	if (q->mq_ops)
++		plug_list = &plug->mq_list;
++	else
++		plug_list = &plug->list;
++
++	list_for_each_entry_reverse(rq, plug_list, queuelist) {
+ 		int el_ret;
+ 
+ 		if (rq->q == q)
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 2dc8de8..88d4e86 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -950,7 +950,7 @@ static void blk_mq_make_request(struct request_queue *q, struct bio *bio)
+ 
+ 		if (plug) {
+ 			blk_mq_bio_to_request(rq, bio);
+-			if (list_empty(&plug->list))
++			if (list_empty(&plug->mq_list))
+ 				trace_block_plug(q);
+ 			else if (request_count >= BLK_MAX_REQUEST_COUNT) {
+ 				blk_flush_plug_list(plug, false);
+-- 
+1.6.0.2
+
