@@ -1,0 +1,124 @@
+From: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Subject: s390: allow to set gcc -mtune flag
+Patch-mainline: v3.13-rc1
+Git-commit: 1db9e0513d7478f6c80ca0bc4f58f53fe49e27f8
+References: fate#315297, LTC#100558
+
+Summary:     build: Introduce kernel config to set -mtune gcc flag
+Description: Backport the "s390: allow to set gcc -mtune flag" upstream
+             commit to introduce kernel config options to tune the kernel
+             for a particular hardware model.
+
+             This function is required to provide an architecture level set
+             (ALS) for the IBM zEnterprise 196/114 and tune for the current
+             IBM zEnterprise EC12/BC12 models.
+
+Upstream-Description:
+
+             s390: allow to set gcc -mtune flag
+
+             Add a new Kconfig choice group which allows to configure how gcc should
+             tune the generated code (via -mtune option).
+             By default the -mtune parameter will match the -march parameter.
+
+             This is a rather large patch, but I wouldn't know how to make this shorter
+             unfortunately.
+
+             Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/Kconfig  |   61 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ arch/s390/Makefile |    8 ++++++
+ 2 files changed, 69 insertions(+)
+
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -237,6 +237,67 @@ config MARCH_ZEC12
+ 
+ endchoice
+ 
++config MARCH_G5_TUNE
++	def_bool TUNE_G5 || MARCH_G5 && TUNE_DEFAULT
++
++config MARCH_Z900_TUNE
++	def_bool TUNE_Z900 || MARCH_Z900 && TUNE_DEFAULT
++
++config MARCH_Z990_TUNE
++	def_bool TUNE_Z990 || MARCH_Z990 && TUNE_DEFAULT
++
++config MARCH_Z9_109_TUNE
++	def_bool TUNE_Z9_109 || MARCH_Z9_109 && TUNE_DEFAULT
++
++config MARCH_Z10_TUNE
++	def_bool TUNE_Z10 || MARCH_Z10 && TUNE_DEFAULT
++
++config MARCH_Z196_TUNE
++	def_bool TUNE_Z196 || MARCH_Z196 && TUNE_DEFAULT
++
++config MARCH_ZEC12_TUNE
++	def_bool TUNE_ZEC12 || MARCH_ZEC12 && TUNE_DEFAULT
++
++choice
++	prompt "Tune code generation"
++	default TUNE_DEFAULT
++	help
++	  Cause the compiler to tune (-mtune) the generated code for a machine.
++	  This will make the code run faster on the selected machine but
++	  somewhat slower on other machines.
++	  This option only changes how the compiler emits instructions, not the
++	  selection of instructions itself, so the resulting kernel will run on
++	  all other machines.
++
++config TUNE_DEFAULT
++	bool "Default"
++	help
++	  Tune the generated code for the target processor for which the kernel
++	  will be compiled.
++
++config TUNE_G5
++	bool "System/390 model G5 and G6"
++
++config TUNE_Z900
++	bool "IBM zSeries model z800 and z900"
++
++config TUNE_Z990
++	bool "IBM zSeries model z890 and z990"
++
++config TUNE_Z9_109
++	bool "IBM System z9"
++
++config TUNE_Z10
++	bool "IBM System z10"
++
++config TUNE_Z196
++	bool "IBM zEnterprise 114 and 196"
++
++config TUNE_ZEC12
++	bool "IBM zBC12 and zEC12"
++
++endchoice
++
+ config 64BIT
+ 	def_bool y
+ 	prompt "64 bit kernel"
+--- a/arch/s390/Makefile
++++ b/arch/s390/Makefile
+@@ -43,6 +43,14 @@ cflags-$(CONFIG_MARCH_Z10) += $(call cc-
+ cflags-$(CONFIG_MARCH_Z196) += $(call cc-option,-march=z196)
+ cflags-$(CONFIG_MARCH_ZEC12) += $(call cc-option,-march=zEC12)
+ 
++cflags-$(CONFIG_MARCH_G5_TUNE)		+= -mtune=g5
++cflags-$(CONFIG_MARCH_Z900_TUNE)	+= -mtune=z900
++cflags-$(CONFIG_MARCH_Z990_TUNE)	+= -mtune=z990
++cflags-$(CONFIG_MARCH_Z9_109_TUNE)	+= -mtune=z9-109
++cflags-$(CONFIG_MARCH_Z10_TUNE)		+= -mtune=z10
++cflags-$(CONFIG_MARCH_Z196_TUNE)	+= -mtune=z196
++cflags-$(CONFIG_MARCH_ZEC12_TUNE)	+= -mtune=zEC12
++
+ #KBUILD_IMAGE is necessary for make rpm
+ KBUILD_IMAGE	:=arch/s390/boot/image
+ 
