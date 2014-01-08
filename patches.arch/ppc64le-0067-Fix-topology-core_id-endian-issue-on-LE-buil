@@ -1,0 +1,52 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc: Fix topology core_id endian issue on LE builds
+Git-commit: f8a1883a833bbad8e6b5ec4f0918b7797e652d65
+Patch-mainline: v3.13-rc4
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc: Fix topology core_id endian issue on LE builds
+
+    cpu_to_core_id() is missing a byteswap:
+
+    cat /sys/devices/system/cpu/cpu63/topology/core_id
+    201326592
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/smp.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/powerpc/kernel/smp.c b/arch/powerpc/kernel/smp.c
+index 8e59abc..5202f4b 100644
+--- a/arch/powerpc/kernel/smp.c
++++ b/arch/powerpc/kernel/smp.c
+@@ -580,7 +580,7 @@ int __cpu_up(unsigned int cpu, struct task_struct *tidle)
+ int cpu_to_core_id(int cpu)
+ {
+ 	struct device_node *np;
+-	const int *reg;
++	const __be32 *reg;
+ 	int id = -1;
+ 
+ 	np = of_get_cpu_node(cpu, NULL);
+@@ -591,7 +591,7 @@ int cpu_to_core_id(int cpu)
+ 	if (!reg)
+ 		goto out;
+ 
+-	id = *reg;
++	id = be32_to_cpup(reg);
+ out:
+ 	of_node_put(np);
+ 	return id;
+-- 
+1.8.3.1
+
