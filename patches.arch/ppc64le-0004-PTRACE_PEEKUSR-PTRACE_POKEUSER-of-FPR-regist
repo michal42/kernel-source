@@ -1,0 +1,58 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc: PTRACE_PEEKUSR/PTRACE_POKEUSER of FPR registers in little endian builds
+Git-commit: 87fec0514f613f8ac43c01b0bc0bc7072c5d10ae
+Patch-mainline: v3.13-rc1
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc: PTRACE_PEEKUSR/PTRACE_POKEUSER of FPR
+     registers in little endian builds
+
+    FPRs overlap the high 64bits of the first 32 VSX registers. The
+    ptrace FP read/write code assumes big endian ordering and grabs
+    the lowest 64 bits.
+
+    Fix this by using the TS_FPR macro which does the right thing.
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/ptrace.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/powerpc/kernel/ptrace.c b/arch/powerpc/kernel/ptrace.c
+index 9a0d24c..8d5d4e9 100644
+--- a/arch/powerpc/kernel/ptrace.c
++++ b/arch/powerpc/kernel/ptrace.c
+@@ -1554,8 +1554,8 @@ long arch_ptrace(struct task_struct *child, long request,
+ 
+ 			flush_fp_to_thread(child);
+ 			if (fpidx < (PT_FPSCR - PT_FPR0))
+-				tmp = ((unsigned long *)child->thread.fpr)
+-					[fpidx * TS_FPRWIDTH];
++				memcpy(&tmp, &child->thread.TS_FPR(fpidx),
++				       sizeof(long));
+ 			else
+ 				tmp = child->thread.fpscr.val;
+ 		}
+@@ -1587,8 +1587,8 @@ long arch_ptrace(struct task_struct *child, long request,
+ 
+ 			flush_fp_to_thread(child);
+ 			if (fpidx < (PT_FPSCR - PT_FPR0))
+-				((unsigned long *)child->thread.fpr)
+-					[fpidx * TS_FPRWIDTH] = data;
++				memcpy(&child->thread.TS_FPR(fpidx), &data,
++				       sizeof(long));
+ 			else
+ 				child->thread.fpscr.val = data;
+ 			ret = 0;
+-- 
+1.8.3.1
+
