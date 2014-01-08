@@ -1,0 +1,83 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc: ELF2 binaries signal handling
+Git-commit: d606b92aedb0542e60965e9058ab37efcebfaec6
+Patch-mainline: v3.13-rc1
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc: ELF2 binaries signal handling
+
+    For the ELFv2 ABI, the hander is the entry point, not a function descriptor.
+    We also need to set up r12, and fortunately the fast_exception_return
+    exit path restores r12 for us so nothing else is required.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/signal_64.c | 25 ++++++++++++++++---------
+ 1 file changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/arch/powerpc/kernel/signal_64.c b/arch/powerpc/kernel/signal_64.c
+index 8b51b02..09198d6 100644
+--- a/arch/powerpc/kernel/signal_64.c
++++ b/arch/powerpc/kernel/signal_64.c
+@@ -700,12 +700,6 @@ badframe:
+ int handle_rt_signal64(int signr, struct k_sigaction *ka, siginfo_t *info,
+ 		sigset_t *set, struct pt_regs *regs)
+ {
+-	/* Handler is *really* a pointer to the function descriptor for
+-	 * the signal routine.  The first entry in the function
+-	 * descriptor is the entry address of signal and the second
+-	 * entry is the TOC value we need to use.
+-	 */
+-	func_descr_t __user *funct_desc_ptr;
+ 	struct rt_sigframe __user *frame;
+ 	unsigned long newsp = 0;
+ 	long err = 0;
+@@ -765,19 +759,32 @@ int handle_rt_signal64(int signr, struct k_sigaction *ka, siginfo_t *info,
+ 			goto badframe;
+ 		regs->link = (unsigned long) &frame->tramp[0];
+ 	}
+-	funct_desc_ptr = (func_descr_t __user *) ka->sa.sa_handler;
+ 
+ 	/* Allocate a dummy caller frame for the signal handler. */
+ 	newsp = ((unsigned long)frame) - __SIGNAL_FRAMESIZE;
+ 	err |= put_user(regs->gpr[1], (unsigned long __user *)newsp);
+ 
+ 	/* Set up "regs" so we "return" to the signal handler. */
+-	err |= get_user(regs->nip, &funct_desc_ptr->entry);
++	if (is_elf2_task()) {
++		regs->nip = (unsigned long) ka->sa.sa_handler;
++		regs->gpr[12] = regs->nip;
++	} else {
++		/* Handler is *really* a pointer to the function descriptor for
++		 * the signal routine.  The first entry in the function
++		 * descriptor is the entry address of signal and the second
++		 * entry is the TOC value we need to use.
++		 */
++		func_descr_t __user *funct_desc_ptr =
++			(func_descr_t __user *) ka->sa.sa_handler;
++
++		err |= get_user(regs->nip, &funct_desc_ptr->entry);
++		err |= get_user(regs->gpr[2], &funct_desc_ptr->toc);
++	}
++
+ 	/* enter the signal handler in native-endian mode */
+ 	regs->msr &= ~MSR_LE;
+ 	regs->msr |= (MSR_KERNEL & MSR_LE);
+ 	regs->gpr[1] = newsp;
+-	err |= get_user(regs->gpr[2], &funct_desc_ptr->toc);
+ 	regs->gpr[3] = signr;
+ 	regs->result = 0;
+ 	if (ka->sa.sa_flags & SA_SIGINFO) {
+-- 
+1.8.3.1
+
