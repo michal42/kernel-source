@@ -1,0 +1,64 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc/nvram: Fix endian issue when using the partition length
+Git-commit: c81095a465b2c1cd819fb14ee3cd07bc1b377af1
+Patch-mainline: v3.13-rc1
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc/nvram: Fix endian issue when using the
+     partition length
+
+    When reading partitions, the length has to be translated from
+    big endian to the endian order of the host. Similarly, when writing
+    partitions, the length needs to be in big endian order.
+
+    The userspace tool 'nvram' needs a similar fix as it is reading
+    and writing partitions through /dev/nram :
+
+        http://sourceforge.net/p/powerpc-utils/mailman/message/31571277/
+
+Signed-off-by: Cedric Le Goater <clg@fr.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/nvram_64.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/arch/powerpc/kernel/nvram_64.c b/arch/powerpc/kernel/nvram_64.c
+index 8213ee1..fd82c28 100644
+--- a/arch/powerpc/kernel/nvram_64.c
++++ b/arch/powerpc/kernel/nvram_64.c
+@@ -223,9 +223,13 @@ static int __init nvram_write_header(struct nvram_partition * part)
+ {
+ 	loff_t tmp_index;
+ 	int rc;
+-	
++	struct nvram_header phead;
++
++	memcpy(&phead, &part->header, NVRAM_HEADER_LEN);
++	phead.length = cpu_to_be16(phead.length);
++
+ 	tmp_index = part->index;
+-	rc = ppc_md.nvram_write((char *)&part->header, NVRAM_HEADER_LEN, &tmp_index); 
++	rc = ppc_md.nvram_write((char *)&phead, NVRAM_HEADER_LEN, &tmp_index);
+ 
+ 	return rc;
+ }
+@@ -505,6 +509,8 @@ int __init nvram_scan_partitions(void)
+ 
+ 		memcpy(&phead, header, NVRAM_HEADER_LEN);
+ 
++		phead.length = be16_to_cpu(phead.length);
++
+ 		err = 0;
+ 		c_sum = nvram_checksum(&phead);
+ 		if (c_sum != phead.checksum) {
+-- 
+1.8.3.1
+
