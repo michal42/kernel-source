@@ -1,0 +1,94 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc: ELF2 binaries launched directly.
+Git-commit: 94af3abf995b17f6a008b00152c94841242ec6c7
+Patch-mainline: v3.13-rc1
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc: ELF2 binaries launched directly.
+
+    No function descriptor, but we set r12 up and set TIF_RESTOREALL as it
+    normally isn't restored on return from syscall.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/process.c | 50 ++++++++++++++++++++++++++++++-------------
+ 1 file changed, 35 insertions(+), 15 deletions(-)
+
+diff --git a/arch/powerpc/kernel/process.c b/arch/powerpc/kernel/process.c
+index 96d2fdf..b17d3c0 100644
+--- a/arch/powerpc/kernel/process.c
++++ b/arch/powerpc/kernel/process.c
+@@ -1083,25 +1083,45 @@ void start_thread(struct pt_regs *regs, unsigned long start, unsigned long sp)
+ 	regs->msr = MSR_USER;
+ #else
+ 	if (!is_32bit_task()) {
+-		unsigned long entry, toc;
++		unsigned long entry;
+ 
+-		/* start is a relocated pointer to the function descriptor for
+-		 * the elf _start routine.  The first entry in the function
+-		 * descriptor is the entry address of _start and the second
+-		 * entry is the TOC value we need to use.
+-		 */
+-		__get_user(entry, (unsigned long __user *)start);
+-		__get_user(toc, (unsigned long __user *)start+1);
++		if (is_elf2_task()) {
++			/* Look ma, no function descriptors! */
++			entry = start;
+ 
+-		/* Check whether the e_entry function descriptor entries
+-		 * need to be relocated before we can use them.
+-		 */
+-		if (load_addr != 0) {
+-			entry += load_addr;
+-			toc   += load_addr;
++			/*
++			 * Ulrich says:
++			 *   The latest iteration of the ABI requires that when
++			 *   calling a function (at its global entry point),
++			 *   the caller must ensure r12 holds the entry point
++			 *   address (so that the function can quickly
++			 *   establish addressability).
++			 */
++			regs->gpr[12] = start;
++			/* Make sure that's restored on entry to userspace. */
++			set_thread_flag(TIF_RESTOREALL);
++		} else {
++			unsigned long toc;
++
++			/* start is a relocated pointer to the function
++			 * descriptor for the elf _start routine.  The first
++			 * entry in the function descriptor is the entry
++			 * address of _start and the second entry is the TOC
++			 * value we need to use.
++			 */
++			__get_user(entry, (unsigned long __user *)start);
++			__get_user(toc, (unsigned long __user *)start+1);
++
++			/* Check whether the e_entry function descriptor entries
++			 * need to be relocated before we can use them.
++			 */
++			if (load_addr != 0) {
++				entry += load_addr;
++				toc   += load_addr;
++			}
++			regs->gpr[2] = toc;
+ 		}
+ 		regs->nip = entry;
+-		regs->gpr[2] = toc;
+ 		regs->msr = MSR_USER64;
+ 	} else {
+ 		regs->nip = start;
+-- 
+1.8.3.1
+
