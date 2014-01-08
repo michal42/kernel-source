@@ -1,0 +1,79 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc: prom_init exception when updating core value
+Git-commit: dbd0c5d5296f291a5c3affee4fbdde254632ffca
+Patch-mainline: v3.13-rc1
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc: prom_init exception when updating core value
+
+    Since the CPU is generating an exception when accessing unaligned word, and
+    as this exception is not yet handled when running prom_init, data should be
+    copied from the architecture vector byte per byte.
+
+Signed-off-by: Laurent Dufour <ldufour@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/prom_init.c | 28 ++++++++++++++++++++++------
+ 1 file changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/arch/powerpc/kernel/prom_init.c b/arch/powerpc/kernel/prom_init.c
+index 5fe2842..cb64a6e 100644
+--- a/arch/powerpc/kernel/prom_init.c
++++ b/arch/powerpc/kernel/prom_init.c
+@@ -858,7 +858,8 @@ static void __init prom_send_capabilities(void)
+ {
+ 	ihandle root;
+ 	prom_arg_t ret;
+-	__be32 *cores;
++	u32 cores;
++	unsigned char *ptcores;
+ 
+ 	root = call_prom("open", 1, 1, ADDR("/"));
+ 	if (root != 0) {
+@@ -868,15 +869,30 @@ static void __init prom_send_capabilities(void)
+ 		 * (we assume this is the same for all cores) and use it to
+ 		 * divide NR_CPUS.
+ 		 */
+-		cores = (__be32 *)&ibm_architecture_vec[IBM_ARCH_VEC_NRCORES_OFFSET];
+-		if (be32_to_cpup(cores) != NR_CPUS) {
++
++		/* The core value may start at an odd address. If such a word
++		 * access is made at a cache line boundary, this leads to an
++		 * exception which may not be handled at this time.
++		 * Forcing a per byte access to avoid exception.
++		 */
++		ptcores = &ibm_architecture_vec[IBM_ARCH_VEC_NRCORES_OFFSET];
++		cores = 0;
++		cores |= ptcores[0] << 24;
++		cores |= ptcores[1] << 16;
++		cores |= ptcores[2] << 8;
++		cores |= ptcores[3];
++		if (cores != NR_CPUS) {
+ 			prom_printf("WARNING ! "
+ 				    "ibm_architecture_vec structure inconsistent: %lu!\n",
+-				    be32_to_cpup(cores));
++				    cores);
+ 		} else {
+-			*cores = cpu_to_be32(DIV_ROUND_UP(NR_CPUS, prom_count_smt_threads()));
++			cores = DIV_ROUND_UP(NR_CPUS, prom_count_smt_threads());
+ 			prom_printf("Max number of cores passed to firmware: %lu (NR_CPUS = %lu)\n",
+-				    be32_to_cpup(cores), NR_CPUS);
++				    cores, NR_CPUS);
++			ptcores[0] = (cores >> 24) & 0xff;
++			ptcores[1] = (cores >> 16) & 0xff;
++			ptcores[2] = (cores >> 8) & 0xff;
++			ptcores[3] = cores & 0xff;
+ 		}
+ 
+ 		/* try calling the ibm,client-architecture-support method */
+-- 
+1.8.3.1
+
