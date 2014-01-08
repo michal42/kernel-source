@@ -1,0 +1,62 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: powerpc: Fix error when cross building TAGS & cscope
+Git-commit: 924dd50bc4ad26612efbc75f7e60492c5faaa868
+Patch-mainline: v3.13-rc2
+References: bnc#856774 fate#315275, LTC#92305
+
+Summary:     powerpc: add little-endian support
+Description: Add little-endian support for POWER8.
+
+Upstream-Description:
+
+    powerpc: Fix error when cross building TAGS & cscope
+
+    Currently if I cross build TAGS or cscope from x86 I get this:
+      % make ARCH=powerpc TAGS
+      gcc-4.8.real: error: unrecognized command line option -mbig-endian
+      GEN     TAGS
+      %
+
+    I'm not setting CROSS_COMPILE= as logically I shouldn't need to and I
+    haven't needed to in the past when building TAGS or cscope.  Also, the
+    above completess correct as the error is not fatal to the build.
+
+    This was caused by:
+	commit d72b08017161ab385d4ae080ea415c9eb7ceef83
+        Author: Ian Munsie <imunsie@au1.ibm.com>
+        powerpc: Add ability to build little endian kernels
+
+    The below fixes this by testing for the -mbig-endian option before
+    adding it.
+
+    I've not done the same thing in the little endian case as if
+    -mlittle-endian doesn't exist, we probably want to fail quickly as you
+    probably have an old big endian compiler.
+
+Signed-off-by: Michael Neuling <mikey@neuling.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/Makefile | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/powerpc/Makefile b/arch/powerpc/Makefile
+index 8a24636..273ace7 100644
+--- a/arch/powerpc/Makefile
++++ b/arch/powerpc/Makefile
+@@ -75,8 +75,10 @@ LDEMULATION	:= lppc
+ GNUTARGET	:= powerpcle
+ MULTIPLEWORD	:= -mno-multiple
+ else
++ifeq ($(call cc-option-yn,-mbig-endian),y)
+ override CC	+= -mbig-endian
+ override AS	+= -mbig-endian
++endif
+ override LD	+= -EB
+ LDEMULATION	:= ppc
+ GNUTARGET	:= powerpc
+-- 
+1.8.3.1
+
