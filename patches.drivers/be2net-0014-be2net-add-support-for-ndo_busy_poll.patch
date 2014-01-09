@@ -1,0 +1,404 @@
+From: Sathya Perla <sathya.perla@emulex.com>
+Date: Fri, 25 Oct 2013 10:40:16 +0530
+Subject: be2net: add support for ndo_busy_poll
+Patch-mainline: v3.13-rc1
+Git-commit: 6384a4d0dcf9e28f5aa5e0c8a7e58e7b4df19e68
+References: bnc#855062 FATE#315961
+
+Includes:
+- ndo_busy_poll implementation
+- Locking between napi and busy_poll
+- Fix rx_post_starvation (replenish rx-queues in out-of-mememory scenario)
+  logic to accomodate busy_poll.
+
+v2 changes:
+[Eric D.'s comment] call alloc_pages() with GFP_ATOMIC even in ndo_busy_poll
+context as it is not allowed to sleep.
+
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/emulex/benet/be.h      |  130 +++++++++++++++++++++++++++-
+ drivers/net/ethernet/emulex/benet/be_main.c |   83 ++++++++++++++---
+ 2 files changed, 191 insertions(+), 22 deletions(-)
+--- a/drivers/net/ethernet/emulex/benet/be.h
++++ b/drivers/net/ethernet/emulex/benet/be.h
+@@ -199,6 +199,19 @@ struct be_eq_obj {
+ 	u16 spurious_intr;
+ 	struct napi_struct napi;
+ 	struct be_adapter *adapter;
++
++#ifdef CONFIG_NET_RX_BUSY_POLL
++#define BE_EQ_IDLE		0
++#define BE_EQ_NAPI		1	/* napi owns this EQ */
++#define BE_EQ_POLL		2	/* poll owns this EQ */
++#define BE_EQ_LOCKED		(BE_EQ_NAPI | BE_EQ_POLL)
++#define BE_EQ_NAPI_YIELD	4	/* napi yielded this EQ */
++#define BE_EQ_POLL_YIELD	8	/* poll yielded this EQ */
++#define BE_EQ_YIELD		(BE_EQ_NAPI_YIELD | BE_EQ_POLL_YIELD)
++#define BE_EQ_USER_PEND		(BE_EQ_POLL | BE_EQ_POLL_YIELD)
++	unsigned int state;
++	spinlock_t lock;	/* lock to serialize napi and busy-poll */
++#endif  /* CONFIG_NET_RX_BUSY_POLL */
+ } ____cacheline_aligned_in_smp;
+ 
+ struct be_aic_obj {		/* Adaptive interrupt coalescing (AIC) info */
+@@ -212,6 +225,11 @@ struct be_aic_obj {		/* Adaptive interru
+ 	u64 tx_reqs_prev;	/* Used to calculate TX pps */
+ };
+ 
++enum {
++	NAPI_POLLING,
++	BUSY_POLLING
++};
++
+ struct be_mcc_obj {
+ 	struct be_queue_info q;
+ 	struct be_queue_info cq;
+@@ -561,6 +579,10 @@ extern const struct ethtool_ops be_ethto
+ 	for (i = 0, eqo = &adapter->eq_obj[i]; i < adapter->num_evt_qs; \
+ 		i++, eqo++)
+ 
++#define for_all_rx_queues_on_eq(adapter, eqo, rxo, i)			\
++	for (i = eqo->idx, rxo = &adapter->rx_obj[i]; i < adapter->num_rx_qs;\
++		 i += adapter->num_evt_qs, rxo += adapter->num_evt_qs)
++
+ #define is_mcc_eqo(eqo)			(eqo->idx == 0)
+ #define mcc_eqo(adapter)		(&adapter->eq_obj[0])
+ 
+@@ -711,15 +733,106 @@ static inline int qnq_async_evt_rcvd(str
+ 	return adapter->flags & BE_FLAGS_QNQ_ASYNC_EVT_RCVD;
+ }
+ 
+-static inline int fw_major_num(const char *fw_ver)
++#ifdef CONFIG_NET_RX_BUSY_POLL
++static inline bool be_lock_napi(struct be_eq_obj *eqo)
+ {
+-	int fw_major = 0;
++	bool status = true;
+ 
+-	sscanf(fw_ver, "%d.", &fw_major);
++	spin_lock(&eqo->lock); /* BH is already disabled */
++	if (eqo->state & BE_EQ_LOCKED) {
++		WARN_ON(eqo->state & BE_EQ_NAPI);
++		eqo->state |= BE_EQ_NAPI_YIELD;
++		status = false;
++	} else {
++		eqo->state = BE_EQ_NAPI;
++	}
++	spin_unlock(&eqo->lock);
++	return status;
++}
+ 
+-	return fw_major;
++static inline void be_unlock_napi(struct be_eq_obj *eqo)
++{
++	spin_lock(&eqo->lock); /* BH is already disabled */
++
++	WARN_ON(eqo->state & (BE_EQ_POLL | BE_EQ_NAPI_YIELD));
++	eqo->state = BE_EQ_IDLE;
++
++	spin_unlock(&eqo->lock);
++}
++
++static inline bool be_lock_busy_poll(struct be_eq_obj *eqo)
++{
++	bool status = true;
++
++	spin_lock_bh(&eqo->lock);
++	if (eqo->state & BE_EQ_LOCKED) {
++		eqo->state |= BE_EQ_POLL_YIELD;
++		status = false;
++	} else {
++		eqo->state |= BE_EQ_POLL;
++	}
++	spin_unlock_bh(&eqo->lock);
++	return status;
++}
++
++static inline void be_unlock_busy_poll(struct be_eq_obj *eqo)
++{
++	spin_lock_bh(&eqo->lock);
++
++	WARN_ON(eqo->state & (BE_EQ_NAPI));
++	eqo->state = BE_EQ_IDLE;
++
++	spin_unlock_bh(&eqo->lock);
+ }
+ 
++static inline void be_enable_busy_poll(struct be_eq_obj *eqo)
++{
++	spin_lock_init(&eqo->lock);
++	eqo->state = BE_EQ_IDLE;
++}
++
++static inline void be_disable_busy_poll(struct be_eq_obj *eqo)
++{
++	local_bh_disable();
++
++	/* It's enough to just acquire napi lock on the eqo to stop
++	 * be_busy_poll() from processing any queueus.
++	 */
++	while (!be_lock_napi(eqo))
++		mdelay(1);
++
++	local_bh_enable();
++}
++
++#else /* CONFIG_NET_RX_BUSY_POLL */
++
++static inline bool be_lock_napi(struct be_eq_obj *eqo)
++{
++	return true;
++}
++
++static inline void be_unlock_napi(struct be_eq_obj *eqo)
++{
++}
++
++static inline bool be_lock_busy_poll(struct be_eq_obj *eqo)
++{
++	return false;
++}
++
++static inline void be_unlock_busy_poll(struct be_eq_obj *eqo)
++{
++}
++
++static inline void be_enable_busy_poll(struct be_eq_obj *eqo)
++{
++}
++
++static inline void be_disable_busy_poll(struct be_eq_obj *eqo)
++{
++}
++#endif /* CONFIG_NET_RX_BUSY_POLL */
++
+ void be_cq_notify(struct be_adapter *adapter, u16 qid, bool arm,
+ 		  u16 num_popped);
+ void be_link_status_update(struct be_adapter *adapter, u8 link_status);
+@@ -731,6 +844,15 @@ u32 be_get_fw_log_level(struct be_adapte
+ int be_update_queues(struct be_adapter *adapter);
+ int be_poll(struct napi_struct *napi, int budget);
+ 
++static inline int fw_major_num(const char *fw_ver)
++{
++	int fw_major = 0;
++
++	sscanf(fw_ver, "%d.", &fw_major);
++
++	return fw_major;
++}
++
+ /*
+  * internal function to initialize-cleanup roce device.
+  */
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -22,6 +22,7 @@
+ #include <asm/div64.h>
+ #include <linux/aer.h>
+ #include <linux/if_bridge.h>
++#include <net/busy_poll.h>
+ 
+ MODULE_VERSION(DRV_VER);
+ MODULE_DEVICE_TABLE(pci, be_dev_ids);
+@@ -1556,7 +1557,7 @@ static void skb_fill_rx_data(struct be_r
+ }
+ 
+ /* Process the RX completion indicated by rxcp when GRO is disabled */
+-static void be_rx_compl_process(struct be_rx_obj *rxo,
++static void be_rx_compl_process(struct be_rx_obj *rxo, struct napi_struct *napi,
+ 				struct be_rx_compl_info *rxcp)
+ {
+ 	struct be_adapter *adapter = rxo->adapter;
+@@ -1581,7 +1582,7 @@ static void be_rx_compl_process(struct b
+ 	skb_record_rx_queue(skb, rxo - &adapter->rx_obj[0]);
+ 	if (netdev->features & NETIF_F_RXHASH)
+ 		skb->rxhash = rxcp->rss_hash;
+-
++	skb_mark_napi_id(skb, napi);
+ 
+ 	if (rxcp->vlanf)
+ 		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), rxcp->vlan_tag);
+@@ -1639,6 +1640,7 @@ static void be_rx_compl_process_gro(stru
+ 	skb_record_rx_queue(skb, rxo - &adapter->rx_obj[0]);
+ 	if (adapter->netdev->features & NETIF_F_RXHASH)
+ 		skb->rxhash = rxcp->rss_hash;
++	skb_mark_napi_id(skb, napi);
+ 
+ 	if (rxcp->vlanf)
+ 		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), rxcp->vlan_tag);
+@@ -1819,6 +1821,8 @@ static void be_post_rx_frags(struct be_r
+ 
+ 	if (posted) {
+ 		atomic_add(posted, &rxq->used);
++		if (rxo->rx_post_starved)
++			rxo->rx_post_starved = false;
+ 		be_rxq_notify(adapter, rxq->id, posted);
+ 	} else if (atomic_read(&rxq->used) == 0) {
+ 		/* Let be_worker replenish when memory is available */
+@@ -2021,6 +2025,7 @@ static void be_evt_queues_destroy(struct
+ 		if (eqo->q.created) {
+ 			be_eq_clean(eqo);
+ 			be_cmd_q_destroy(adapter, &eqo->q, QTYPE_EQ);
++			napi_hash_del(&eqo->napi);
+ 			netif_napi_del(&eqo->napi);
+ 		}
+ 		be_queue_free(adapter, &eqo->q);
+@@ -2040,6 +2045,7 @@ static int be_evt_queues_create(struct b
+ 	for_all_evt_queues(adapter, eqo, i) {
+ 		netif_napi_add(adapter->netdev, &eqo->napi, be_poll,
+ 			       BE_NAPI_WEIGHT);
++		napi_hash_add(&eqo->napi);
+ 		aic = &adapter->aic_obj[i];
+ 		eqo->adapter = adapter;
+ 		eqo->tx_budget = BE_TX_BUDGET;
+@@ -2266,7 +2272,7 @@ static inline bool do_gro(struct be_rx_c
+ }
+ 
+ static int be_process_rx(struct be_rx_obj *rxo, struct napi_struct *napi,
+-			int budget)
++			int budget, int polling)
+ {
+ 	struct be_adapter *adapter = rxo->adapter;
+ 	struct be_queue_info *rx_cq = &rxo->cq;
+@@ -2297,10 +2303,12 @@ static int be_process_rx(struct be_rx_ob
+ 			goto loop_continue;
+ 		}
+ 
+-		if (do_gro(rxcp))
++		/* Don't do gro when we're busy_polling */
++		if (do_gro(rxcp) && polling != BUSY_POLLING)
+ 			be_rx_compl_process_gro(rxo, napi, rxcp);
+ 		else
+-			be_rx_compl_process(rxo, rxcp);
++			be_rx_compl_process(rxo, napi, rxcp);
++
+ loop_continue:
+ 		be_rx_stats_update(rxo, rxcp);
+ 	}
+@@ -2308,7 +2316,11 @@ loop_continue:
+ 	if (work_done) {
+ 		be_cq_notify(adapter, rx_cq->id, true, work_done);
+ 
+-		if (atomic_read(&rxo->q.used) < RX_FRAGS_REFILL_WM)
++		/* When an rx-obj gets into post_starved state, just
++		 * let be_worker do the posting.
++		 */
++		if (atomic_read(&rxo->q.used) < RX_FRAGS_REFILL_WM &&
++		    !rxo->rx_post_starved)
+ 			be_post_rx_frags(rxo, GFP_ATOMIC);
+ 	}
+ 
+@@ -2353,6 +2365,7 @@ int be_poll(struct napi_struct *napi, in
+ 	struct be_eq_obj *eqo = container_of(napi, struct be_eq_obj, napi);
+ 	struct be_adapter *adapter = eqo->adapter;
+ 	int max_work = 0, work, i, num_evts;
++	struct be_rx_obj *rxo;
+ 	bool tx_done;
+ 
+ 	num_evts = events_get(eqo);
+@@ -2365,13 +2378,18 @@ int be_poll(struct napi_struct *napi, in
+ 			max_work = budget;
+ 	}
+ 
+-	/* This loop will iterate twice for EQ0 in which
+-	 * completions of the last RXQ (default one) are also processed
+-	 * For other EQs the loop iterates only once
+-	 */
+-	for (i = eqo->idx; i < adapter->num_rx_qs; i += adapter->num_evt_qs) {
+-		work = be_process_rx(&adapter->rx_obj[i], napi, budget);
+-		max_work = max(work, max_work);
++	if (be_lock_napi(eqo)) {
++		/* This loop will iterate twice for EQ0 in which
++		 * completions of the last RXQ (default one) are also processed
++		 * For other EQs the loop iterates only once
++		 */
++		for_all_rx_queues_on_eq(adapter, eqo, rxo, i) {
++			work = be_process_rx(rxo, napi, budget, NAPI_POLLING);
++			max_work = max(work, max_work);
++		}
++		be_unlock_napi(eqo);
++	} else {
++		max_work = budget;
+ 	}
+ 
+ 	if (is_mcc_eqo(eqo))
+@@ -2387,6 +2405,28 @@ int be_poll(struct napi_struct *napi, in
+ 	return max_work;
+ }
+ 
++#ifdef CONFIG_NET_RX_BUSY_POLL
++static int be_busy_poll(struct napi_struct *napi)
++{
++	struct be_eq_obj *eqo = container_of(napi, struct be_eq_obj, napi);
++	struct be_adapter *adapter = eqo->adapter;
++	struct be_rx_obj *rxo;
++	int i, work = 0;
++
++	if (!be_lock_busy_poll(eqo))
++		return LL_FLUSH_BUSY;
++
++	for_all_rx_queues_on_eq(adapter, eqo, rxo, i) {
++		work = be_process_rx(rxo, napi, 4, BUSY_POLLING);
++		if (work)
++			break;
++	}
++
++	be_unlock_busy_poll(eqo);
++	return work;
++}
++#endif
++
+ void be_detect_error(struct be_adapter *adapter)
+ {
+ 	u32 ue_lo = 0, ue_hi = 0, ue_lo_mask = 0, ue_hi_mask = 0;
+@@ -2618,9 +2658,11 @@ static int be_close(struct net_device *n
+ 
+ 	be_roce_dev_close(adapter);
+ 
+-	if (adapter->flags & BE_FLAGS_NAPI_ENABLED) {
+-		for_all_evt_queues(adapter, eqo, i)
++	for_all_evt_queues(adapter, eqo, i) {
++		if (adapter->flags & BE_FLAGS_NAPI_ENABLED) {
+ 			napi_disable(&eqo->napi);
++			be_disable_busy_poll(eqo);
++		}
+ 		adapter->flags &= ~BE_FLAGS_NAPI_ENABLED;
+ 	}
+ 
+@@ -2731,6 +2773,7 @@ static int be_open(struct net_device *ne
+ 
+ 	for_all_evt_queues(adapter, eqo, i) {
+ 		napi_enable(&eqo->napi);
++		be_enable_busy_poll(eqo);
+ 		be_eq_notify(adapter, eqo->q.id, true, false, 0);
+ 	}
+ 	adapter->flags |= BE_FLAGS_NAPI_ENABLED;
+@@ -3999,6 +4042,9 @@ static const struct net_device_ops be_ne
+ #endif
+ 	.ndo_bridge_setlink	= be_ndo_bridge_setlink,
+ 	.ndo_bridge_getlink	= be_ndo_bridge_getlink,
++#ifdef CONFIG_NET_RX_BUSY_POLL
++	.ndo_busy_poll		= be_busy_poll
++#endif
+ };
+ 
+ static void be_netdev_init(struct net_device *netdev)
+@@ -4386,10 +4432,11 @@ static void be_worker(struct work_struct
+ 		be_cmd_get_die_temperature(adapter);
+ 
+ 	for_all_rx_queues(adapter, rxo, i) {
+-		if (rxo->rx_post_starved) {
+-			rxo->rx_post_starved = false;
++		/* Replenish RX-queues starved due to memory
++		 * allocation failures.
++		 */
++		if (rxo->rx_post_starved)
+ 			be_post_rx_frags(rxo, GFP_KERNEL);
+-		}
+ 	}
+ 
+ 	be_eqd_update(adapter);
