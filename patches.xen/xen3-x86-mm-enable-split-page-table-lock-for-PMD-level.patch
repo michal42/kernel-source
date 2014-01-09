@@ -1,0 +1,78 @@
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Thu, 14 Nov 2013 14:31:10 -0800
+Subject: [PATCH] x86, mm: enable split page table lock for PMD level
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: Yes (v3.13-rc1)
+
+Enable PMD split page table lock for X86_64 and PAE.
+
+[akpm@linux-foundation.org: coding-style fixes]
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Tested-by: Alex Thorlton <athorlton@sgi.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Cc: "Eric W . Biederman" <ebiederm@xmission.com>
+Cc: "Paul E . McKenney" <paulmck@linux.vnet.ibm.com>
+Cc: Al Viro <viro@zeniv.linux.org.uk>
+Cc: Andi Kleen <ak@linux.intel.com>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Cc: Dave Hansen <dave.hansen@intel.com>
+Cc: Dave Jones <davej@redhat.com>
+Cc: David Howells <dhowells@redhat.com>
+Cc: Frederic Weisbecker <fweisbec@gmail.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Kees Cook <keescook@chromium.org>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Michael Kerrisk <mtk.manpages@gmail.com>
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Robin Holt <robinmholt@gmail.com>
+Cc: Sedat Dilek <sedat.dilek@gmail.com>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: Hugh Dickins <hughd@google.com>
+Reviewed-by: Steven Rostedt <rostedt@goodmis.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Automatically created from "patches.suse/x86-mm-enable-split-page-table-lock-for-PMD-level.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/mm/pgtable-xen.c	2013-08-12 13:00:59.000000000 +0200
++++ sle12/arch/x86/mm/pgtable-xen.c	2014-01-09 11:58:50.000000000 +0100
+@@ -110,6 +110,10 @@ pmd_t *pmd_alloc_one(struct mm_struct *m
+ 	pmd = alloc_pages(PGALLOC_GFP, 0);
+ 	if (!pmd)
+ 		return NULL;
++	if (!pgtable_pmd_page_ctor(pmd)) {
++		__free_page(pmd);
++		return NULL;
++	}
+ 	SetPageForeign(pmd, _pmd_free);
+ 	init_page_count(pmd);
+ 	return page_address(pmd);
+@@ -128,11 +132,13 @@ void __pmd_free(pgtable_t pmd)
+ 
+ 	ClearPageForeign(pmd);
+ 	init_page_count(pmd);
++	pgtable_pmd_page_dtor(pmd);
+ 	__free_page(pmd);
+ }
+ 
+ void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd)
+ {
++	struct page *page = virt_to_page(pmd);
+ 	paravirt_release_pmd(__pa(pmd) >> PAGE_SHIFT);
+ 	/*
+ 	 * NOTE! For PAE, any changes to the top page-directory-pointer-table
+@@ -141,7 +147,8 @@ void ___pmd_free_tlb(struct mmu_gather *
+ #ifdef CONFIG_X86_PAE
+ 	tlb->need_flush_all = 1;
+ #endif
+-	tlb_remove_page(tlb, virt_to_page(pmd));
++	pgtable_pmd_page_dtor(page);
++	tlb_remove_page(tlb, page);
+ }
+ 
+ #if PAGETABLE_LEVELS > 3
