@@ -1,0 +1,87 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Thu, 25 Aug 2011 11:41:37 +0200
+Subject: cciss causes kernel WARNING with intel_iommu=on
+References: bnc#590856
+Patch-Mainline: Not yet
+
+When booting with 'intel_iommu=on', the cciss driver will hit
+a kernel WARNING during multipath startup:
+
+WARNING: at drivers/pci/intel-iommu.c:2746 intel_unmap_page+0x114/0x1e0()
+Hardware name: ProLiant DL360 G6
+Driver unmaps unmatched page at PFN 0
+
+This warning is from the CCISS_PASSTHRU ioctl; when sending a command
+with no data (like TEST_UNIT_READY) the driver tries to unmap a
+zero-sized page.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 8f4ef65..c67f13c 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -1444,6 +1444,7 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
+ 	CommandList_struct *c;
+ 	char *buff = NULL;
+ 	u64bit temp64;
++	int retval = -EFAULT;
+ 	DECLARE_COMPLETION_ONSTACK(wait);
+ 
+ 	if (!argp)
+@@ -1470,7 +1471,7 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
+ 			kfree(buff);
+ 			return -EFAULT;
+ 		}
+-	} else {
++	} else if (iocommand.buf_size > 0) {
+ 		memset(buff, 0, iocommand.buf_size);
+ 	}
+ 	c = cmd_special_alloc(h);
+@@ -1510,32 +1511,30 @@ static int cciss_passthru(ctlr_info_t *h, void __user *argp)
+ 	enqueue_cmd_and_start_io(h, c);
+ 	wait_for_completion(&wait);
+ 
+-	/* unlock the buffers from DMA */
+-	temp64.val32.lower = c->SG[0].Addr.lower;
+-	temp64.val32.upper = c->SG[0].Addr.upper;
+-	pci_unmap_single(h->pdev, (dma_addr_t) temp64.val, iocommand.buf_size,
+-			 PCI_DMA_BIDIRECTIONAL);
++	if (iocommand.buf_size > 0) {
++		/* unlock the buffers from DMA */
++		temp64.val32.lower = c->SG[0].Addr.lower;
++		temp64.val32.upper = c->SG[0].Addr.upper;
++		pci_unmap_single(h->pdev, (dma_addr_t) temp64.val,
++				 iocommand.buf_size, PCI_DMA_BIDIRECTIONAL);
++	}
+ 	check_ioctl_unit_attention(h, c);
+ 
+ 	/* Copy the error information out */
+ 	iocommand.error_info = *(c->err_info);
+-	if (copy_to_user(argp, &iocommand, sizeof(IOCTL_Command_struct))) {
+-		kfree(buff);
+-		cmd_special_free(h, c);
+-		return -EFAULT;
+-	}
++	if (copy_to_user(argp, &iocommand, sizeof(IOCTL_Command_struct)))
++		goto out;
+ 
+ 	if (iocommand.Request.Type.Direction == XFER_READ) {
+ 		/* Copy the data out of the buffer we created */
+-		if (copy_to_user(iocommand.buf, buff, iocommand.buf_size)) {
+-			kfree(buff);
+-			cmd_special_free(h, c);
+-			return -EFAULT;
+-		}
++		if (copy_to_user(iocommand.buf, buff, iocommand.buf_size))
++			goto out;
+ 	}
++	retval = 0;
++out:
+ 	kfree(buff);
+ 	cmd_special_free(h, c);
+-	return 0;
++	return retval;
+ }
+ 
+ static int cciss_bigpassthru(ctlr_info_t *h, void __user *argp)

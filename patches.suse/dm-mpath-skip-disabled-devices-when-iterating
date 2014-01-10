@@ -1,0 +1,27 @@
+From: Hannes Reinecke <hare@suse.de>
+Subject: kernel Oops in multipathing after chchp -v 0
+References: bnc#570526
+Patch-Mainline: Submitted to dm-devel
+
+When disabling all paths simultaneously the kernel oopses in
+dm_set_device_limits(). Reason being multipath_iterate_devices
+is not checking for disabled devices and call the function
+with invalid arguments.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+
+---
+ drivers/md/dm-mpath.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -1599,6 +1599,8 @@ static int multipath_iterate_devices(str
+ 
+ 	list_for_each_entry(pg, &m->priority_groups, list) {
+ 		list_for_each_entry(p, &pg->pgpaths, list) {
++			if (!p->path.dev)
++				continue;
+ 			ret = fn(ti, p->path.dev, ti->begin, ti->len, data);
+ 			if (ret)
+ 				goto out;

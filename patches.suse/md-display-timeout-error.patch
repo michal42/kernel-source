@@ -1,0 +1,313 @@
+From: Hannes Reinecke <hare@suse.com>
+Date: Thu, 12 Jul 2012 08:36:52 +0200
+Subject: md: display timeout errors in /etc/mdstat etc
+Patch-mainline: no
+References: bnc#763402
+
+Track whether a device failed due to a timeout or some other reason.
+If due to a timeout, set a flag so that it can be reported.
+
+Acked-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Neil Brown <neilb@suse.de>
+
+---
+ drivers/md/md.c           |   44 +++++++++++++++++++++++++++++++++++---------
+ drivers/md/md.h           |    3 +++
+ drivers/md/raid10.c       |   41 +++++++++++++++++++++++++++++++++++++----
+ drivers/md/raid10.h       |    1 +
+ include/linux/raid/md_p.h |    1 +
+ 5 files changed, 77 insertions(+), 13 deletions(-)
+
+--- linux-3.0-SLE11-SP3.orig/drivers/md/md.c
++++ linux-3.0-SLE11-SP3/drivers/md/md.c
+@@ -798,8 +798,10 @@ static void super_written(struct bio *bi
+ 		       error, test_bit(BIO_UPTODATE, &bio->bi_flags));
+ 		WARN_ON(test_bit(BIO_UPTODATE, &bio->bi_flags));
+ 		md_error(mddev, rdev);
+-		if (!test_bit(Faulty, &rdev->flags)
+-		    && (bio->bi_rw & REQ_FAILFAST_DEV)) {
++		if (test_bit(Faulty, &rdev->flags)) {
++			if (error == -ETIMEDOUT)
++				set_bit(Timeout, &rdev->flags);
++		} else if (bio->bi_rw & REQ_FAILFAST_DEV) {
+ 			set_bit(MD_NEED_REWRITE, &mddev->flags);
+ 			set_bit(LastDev, &rdev->flags);
+ 		}
+@@ -1167,6 +1169,7 @@ static int super_90_validate(mddev_t *md
+ 
+ 	rdev->raid_disk = -1;
+ 	clear_bit(Faulty, &rdev->flags);
++	clear_bit(Timeout, &rdev->flags);
+ 	clear_bit(In_sync, &rdev->flags);
+ 	clear_bit(WriteMostly, &rdev->flags);
+ 
+@@ -1617,6 +1620,7 @@ static int super_1_validate(mddev_t *mdd
+ 
+ 	rdev->raid_disk = -1;
+ 	clear_bit(Faulty, &rdev->flags);
++	clear_bit(Timeout, &rdev->flags);
+ 	clear_bit(In_sync, &rdev->flags);
+ 	clear_bit(WriteMostly, &rdev->flags);
+ 
+@@ -1691,7 +1695,7 @@ static int super_1_validate(mddev_t *mdd
+ 		++ev1;
+ 		if (rdev->desc_nr >= 0 &&
+ 		    rdev->desc_nr < le32_to_cpu(sb->max_dev) &&
+-		    le16_to_cpu(sb->dev_roles[rdev->desc_nr]) < 0xfffe)
++		    le16_to_cpu(sb->dev_roles[rdev->desc_nr]) < 0xfffd)
+ 			if (ev1 < mddev->events)
+ 				return -EINVAL;
+ 	} else if (mddev->bitmap) {
+@@ -1719,6 +1723,10 @@ static int super_1_validate(mddev_t *mdd
+ 		case 0xfffe: /* faulty */
+ 			set_bit(Faulty, &rdev->flags);
+ 			break;
++		case 0xfffd: /* faulty, timeout */
++			set_bit(Faulty, &rdev->flags);
++			set_bit(Timeout, &rdev->flags);
++			break;
+ 		default:
+ 			if ((le32_to_cpu(sb->feature_map) &
+ 			     MD_FEATURE_RECOVERY_OFFSET))
+@@ -1831,9 +1839,12 @@ static void super_1_sync(mddev_t *mddev,
+ 	
+ 	list_for_each_entry(rdev2, &mddev->disks, same_set) {
+ 		i = rdev2->desc_nr;
+-		if (test_bit(Faulty, &rdev2->flags))
+-			sb->dev_roles[i] = cpu_to_le16(0xfffe);
+-		else if (test_bit(In_sync, &rdev2->flags))
++		if (test_bit(Faulty, &rdev2->flags)) {
++			if (test_bit(Timeout, &rdev2->flags))
++				sb->dev_roles[i] = cpu_to_le16(0xfffd);
++			else
++				sb->dev_roles[i] = cpu_to_le16(0xfffe);
++		} else if (test_bit(In_sync, &rdev2->flags))
+ 			sb->dev_roles[i] = cpu_to_le16(rdev2->raid_disk);
+ 		else if (rdev2->raid_disk >= 0)
+ 			sb->dev_roles[i] = cpu_to_le16(rdev2->raid_disk);
+@@ -2537,6 +2548,10 @@ state_show(mdk_rdev_t *rdev, char *page)
+ 		len+= sprintf(page+len, "%sfaulty",sep);
+ 		sep = ",";
+ 	}
++	if (test_bit(Timeout, &rdev->flags)) {
++		len+= sprintf(page+len, "%stimeout",sep);
++		sep = ",";
++	}
+ 	if (test_bit(In_sync, &rdev->flags)) {
+ 		len += sprintf(page+len, "%sin_sync",sep);
+ 		sep = ",";
+@@ -2578,6 +2593,11 @@ state_store(mdk_rdev_t *rdev, const char
+ 	if (cmd_match(buf, "faulty") && rdev->mddev->pers) {
+ 		md_error(rdev->mddev, rdev);
+ 		err = 0;
++	} else if (cmd_match(buf, "timeout") && rdev->mddev->pers) {
++		md_error(rdev->mddev, rdev);
++		if (test_bit(Faulty, &rdev->flags))
++			set_bit(Timeout, &rdev->flags);
++		err = 0;
+ 	} else if (cmd_match(buf, "remove")) {
+ 		if (rdev->raid_disk >= 0)
+ 			err = -EBUSY;
+@@ -2730,6 +2750,7 @@ slot_store(mdk_rdev_t *rdev, const char
+ 		rdev->raid_disk = slot;
+ 		/* assume it is working */
+ 		clear_bit(Faulty, &rdev->flags);
++		clear_bit(Timeout, &rdev->flags);
+ 		clear_bit(WriteMostly, &rdev->flags);
+ 		set_bit(In_sync, &rdev->flags);
+ 		sysfs_notify_dirent_safe(rdev->sysfs_state);
+@@ -5487,9 +5508,11 @@ static int get_disk_info(mddev_t * mddev
+ 		info.minor = MINOR(rdev->bdev->bd_dev);
+ 		info.raid_disk = rdev->raid_disk;
+ 		info.state = 0;
+-		if (test_bit(Faulty, &rdev->flags))
++		if (test_bit(Faulty, &rdev->flags)) {
+ 			info.state |= (1<<MD_DISK_FAULTY);
+-		else if (test_bit(In_sync, &rdev->flags)) {
++			if (test_bit(Timeout, &rdev->flags))
++				info.state |= (1<<MD_DISK_TIMEOUT);
++		} else if (test_bit(In_sync, &rdev->flags)) {
+ 			info.state |= (1<<MD_DISK_ACTIVE);
+ 			info.state |= (1<<MD_DISK_SYNC);
+ 		}
+@@ -6847,7 +6870,10 @@ static int md_seq_show(struct seq_file *
+ 			if (test_bit(WriteMostly, &rdev->flags))
+ 				seq_printf(seq, "(W)");
+ 			if (test_bit(Faulty, &rdev->flags)) {
+-				seq_printf(seq, "(F)");
++				if (test_bit(Timeout, &rdev->flags))
++					seq_printf(seq, "(T)");
++				else
++					seq_printf(seq, "(F)");
+ 				continue;
+ 			} else if (rdev->raid_disk < 0)
+ 				seq_printf(seq, "(S)"); /* spare */
+--- linux-3.0-SLE11-SP3.orig/drivers/md/md.h
++++ linux-3.0-SLE11-SP3/drivers/md/md.h
+@@ -92,6 +92,9 @@ struct mdk_rdev_s
+ 					 * it didn't fail, so don't use FailFast
+ 					 * any more for metadata
+ 					 */
++#define Timeout		11		/* Device fault due to timeout.
++					 * 'Faulty' is required to be set.
++					 */
+ 	wait_queue_head_t blocked_wait;
+ 
+ 	int desc_nr;			/* descriptor index in the superblock */
+--- linux-3.0-SLE11-SP3.orig/drivers/md/raid10.c
++++ linux-3.0-SLE11-SP3/drivers/md/raid10.c
+@@ -274,6 +274,7 @@ static void raid10_end_read_request(stru
+ 	 * this branch is our 'one mirror IO has finished' event handler:
+ 	 */
+ 	update_head_pos(slot, r10_bio);
++	r10_bio->devs[slot].error = error;
+ 
+ 	if (uptodate) {
+ 		/*
+@@ -331,6 +332,7 @@ static void raid10_end_write_request(str
+ 
+ 	to_put = bio;
+ 	r10_bio->devs[slot].bio = NULL;
++	r10_bio->devs[slot].error = error;
+ 	/*
+ 	 * this branch is our 'one mirror IO has finished' event handler:
+ 	 */
+@@ -348,7 +350,8 @@ static void raid10_end_write_request(str
+ 			set_bit(R10BIO_WriteError, &r10_bio->state);
+ 			r10_bio->devs[slot].bio = to_put;
+ 			to_put = NULL;
+-		}
++		} else if (error == -ETIMEDOUT)
++			set_bit(Timeout, &rdev->flags);
+ 	} else
+ 		/*
+ 		 * Set R10BIO_Uptodate in our master bio, so that
+@@ -1399,9 +1402,13 @@ static void end_sync_read(struct bio *bi
+ 	else {
+ 		atomic_add(r10_bio->sectors,
+ 			   &conf->mirrors[d].rdev->corrected_errors);
+-		if (!test_bit(MD_RECOVERY_SYNC, &conf->mddev->recovery))
++		if (!test_bit(MD_RECOVERY_SYNC, &conf->mddev->recovery)) {
+ 			md_error(r10_bio->mddev,
+ 				 conf->mirrors[d].rdev);
++			if (test_bit(Faulty, &conf->mirrors[d].rdev->flags) &&
++			    error == -ETIMEDOUT)
++				set_bit(Timeout, &conf->mirrors[d].rdev->flags);
++		}
+ 	}
+ 
+ 	/* for reconstruct, we always reschedule after a read.
+@@ -1430,8 +1437,12 @@ static void end_sync_write(struct bio *b
+ 			break;
+ 	d = r10_bio->devs[i].devnum;
+ 
+-	if (!uptodate)
++	if (!uptodate) {
+ 		md_error(mddev, conf->mirrors[d].rdev);
++		if (test_bit(Faulty, &conf->mirrors[d].rdev->flags) &&
++		    error == -ETIMEDOUT)
++			set_bit(Timeout, &conf->mirrors[d].rdev->flags);
++	}
+ 
+ 	update_head_pos(i, r10_bio);
+ 
+@@ -1519,6 +1530,9 @@ static void sync_request_write(mddev_t *
+ 		} else if (test_bit(FailFast, &rdev->flags)) {
+ 			/* Just give up on this device */
+ 			md_error(rdev->mddev, rdev);
++			if (test_bit(Faulty, &rdev->flags) &&
++			    r10_bio->devs[i].error == -ETIMEDOUT)
++				set_bit(Timeout, &rdev->flags);
+ 			continue;
+ 		}
+ 		/* Ok, we need to write this bio
+@@ -1649,6 +1663,7 @@ static void fix_read_error(conf_t *conf,
+ 	mdk_rdev_t*rdev;
+ 	int max_read_errors = atomic_read(&mddev->max_corr_read_errors);
+ 	int d = r10_bio->devs[r10_bio->read_slot].devnum;
++	int read_error = r10_bio->devs[r10_bio->read_slot].error;
+ 
+ 	/* still own a reference to this rdev, so it cannot
+ 	 * have been cleared recently.
+@@ -1674,7 +1689,10 @@ static void fix_read_error(conf_t *conf,
+ 		printk(KERN_NOTICE
+ 		       "md/raid10:%s: %s: Failing raid device\n",
+ 		       mdname(mddev), b);
+-		md_error(mddev, conf->mirrors[d].rdev);
++		md_error(mddev, rdev);
++		if (test_bit(Faulty, &rdev->flags) &&
++		    read_error == -ETIMEDOUT)
++			set_bit(Timeout, &rdev->flags);
+ 		r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
+ 		return;
+ 	}
+@@ -1717,6 +1735,10 @@ static void fix_read_error(conf_t *conf,
+ 			/* Cannot read from anywhere -- bye bye array */
+ 			int dn = r10_bio->devs[r10_bio->read_slot].devnum;
+ 			md_error(mddev, conf->mirrors[dn].rdev);
++			if (test_bit(Faulty, &conf->mirrors[dn].rdev->flags) &&
++			    read_error == -ETIMEDOUT)
++				set_bit(Timeout, &conf->mirrors[dn].rdev->flags);
++
+ 			r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
+ 			break;
+ 		}
+@@ -1759,6 +1781,9 @@ static void fix_read_error(conf_t *conf,
+ 					       mdname(mddev),
+ 					       bdevname(rdev->bdev, b));
+ 					md_error(mddev, rdev);
++					if (test_bit(Faulty, &rdev->flags) &&
++					    read_error == -ETIMEDOUT)
++						set_bit(Timeout, &rdev->flags);
+ 				}
+ 				rdev_dec_pending(rdev, mddev);
+ 				rcu_read_lock();
+@@ -1797,6 +1822,9 @@ static void fix_read_error(conf_t *conf,
+ 					       bdevname(rdev->bdev, b));
+ 
+ 					md_error(mddev, rdev);
++					if (test_bit(Faulty, &rdev->flags) &&
++					    read_error == -ETIMEDOUT)
++						set_bit(Timeout, &rdev->flags);
+ 				} else {
+ 					printk(KERN_INFO
+ 					       "md/raid10:%s: read error corrected"
+@@ -1944,6 +1972,9 @@ static void raid10d(mddev_t *mddev)
+ 				unfreeze_array(conf);
+ 			} else {
+ 				md_error(mddev, rdev);
++				if (test_bit(Faulty, &rdev->flags) &&
++				    r10_bio->devs[slot].error == -ETIMEDOUT)
++					set_bit(Timeout, &rdev->flags);
+ 				r10_bio->devs[slot].bio = IO_BLOCKED;
+ 			}
+ 
+@@ -3609,6 +3640,8 @@ static void end_reshape_write(struct bio
+ 	if (!uptodate) {
+ 		/* FIXME should record badblock */
+ 		md_error(mddev, rdev);
++		if (test_bit(Faulty, &rdev->flags) && error == -ETIMEDOUT)
++			set_bit(Timeout, &rdev->flags);
+ 	}
+ 
+ 	rdev_dec_pending(rdev, mddev);
+--- linux-3.0-SLE11-SP3.orig/drivers/md/raid10.h
++++ linux-3.0-SLE11-SP3/drivers/md/raid10.h
+@@ -111,6 +111,7 @@ struct r10bio_s {
+ 		struct bio		*bio;
+ 		sector_t addr;
+ 		int devnum;
++		int			error;
+ 	} devs[0];
+ };
+ 
+--- linux-3.0-SLE11-SP3.orig/include/linux/raid/md_p.h
++++ linux-3.0-SLE11-SP3/include/linux/raid/md_p.h
+@@ -86,6 +86,7 @@
+ 				    * devices available - and don't try to
+ 				    * correct read errors.
+ 				    */
++#define	MD_DISK_TIMEOUT		11 /* disk is faulty due to timeout */
+ 
+ typedef struct mdp_device_descriptor_s {
+ 	__u32 number;		/* 0 Device number in the entire set	      */

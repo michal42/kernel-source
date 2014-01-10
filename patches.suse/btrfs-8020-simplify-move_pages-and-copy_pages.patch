@@ -1,0 +1,36 @@
+From: David Sterba <dsterba@suse.cz>
+Date: Tue, 29 Nov 2011 18:34:05 +0100
+Patch-mainline: no
+References: FATE#306586
+Subject: [PATCH] btrfs: simplify move_pages and copy_pages
+
+After commit a65917156e34594 ("Btrfs: stop using highmem for
+extent_buffers") we don't need to kmap_atomic anymore and can simplify
+both functions.
+
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent_io.c |   11 ++---------
+ 1 file changed, 2 insertions(+), 9 deletions(-)
+
+--- a/fs/btrfs/extent_io.c
++++ b/fs/btrfs/extent_io.c
+@@ -4717,16 +4717,9 @@ static void move_pages(struct page *dst_
+ 		       unsigned long len)
+ {
+ 	char *dst_kaddr = page_address(dst_page);
+-	if (dst_page == src_page) {
+-		memmove(dst_kaddr + dst_off, dst_kaddr + src_off, len);
+-	} else {
+-		char *src_kaddr = page_address(src_page);
+-		char *p = dst_kaddr + dst_off + len;
+-		char *s = src_kaddr + src_off + len;
++	char *src_kaddr = page_address(src_page);
+ 
+-		while (len--)
+-			*--p = *--s;
+-	}
++	memmove(dst_kaddr + dst_off, src_kaddr + src_off, len);
+ }
+ 
+ static inline bool areas_overlap(unsigned long src, unsigned long dst, unsigned long len)
