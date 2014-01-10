@@ -1,0 +1,54 @@
+From: =?UTF-8?q?Michal=20Kube=C4=8Dek?= <mkubecek@suse.cz>
+Date: Fri, 15 Nov 2013 06:18:50 +0100
+Subject: macvlan: disable LRO on lower device instead of macvlan
+Patch-mainline: v3.13-rc1
+Git-commit: 529d04895446f02449077a4ff49185b593283e19
+References: bnc#846984
+
+A macvlan device has always LRO disabled so that calling
+dev_disable_lro() on it does nothing. If we need to disable LRO
+e.g. because
+
+  - the macvlan device is inserted into a bridge
+  - IPv6 forwarding is enabled for it
+  - it is in a different namespace than lowerdev and IPv4
+    forwarding is enabled in it
+
+we need to disable LRO on its underlying device instead (as we
+do for 802.1q VLAN devices).
+
+v2: use newly introduced netif_is_macvlan()
+
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit )
+---
+ net/core/dev.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index d5c9bff..7c2b2fe 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -131,6 +131,7 @@
+ #include <linux/static_key.h>
+ #include <linux/hashtable.h>
+ #include <linux/vmalloc.h>
++#include <linux/if_macvlan.h>
+ 
+ #include "net-sysfs.h"
+ 
+@@ -1425,6 +1426,10 @@ void dev_disable_lro(struct net_device *dev)
+ 	if (is_vlan_dev(dev))
+ 		dev = vlan_dev_real_dev(dev);
+ 
++	/* the same for macvlan devices */
++	if (netif_is_macvlan(dev))
++		dev = macvlan_dev_real_dev(dev);
++
+ 	dev->wanted_features &= ~NETIF_F_LRO;
+ 	netdev_update_features(dev);
+ 
+-- 
+1.8.1.4
+
