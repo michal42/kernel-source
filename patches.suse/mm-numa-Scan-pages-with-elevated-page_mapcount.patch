@@ -29,39 +29,39 @@ Link: http://lkml.kernel.org/r/1381141781-10992-28-git-send-email-mgorman@suse.d
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/migrate.h |  7 ++++---
- mm/huge_memory.c        | 12 +++++-------
- mm/memory.c             |  7 ++-----
- mm/migrate.c            | 17 ++++++-----------
- mm/mprotect.c           |  4 +---
- 5 files changed, 18 insertions(+), 29 deletions(-)
+ include/linux/migrate.h |    6 ++++--
+ mm/huge_memory.c        |   12 +++++-------
+ mm/memory.c             |    7 ++-----
+ mm/migrate.c            |   17 ++++++-----------
+ mm/mprotect.c           |    4 +---
+ 5 files changed, 18 insertions(+), 28 deletions(-)
 
-diff --git a/include/linux/migrate.h b/include/linux/migrate.h
-index 8d3c57f..f5096b5 100644
 --- a/include/linux/migrate.h
 +++ b/include/linux/migrate.h
-@@ -90,11 +90,12 @@ static inline int migrate_huge_page_move_mapping(struct address_space *mapping,
- #endif /* CONFIG_MIGRATION */
- 
+@@ -93,7 +93,8 @@ static inline int migrate_huge_page_move
  #ifdef CONFIG_NUMA_BALANCING
--extern int migrate_misplaced_page(struct page *page, int node);
+ extern bool pmd_trans_migrating(pmd_t pmd);
+ extern void wait_migrate_huge_page(struct anon_vma *anon_vma, pmd_t *pmd);
 -extern int migrate_misplaced_page(struct page *page, int node);
 +extern int migrate_misplaced_page(struct page *page,
 +				  struct vm_area_struct *vma, int node);
  extern bool migrate_ratelimited(int node);
  #else
+ static inline bool pmd_trans_migrating(pmd_t pmd)
+@@ -103,7 +104,8 @@ static inline bool pmd_trans_migrating(p
+ static inline void wait_migrate_huge_page(struct anon_vma *anon_vma, pmd_t *pmd)
+ {
+ }
 -static inline int migrate_misplaced_page(struct page *page, int node)
 +static inline int migrate_misplaced_page(struct page *page,
 +					 struct vm_area_struct *vma, int node)
  {
  	return -EAGAIN; /* can't migrate now */
  }
-diff --git a/mm/huge_memory.c b/mm/huge_memory.c
-index 5f311f2..fa5edb7 100644
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -1494,14 +1494,12 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
- 			struct page *page = pmd_page(*pmd);
+@@ -1513,14 +1513,12 @@ int change_huge_pmd(struct vm_area_struc
+ 			entry = *pmd;
  
  			/*
 -			 * Only check non-shared pages. Do not trap faults
@@ -78,13 +78,11 @@ index 5f311f2..fa5edb7 100644
 -			    !is_huge_zero_page(page) &&
 +			if (!is_huge_zero_page(page) &&
  			    !pmd_numa(*pmd)) {
- 				entry = pmdp_get_and_clear(mm, addr, pmd);
  				entry = pmd_mknuma(entry);
-diff --git a/mm/memory.c b/mm/memory.c
-index 3c4b886..9d4aef9 100644
+ 				set_pmd_at(mm, addr, pmd, entry);
 --- a/mm/memory.c
 +++ b/mm/memory.c
-@@ -3621,7 +3621,7 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -3579,7 +3579,7 @@ int do_numa_page(struct mm_struct *mm, s
  	}
  
  	/* Migrate to the requested node */
@@ -93,7 +91,7 @@ index 3c4b886..9d4aef9 100644
  	if (migrated)
  		page_nid = target_nid;
  
-@@ -3686,16 +3686,13 @@ static int do_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -3644,16 +3644,13 @@ static int do_pmd_numa_page(struct mm_st
  		page = vm_normal_page(vma, addr, pteval);
  		if (unlikely(!page))
  			continue;
@@ -111,11 +109,9 @@ index 3c4b886..9d4aef9 100644
  			if (migrated)
  				page_nid = target_nid;
  		} else {
-diff --git a/mm/migrate.c b/mm/migrate.c
-index 9b9b980..ea2cf2b 100644
 --- a/mm/migrate.c
 +++ b/mm/migrate.c
-@@ -1601,7 +1601,8 @@ int numamigrate_isolate_page(pg_data_t *pgdat, struct page *page)
+@@ -1615,7 +1615,8 @@ void wait_migrate_huge_page(struct anon_
   * node. Caller is expected to have an elevated reference count on
   * the page that will be dropped by this function before returning.
   */
@@ -125,7 +121,7 @@ index 9b9b980..ea2cf2b 100644
  {
  	pg_data_t *pgdat = NODE_DATA(node);
  	int isolated;
-@@ -1609,10 +1610,11 @@ int migrate_misplaced_page(struct page *page, int node)
+@@ -1623,10 +1624,11 @@ int migrate_misplaced_page(struct page *
  	LIST_HEAD(migratepages);
  
  	/*
@@ -140,8 +136,8 @@ index 9b9b980..ea2cf2b 100644
  		goto out;
  
  	/*
-@@ -1663,13 +1665,6 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
- 	int page_lru = page_is_file_cache(page);
+@@ -1679,13 +1681,6 @@ int migrate_misplaced_transhuge_page(str
+ 	pmd_t orig_entry;
  
  	/*
 -	 * Don't migrate pages that are mapped in multiple processes.
@@ -154,11 +150,9 @@ index 9b9b980..ea2cf2b 100644
  	 * Rate-limit the amount of data that is being migrated to a node.
  	 * Optimal placement is no good if the memory bus is saturated and
  	 * all the time is being spent migrating!
-diff --git a/mm/mprotect.c b/mm/mprotect.c
-index 11035cd..91e61f5 100644
 --- a/mm/mprotect.c
 +++ b/mm/mprotect.c
-@@ -69,9 +69,7 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+@@ -72,9 +72,7 @@ static unsigned long change_pte_range(st
  					if (last_nid != this_nid)
  						all_same_node = false;
  
@@ -167,5 +161,5 @@ index 11035cd..91e61f5 100644
 -					    page_mapcount(page) == 1) {
 +					if (!pte_numa(oldpte)) {
  						ptent = pte_mknuma(ptent);
+ 						set_pte_at(mm, addr, pte, ptent);
  						updated = true;
- 					}

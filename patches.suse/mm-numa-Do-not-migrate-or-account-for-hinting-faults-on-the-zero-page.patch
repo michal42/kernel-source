@@ -25,25 +25,23 @@ Link: http://lkml.kernel.org/r/1381141781-10992-13-git-send-email-mgorman@suse.d
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- mm/huge_memory.c | 10 +++++++++-
- mm/memory.c      |  1 +
+ mm/huge_memory.c |   10 +++++++++-
+ mm/memory.c      |    1 +
  2 files changed, 10 insertions(+), 1 deletion(-)
 
-diff --git a/mm/huge_memory.c b/mm/huge_memory.c
-index d7b17d1..65fce2a 100644
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -1295,6 +1295,7 @@ int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
- 		goto out_unlock;
+@@ -1310,6 +1310,7 @@ int do_huge_pmd_numa_page(struct mm_stru
+ 	}
  
  	page = pmd_page(pmd);
 +	BUG_ON(is_huge_zero_page(page));
  	page_nid = page_to_nid(page);
  	count_vm_numa_event(NUMA_HINT_FAULTS);
  	if (page_nid == this_nid)
-@@ -1491,8 +1492,15 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
- 		} else {
+@@ -1510,8 +1511,15 @@ int change_huge_pmd(struct vm_area_struc
  			struct page *page = pmd_page(*pmd);
+ 			entry = *pmd;
  
 -			/* only check non-shared pages */
 +			/*
@@ -56,13 +54,11 @@ index d7b17d1..65fce2a 100644
  			if (page_mapcount(page) == 1 &&
 +			    !is_huge_zero_page(page) &&
  			    !pmd_numa(*pmd)) {
- 				entry = pmdp_get_and_clear(mm, addr, pmd);
  				entry = pmd_mknuma(entry);
-diff --git a/mm/memory.c b/mm/memory.c
-index 958ba6d..1f5f5bb 100644
+ 				set_pmd_at(mm, addr, pmd, entry);
 --- a/mm/memory.c
 +++ b/mm/memory.c
-@@ -3608,6 +3608,7 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -3566,6 +3566,7 @@ int do_numa_page(struct mm_struct *mm, s
  		pte_unmap_unlock(ptep, ptl);
  		return 0;
  	}
