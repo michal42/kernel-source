@@ -1,97 +1,170 @@
+From c4a391b53a72d2df4ee97f96f78c1d5971b47489 Mon Sep 17 00:00:00 2001
 From: Jan Kara <jack@suse.cz>
-Subject: writeback: Do not sync data dirtied after sync start
-References: bnc#833820
-Patch-mainline: 3.13-rc1
+Date: Tue, 12 Nov 2013 15:07:51 -0800
+Subject: [PATCH] writeback: do not sync data dirtied after sync start
 Git-commit: c4a391b53a72d2df4ee97f96f78c1d5971b47489
+Patch-mainline: v3.13-rc1
+References: bnc#833820
 
-When there are processes heavily creating small files while sync(2) is running,
-it can easily happen that quite some new files are created between WB_SYNC_NONE
-and WB_SYNC_ALL pass of sync(2). Because WB_SYNC_ALL pass is slow (e.g. causes
-a transaction commit and cache flush for each inode in ext3) it can cause
-rather long sync(2) times.
+When there are processes heavily creating small files while sync(2) is
+running, it can easily happen that quite some new files are created
+between WB_SYNC_NONE and WB_SYNC_ALL pass of sync(2).  That can happen
+especially if there are several busy filesystems (remember that sync
+traverses filesystems sequentially and waits in WB_SYNC_ALL phase on one
+fs before starting it on another fs).  Because WB_SYNC_ALL pass is slow
+(e.g.  causes a transaction commit and cache flush for each inode in
+ext3), resulting sync(2) times are rather large.
 
-Fix the problem by disregarding inodes dirtied after WB_SYNC_NONE pass has
-started in the WB_SYNC_ALL pass. To allow for this, __sync_filesystem() passes
-the time stamp when sync started to both syncing works.
+The following script reproduces the problem:
+
+  function run_writers
+  {
+    for (( i = 0; i < 10; i++ )); do
+      mkdir $1/dir$i
+      for (( j = 0; j < 40000; j++ )); do
+        dd if=/dev/zero of=$1/dir$i/$j bs=4k count=4 &>/dev/null
+      done &
+    done
+  }
+
+  for dir in "$@"; do
+    run_writers $dir
+  done
+
+  sleep 40
+  time sync
+
+Fix the problem by disregarding inodes dirtied after sync(2) was called
+in the WB_SYNC_ALL pass.  To allow for this, sync_inodes_sb() now takes
+a time stamp when sync has started which is used for setting up work for
+flusher threads.
+
+To give some numbers, when above script is run on two ext4 filesystems
+on simple SATA drive, the average sync time from 10 runs is 267.549
+seconds with standard deviation 104.799426.  With the patched kernel,
+the average sync time from 10 runs is 2.995 seconds with standard
+deviation 0.096.
 
 Signed-off-by: Jan Kara <jack@suse.cz>
+Reviewed-by: Fengguang Wu <fengguang.wu@intel.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 
-diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.0-SLE11-SP2/fs/fs-writeback.c linux-3.0-SLE11-SP2-1-sync_faster/fs/fs-writeback.c
---- linux-3.0-SLE11-SP2/fs/fs-writeback.c	2013-09-12 18:53:23.689055055 +0200
-+++ linux-3.0-SLE11-SP2-1-sync_faster/fs/fs-writeback.c	2013-09-20 14:23:31.622847986 +0200
-@@ -35,6 +35,7 @@
+---
+ fs/fs-writeback.c                | 33 ++++++++++++++++++++++-----------
+ fs/sync.c                        | 15 +++++++++------
+ fs/xfs/xfs_super.c               |  2 +-
+ include/linux/writeback.h        |  2 +-
+ include/trace/events/writeback.h |  6 +++---
+ 5 files changed, 36 insertions(+), 22 deletions(-)
+
+diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
+index 9f4935b8f208..4afdbd6d9678 100644
+--- a/fs/fs-writeback.c
++++ b/fs/fs-writeback.c
+@@ -39,13 +39,18 @@
  struct wb_writeback_work {
  	long nr_pages;
  	struct super_block *sb;
-+	unsigned long start_jif;
+-	unsigned long *older_than_this;
++	/*
++	 * Write only inodes dirtied before this time. Don't forget to set
++	 * older_than_this_is_set when you set this.
++	 */
++	unsigned long older_than_this;
  	enum writeback_sync_modes sync_mode;
  	unsigned int tagged_writepages:1;
  	unsigned int for_kupdate:1;
-@@ -670,6 +671,7 @@ static long wb_writeback(struct bdi_writ
- 		.sync_mode		= work->sync_mode,
- 		.tagged_writepages	= work->tagged_writepages,
- 		.older_than_this	= NULL,
-+		.wb_start		= work->start_jif,
- 		.for_kupdate		= work->for_kupdate,
- 		.for_background		= work->for_background,
- 		.range_cyclic		= work->range_cyclic,
-@@ -705,7 +707,8 @@ static long wb_writeback(struct bdi_writ
- 	if (wbc.sync_mode == WB_SYNC_ALL || wbc.tagged_writepages)
- 		write_chunk = LONG_MAX;
+ 	unsigned int range_cyclic:1;
+ 	unsigned int for_background:1;
+ 	unsigned int for_sync:1;	/* sync(2) WB_SYNC_ALL writeback */
++	unsigned int older_than_this_is_set:1;
+ 	enum wb_reason reason;		/* why was writeback initiated? */
  
--	wbc.wb_start = jiffies; /* livelock avoidance */
-+	if (!wbc.wb_start)
-+		wbc.wb_start = jiffies; /* livelock avoidance */
+ 	struct list_head list;		/* pending work list */
+@@ -246,10 +251,10 @@ static int move_expired_inodes(struct list_head *delaying_queue,
+ 	int do_sb_sort = 0;
+ 	int moved = 0;
+ 
++	WARN_ON_ONCE(!work->older_than_this_is_set);
+ 	while (!list_empty(delaying_queue)) {
+ 		inode = wb_inode(delaying_queue->prev);
+-		if (work->older_than_this &&
+-		    inode_dirtied_after(inode, *work->older_than_this))
++		if (inode_dirtied_after(inode, work->older_than_this))
+ 			break;
+ 		list_move(&inode->i_wb_list, &tmp);
+ 		moved++;
+@@ -733,6 +738,8 @@ static long writeback_inodes_wb(struct bdi_writeback *wb, long nr_pages,
+ 		.sync_mode	= WB_SYNC_NONE,
+ 		.range_cyclic	= 1,
+ 		.reason		= reason,
++		.older_than_this = jiffies,
++		.older_than_this_is_set = 1,
+ 	};
+ 
+ 	spin_lock(&wb->list_lock);
+@@ -791,12 +798,13 @@ static long wb_writeback(struct bdi_writeback *wb,
+ {
+ 	unsigned long wb_start = jiffies;
+ 	long nr_pages = work->nr_pages;
+-	unsigned long oldest_jif;
+ 	struct inode *inode;
+ 	long progress;
+ 
+-	oldest_jif = jiffies;
+-	work->older_than_this = &oldest_jif;
++	if (!work->older_than_this_is_set) {
++		work->older_than_this = jiffies;
++		work->older_than_this_is_set = 1;
++	}
+ 
+ 	spin_lock(&wb->list_lock);
  	for (;;) {
- 		/*
- 		 * Stop writeback when nr_pages has been consumed
-@@ -1304,18 +1307,12 @@ int writeback_inodes_sb_nr_if_idle(struc
- }
- EXPORT_SYMBOL(writeback_inodes_sb_nr_if_idle);
+@@ -830,10 +838,10 @@ static long wb_writeback(struct bdi_writeback *wb,
+ 		 * safe.
+ 		 */
+ 		if (work->for_kupdate) {
+-			oldest_jif = jiffies -
++			work->older_than_this = jiffies -
+ 				msecs_to_jiffies(dirty_expire_interval * 10);
+ 		} else if (work->for_background)
+-			oldest_jif = jiffies;
++			work->older_than_this = jiffies;
  
--/**
-- * sync_inodes_sb	-	sync sb inode pages
+ 		trace_writeback_start(wb->bdi, work);
+ 		if (list_empty(&wb->b_io))
+@@ -1345,18 +1353,21 @@ EXPORT_SYMBOL(try_to_writeback_inodes_sb);
+ 
+ /**
+  * sync_inodes_sb	-	sync sb inode pages
 - * @sb: the superblock
-- *
-- * This function writes and waits on any dirty inode belonging to this
++ * @sb:			the superblock
++ * @older_than_this:	timestamp
+  *
+  * This function writes and waits on any dirty inode belonging to this
 - * super_block.
-- */
++ * superblock that has been dirtied before given timestamp.
+  */
 -void sync_inodes_sb(struct super_block *sb)
-+void sync_inodes_sb_after(struct super_block *sb, unsigned long start)
++void sync_inodes_sb(struct super_block *sb, unsigned long older_than_this)
  {
  	DECLARE_COMPLETION_ONSTACK(done);
  	struct wb_writeback_work work = {
  		.sb		= sb,
-+		.start_jif	= start,
  		.sync_mode	= WB_SYNC_ALL,
  		.nr_pages	= LONG_MAX,
++		.older_than_this = older_than_this,
++		.older_than_this_is_set = 1,
  		.range_cyclic	= 0,
-@@ -1329,8 +1326,21 @@ void sync_inodes_sb(struct super_block *
- 
- 	wait_sb_inodes(sb);
- }
-+
-+/**
-+ * sync_inodes_sb	-	sync sb inode pages
-+ * @sb: the superblock
-+ *
-+ * This function writes and waits on any dirty inode belonging to this
-+ * super_block.
-+ */
-+void sync_inodes_sb(struct super_block *sb)
-+{
-+	sync_inodes_sb_after(sb, jiffies);
-+}
- EXPORT_SYMBOL(sync_inodes_sb);
- 
-+
- /**
-  * write_inode_now	-	write an inode to disk
-  * @inode: inode to write to disk
-diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.0-SLE11-SP2/fs/sync.c linux-3.0-SLE11-SP2-1-sync_faster/fs/sync.c
---- linux-3.0-SLE11-SP2/fs/sync.c	2013-09-12 18:53:22.600053575 +0200
-+++ linux-3.0-SLE11-SP2-1-sync_faster/fs/sync.c	2013-09-20 14:30:47.271541418 +0200
-@@ -28,7 +28,8 @@
+ 		.done		= &done,
+ 		.reason		= WB_REASON_SYNC,
+diff --git a/fs/sync.c b/fs/sync.c
+index 905f3f6b3d85..ff96f99fef64 100644
+--- a/fs/sync.c
++++ b/fs/sync.c
+@@ -27,10 +27,11 @@
   * wait == 1 case since in that case write_inode() functions do
   * sync_dirty_buffer() and thus effectively write one block at a time.
   */
@@ -99,100 +172,98 @@ diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.0-SLE11-SP2/fs/sync.c lin
 +static int __sync_filesystem(struct super_block *sb, int wait,
 +			     unsigned long start)
  {
- 	/*
- 	 * This should be safe, as we require bdi backing to actually
-@@ -41,7 +42,7 @@ static int __sync_filesystem(struct supe
- 		sb->s_qcop->quota_sync(sb, -1, wait);
- 
  	if (wait)
 -		sync_inodes_sb(sb);
-+		sync_inodes_sb_after(sb, start);
++		sync_inodes_sb(sb, start);
  	else
- 		writeback_inodes_sb(sb);
+ 		writeback_inodes_sb(sb, WB_REASON_SYNC);
  
-@@ -58,6 +59,7 @@ static int __sync_filesystem(struct supe
+@@ -47,6 +48,7 @@ static int __sync_filesystem(struct super_block *sb, int wait)
  int sync_filesystem(struct super_block *sb)
  {
  	int ret;
-+	unsigned long sincejif = jiffies;
++	unsigned long start = jiffies;
  
  	/*
  	 * We need to be protected against the filesystem going from
-@@ -71,25 +73,36 @@ int sync_filesystem(struct super_block *
+@@ -60,17 +62,17 @@ int sync_filesystem(struct super_block *sb)
  	if (sb->s_flags & MS_RDONLY)
  		return 0;
  
 -	ret = __sync_filesystem(sb, 0);
-+	ret = __sync_filesystem(sb, 0, sincejif);
++	ret = __sync_filesystem(sb, 0, start);
  	if (ret < 0)
  		return ret;
 -	return __sync_filesystem(sb, 1);
-+	return __sync_filesystem(sb, 1, sincejif);
++	return __sync_filesystem(sb, 1, start);
  }
  EXPORT_SYMBOL_GPL(sync_filesystem);
  
-+struct sync_arg {
-+	unsigned long sincejif;
-+	int wait;
-+};
-+
- static void sync_one_sb(struct super_block *sb, void *arg)
+ static void sync_inodes_one_sb(struct super_block *sb, void *arg)
  {
-+	struct sync_arg *sarg = arg;
-+
  	if (!(sb->s_flags & MS_RDONLY))
--		__sync_filesystem(sb, *(int *)arg);
-+		__sync_filesystem(sb, sarg->wait, sarg->sincejif);
- }
- /*
-  * Sync all the data for all the filesystems (called by sys_sync() and
-  * emergency sync)
-  */
--static void sync_filesystems(int wait)
-+static void sync_filesystems(int wait, unsigned long sincejif)
- {
--	iterate_supers(sync_one_sb, &wait);
-+	struct sync_arg arg = {
-+		.sincejif = sincejif,
-+		.wait = wait,
-+	};
-+	iterate_supers(sync_one_sb, &arg);
+-		sync_inodes_sb(sb);
++		sync_inodes_sb(sb, *((unsigned long *)arg));
  }
  
- /*
-@@ -98,9 +111,11 @@ static void sync_filesystems(int wait)
-  */
+ static void sync_fs_one_sb(struct super_block *sb, void *arg)
+@@ -102,9 +104,10 @@ static void fdatawait_one_bdev(struct block_device *bdev, void *arg)
  SYSCALL_DEFINE0(sync)
  {
-+	unsigned long sincejif = jiffies;
-+
- 	wakeup_flusher_threads(0);
--	sync_filesystems(0);
--	sync_filesystems(1);
-+	sync_filesystems(0, sincejif);
-+	sync_filesystems(1, sincejif);
- 	if (unlikely(laptop_mode))
- 		laptop_sync_completion();
- 	return 0;
-@@ -112,8 +127,8 @@ static void do_sync_work(struct work_str
- 	 * Sync twice to reduce the possibility we skipped some inodes / pages
- 	 * because they were temporarily locked
- 	 */
--	sync_filesystems(0);
--	sync_filesystems(0);
-+	sync_filesystems(0, jiffies);
-+	sync_filesystems(0, jiffies);
- 	printk("Emergency Sync complete\n");
- 	kfree(work);
+ 	int nowait = 0, wait = 1;
++	unsigned long start = jiffies;
+ 
+ 	wakeup_flusher_threads(0, WB_REASON_SYNC);
+-	iterate_supers(sync_inodes_one_sb, NULL);
++	iterate_supers(sync_inodes_one_sb, &start);
+ 	iterate_supers(sync_fs_one_sb, &nowait);
+ 	iterate_supers(sync_fs_one_sb, &wait);
+ 	iterate_bdevs(fdatawrite_one_bdev, NULL);
+diff --git a/fs/xfs/xfs_super.c b/fs/xfs/xfs_super.c
+index 15188cc99449..8968f5036fa1 100644
+--- a/fs/xfs/xfs_super.c
++++ b/fs/xfs/xfs_super.c
+@@ -918,7 +918,7 @@ xfs_flush_inodes(
+ 	struct super_block	*sb = mp->m_super;
+ 
+ 	if (down_read_trylock(&sb->s_umount)) {
+-		sync_inodes_sb(sb);
++		sync_inodes_sb(sb, jiffies);
+ 		up_read(&sb->s_umount);
+ 	}
  }
-diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.0-SLE11-SP2/include/linux/writeback.h linux-3.0-SLE11-SP2-1-sync_faster/include/linux/writeback.h
---- linux-3.0-SLE11-SP2/include/linux/writeback.h	2013-09-12 18:53:23.083054232 +0200
-+++ linux-3.0-SLE11-SP2-1-sync_faster/include/linux/writeback.h	2013-09-20 14:31:55.941651394 +0200
-@@ -62,6 +62,7 @@ int writeback_inodes_sb_if_idle(struct s
- int writeback_inodes_sb_nr_if_idle(struct super_block *, unsigned long nr);
- int try_to_writeback_inodes_sb_nr(struct super_block *, unsigned long nr);
- void sync_inodes_sb(struct super_block *);
-+void sync_inodes_sb_after(struct super_block *, unsigned long);
- void writeback_inodes_wb(struct bdi_writeback *wb,
- 		struct writeback_control *wbc);
- long wb_do_writeback(struct bdi_writeback *wb, int force_wait);
+diff --git a/include/linux/writeback.h b/include/linux/writeback.h
+index 021b8a319b9e..fc0e4320aa6d 100644
+--- a/include/linux/writeback.h
++++ b/include/linux/writeback.h
+@@ -97,7 +97,7 @@ void writeback_inodes_sb_nr(struct super_block *, unsigned long nr,
+ int try_to_writeback_inodes_sb(struct super_block *, enum wb_reason reason);
+ int try_to_writeback_inodes_sb_nr(struct super_block *, unsigned long nr,
+ 				  enum wb_reason reason);
+-void sync_inodes_sb(struct super_block *);
++void sync_inodes_sb(struct super_block *sb, unsigned long older_than_this);
+ void wakeup_flusher_threads(long nr_pages, enum wb_reason reason);
+ void inode_wait_for_writeback(struct inode *inode);
+ 
+diff --git a/include/trace/events/writeback.h b/include/trace/events/writeback.h
+index 464ea82e10db..c7bbbe794e65 100644
+--- a/include/trace/events/writeback.h
++++ b/include/trace/events/writeback.h
+@@ -287,11 +287,11 @@ TRACE_EVENT(writeback_queue_io,
+ 		__field(int,		reason)
+ 	),
+ 	TP_fast_assign(
+-		unsigned long *older_than_this = work->older_than_this;
++		unsigned long older_than_this = work->older_than_this;
+ 		strncpy(__entry->name, dev_name(wb->bdi->dev), 32);
+-		__entry->older	= older_than_this ?  *older_than_this : 0;
++		__entry->older	= older_than_this;
+ 		__entry->age	= older_than_this ?
+-				  (jiffies - *older_than_this) * 1000 / HZ : -1;
++				  (jiffies - older_than_this) * 1000 / HZ : -1;
+ 		__entry->moved	= moved;
+ 		__entry->reason	= work->reason;
+ 	),
+-- 
+1.8.1.4
+
