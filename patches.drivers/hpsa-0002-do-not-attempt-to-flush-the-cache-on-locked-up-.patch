@@ -1,0 +1,40 @@
+From: "Stephen M. Cameron" <scameron@beardog.cce.hp.com>
+Date: Mon, 23 Sep 2013 13:33:30 -0500
+Subject: hpsa: do not attempt to flush the cache on locked up controllers
+References: bnc#857800,FATE#315359
+Git-commit: scsi-misc 702890e3b910cd14c3d0ee3b4842d7e946e66b8d
+Patch-Mainline: queued to scsi-misc
+
+There's no point in trying since it can't work, and if you do
+try, it will just hang the system on shutdown.
+
+Signed-off-by: Stephen M. Cameron <scameron@beardog.cce.hp.com>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/hpsa.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/scsi/hpsa.c b/drivers/scsi/hpsa.c
+index 3896396..1f2370c 100644
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -4942,6 +4942,15 @@ static void hpsa_flush_cache(struct ctlr_info *h)
+ {
+ 	char *flush_buf;
+ 	struct CommandList *c;
++	unsigned long flags;
++
++	/* Don't bother trying to flush the cache if locked up */
++	spin_lock_irqsave(&h->lock, flags);
++	if (unlikely(h->lockup_detected)) {
++		spin_unlock_irqrestore(&h->lock, flags);
++		return;
++	}
++	spin_unlock_irqrestore(&h->lock, flags);
+ 
+ 	flush_buf = kzalloc(4, GFP_KERNEL);
+ 	if (!flush_buf)
+-- 
+1.7.12.4
+
