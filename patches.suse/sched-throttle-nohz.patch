@@ -1,7 +1,8 @@
 Subject: sched: ratelimit nohz
 From: Mike Galbraith <mgalbraith@suse.de>
 Date: Mon Jun 11 18:21:05 CEST 2012
-Patch-mainline: never
+Git-commit:
+Patch-mainline: never, SUSE specific
 References: Scheduler enhancements for I7 (bnc#754690)
 
 Entering nohz code on every micro-idle is costing ~10% throughput for netperf
@@ -17,22 +18,22 @@ on my Q6600 bof from ~85c to ~128, this version does not, and also blocks
 the mb() in rcu_needs_cpu().
 
 Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
-
 ---
  include/linux/sched.h    |    5 +++++
- kernel/sched.c           |    5 +++++
- kernel/time/tick-sched.c |    4 ++--
- 3 files changed, 12 insertions(+), 2 deletions(-)
+ kernel/sched/core.c      |    5 +++++
+ kernel/time/tick-sched.c |    2 +-
+ 3 files changed, 11 insertions(+), 1 deletion(-)
 
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
-@@ -274,8 +274,13 @@ extern cpumask_var_t nohz_cpu_mask;
- #if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ)
- extern void select_nohz_load_balancer(int stop_tick);
+@@ -227,9 +227,14 @@ extern int runqueue_is_locked(int cpu);
+ extern void nohz_balance_enter_idle(int cpu);
+ extern void set_cpu_sd_state_idle(void);
  extern int get_nohz_timer_target(void);
 +extern int sched_needs_cpu(int cpu);
  #else
- static inline void select_nohz_load_balancer(int stop_tick) { }
+ static inline void nohz_balance_enter_idle(int cpu) { }
+ static inline void set_cpu_sd_state_idle(void) { }
 +static inline int sched_needs_cpu(int cpu)
 +{
 +	return 0;
@@ -40,10 +41,10 @@ Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
  #endif
  
  /*
---- a/kernel/sched.c
-+++ b/kernel/sched.c
-@@ -1415,6 +1415,11 @@ static inline bool got_nohz_idle_kick(vo
- 	return idle_cpu(smp_processor_id()) && this_rq()->nohz_balance_kick;
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -659,6 +659,11 @@ static inline bool got_nohz_idle_kick(vo
+ 	return false;
  }
  
 +int sched_needs_cpu(int cpu)
@@ -51,19 +52,17 @@ Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
 +	return  cpu_rq(cpu)->avg_idle < sysctl_sched_migration_cost;
 +}
 +
- #else /* CONFIG_NO_HZ */
+ #else /* CONFIG_NO_HZ_COMMON */
  
  static inline bool got_nohz_idle_kick(void)
 --- a/kernel/time/tick-sched.c
 +++ b/kernel/time/tick-sched.c
-@@ -323,8 +323,8 @@ void tick_nohz_stop_sched_tick(int inidl
+@@ -544,7 +544,7 @@ static ktime_t tick_nohz_stop_sched_tick
  		time_delta = timekeeping_max_deferment();
- 	} while (read_seqretry(&xtime_lock, seq));
+ 	} while (read_seqretry(&jiffies_lock, seq));
  
--	if (rcu_needs_cpu(cpu) || printk_needs_cpu(cpu) ||
--	    arch_needs_cpu(cpu)) {
-+	if (sched_needs_cpu(cpu) || rcu_needs_cpu(cpu) ||
-+	    printk_needs_cpu(cpu) || arch_needs_cpu(cpu)) {
+-	if (rcu_needs_cpu(cpu, &rcu_delta_jiffies) ||
++	if (sched_needs_cpu(cpu) || rcu_needs_cpu(cpu, &rcu_delta_jiffies) ||
+ 	    arch_needs_cpu(cpu) || irq_work_needs_cpu()) {
  		next_jiffies = last_jiffies + 1;
  		delta_jiffies = 1;
- 	} else {
