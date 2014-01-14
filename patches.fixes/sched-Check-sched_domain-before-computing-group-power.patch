@@ -1,0 +1,62 @@
+From: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Date: Tue, 12 Nov 2013 22:11:26 +0530
+Subject: sched: Check sched_domain before computing group power
+Git-commit: 9abf24d465180f5f2eb26a43545348262f16b771
+Patch-mainline: v3.13-rc3
+References:
+
+After commit 863bffc80898 ("sched/fair: Fix group power_orig
+computation"), we can dereference rq->sd before it is set.
+
+Fix this by falling back to power_of() in this case and add a comment
+explaining things.
+
+Signed-off-by: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+[ Added comment and tweaked patch. ]
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: mikey@neuling.org
+Link: http://lkml.kernel.org/r/20131113151718.GN21461@twins.programming.kicks-ass.net
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+
+Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
+---
+ kernel/sched/fair.c |   27 ++++++++++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -5415,10 +5415,31 @@ void update_group_power(struct sched_dom
+ 		 */
+ 
+ 		for_each_cpu(cpu, sched_group_cpus(sdg)) {
+-			struct sched_group *sg = cpu_rq(cpu)->sd->groups;
++			struct sched_group_power *sgp;
++			struct rq *rq = cpu_rq(cpu);
+ 
+-			power_orig += sg->sgp->power_orig;
+-			power += sg->sgp->power;
++			/*
++			 * build_sched_domains() -> init_sched_groups_power()
++			 * gets here before we've attached the domains to the
++			 * runqueues.
++			 *
++			 * Use power_of(), which is set irrespective of domains
++			 * in update_cpu_power().
++			 *
++			 * This avoids power/power_orig from being 0 and
++			 * causing divide-by-zero issues on boot.
++			 *
++			 * Runtime updates will correct power_orig.
++			 */
++			if (unlikely(!rq->sd)) {
++				power_orig += power_of(cpu);
++				power += power_of(cpu);
++				continue;
++			}
++
++			sgp = rq->sd->groups->sgp;
++			power_orig += sgp->power_orig;
++			power += sgp->power;
+ 		}
+ 	} else  {
+ 		/*
