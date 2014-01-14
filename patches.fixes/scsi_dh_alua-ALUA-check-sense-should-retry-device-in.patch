@@ -1,0 +1,39 @@
+From: "Stewart, Sean" <Sean.Stewart@netapp.com>
+Date: Tue, 15 Oct 2013 15:52:39 +0000
+Subject: scsi_dh_alua: ALUA check sense should retry device internal reset unit attention
+References: bnc#846092
+Patch-Mainline: queued in scsi-misc for v3.14
+Git-commit: scsi-misc c20ee7b56e0a1937b41919813e5a98373ca48ae8
+
+When the scsi_dh_alua handler issues an RTPG during initialization, if it gets
+0x06/0x29/0x04 as the sense, it will fail to attach the handler.  NetApp
+E-Series returns 0x29/0x00 for power on, and 0x29/0x04 for conditions that
+cause the controller to reboot again.  These conditions should be treated
+identically within the handler.
+
+Signed-off-by: Sean Stewart <Sean.Stewart@netapp.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+---
+ drivers/scsi/device_handler/scsi_dh_alua.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
+index 68adb89..78205cc 100644
+--- a/drivers/scsi/device_handler/scsi_dh_alua.c
++++ b/drivers/scsi/device_handler/scsi_dh_alua.c
+@@ -481,6 +481,11 @@ static int alua_check_sense(struct scsi_device *sdev,
+ 			 * Power On, Reset, or Bus Device Reset, just retry.
+ 			 */
+ 			return ADD_TO_MLQUEUE;
++		if (sense_hdr->asc == 0x29 && sense_hdr->ascq == 0x04)
++			/*
++			 * Device internal reset
++			 */
++			return ADD_TO_MLQUEUE;
+ 		if (sense_hdr->asc == 0x2a && sense_hdr->ascq == 0x01)
+ 			/*
+ 			 * Mode Parameters Changed
+-- 
+1.7.12.4
+

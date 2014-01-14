@@ -1,0 +1,34 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Tue, 19 Nov 2013 16:41:49 +0100
+Subject: sched: Avoid NULL dereference on sd_busy
+Git-commit: 42eb088ed246a5a817bb45a8b32fe234cf1c0f8b
+Patch-mainline: v3.13-rc3
+References:
+
+Commit 37dc6b50cee9 ("sched: Remove unnecessary iteration over sched
+domains to update nr_busy_cpus") forgot to clear 'sd_busy' under some
+conditions leading to a possible NULL deref in set_cpu_sd_state_idle().
+
+Reported-by: Anton Blanchard <anton@samba.org>
+Cc: Preeti U Murthy <preeti@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/20131118113701.GF3866@twins.programming.kicks-ass.net
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
+---
+ kernel/sched/core.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -5341,8 +5341,9 @@ static void update_top_cache_domain(int
+ 	if (sd) {
+ 		id = cpumask_first(sched_domain_span(sd));
+ 		size = cpumask_weight(sched_domain_span(sd));
+-		rcu_assign_pointer(per_cpu(sd_busy, cpu), sd->parent);
++		sd = sd->parent; /* sd_busy */
+ 	}
++	rcu_assign_pointer(per_cpu(sd_busy, cpu), sd);
+ 
+ 	rcu_assign_pointer(per_cpu(sd_llc, cpu), sd);
+ 	per_cpu(sd_llc_size, cpu) = size;
