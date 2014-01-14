@@ -8,20 +8,23 @@ Improve error handling and use standard logging functions
 instead of hand-crafted ones.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/device_handler/scsi_dh_alua.c | 150 +++++++++++++++++++----------
+ 1 file changed, 98 insertions(+), 52 deletions(-)
 
 diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
-index a2759d7..f8a6df1 100644
+index 5248c88..e4e5497 100644
 --- a/drivers/scsi/device_handler/scsi_dh_alua.c
 +++ b/drivers/scsi/device_handler/scsi_dh_alua.c
-@@ -22,6 +22,7 @@
- #include <linux/slab.h>
+@@ -23,6 +23,7 @@
  #include <linux/delay.h>
+ #include <linux/module.h>
  #include <scsi/scsi.h>
 +#include <scsi/scsi_dbg.h>
  #include <scsi/scsi_eh.h>
  #include <scsi/scsi_dh.h>
  
-@@ -143,11 +144,13 @@ static struct request *get_alua_req(struct scsi_device *sdev,
+@@ -144,11 +145,13 @@ static struct request *get_alua_req(struct scsi_device *sdev,
  static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  {
  	struct request *rq;
@@ -37,7 +40,7 @@ index a2759d7..f8a6df1 100644
  
  	/* Prepare the command. */
  	rq->cmd[0] = INQUIRY;
-@@ -161,12 +164,12 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -162,12 +165,12 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  	rq->sense_len = h->senselen = 0;
  
  	err = blk_execute_rq(rq->q, NULL, rq, 1);
@@ -55,7 +58,7 @@ index a2759d7..f8a6df1 100644
  	}
  	blk_put_request(rq);
  done:
-@@ -181,11 +184,13 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h,
+@@ -182,11 +185,13 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h,
  			    bool rtpg_ext_hdr_req)
  {
  	struct request *rq;
@@ -71,7 +74,7 @@ index a2759d7..f8a6df1 100644
  
  	/* Prepare the command. */
  	rq->cmd[0] = MAINTENANCE_IN;
-@@ -204,12 +209,12 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h,
+@@ -205,12 +210,12 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h,
  	rq->sense_len = h->senselen = 0;
  
  	err = blk_execute_rq(rq->q, NULL, rq, 1);
@@ -89,7 +92,7 @@ index a2759d7..f8a6df1 100644
  	}
  	blk_put_request(rq);
  done:
-@@ -217,13 +222,11 @@ done:
+@@ -218,13 +223,11 @@ done:
  }
  
  /*
@@ -105,10 +108,10 @@ index a2759d7..f8a6df1 100644
   */
  static void stpg_endio(struct request *req, int error)
  {
-@@ -238,9 +241,8 @@ static void stpg_endio(struct request *req, int error)
+@@ -239,9 +242,8 @@ static void stpg_endio(struct request *req, int error)
  	}
  
- 	if (h->senselen > 0) {
+ 	if (req->sense_len > 0) {
 -		err = scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
 -					   &sense_hdr);
 -		if (!err) {
@@ -117,7 +120,7 @@ index a2759d7..f8a6df1 100644
  			err = SCSI_DH_IO;
  			goto done;
  		}
-@@ -249,10 +251,12 @@ static void stpg_endio(struct request *req, int error)
+@@ -250,10 +252,12 @@ static void stpg_endio(struct request *req, int error)
  			err = SCSI_DH_RETRY;
  			goto done;
  		}
@@ -132,9 +135,9 @@ index a2759d7..f8a6df1 100644
 +			    ALUA_DH_NAME);
 +		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
  		err = SCSI_DH_IO;
- 	}
- 	if (err == SCSI_DH_OK) {
-@@ -359,15 +363,43 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
+ 	} else if (error)
+ 		err = SCSI_DH_IO;
+@@ -362,15 +366,43 @@ static int alua_check_tpgs(struct scsi_device *sdev, struct alua_dh_data *h)
   */
  static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  {
@@ -184,7 +187,7 @@ index a2759d7..f8a6df1 100644
  
  	/* Check if vpd page exceeds initial buffer */
  	len = (h->buff[2] << 8) + h->buff[3] + 4;
-@@ -414,14 +446,13 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -417,14 +449,13 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  			    ALUA_DH_NAME);
  		h->state = TPGS_STATE_OPTIMIZED;
  		h->tpgs = TPGS_MODE_NONE;
@@ -204,7 +207,7 @@ index a2759d7..f8a6df1 100644
  }
  
  static char print_alua_state(int state)
-@@ -524,7 +555,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -533,7 +564,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  	struct scsi_sense_hdr sense_hdr;
  	int len, k, off, valid_states = 0;
  	unsigned char *ucp;
@@ -213,7 +216,7 @@ index a2759d7..f8a6df1 100644
  	bool rtpg_ext_hdr_req = 1;
  	unsigned long expiry, interval = 0;
  	unsigned int tpg_desc_tbl_off;
-@@ -536,13 +567,21 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -545,13 +576,21 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		expiry = round_jiffies_up(jiffies + h->transition_tmo * HZ);
  
   retry:
@@ -241,7 +244,7 @@ index a2759d7..f8a6df1 100644
  
  		/*
  		 * submit_rtpg() has failed on existing arrays
-@@ -560,16 +599,23 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -569,16 +608,23 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		}
  
  		err = alua_check_sense(sdev, &sense_hdr);
@@ -273,3 +276,6 @@ index a2759d7..f8a6df1 100644
  
  	len = (h->buff[0] << 24) + (h->buff[1] << 16) +
  		(h->buff[2] << 8) + h->buff[3] + 4;
+-- 
+1.7.12.4
+

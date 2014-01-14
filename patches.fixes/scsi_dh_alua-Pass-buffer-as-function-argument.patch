@@ -2,21 +2,21 @@ From: Hannes Reinecke <hare@suse.de>
 Date: Wed, 10 Oct 2012 11:03:54 +0200
 Subject: scsi_dh_alua: Pass buffer as function argument
 References: bnc#708296
-Patch-Mainline: submitted to linux scsi
+Patch-Mainline: submitted to linux-scsi
 
 Pass in the buffer as a function argument for submit_vpd() and
 submit_rtpg().
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/scsi/device_handler/scsi_dh_alua.c | 48 ++++++++++++++++--------------
- 1 file changed, 26 insertions(+), 22 deletions(-)
+ drivers/scsi/device_handler/scsi_dh_alua.c | 44 ++++++++++++++++--------------
+ 1 file changed, 24 insertions(+), 20 deletions(-)
 
 diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
-index 07c63ef..56747db 100644
+index ece2255..5358c2f 100644
 --- a/drivers/scsi/device_handler/scsi_dh_alua.c
 +++ b/drivers/scsi/device_handler/scsi_dh_alua.c
-@@ -142,12 +142,13 @@ static struct request *get_alua_req(struct scsi_device *sdev,
+@@ -143,12 +143,13 @@ static struct request *get_alua_req(struct scsi_device *sdev,
   * submit_vpd_inquiry - Issue an INQUIRY VPD page 0x83 command
   * @sdev: sdev the command should be sent to
   */
@@ -32,7 +32,7 @@ index 07c63ef..56747db 100644
  	if (!rq) {
  		err = DRIVER_BUSY << 24;
  		goto done;
-@@ -157,12 +158,12 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -158,12 +159,12 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  	rq->cmd[0] = INQUIRY;
  	rq->cmd[1] = 1;
  	rq->cmd[2] = 0x83;
@@ -48,7 +48,7 @@ index 07c63ef..56747db 100644
  
  	err = blk_execute_rq(rq->q, NULL, rq, 1);
  	if (err < 0) {
-@@ -170,7 +171,8 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -171,7 +172,8 @@ static int submit_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  			err = DID_ERROR << 16;
  		else
  			err = rq->errors;
@@ -58,7 +58,7 @@ index 07c63ef..56747db 100644
  	}
  	blk_put_request(rq);
  done:
-@@ -181,12 +183,13 @@ done:
+@@ -182,12 +184,13 @@ done:
   * submit_rtpg - Issue a REPORT TARGET GROUP STATES command
   * @sdev: sdev the command should be sent to
   */
@@ -74,7 +74,7 @@ index 07c63ef..56747db 100644
  	if (!rq) {
  		err = DRIVER_BUSY << 24;
  		goto done;
-@@ -194,19 +197,19 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -195,19 +198,19 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
  
  	/* Prepare the command. */
  	rq->cmd[0] = MAINTENANCE_IN;
@@ -101,7 +101,7 @@ index 07c63ef..56747db 100644
  
  	err = blk_execute_rq(rq->q, NULL, rq, 1);
  	if (err < 0) {
-@@ -214,7 +217,8 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -215,7 +218,8 @@ static unsigned submit_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
  			err = DID_ERROR << 16;
  		else
  			err = rq->errors;
@@ -111,18 +111,7 @@ index 07c63ef..56747db 100644
  	}
  	blk_put_request(rq);
  done:
-@@ -240,8 +244,8 @@ static void stpg_endio(struct request *req, int error)
- 		goto done;
- 	}
- 
--	if (h->senselen > 0) {
--		if (!scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
-+	if (req->sense_len > 0) {
-+		if (!scsi_normalize_sense(req->sense, SCSI_SENSE_BUFFERSIZE,
- 					  &sense_hdr)) {
- 			err = SCSI_DH_IO;
- 			goto done;
-@@ -371,11 +375,11 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -374,11 +378,11 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  
  	expiry = round_jiffies_up(jiffies + timeout);
   retry:
@@ -136,7 +125,7 @@ index 07c63ef..56747db 100644
  		    !scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
  					  &sense_hdr)) {
  			sdev_printk(KERN_INFO, sdev,
-@@ -566,10 +570,10 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -575,10 +579,10 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		expiry = round_jiffies_up(jiffies + h->transition_tmo * HZ);
  
   retry:

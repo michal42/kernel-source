@@ -2,21 +2,21 @@ From: Hannes Reinecke <hare@suse.de>
 Date: Mon, 8 Oct 2012 10:07:21 +0200
 Subject: scsi_dh_alua: Use separate alua_port_group structure
 References: bnc#708296
-Patch-Mainline: submitted to linux scsi
+Patch-Mainline: submitted to linux-scsi
 
 The port group needs to be a separate structure as several
 LUNs might belong to the same group.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/scsi/device_handler/scsi_dh_alua.c | 219 ++++++++++++++++++-----------
- 1 file changed, 138 insertions(+), 81 deletions(-)
+ drivers/scsi/device_handler/scsi_dh_alua.c | 220 ++++++++++++++++++-----------
+ 1 file changed, 139 insertions(+), 81 deletions(-)
 
 diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
-index 6e317a4..b1dc1f2 100644
+index 49952f4..6f1d19c 100644
 --- a/drivers/scsi/device_handler/scsi_dh_alua.c
 +++ b/drivers/scsi/device_handler/scsi_dh_alua.c
-@@ -62,9 +62,13 @@
+@@ -63,9 +63,13 @@
  #define ALUA_OPTIMIZE_STPG		1
  #define ALUA_RTPG_EXT_HDR_UNSUPP	2
  
@@ -32,7 +32,7 @@ index 6e317a4..b1dc1f2 100644
  	int			tpgs;
  	int			state;
  	int			pref;
-@@ -73,6 +77,13 @@ struct alua_dh_data {
+@@ -74,6 +78,13 @@ struct alua_dh_data {
  	unsigned char		*buff;
  	int			bufflen;
  	unsigned char		transition_tmo;
@@ -46,7 +46,7 @@ index 6e317a4..b1dc1f2 100644
  	struct scsi_device	*sdev;
  	activate_complete	callback_fn;
  	void			*callback_data;
-@@ -91,18 +102,18 @@ static inline struct alua_dh_data *get_alua_data(struct scsi_device *sdev)
+@@ -92,18 +103,18 @@ static inline struct alua_dh_data *get_alua_data(struct scsi_device *sdev)
  	return ((struct alua_dh_data *) scsi_dh_data->buf);
  }
  
@@ -73,7 +73,7 @@ index 6e317a4..b1dc1f2 100644
  	return 0;
  }
  
-@@ -136,6 +147,20 @@ static struct request *get_alua_req(struct scsi_device *sdev,
+@@ -137,6 +148,20 @@ static struct request *get_alua_req(struct scsi_device *sdev,
  	return rq;
  }
  
@@ -94,7 +94,7 @@ index 6e317a4..b1dc1f2 100644
  /*
   * submit_vpd_inquiry - Issue an INQUIRY VPD page 0x83 command
   * @sdev: sdev the command should be sent to
-@@ -326,10 +351,11 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -327,10 +352,11 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  	int len, timeout = ALUA_FAILOVER_TIMEOUT;
  	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
  	struct scsi_sense_hdr sense_hdr;
@@ -108,7 +108,7 @@ index 6e317a4..b1dc1f2 100644
  
  	expiry = round_jiffies_up(jiffies + timeout);
   retry:
-@@ -343,8 +369,6 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -344,8 +370,6 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  	}
  	retval = submit_vpd_inquiry(sdev, buff, bufflen, sense);
  	if (retval) {
@@ -117,7 +117,7 @@ index 6e317a4..b1dc1f2 100644
  		if (!(driver_byte(retval) & DRIVER_SENSE) ||
  		    !scsi_normalize_sense(sense, SCSI_SENSE_BUFFERSIZE,
  					  &sense_hdr)) {
-@@ -355,8 +379,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -356,8 +380,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  				err = SCSI_DH_DEV_TEMP_BUSY;
  			else
  				err = SCSI_DH_IO;
@@ -127,7 +127,7 @@ index 6e317a4..b1dc1f2 100644
  		}
  		err = alua_check_sense(sdev, &sense_hdr);
  		if (err == ADD_TO_MLQUEUE && time_before(jiffies, expiry))
-@@ -368,7 +391,8 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -369,7 +392,8 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  			sdev_printk(KERN_INFO, sdev,
  				    "%s: evpd inquiry failed, ", ALUA_DH_NAME);
  			scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
@@ -137,7 +137,7 @@ index 6e317a4..b1dc1f2 100644
  		}
  	}
  
-@@ -393,7 +417,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -394,7 +418,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  			break;
  		case 0x5:
  			/* Target port group */
@@ -146,7 +146,7 @@ index 6e317a4..b1dc1f2 100644
  			break;
  		default:
  			break;
-@@ -401,7 +425,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -402,7 +426,7 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  		d += d[3] + 4;
  	}
  
@@ -155,7 +155,7 @@ index 6e317a4..b1dc1f2 100644
  		/*
  		 * Internal error; TPGS supported but required
  		 * VPD identification descriptors not present.
-@@ -410,15 +434,36 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -411,15 +435,37 @@ static int alua_vpd_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
  		sdev_printk(KERN_INFO, sdev,
  			    "%s: No target port descriptors found\n",
  			    ALUA_DH_NAME);
@@ -174,10 +174,10 @@ index 6e317a4..b1dc1f2 100644
 +		    "%s: port group %02x rel port %02x\n",
 +		    ALUA_DH_NAME, group_id, h->rel_port);
 +	spin_lock(&port_group_lock);
-+	pg = kmalloc(sizeof(struct alua_port_group), GFP_ATOMIC);
++	pg = kzalloc(sizeof(struct alua_port_group), GFP_ATOMIC);
 +	if (!pg) {
 +		sdev_printk(KERN_WARNING, sdev,
-+			    "%s: kmalloc port group failed\n",
++			    "%s: kzalloc port group failed\n",
 +			    ALUA_DH_NAME);
 +		/* Temporary failure, bypass */
 +		spin_unlock(&port_group_lock);
@@ -187,8 +187,9 @@ index 6e317a4..b1dc1f2 100644
 +	pg->group_id = group_id;
 +	pg->buff = pg->inq;
 +	pg->bufflen = ALUA_INQUIRY_SIZE;
-+	pg->tpgs = TPGS_MODE_UNINITIALIZED;
++	pg->tpgs = h->tpgs;
 +	pg->state = TPGS_STATE_OPTIMIZED;
++	pg->flags = h->flags;
 +	kref_init(&pg->kref);
 +	list_add(&pg->node, &port_group_list);
 +	h->pg = pg;
@@ -198,16 +199,16 @@ index 6e317a4..b1dc1f2 100644
  	kfree(buff);
  	return err;
  }
-@@ -518,7 +563,7 @@ static int alua_check_sense(struct scsi_device *sdev,
+@@ -525,7 +571,7 @@ static int alua_check_sense(struct scsi_device *sdev,
   * Returns SCSI_DH_DEV_OFFLINED if the path is
   * found to be unusable.
   */
--static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
-+static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
+-static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_for_transition)
++static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg, int wait_for_transition)
  {
  	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
  	struct scsi_sense_hdr sense_hdr;
-@@ -529,13 +574,13 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -536,13 +582,13 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  	unsigned int tpg_desc_tbl_off;
  	unsigned char orig_transition_tmo;
  
@@ -224,7 +225,7 @@ index 6e317a4..b1dc1f2 100644
  
  	if (retval) {
  		if (!(driver_byte(retval) & DRIVER_SENSE) ||
-@@ -559,10 +604,10 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -566,10 +612,10 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		 * The retry without rtpg_ext_hdr_req set
  		 * handles this.
  		 */
@@ -237,7 +238,7 @@ index 6e317a4..b1dc1f2 100644
  			goto retry;
  		}
  
-@@ -585,12 +630,12 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -592,12 +638,12 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		return SCSI_DH_IO;
  	}
  
@@ -254,7 +255,7 @@ index 6e317a4..b1dc1f2 100644
  			sdev_printk(KERN_WARNING, sdev,
  				    "%s: kmalloc buffer failed\n",__func__);
  			/* Temporary failure, bypass */
-@@ -599,31 +644,32 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -606,31 +652,32 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		goto retry;
  	}
  
@@ -269,8 +270,8 @@ index 6e317a4..b1dc1f2 100644
 -		h->transition_tmo = ALUA_FAILOVER_TIMEOUT;
 +		pg->transition_tmo = ALUA_FAILOVER_TIMEOUT;
  
--	if (orig_transition_tmo != h->transition_tmo) {
-+	if (orig_transition_tmo != pg->transition_tmo) {
+-	if (wait_for_transition && (orig_transition_tmo != h->transition_tmo)) {
++	if (wait_for_transition && (orig_transition_tmo != pg->transition_tmo)) {
  		sdev_printk(KERN_INFO, sdev,
  			    "%s: transition timeout set to %d seconds\n",
 -			    ALUA_DH_NAME, h->transition_tmo);
@@ -299,7 +300,7 @@ index 6e317a4..b1dc1f2 100644
  			valid_states = ucp[1];
  		}
  		off = 8 + (ucp[7] * 4);
-@@ -631,8 +677,8 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -638,8 +685,8 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  
  	sdev_printk(KERN_INFO, sdev,
  		    "%s: port group %02x state %c %s supports %c%c%c%c%c%c%c\n",
@@ -310,25 +311,25 @@ index 6e317a4..b1dc1f2 100644
  		    valid_states&TPGS_SUPPORT_TRANSITION?'T':'t',
  		    valid_states&TPGS_SUPPORT_OFFLINE?'O':'o',
  		    valid_states&TPGS_SUPPORT_LBA_DEPENDENT?'L':'l',
-@@ -641,7 +687,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -648,7 +695,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		    valid_states&TPGS_SUPPORT_NONOPTIMIZED?'N':'n',
  		    valid_states&TPGS_SUPPORT_OPTIMIZED?'A':'a');
  
 -	switch (h->state) {
 +	switch (pg->state) {
  	case TPGS_STATE_TRANSITIONING:
- 		if (time_before(jiffies, expiry)) {
- 			/* State transition, retry */
-@@ -651,7 +697,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+ 		if (wait_for_transition) {
+ 			if (time_before(jiffies, expiry)) {
+@@ -663,7 +710,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  		}
+ 
  		/* Transitioning time exceeded, set port to standby */
- 		err = SCSI_DH_RETRY;
 -		h->state = TPGS_STATE_STANDBY;
 +		pg->state = TPGS_STATE_STANDBY;
  		break;
  	case TPGS_STATE_OFFLINE:
  		/* Path unusable */
-@@ -672,21 +718,21 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -684,21 +731,21 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
   * response. Returns SCSI_DH_RETRY per default to trigger
   * a re-evaluation of the target group state.
   */
@@ -356,7 +357,7 @@ index 6e317a4..b1dc1f2 100644
  			return SCSI_DH_OK;
  		break;
  	case TPGS_STATE_STANDBY:
-@@ -703,8 +749,8 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -715,8 +762,8 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
  		break;
  	}
  	/* Set state to transitioning */
@@ -367,7 +368,7 @@ index 6e317a4..b1dc1f2 100644
  
  	if (retval) {
  		if (!(driver_byte(retval) & DRIVER_SENSE) ||
-@@ -716,11 +762,11 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -728,11 +775,11 @@ static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
  			/* Retry RTPG */
  			return err;
  		}
@@ -382,14 +383,14 @@ index 6e317a4..b1dc1f2 100644
  			    ALUA_DH_NAME);
  		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
  		err = SCSI_DH_RETRY;
-@@ -744,16 +790,16 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -756,16 +803,16 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
  		goto out;
  
  	err = alua_vpd_inquiry(sdev, h);
 -	if (err != SCSI_DH_OK)
 -		goto out;
 -
--	err = alua_rtpg(sdev, h);
+-	err = alua_rtpg(sdev, h, 0);
 -	if (err != SCSI_DH_OK)
 +	if (err != SCSI_DH_OK || !h->pg)
  		goto out;
@@ -404,14 +405,17 @@ index 6e317a4..b1dc1f2 100644
  /*
   * alua_set_params - set/unset the optimize flag
   * @sdev: device on the path to be activated
-@@ -802,13 +848,19 @@ static int alua_activate(struct scsi_device *sdev,
+@@ -818,16 +865,22 @@ static int alua_activate(struct scsi_device *sdev,
  	struct alua_dh_data *h = get_alua_data(sdev);
  	int err = SCSI_DH_OK;
  
--	err = alua_rtpg(sdev, h);
+-	err = alua_rtpg(sdev, h, 1);
 -	if (err != SCSI_DH_OK)
 +	if (!h->pg)
  		goto out;
+ 
+ 	if (optimize_stpg)
+ 		h->flags |= ALUA_OPTIMIZE_STPG;
  
 -	err = alua_stpg(sdev, h);
 +	kref_get(&h->pg->kref);
@@ -428,7 +432,7 @@ index 6e317a4..b1dc1f2 100644
  out:
  	if (fn)
  		fn(data, err);
-@@ -824,13 +876,19 @@ out:
+@@ -843,13 +896,19 @@ out:
  static int alua_prep_fn(struct scsi_device *sdev, struct request *req)
  {
  	struct alua_dh_data *h = get_alua_data(sdev);
@@ -452,7 +456,7 @@ index 6e317a4..b1dc1f2 100644
  		ret = BLKPREP_KILL;
  		req->cmd_flags |= REQ_QUIET;
  	}
-@@ -880,11 +938,8 @@ static int alua_bus_attach(struct scsi_device *sdev)
+@@ -899,11 +958,8 @@ static int alua_bus_attach(struct scsi_device *sdev)
  	scsi_dh_data->scsi_dh = &alua_dh;
  	h = (struct alua_dh_data *) scsi_dh_data->buf;
  	h->tpgs = TPGS_MODE_UNINITIALIZED;
@@ -465,7 +469,7 @@ index 6e317a4..b1dc1f2 100644
  	h->sdev = sdev;
  
  	err = alua_initialize(sdev, h);
-@@ -923,8 +978,10 @@ static void alua_bus_detach(struct scsi_device *sdev)
+@@ -942,8 +998,10 @@ static void alua_bus_detach(struct scsi_device *sdev)
  	spin_unlock_irqrestore(sdev->request_queue->queue_lock, flags);
  
  	h = (struct alua_dh_data *) scsi_dh_data->buf;

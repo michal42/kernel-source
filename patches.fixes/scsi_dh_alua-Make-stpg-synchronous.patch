@@ -2,21 +2,21 @@ From: Hannes Reinecke <hare@suse.de>
 Date: Wed, 26 Sep 2012 11:08:43 +0200
 Subject: scsi_dh_alua: Make stpg synchronous
 References: bnc#708296
-Patch-Mainline: submitted to linux scsi
+Patch-Mainline: submitted to linux-scsi
 
-We should be issuing STPG synchronously as we might need to
-evaluate the return code.
+We should be issuing STPG synchronously as we need to
+evaluate the return code on failure.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/scsi/device_handler/scsi_dh_alua.c | 143 ++++++++++++++---------------
- 1 file changed, 68 insertions(+), 75 deletions(-)
+ drivers/scsi/device_handler/scsi_dh_alua.c | 192 +++++++++++++----------------
+ 1 file changed, 89 insertions(+), 103 deletions(-)
 
 diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
-index 56747db..478be15 100644
+index 5358c2f..ef92008 100644
 --- a/drivers/scsi/device_handler/scsi_dh_alua.c
 +++ b/drivers/scsi/device_handler/scsi_dh_alua.c
-@@ -226,80 +226,27 @@ done:
+@@ -227,82 +227,27 @@ done:
  }
  
  /*
@@ -32,14 +32,14 @@ index 56747db..478be15 100644
 -	struct scsi_sense_hdr sense_hdr;
 -	unsigned err = SCSI_DH_OK;
 -
--	if (error || host_byte(req->errors) != DID_OK ||
--			msg_byte(req->errors) != COMMAND_COMPLETE) {
+-	if (host_byte(req->errors) != DID_OK ||
+-	    msg_byte(req->errors) != COMMAND_COMPLETE) {
 -		err = SCSI_DH_IO;
 -		goto done;
 -	}
 -
 -	if (req->sense_len > 0) {
--		if (!scsi_normalize_sense(req->sense, SCSI_SENSE_BUFFERSIZE,
+-		if (!scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
 -					  &sense_hdr)) {
 -			err = SCSI_DH_IO;
 -			goto done;
@@ -56,7 +56,9 @@ index 56747db..478be15 100644
 -			    ALUA_DH_NAME);
 -		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
 -		err = SCSI_DH_IO;
--	}
+-	} else if (error)
+-		err = SCSI_DH_IO;
+-
 -	if (err == SCSI_DH_OK) {
 -		h->state = TPGS_STATE_OPTIMIZED;
 -		sdev_printk(KERN_INFO, h->sdev,
@@ -106,7 +108,7 @@ index 56747db..478be15 100644
  	if (!rq)
  		return SCSI_DH_RES_TEMP_UNAVAIL;
  
-@@ -312,13 +259,22 @@ static unsigned submit_stpg(struct alua_dh_data *h)
+@@ -315,13 +260,22 @@ static unsigned submit_stpg(struct alua_dh_data *h)
  	rq->cmd[9] = stpg_len & 0xff;
  	rq->cmd_len = COMMAND_SIZE(MAINTENANCE_OUT);
  
@@ -134,21 +136,48 @@ index 56747db..478be15 100644
  }
  
  /*
-@@ -701,6 +657,49 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
+@@ -715,6 +669,69 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h, int wait_
  }
  
  /*
 + * alua_stpg - Issue a SET TARGET GROUP STATES command
 + *
 + * Issue a SET TARGET GROUP STATES command and evaluate the
-+ * response.
++ * response. Returns SCSI_DH_RETRY per default to trigger
++ * a re-evaluation of the target group state.
 + */
 +static unsigned alua_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
 +{
-+	int retval, err = SCSI_DH_OK;
++	int retval, err = SCSI_DH_RETRY;
 +	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
 +	struct scsi_sense_hdr sense_hdr;
 +
++	if (!(h->tpgs & TPGS_MODE_EXPLICIT)) {
++		/* Only implicit ALUA supported, retry */
++		return SCSI_DH_RETRY;
++	}
++	switch (h->state) {
++	case TPGS_STATE_NONOPTIMIZED:
++		if ((h->flags & ALUA_OPTIMIZE_STPG) &&
++		    (!h->pref) &&
++		    (h->tpgs & TPGS_MODE_IMPLICIT))
++			return SCSI_DH_OK;
++		break;
++	case TPGS_STATE_STANDBY:
++	case TPGS_STATE_UNAVAILABLE:
++		break;
++	case TPGS_STATE_OFFLINE:
++		return SCSI_DH_IO;
++		break;
++	case TPGS_STATE_TRANSITIONING:
++		return SCSI_DH_RETRY;
++		break;
++	default:
++		return SCSI_DH_NOSYS;
++		break;
++	}
++	/* Set state to transitioning */
++	h->state = TPGS_STATE_TRANSITIONING;
 +	retval = submit_stpg(sdev, h->group_id, sense);
 +
 +	if (retval) {
@@ -158,24 +187,17 @@ index 56747db..478be15 100644
 +			sdev_printk(KERN_INFO, sdev, "%s: stpg failed, ",
 +				    ALUA_DH_NAME);
 +			scsi_show_result(retval);
-+			if (driver_byte(retval) == DRIVER_BUSY)
-+				err = SCSI_DH_DEV_TEMP_BUSY;
-+			else
-+				err = SCSI_DH_IO;
++			/* Retry RTPG */
 +			return err;
 +		}
 +		err = alua_check_sense(h->sdev, &sense_hdr);
-+		if (err == ADD_TO_MLQUEUE) {
-+			/* Port already transitioning */
-+			return SCSI_DH_OK;
-+		}
 +		sdev_printk(KERN_INFO, h->sdev, "%s: stpg failed, ",
 +			    ALUA_DH_NAME);
 +		scsi_show_sense_hdr(&sense_hdr);
 +		sdev_printk(KERN_INFO, h->sdev, "%s: stpg failed, ",
 +			    ALUA_DH_NAME);
 +		scsi_show_extd_sense(sense_hdr.asc, sense_hdr.ascq);
-+		err = SCSI_DH_IO;
++		err = SCSI_DH_RETRY;
 +	}
 +	return err;
 +}
@@ -184,10 +206,42 @@ index 56747db..478be15 100644
   * alua_initialize - Initialize ALUA state
   * @sdev: the device to be initialized
   *
-@@ -803,14 +802,8 @@ static int alua_activate(struct scsi_device *sdev,
- 		}
- 	}
+@@ -791,7 +808,6 @@ static int alua_activate(struct scsi_device *sdev,
+ {
+ 	struct alua_dh_data *h = get_alua_data(sdev);
+ 	int err = SCSI_DH_OK;
+-	int stpg = 0;
  
+ 	err = alua_rtpg(sdev, h, 1);
+ 	if (err != SCSI_DH_OK)
+@@ -800,39 +816,9 @@ static int alua_activate(struct scsi_device *sdev,
+ 	if (optimize_stpg)
+ 		h->flags |= ALUA_OPTIMIZE_STPG;
+ 
+-	if (h->tpgs & TPGS_MODE_EXPLICIT) {
+-		switch (h->state) {
+-		case TPGS_STATE_NONOPTIMIZED:
+-			stpg = 1;
+-			if ((h->flags & ALUA_OPTIMIZE_STPG) &&
+-			    (!h->pref) &&
+-			    (h->tpgs & TPGS_MODE_IMPLICIT))
+-				stpg = 0;
+-			break;
+-		case TPGS_STATE_STANDBY:
+-		case TPGS_STATE_UNAVAILABLE:
+-			stpg = 1;
+-			break;
+-		case TPGS_STATE_OFFLINE:
+-			err = SCSI_DH_IO;
+-			break;
+-		case TPGS_STATE_TRANSITIONING:
+-			err = SCSI_DH_RETRY;
+-			break;
+-		default:
+-			break;
+-		}
+-	}
+-
 -	if (stpg) {
 -		h->callback_fn = fn;
 -		h->callback_data = data;
@@ -196,11 +250,13 @@ index 56747db..478be15 100644
 -			return 0;
 -		h->callback_fn = h->callback_data = NULL;
 -	}
-+	if (stpg)
-+		err = alua_stpg(sdev, h);
- 
+-
++	err = alua_stpg(sdev, h);
++	if (err == SCSI_DH_RETRY)
++		err = alua_rtpg(sdev, h);
  out:
  	if (fn)
+ 		fn(data, err);
 -- 
 1.7.12.4
 
