@@ -1,0 +1,97 @@
+From: Zhang Yanfei <zhangyanfei@cn.fujitsu.com>
+Date: Tue, 12 Nov 2013 15:07:43 -0800
+Subject: [PATCH] mm/sparsemem: fix a bug in free_map_bootmem when
+ CONFIG_SPARSEMEM_VMEMMAP
+
+References: Node memory hot remove (fate#316483)
+Patch-mainline: Yes (v3.13)
+Git-commit: 81556b02525181e19ef073a798ba9d48db96f708
+
+We pass the number of pages which hold page structs of a memory section
+to free_map_bootmem().  This is right when !CONFIG_SPARSEMEM_VMEMMAP but
+wrong when CONFIG_SPARSEMEM_VMEMMAP.  When CONFIG_SPARSEMEM_VMEMMAP, we
+should pass the number of pages of a memory section to free_map_bootmem.
+
+So the fix is removing the nr_pages parameter.  When
+CONFIG_SPARSEMEM_VMEMMAP, we directly use the prefined marco
+PAGES_PER_SECTION in free_map_bootmem.  When !CONFIG_SPARSEMEM_VMEMMAP,
+we calculate page numbers needed to hold the page structs for a memory
+section and use the value in free_map_bootmem().
+
+This was found by reading the code.  And I have no machine that support
+memory hot-remove to test the bug now.
+
+Signed-off-by: Zhang Yanfei <zhangyanfei@cn.fujitsu.com>
+Reviewed-by: Wanpeng Li <liwanp@linux.vnet.ibm.com>
+Cc: Wen Congyang <wency@cn.fujitsu.com>
+Cc: Tang Chen <tangchen@cn.fujitsu.com>
+Cc: Toshi Kani <toshi.kani@hp.com>
+Cc: Yasuaki Ishimatsu <isimatu.yasuaki@jp.fujitsu.com>
+Cc: Yinghai Lu <yinghai@kernel.org>
+Cc: Yasunori Goto <y-goto@jp.fujitsu.com>
+Cc: Andy Whitcroft <apw@shadowen.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/sparse.c | 20 +++++++++-----------
+ 1 file changed, 9 insertions(+), 11 deletions(-)
+
+diff --git a/mm/sparse.c b/mm/sparse.c
+index fbb9dbc..8cc7be0 100644
+--- a/mm/sparse.c
++++ b/mm/sparse.c
+@@ -603,10 +603,10 @@ static void __kfree_section_memmap(struct page *memmap)
+ 	vmemmap_free(start, end);
+ }
+ #ifdef CONFIG_MEMORY_HOTREMOVE
+-static void free_map_bootmem(struct page *memmap, unsigned long nr_pages)
++static void free_map_bootmem(struct page *memmap)
+ {
+ 	unsigned long start = (unsigned long)memmap;
+-	unsigned long end = (unsigned long)(memmap + nr_pages);
++	unsigned long end = (unsigned long)(memmap + PAGES_PER_SECTION);
+ 
+ 	vmemmap_free(start, end);
+ }
+@@ -648,12 +648,15 @@ static void __kfree_section_memmap(struct page *memmap)
+ }
+ 
+ #ifdef CONFIG_MEMORY_HOTREMOVE
+-static void free_map_bootmem(struct page *memmap, unsigned long nr_pages)
++static void free_map_bootmem(struct page *memmap)
+ {
+ 	unsigned long maps_section_nr, removing_section_nr, i;
+-	unsigned long magic;
++	unsigned long magic, nr_pages;
+ 	struct page *page = virt_to_page(memmap);
+ 
++	nr_pages = PAGE_ALIGN(PAGES_PER_SECTION * sizeof(struct page))
++		>> PAGE_SHIFT;
++
+ 	for (i = 0; i < nr_pages; i++, page++) {
+ 		magic = (unsigned long) page->lru.next;
+ 
+@@ -756,7 +759,6 @@ static inline void clear_hwpoisoned_pages(struct page *memmap, int nr_pages)
+ static void free_section_usemap(struct page *memmap, unsigned long *usemap)
+ {
+ 	struct page *usemap_page;
+-	unsigned long nr_pages;
+ 
+ 	if (!usemap)
+ 		return;
+@@ -777,12 +779,8 @@ static void free_section_usemap(struct page *memmap, unsigned long *usemap)
+ 	 * on the section which has pgdat at boot time. Just keep it as is now.
+ 	 */
+ 
+-	if (memmap) {
+-		nr_pages = PAGE_ALIGN(PAGES_PER_SECTION * sizeof(struct page))
+-			>> PAGE_SHIFT;
+-
+-		free_map_bootmem(memmap, nr_pages);
+-	}
++	if (memmap)
++		free_map_bootmem(memmap);
+ }
+ 
+ void sparse_remove_one_section(struct zone *zone, struct mem_section *ms)
