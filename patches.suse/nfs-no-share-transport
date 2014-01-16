@@ -44,10 +44,10 @@ Acked-by: NeilBrown <neilb@suse.de>
 
 ---
  fs/nfs/client.c                |    7 +++++++
- fs/nfs/super.c                 |   12 ++++++++++++
+ fs/nfs/super.c                 |   17 +++++++++++++++++
  include/linux/nfs_fs_sb.h      |    1 +
  include/uapi/linux/nfs_mount.h |    1 +
- 4 files changed, 21 insertions(+)
+ 4 files changed, 26 insertions(+)
 
 --- linux-3.12-SLE12.orig/fs/nfs/client.c
 +++ linux-3.12-SLE12/fs/nfs/client.c
@@ -114,7 +114,17 @@ Acked-by: NeilBrown <neilb@suse.de>
  		case Opt_resvport:
  			mnt->flags &= ~NFS_MOUNT_NORESVPORT;
  			break;
-@@ -2204,6 +2214,8 @@ nfs_remount(struct super_block *sb, int
+@@ -2159,6 +2169,9 @@ nfs_compare_remount_data(struct nfs_serv
+ 	return 0;
+ }
+ 
++static bool always_nosharetransport = 0;
++module_param(always_nosharetransport, bool, 0644);
++
+ int
+ nfs_remount(struct super_block *sb, int *flags, char *raw_data)
+ {
+@@ -2204,6 +2217,8 @@ nfs_remount(struct super_block *sb, int
  	error = nfs_parse_mount_options((char *)options, data);
  	if (error < 0)
  		goto out;
@@ -123,6 +133,15 @@ Acked-by: NeilBrown <neilb@suse.de>
  
  	/*
  	 * noac is a special case. It implies -o sync, but that's not
+@@ -2591,6 +2606,8 @@ struct dentry *nfs_fs_mount(struct file_
+ 		mntroot = ERR_PTR(error);
+ 		goto out;
+ 	}
++	if (always_nosharetransport)
++		mount_info.parsed->flags |= NFS_MOUNT_NOSHARE_XPRT;
+ 
+ 	nfs_mod = get_nfs_version(mount_info.parsed->version);
+ 	if (IS_ERR(nfs_mod)) {
 --- linux-3.12-SLE12.orig/include/linux/nfs_fs_sb.h
 +++ linux-3.12-SLE12/include/linux/nfs_fs_sb.h
 @@ -41,6 +41,7 @@ struct nfs_client {
