@@ -11,47 +11,86 @@ I/O to a known faulty device.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 
-diff --git a/drivers/md/raid10.c b/drivers/md/raid10.c
-index 459a625..7fff6b1 100644
---- a/drivers/md/raid10.c
-+++ b/drivers/md/raid10.c
-@@ -737,8 +737,23 @@ static void flush_pending_writes(conf_t *conf)
+---
+ drivers/md/raid10.c |   32 +++++++++++++++++++++++++++-----
+ 1 file changed, 27 insertions(+), 5 deletions(-)
+
+--- linux-3.12-SLE12.orig/drivers/md/raid10.c
++++ linux-3.12-SLE12/drivers/md/raid10.c
+@@ -1002,13 +1002,28 @@ static void flush_pending_writes(struct
  
  		while (bio) { /* submit pending writes */
  			struct bio *next = bio->bi_next;
-+			mdk_rdev_t *rdev = (void*)bio->bi_bdev;
++			struct md_rdev *rdev = (void*)bio->bi_bdev;
 +
  			bio->bi_next = NULL;
--			generic_make_request(bio);
 +			bio->bi_bdev = rdev->bdev;
-+
-+			if (test_bit(Faulty, &rdev->flags)) {
-+				/*
-+				 * Do not send requests down
-+				 * a faulty device.
-+				 */
-+				if (test_bit(Timeout, &rdev->flags))
-+					bio_endio(bio, -ETIMEDOUT);
-+				else
-+					bio_endio(bio, -EIO);
-+			} else {
-+				generic_make_request(bio);
+ 			if (unlikely((bio->bi_rw & REQ_DISCARD) &&
+ 			    !blk_queue_discard(bdev_get_queue(bio->bi_bdev))))
+ 				/* Just ignore it */
+ 				bio_endio(bio, 0);
+-			else
+-				generic_make_request(bio);
++			else {
++				if (test_bit(Faulty, &rdev->flags)) {
++					/*
++					 * Do not send requests down
++					 * a faulty device.
++					 */
++					if (test_bit(Timeout, &rdev->flags))
++						bio_endio(bio, -ETIMEDOUT);
++					else
++						bio_endio(bio, -EIO);
++				} else {
++					generic_make_request(bio);
++				}
 +			}
  			bio = next;
  		}
  	} else
-@@ -1109,11 +1124,12 @@ static int make_request(mddev_t *mddev, struct bio * bio)
+@@ -1179,11 +1194,16 @@ static void raid10_unplug(struct blk_plu
  
- 		atomic_inc(&r10_bio->remaining);
- 		spin_lock_irqsave(&conf->device_lock, flags);
--		bio_list_add(&conf->pending_bio_list, mbio);
--		spin_unlock_irqrestore(&conf->device_lock, flags);
- 		trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
- 				      mbio, disk_devt(mddev->gendisk),
- 				      r10_bio->sector);
-+		mbio->bi_bdev = (void *)conf->mirrors[d].rdev;
-+		bio_list_add(&conf->pending_bio_list, mbio);
-+		spin_unlock_irqrestore(&conf->device_lock, flags);
- 	}
+ 	while (bio) { /* submit pending writes */
+ 		struct bio *next = bio->bi_next;
++		struct md_rdev *rdev;
+ 		bio->bi_next = NULL;
++		rdev = (void*)bio->bi_bdev;
++		bio->bi_bdev = rdev->bdev;
+ 		if (unlikely((bio->bi_rw & REQ_DISCARD) &&
+ 		    !blk_queue_discard(bdev_get_queue(bio->bi_bdev))))
+ 			/* Just ignore it */
+ 			bio_endio(bio, 0);
++		else if (test_bit(Faulty, &rdev->flags))
++			bio_endio(bio, -EIO);
+ 		else
+ 			generic_make_request(bio);
+ 		bio = next;
+@@ -1585,6 +1605,10 @@ retry_write:
+ 			else
+ 				plug = NULL;
+ 			spin_lock_irqsave(&conf->device_lock, flags);
++			trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
++					      mbio, disk_devt(mddev->gendisk),
++					      r10_bio->sector);
++			mbio->bi_bdev = (void *)conf->mirrors[d].rdev;
+ 			if (plug) {
+ 				bio_list_add(&plug->pending, mbio);
+ 				plug->pending_cnt++;
+@@ -1592,9 +1616,6 @@ retry_write:
+ 				bio_list_add(&conf->pending_bio_list, mbio);
+ 				conf->pending_count++;
+ 			}
+-			trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
+-					      mbio, disk_devt(mddev->gendisk),
+-					      r10_bio->sector);
+ 			spin_unlock_irqrestore(&conf->device_lock, flags);
+ 			if (!plug)
+ 				md_wakeup_thread(mddev->thread);
+@@ -1623,6 +1644,7 @@ retry_write:
  
- 	if (atomic_dec_and_test(&r10_bio->remaining)) {
+ 			atomic_inc(&r10_bio->remaining);
+ 			spin_lock_irqsave(&conf->device_lock, flags);
++			mbio->bi_bdev = (void *)conf->mirrors[d].rdev;
+ 			bio_list_add(&conf->pending_bio_list, mbio);
+ 			conf->pending_count++;
+ 			spin_unlock_irqrestore(&conf->device_lock, flags);

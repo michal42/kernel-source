@@ -11,16 +11,16 @@ Acked-by: NeilBrown <neilb@suse.de>
 Signed-off-by: Neil Brown <neilb@suse.de>
 
 ---
- drivers/md/md.c           |   44 +++++++++++++++++++++++++++++++++++---------
- drivers/md/md.h           |    3 +++
- drivers/md/raid10.c       |   41 +++++++++++++++++++++++++++++++++++++----
- drivers/md/raid10.h       |    1 +
- include/linux/raid/md_p.h |    1 +
- 5 files changed, 77 insertions(+), 13 deletions(-)
+ drivers/md/md.c                |   44 ++++++++++++++++++++++++++++++++---------
+ drivers/md/md.h                |    3 ++
+ drivers/md/raid10.c            |   34 +++++++++++++++++++++++++++----
+ drivers/md/raid10.h            |    1 
+ include/uapi/linux/raid/md_p.h |    1 
+ 5 files changed, 69 insertions(+), 14 deletions(-)
 
---- linux-3.0-SLE11-SP3.orig/drivers/md/md.c
-+++ linux-3.0-SLE11-SP3/drivers/md/md.c
-@@ -798,8 +798,10 @@ static void super_written(struct bio *bi
+--- linux-3.12-SLE12.orig/drivers/md/md.c
++++ linux-3.12-SLE12/drivers/md/md.c
+@@ -767,8 +767,10 @@ static void super_written(struct bio *bi
  		       error, test_bit(BIO_UPTODATE, &bio->bi_flags));
  		WARN_ON(test_bit(BIO_UPTODATE, &bio->bi_flags));
  		md_error(mddev, rdev);
@@ -33,7 +33,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			set_bit(MD_NEED_REWRITE, &mddev->flags);
  			set_bit(LastDev, &rdev->flags);
  		}
-@@ -1167,6 +1169,7 @@ static int super_90_validate(mddev_t *md
+@@ -1137,6 +1139,7 @@ static int super_90_validate(struct mdde
  
  	rdev->raid_disk = -1;
  	clear_bit(Faulty, &rdev->flags);
@@ -41,7 +41,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	clear_bit(In_sync, &rdev->flags);
  	clear_bit(WriteMostly, &rdev->flags);
  
-@@ -1617,6 +1620,7 @@ static int super_1_validate(mddev_t *mdd
+@@ -1628,6 +1631,7 @@ static int super_1_validate(struct mddev
  
  	rdev->raid_disk = -1;
  	clear_bit(Faulty, &rdev->flags);
@@ -49,7 +49,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	clear_bit(In_sync, &rdev->flags);
  	clear_bit(WriteMostly, &rdev->flags);
  
-@@ -1691,7 +1695,7 @@ static int super_1_validate(mddev_t *mdd
+@@ -1702,7 +1706,7 @@ static int super_1_validate(struct mddev
  		++ev1;
  		if (rdev->desc_nr >= 0 &&
  		    rdev->desc_nr < le32_to_cpu(sb->max_dev) &&
@@ -58,7 +58,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			if (ev1 < mddev->events)
  				return -EINVAL;
  	} else if (mddev->bitmap) {
-@@ -1719,6 +1723,10 @@ static int super_1_validate(mddev_t *mdd
+@@ -1730,6 +1734,10 @@ static int super_1_validate(struct mddev
  		case 0xfffe: /* faulty */
  			set_bit(Faulty, &rdev->flags);
  			break;
@@ -69,9 +69,9 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  		default:
  			if ((le32_to_cpu(sb->feature_map) &
  			     MD_FEATURE_RECOVERY_OFFSET))
-@@ -1831,9 +1839,12 @@ static void super_1_sync(mddev_t *mddev,
+@@ -1880,9 +1888,12 @@ retry:
  	
- 	list_for_each_entry(rdev2, &mddev->disks, same_set) {
+ 	rdev_for_each(rdev2, mddev) {
  		i = rdev2->desc_nr;
 -		if (test_bit(Faulty, &rdev2->flags))
 -			sb->dev_roles[i] = cpu_to_le16(0xfffe);
@@ -85,7 +85,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			sb->dev_roles[i] = cpu_to_le16(rdev2->raid_disk);
  		else if (rdev2->raid_disk >= 0)
  			sb->dev_roles[i] = cpu_to_le16(rdev2->raid_disk);
-@@ -2537,6 +2548,10 @@ state_show(mdk_rdev_t *rdev, char *page)
+@@ -2637,6 +2648,10 @@ state_show(struct md_rdev *rdev, char *p
  		len+= sprintf(page+len, "%sfaulty",sep);
  		sep = ",";
  	}
@@ -96,10 +96,10 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	if (test_bit(In_sync, &rdev->flags)) {
  		len += sprintf(page+len, "%sin_sync",sep);
  		sep = ",";
-@@ -2578,6 +2593,11 @@ state_store(mdk_rdev_t *rdev, const char
- 	if (cmd_match(buf, "faulty") && rdev->mddev->pers) {
- 		md_error(rdev->mddev, rdev);
- 		err = 0;
+@@ -2698,6 +2713,11 @@ state_store(struct md_rdev *rdev, const
+ 			err = 0;
+ 		else
+ 			err = -EBUSY;
 +	} else if (cmd_match(buf, "timeout") && rdev->mddev->pers) {
 +		md_error(rdev->mddev, rdev);
 +		if (test_bit(Faulty, &rdev->flags))
@@ -108,7 +108,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	} else if (cmd_match(buf, "remove")) {
  		if (rdev->raid_disk >= 0)
  			err = -EBUSY;
-@@ -2730,6 +2750,7 @@ slot_store(mdk_rdev_t *rdev, const char
+@@ -2891,6 +2911,7 @@ slot_store(struct md_rdev *rdev, const c
  		rdev->raid_disk = slot;
  		/* assume it is working */
  		clear_bit(Faulty, &rdev->flags);
@@ -116,7 +116,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  		clear_bit(WriteMostly, &rdev->flags);
  		set_bit(In_sync, &rdev->flags);
  		sysfs_notify_dirent_safe(rdev->sysfs_state);
-@@ -5487,9 +5508,11 @@ static int get_disk_info(mddev_t * mddev
+@@ -5727,9 +5748,11 @@ static int get_disk_info(struct mddev *
  		info.minor = MINOR(rdev->bdev->bd_dev);
  		info.raid_disk = rdev->raid_disk;
  		info.state = 0;
@@ -130,7 +130,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			info.state |= (1<<MD_DISK_ACTIVE);
  			info.state |= (1<<MD_DISK_SYNC);
  		}
-@@ -6847,7 +6870,10 @@ static int md_seq_show(struct seq_file *
+@@ -7126,7 +7149,10 @@ static int md_seq_show(struct seq_file *
  			if (test_bit(WriteMostly, &rdev->flags))
  				seq_printf(seq, "(W)");
  			if (test_bit(Faulty, &rdev->flags)) {
@@ -140,78 +140,48 @@ Signed-off-by: Neil Brown <neilb@suse.de>
 +				else
 +					seq_printf(seq, "(F)");
  				continue;
- 			} else if (rdev->raid_disk < 0)
- 				seq_printf(seq, "(S)"); /* spare */
---- linux-3.0-SLE11-SP3.orig/drivers/md/md.h
-+++ linux-3.0-SLE11-SP3/drivers/md/md.h
-@@ -92,6 +92,9 @@ struct mdk_rdev_s
- 					 * it didn't fail, so don't use FailFast
- 					 * any more for metadata
- 					 */
-+#define Timeout		11		/* Device fault due to timeout.
-+					 * 'Faulty' is required to be set.
-+					 */
- 	wait_queue_head_t blocked_wait;
+ 			}
+ 			if (rdev->raid_disk < 0)
+--- linux-3.12-SLE12.orig/drivers/md/md.h
++++ linux-3.12-SLE12/drivers/md/md.h
+@@ -177,6 +177,9 @@ enum flag_bits {
+ 				 * it didn't fail, so don't use FailFast
+ 				 * any more for metadata
+ 				 */
++	Timeout,		/* Device fault due to timeout.
++				 * 'Faulty' is required to be set.
++				 */
+ };
  
- 	int desc_nr;			/* descriptor index in the superblock */
---- linux-3.0-SLE11-SP3.orig/drivers/md/raid10.c
-+++ linux-3.0-SLE11-SP3/drivers/md/raid10.c
-@@ -274,6 +274,7 @@ static void raid10_end_read_request(stru
- 	 * this branch is our 'one mirror IO has finished' event handler:
- 	 */
- 	update_head_pos(slot, r10_bio);
-+	r10_bio->devs[slot].error = error;
- 
- 	if (uptodate) {
- 		/*
-@@ -331,6 +332,7 @@ static void raid10_end_write_request(str
- 
- 	to_put = bio;
- 	r10_bio->devs[slot].bio = NULL;
+ #define BB_LEN_MASK	(0x00000000000001FFULL)
+--- linux-3.12-SLE12.orig/drivers/md/raid10.c
++++ linux-3.12-SLE12/drivers/md/raid10.c
+@@ -370,6 +370,7 @@ static void raid10_end_read_request(stru
+ 	slot = r10_bio->read_slot;
+ 	dev = r10_bio->devs[slot].devnum;
+ 	rdev = r10_bio->devs[slot].rdev;
 +	r10_bio->devs[slot].error = error;
  	/*
  	 * this branch is our 'one mirror IO has finished' event handler:
  	 */
-@@ -348,7 +350,8 @@ static void raid10_end_write_request(str
- 			set_bit(R10BIO_WriteError, &r10_bio->state);
- 			r10_bio->devs[slot].bio = to_put;
- 			to_put = NULL;
--		}
-+		} else if (error == -ETIMEDOUT)
-+			set_bit(Timeout, &rdev->flags);
- 	} else
- 		/*
- 		 * Set R10BIO_Uptodate in our master bio, so that
-@@ -1399,9 +1402,13 @@ static void end_sync_read(struct bio *bi
- 	else {
- 		atomic_add(r10_bio->sectors,
- 			   &conf->mirrors[d].rdev->corrected_errors);
--		if (!test_bit(MD_RECOVERY_SYNC, &conf->mddev->recovery))
-+		if (!test_bit(MD_RECOVERY_SYNC, &conf->mddev->recovery)) {
- 			md_error(r10_bio->mddev,
- 				 conf->mirrors[d].rdev);
-+			if (test_bit(Faulty, &conf->mirrors[d].rdev->flags) &&
-+			    error == -ETIMEDOUT)
-+				set_bit(Timeout, &conf->mirrors[d].rdev->flags);
-+		}
+@@ -459,6 +460,7 @@ static void raid10_end_write_request(str
+ 		repl = 0;
+ 		rdev = conf->mirrors[dev].rdev;
  	}
- 
- 	/* for reconstruct, we always reschedule after a read.
-@@ -1430,8 +1437,12 @@ static void end_sync_write(struct bio *b
- 			break;
- 	d = r10_bio->devs[i].devnum;
- 
--	if (!uptodate)
-+	if (!uptodate) {
- 		md_error(mddev, conf->mirrors[d].rdev);
-+		if (test_bit(Faulty, &conf->mirrors[d].rdev->flags) &&
-+		    error == -ETIMEDOUT)
-+			set_bit(Timeout, &conf->mirrors[d].rdev->flags);
-+	}
- 
- 	update_head_pos(i, r10_bio);
- 
-@@ -1519,6 +1530,9 @@ static void sync_request_write(mddev_t *
++	r10_bio->devs[slot].error = error;
+ 	/*
+ 	 * this branch is our 'one mirror IO has finished' event handler:
+ 	 */
+@@ -484,6 +486,8 @@ static void raid10_end_write_request(str
+ 					 */
+ 					set_bit(R10BIO_WriteError, &r10_bio->state);
+ 				else {
++					if (error == -ETIMEDOUT)
++						set_bit(Timeout, &rdev->flags);
+ 					r10_bio->devs[slot].bio = NULL;
+ 					to_put = bio;
+ 					dec_rdev = 1;
+@@ -2150,6 +2154,9 @@ static void sync_request_write(struct md
  		} else if (test_bit(FailFast, &rdev->flags)) {
  			/* Just give up on this device */
  			md_error(rdev->mddev, rdev);
@@ -220,16 +190,16 @@ Signed-off-by: Neil Brown <neilb@suse.de>
 +				set_bit(Timeout, &rdev->flags);
  			continue;
  		}
- 		/* Ok, we need to write this bio
-@@ -1649,6 +1663,7 @@ static void fix_read_error(conf_t *conf,
- 	mdk_rdev_t*rdev;
+ 		/* Ok, we need to write this bio, either to correct an
+@@ -2424,6 +2431,7 @@ static void fix_read_error(struct r10con
+ 	struct md_rdev*rdev;
  	int max_read_errors = atomic_read(&mddev->max_corr_read_errors);
  	int d = r10_bio->devs[r10_bio->read_slot].devnum;
 +	int read_error = r10_bio->devs[r10_bio->read_slot].error;
  
  	/* still own a reference to this rdev, so it cannot
  	 * have been cleared recently.
-@@ -1674,7 +1689,10 @@ static void fix_read_error(conf_t *conf,
+@@ -2449,7 +2457,10 @@ static void fix_read_error(struct r10con
  		printk(KERN_NOTICE
  		       "md/raid10:%s: %s: Failing raid device\n",
  		       mdname(mddev), b);
@@ -241,48 +211,50 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  		r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
  		return;
  	}
-@@ -1717,6 +1735,10 @@ static void fix_read_error(conf_t *conf,
- 			/* Cannot read from anywhere -- bye bye array */
- 			int dn = r10_bio->devs[r10_bio->read_slot].devnum;
- 			md_error(mddev, conf->mirrors[dn].rdev);
-+			if (test_bit(Faulty, &conf->mirrors[dn].rdev->flags) &&
-+			    read_error == -ETIMEDOUT)
-+				set_bit(Timeout, &conf->mirrors[dn].rdev->flags);
-+
- 			r10_bio->devs[r10_bio->read_slot].bio = IO_BLOCKED;
- 			break;
- 		}
-@@ -1759,6 +1781,9 @@ static void fix_read_error(conf_t *conf,
- 					       mdname(mddev),
- 					       bdevname(rdev->bdev, b));
- 					md_error(mddev, rdev);
-+					if (test_bit(Faulty, &rdev->flags) &&
-+					    read_error == -ETIMEDOUT)
-+						set_bit(Timeout, &rdev->flags);
- 				}
- 				rdev_dec_pending(rdev, mddev);
- 				rcu_read_lock();
-@@ -1797,6 +1822,9 @@ static void fix_read_error(conf_t *conf,
- 					       bdevname(rdev->bdev, b));
+@@ -2699,9 +2710,12 @@ static void handle_read_error(struct mdd
+ 		freeze_array(conf, 1);
+ 		fix_read_error(conf, mddev, r10_bio);
+ 		unfreeze_array(conf);
+-	} else
++	} else {
+ 		md_error(mddev, rdev);
+-
++		if (test_bit(Faulty, &rdev->flags) &&
++		    r10_bio->devs[slot].error == -ETIMEDOUT)
++			set_bit(Timeout, &rdev->flags);
++	}
+ 	rdev_dec_pending(rdev, mddev);
  
- 					md_error(mddev, rdev);
+ read_more:
+@@ -2799,8 +2813,12 @@ static void handle_write_completed(struc
+ 				if (!rdev_set_badblocks(
+ 					    rdev,
+ 					    r10_bio->devs[m].addr,
+-					    r10_bio->sectors, 0))
++					    r10_bio->sectors, 0)) {
+ 					md_error(conf->mddev, rdev);
 +					if (test_bit(Faulty, &rdev->flags) &&
-+					    read_error == -ETIMEDOUT)
++					    r10_bio->devs[m].error == -ETIMEDOUT)
 +						set_bit(Timeout, &rdev->flags);
- 				} else {
- 					printk(KERN_INFO
- 					       "md/raid10:%s: read error corrected"
-@@ -1944,6 +1972,9 @@ static void raid10d(mddev_t *mddev)
- 				unfreeze_array(conf);
- 			} else {
- 				md_error(mddev, rdev);
-+				if (test_bit(Faulty, &rdev->flags) &&
-+				    r10_bio->devs[slot].error == -ETIMEDOUT)
-+					set_bit(Timeout, &rdev->flags);
- 				r10_bio->devs[slot].bio = IO_BLOCKED;
++				}
  			}
- 
-@@ -3609,6 +3640,8 @@ static void end_reshape_write(struct bio
+ 			rdev = conf->mirrors[dev].replacement;
+ 			if (r10_bio->devs[m].repl_bio == NULL)
+@@ -2815,8 +2833,12 @@ static void handle_write_completed(struc
+ 				if (!rdev_set_badblocks(
+ 					    rdev,
+ 					    r10_bio->devs[m].addr,
+-					    r10_bio->sectors, 0))
++					    r10_bio->sectors, 0)) {
+ 					md_error(conf->mddev, rdev);
++					if (test_bit(Faulty, &rdev->flags) &&
++					    r10_bio->devs[m].error == -ETIMEDOUT)
++						set_bit(Timeout, &rdev->flags);
++				}
+ 			}
+ 		}
+ 		put_buf(r10_bio);
+@@ -4728,6 +4750,8 @@ static void end_reshape_write(struct bio
  	if (!uptodate) {
  		/* FIXME should record badblock */
  		md_error(mddev, rdev);
@@ -291,18 +263,18 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	}
  
  	rdev_dec_pending(rdev, mddev);
---- linux-3.0-SLE11-SP3.orig/drivers/md/raid10.h
-+++ linux-3.0-SLE11-SP3/drivers/md/raid10.h
-@@ -111,6 +111,7 @@ struct r10bio_s {
- 		struct bio		*bio;
- 		sector_t addr;
- 		int devnum;
-+		int			error;
+--- linux-3.12-SLE12.orig/drivers/md/raid10.h
++++ linux-3.12-SLE12/drivers/md/raid10.h
+@@ -125,6 +125,7 @@ struct r10bio {
+ 		};
+ 		sector_t	addr;
+ 		int		devnum;
++		int		error;
  	} devs[0];
  };
  
---- linux-3.0-SLE11-SP3.orig/include/linux/raid/md_p.h
-+++ linux-3.0-SLE11-SP3/include/linux/raid/md_p.h
+--- linux-3.12-SLE12.orig/include/uapi/linux/raid/md_p.h
++++ linux-3.12-SLE12/include/uapi/linux/raid/md_p.h
 @@ -86,6 +86,7 @@
  				    * devices available - and don't try to
  				    * correct read errors.

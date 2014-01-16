@@ -16,12 +16,12 @@ should unlock it.
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 
 ---
- drivers/md/md.c |   27 ++++++++++++++++++++++-----
- 1 file changed, 22 insertions(+), 5 deletions(-)
+ drivers/md/md.c |   24 ++++++++++++++++++++++--
+ 1 file changed, 22 insertions(+), 2 deletions(-)
 
---- linux-3.0-SLE11-SP3.orig/drivers/md/md.c
-+++ linux-3.0-SLE11-SP3/drivers/md/md.c
-@@ -743,6 +743,21 @@ static mdk_rdev_t * find_rdev(mddev_t *
+--- linux-3.12-SLE12.orig/drivers/md/md.c
++++ linux-3.12-SLE12/drivers/md/md.c
+@@ -706,6 +706,21 @@ static struct md_rdev *find_rdev_rcu(str
  	return NULL;
  }
  
@@ -40,22 +40,22 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
 +	return NULL;
 +}
 +
- static struct mdk_personality *find_pers(int level, char *clevel)
+ static struct md_personality *find_pers(int level, char *clevel)
  {
- 	struct mdk_personality *pers;
-@@ -6144,7 +6159,7 @@ static int set_disk_faulty(mddev_t *mdde
- 	if (mddev->pers == NULL)
- 		return -ENODEV;
+ 	struct md_personality *pers;
+@@ -5955,7 +5970,7 @@ static int hot_remove_disk(struct mddev
+ 	char b[BDEVNAME_SIZE];
+ 	struct md_rdev *rdev;
  
 -	rdev = find_rdev(mddev, dev);
 +	rdev = find_rdev_rcu(mddev, dev);
  	if (!rdev)
- 		return -ENODEV;
+ 		return -ENXIO;
  
-@@ -6244,6 +6259,12 @@ static int md_ioctl(struct block_device
- 		goto abort;
+@@ -6514,6 +6529,12 @@ static int md_ioctl(struct block_device
+ 		mutex_unlock(&mddev->open_mutex);
+ 		sync_blockdev(bdev);
  	}
- 
 +	if ((mddev->raid_disks || mddev->external) &&
 +	    (cmd == SET_DISK_FAULTY)) {
 +		err = set_disk_faulty(mddev, new_decode_dev(arg));
@@ -65,14 +65,11 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	err = mddev_lock(mddev);
  	if (err) {
  		printk(KERN_INFO 
-@@ -6397,10 +6418,6 @@ static int md_ioctl(struct block_device
- 			err = hot_add_disk(mddev, new_decode_dev(arg));
- 			goto done_unlock;
- 
--		case SET_DISK_FAULTY:
--			err = set_disk_faulty(mddev, new_decode_dev(arg));
--			goto done_unlock;
+@@ -6690,7 +6711,6 @@ static int md_ioctl(struct block_device
+ 	case HOT_ADD_DISK:
+ 		err = hot_add_disk(mddev, new_decode_dev(arg));
+ 		goto done_unlock;
 -
- 		case RUN_ARRAY:
- 			err = do_md_run(mddev);
- 			goto done_unlock;
+ 	case RUN_ARRAY:
+ 		err = do_md_run(mddev);
+ 		goto done_unlock;

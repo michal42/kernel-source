@@ -24,24 +24,24 @@ resync/recovery with remaining devices.
 
 Signed-off-by: NeilBrown <neilb@suse.de>
 ---
- drivers/md/raid1.c |   69 +++++++++++++++++++++++++++++++++++++++++++----------
+ drivers/md/raid1.c |   67 ++++++++++++++++++++++++++++++++++++++++++-----------
  drivers/md/raid1.h |    2 +
- 2 files changed, 58 insertions(+), 13 deletions(-)
+ 2 files changed, 56 insertions(+), 13 deletions(-)
 
---- linux-3.0-SLE11-SP2.orig/drivers/md/raid1.c
-+++ linux-3.0-SLE11-SP2/drivers/md/raid1.c
-@@ -257,8 +257,10 @@ static void raid1_end_read_request(struc
- 	r1bio_t *r1_bio = bio->bi_private;
+--- linux-3.12-SLE12.orig/drivers/md/raid1.c
++++ linux-3.12-SLE12/drivers/md/raid1.c
+@@ -300,8 +300,10 @@ static void raid1_end_read_request(struc
+ 	struct r1bio *r1_bio = bio->bi_private;
  	int mirror;
- 	conf_t *conf = r1_bio->mddev->private;
-+	mdk_rdev_t *rdev;
+ 	struct r1conf *conf = r1_bio->mddev->private;
++	struct md_rdev *rdev;
  
  	mirror = r1_bio->read_disk;
 +	rdev = conf->mirrors[mirror].rdev;
  	/*
  	 * this branch is our 'one mirror IO has finished' event handler:
  	 */
-@@ -266,6 +268,11 @@ static void raid1_end_read_request(struc
+@@ -309,6 +311,11 @@ static void raid1_end_read_request(struc
  
  	if (uptodate)
  		set_bit(R1BIO_Uptodate, &r1_bio->state);
@@ -53,44 +53,45 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  	else {
  		/* If all other devices have failed, we want to return
  		 * the error upwards rather than fail the last device.
-@@ -428,6 +435,8 @@ static int read_balance(conf_t *conf, r1
-  retry:
- 	best_disk = -1;
- 	best_dist = MaxSector;
+@@ -522,6 +529,7 @@ static int read_balance(struct r1conf *c
+ 	best_good_sectors = 0;
+ 	has_nonrot_disk = 0;
+ 	choose_next_idle = 0;
 +	clear_bit(R1BIO_FailFast, &r1_bio->state);
-+
+ 
  	if (conf->mddev->recovery_cp < MaxSector &&
- 	    (this_sector + sectors >= conf->next_resync)) {
- 		choose_first = 1;
-@@ -462,15 +471,21 @@ static int read_balance(conf_t *conf, r1
- 		 * even be best.
- 		 */
- 		dist = abs(this_sector - conf->mirrors[disk].head_position);
--		if (choose_first
--		    /* Don't change to another disk for sequential reads */
--		    || conf->next_seq_sect == this_sector
--		    || dist == 0
--		    /* If device is idle, use it */
--		    || atomic_read(&rdev->nr_pending) == 0) {
-+		if (choose_first) {
- 			best_disk = disk;
- 			break;
- 		}
-+		if (
-+		    /* Don't change to another disk for sequential reads */
-+		    conf->next_seq_sect == this_sector
-+		    /* If device is idle, use it */
-+		    || atomic_read(&rdev->nr_pending) == 0)
-+			dist = 0;
-+
+ 	    (this_sector + sectors >= conf->next_resync))
+@@ -593,6 +601,10 @@ static int read_balance(struct r1conf *c
+ 		} else
+ 			best_good_sectors = sectors;
+ 
 +		if (best_disk >= 0)
 +			/* At least two disks to choose from so failfast is OK */
 +			set_bit(R1BIO_FailFast, &r1_bio->state);
 +
- 		if (dist < best_dist) {
- 			best_dist = dist;
+ 		nonrot = blk_queue_nonrot(bdev_get_queue(rdev->bdev));
+ 		has_nonrot_disk |= nonrot;
+ 		pending = atomic_read(&rdev->nr_pending);
+@@ -632,7 +644,8 @@ static int read_balance(struct r1conf *c
+ 			break;
+ 		}
+ 		/* If device is idle, use it */
+-		if (pending == 0) {
++		if (pending == 0 &&
++		    (!test_bit(FailFast, &rdev->flags) || best_disk >= 0)) {
  			best_disk = disk;
-@@ -799,6 +814,9 @@ static int make_request(mddev_t *mddev,
+ 			break;
+ 		}
+@@ -658,7 +671,7 @@ static int read_balance(struct r1conf *c
+ 	 * mixed ratation/non-rotational disks depending on workload.
+ 	 */
+ 	if (best_disk == -1) {
+-		if (has_nonrot_disk)
++		if (has_nonrot_disk || min_pending == 0)
+ 			best_disk = best_pending_disk;
+ 		else
+ 			best_disk = best_dist_disk;
+@@ -1106,6 +1119,9 @@ read_again:
  		read_bio->bi_bdev = mirror->rdev->bdev;
  		read_bio->bi_end_io = raid1_end_read_request;
  		read_bio->bi_rw = READ | do_sync;
@@ -99,16 +100,16 @@ Signed-off-by: NeilBrown <neilb@suse.de>
 +			read_bio->bi_rw |= REQ_FAILFAST_DEV;
  		read_bio->bi_private = r1_bio;
  
- 		generic_make_request(read_bio);
-@@ -951,6 +969,7 @@ static void error(mddev_t *mddev, mdk_rd
+ 		if (max_sectors < r1_bio->sectors) {
+@@ -1372,6 +1388,7 @@ static void error(struct mddev *mddev, s
  {
  	char b[BDEVNAME_SIZE];
- 	conf_t *conf = mddev->private;
+ 	struct r1conf *conf = mddev->private;
 +	unsigned long flags;
  
  	/*
  	 * If it is not operational, then we have already marked it as dead
-@@ -958,6 +977,7 @@ static void error(mddev_t *mddev, mdk_rd
+@@ -1379,6 +1396,7 @@ static void error(struct mddev *mddev, s
  	 * next level up know.
  	 * else mark the drive as failed
  	 */
@@ -116,13 +117,14 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  	if (test_bit(In_sync, &rdev->flags)
  	    && (conf->raid_disks - mddev->degraded) == 1) {
  		/*
-@@ -967,20 +987,19 @@ static void error(mddev_t *mddev, mdk_rd
+@@ -1388,21 +1406,20 @@ static void error(struct mddev *mddev, s
  		 * it is very likely to fail.
  		 */
- 		mddev->recovery_disabled = 1;
+ 		conf->recovery_disabled = mddev->recovery_disabled;
 +		spin_unlock_irqrestore(&conf->device_lock, flags);
  		return;
  	}
+ 	set_bit(Blocked, &rdev->flags);
  	if (test_and_clear_bit(In_sync, &rdev->flags)) {
 -		unsigned long flags;
 -		spin_lock_irqsave(&conf->device_lock, flags);
@@ -139,11 +141,11 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  	set_bit(MD_CHANGE_DEVS, &mddev->flags);
  	printk(KERN_ALERT
  	       "md/raid1:%s: Disk failure on %s, disabling device.\n"
-@@ -1214,12 +1233,24 @@ static int fix_sync_read_error(r1bio_t *
+@@ -1733,12 +1750,24 @@ static int fix_sync_read_error(struct r1
  	sector_t sect = r1_bio->sector;
  	int sectors = r1_bio->sectors;
  	int idx = 0;
-+	mdk_rdev_t *rdev;
++	struct md_rdev *rdev;
 +
 +	rdev = conf->mirrors[r1_bio->read_disk].rdev;
 +	if (test_bit(FailFast, &rdev->flags)) {
@@ -154,78 +156,89 @@ Signed-off-by: NeilBrown <neilb@suse.de>
 +			/* Don't try to read from here, but make sure
 +			 * put_buf does it's thing
 +			 */
-+			r1_bio->bios[r1_bio->read_disk]->bi_end_io = end_sync_write;
++			bio->bi_end_io = end_sync_write;
 +	}
  
  	while(sectors) {
  		int s = sectors;
  		int d = r1_bio->read_disk;
  		int success = 0;
--		mdk_rdev_t *rdev;
+-		struct md_rdev *rdev;
  		int start;
  
  		if (s > (PAGE_SIZE>>9))
-@@ -1566,7 +1597,9 @@ static void raid1d(mddev_t *mddev)
- 			 * This is all done synchronously while the array is
- 			 * frozen
- 			 */
--			if (mddev->ro == 0) {
-+			rdev = conf->mirrors[r1_bio->read_disk].rdev;
-+			if (mddev->ro == 0
-+			    && !test_bit(FailFast, &rdev->flags)) {
- 				freeze_array(conf);
- 				fix_read_error(conf, r1_bio->read_disk,
- 					       r1_bio->sector,
-@@ -1577,17 +1610,18 @@ static void raid1d(mddev_t *mddev)
- 					 conf->mirrors[r1_bio->read_disk].rdev);
+@@ -2213,16 +2242,20 @@ static void handle_read_error(struct r1c
+ 	 * This is all done synchronously while the array is
+ 	 * frozen
+ 	 */
+-	if (mddev->ro == 0) {
++	rdev = conf->mirrors[r1_bio->read_disk].rdev;
++	if (mddev->ro == 0
++	    && !test_bit(FailFast, &rdev->flags)) {
+ 		freeze_array(conf, 1);
+ 		fix_read_error(conf, r1_bio->read_disk,
+ 			       r1_bio->sector, r1_bio->sectors);
+ 		unfreeze_array(conf);
+ 	} else
+-		md_error(mddev, conf->mirrors[r1_bio->read_disk].rdev);
+-	rdev_dec_pending(conf->mirrors[r1_bio->read_disk].rdev, conf->mddev);
++		md_error(mddev, rdev);
++	rdev_dec_pending(rdev, conf->mddev);
  
- 			bio = r1_bio->bios[r1_bio->read_disk];
-+			r1_bio->bios[r1_bio->read_disk] =
-+				mddev->ro ? IO_BLOCKED : NULL;
- 			if ((disk=read_balance(conf, r1_bio)) == -1) {
- 				printk(KERN_ALERT "md/raid1:%s: %s: unrecoverable I/O"
- 				       " read error for block %llu\n",
- 				       mdname(mddev),
- 				       bdevname(bio->bi_bdev,b),
- 				       (unsigned long long)r1_bio->sector);
-+				bio_put(bio);
- 				raid_end_bio_io(r1_bio);
- 			} else {
- 				const unsigned long do_sync = r1_bio->master_bio->bi_rw & REQ_SYNC;
--				r1_bio->bios[r1_bio->read_disk] =
--					mddev->ro ? IO_BLOCKED : NULL;
- 				r1_bio->read_disk = disk;
- 				bio_put(bio);
- 				bio = bio_clone_mddev(r1_bio->master_bio,
-@@ -1604,6 +1638,9 @@ static void raid1d(mddev_t *mddev)
- 				bio->bi_bdev = rdev->bdev;
- 				bio->bi_end_io = raid1_end_read_request;
- 				bio->bi_rw = READ | do_sync;
-+				if (test_bit(FailFast, &rdev->flags) &&
-+				    test_bit(R1BIO_FailFast, &r1_bio->state))
-+					bio->bi_rw |= REQ_FAILFAST_DEV;
- 				bio->bi_private = r1_bio;
- 				generic_make_request(bio);
- 			}
-@@ -1761,6 +1798,8 @@ static sector_t sync_request(mddev_t *md
- 		bio->bi_sector = sector_nr + rdev->data_offset;
+ 	bio = r1_bio->bios[r1_bio->read_disk];
++	r1_bio->bios[r1_bio->read_disk] =
++		mddev->ro ? IO_BLOCKED : NULL;
+ 	bdevname(bio->bi_bdev, b);
+ read_more:
+ 	disk = read_balance(conf, r1_bio, &max_sectors);
+@@ -2230,15 +2263,14 @@ read_more:
+ 		printk(KERN_ALERT "md/raid1:%s: %s: unrecoverable I/O"
+ 		       " read error for block %llu\n",
+ 		       mdname(mddev), b, (unsigned long long)r1_bio->sector);
++		if (bio)
++			bio_put(bio);
+ 		raid_end_bio_io(r1_bio);
+ 	} else {
+ 		const unsigned long do_sync
+ 			= r1_bio->master_bio->bi_rw & REQ_SYNC;
+-		if (bio) {
+-			r1_bio->bios[r1_bio->read_disk] =
+-				mddev->ro ? IO_BLOCKED : NULL;
++		if (bio)
+ 			bio_put(bio);
+-		}
+ 		r1_bio->read_disk = disk;
+ 		bio = bio_clone_mddev(r1_bio->master_bio, GFP_NOIO, mddev);
+ 		md_trim_bio(bio, r1_bio->sector - bio->bi_sector, max_sectors);
+@@ -2254,6 +2286,9 @@ read_more:
  		bio->bi_bdev = rdev->bdev;
- 		bio->bi_private = r1_bio;
-+		if (test_bit(FailFast, &rdev->flags))
+ 		bio->bi_end_io = raid1_end_read_request;
+ 		bio->bi_rw = READ | do_sync;
++		if (test_bit(FailFast, &rdev->flags) &&
++		    test_bit(R1BIO_FailFast, &r1_bio->state))
 +			bio->bi_rw |= REQ_FAILFAST_DEV;
+ 		bio->bi_private = r1_bio;
+ 		if (max_sectors < r1_bio->sectors) {
+ 			/* Drat - have to split this up more */
+@@ -2504,6 +2539,8 @@ static sector_t sync_request(struct mdde
+ 			bio->bi_sector = sector_nr + rdev->data_offset;
+ 			bio->bi_bdev = rdev->bdev;
+ 			bio->bi_private = r1_bio;
++			if (test_bit(FailFast, &rdev->flags))
++				bio->bi_rw |= REQ_FAILFAST_DEV;
+ 		}
  	}
  	rcu_read_unlock();
- 	if (disk < 0)
-@@ -1840,6 +1879,8 @@ static sector_t sync_request(mddev_t *md
- 			bio = r1_bio->bios[i];
+@@ -2625,6 +2662,8 @@ static sector_t sync_request(struct mdde
  			if (bio->bi_end_io == end_sync_read) {
+ 				read_targets--;
  				md_sync_acct(bio->bi_bdev, nr_sectors);
 +				if (read_targets == 1)
 +					bio->bi_rw &= ~REQ_FAILFAST_MASK;
  				generic_make_request(bio);
  			}
  		}
-@@ -1847,6 +1888,8 @@ static sector_t sync_request(mddev_t *md
+@@ -2632,6 +2671,8 @@ static sector_t sync_request(struct mdde
  		atomic_set(&r1_bio->remaining, 1);
  		bio = r1_bio->bios[r1_bio->read_disk];
  		md_sync_acct(bio->bi_bdev, nr_sectors);
@@ -234,14 +247,14 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		generic_make_request(bio);
  
  	}
---- linux-3.0-SLE11-SP2.orig/drivers/md/raid1.h
-+++ linux-3.0-SLE11-SP2/drivers/md/raid1.h
-@@ -126,6 +126,8 @@ struct r1bio_s {
-  * Record that bi_end_io was called with this flag...
+--- linux-3.12-SLE12.orig/drivers/md/raid1.h
++++ linux-3.12-SLE12/drivers/md/raid1.h
+@@ -157,6 +157,8 @@ struct r1bio {
   */
- #define	R1BIO_Returned 6
+ #define	R1BIO_MadeGood 7
+ #define	R1BIO_WriteError 8
 +/* failfast devices did receive failfast requests. */
-+#define	R1BIO_FailFast 7
++#define	R1BIO_FailFast 9
  
- extern int md_raid1_congested(mddev_t *mddev, int bits);
+ extern int md_raid1_congested(struct mddev *mddev, int bits);
  
