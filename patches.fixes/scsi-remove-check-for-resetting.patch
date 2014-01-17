@@ -1,0 +1,87 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Wed, 23 Oct 2013 10:51:20 +0200
+Subject: [SCSI] remove check for 'resetting'
+References: bnc#798050
+Patch-Mainline: v3.14
+Git-commit: 6b1e5a45d4eaa75e28f2d170ea43ab8fc6dd34d8
+
+Field is now unused, so this is dead code.
+
+[jejb: remove resetting and last_reset from Scsi_Host]
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/scsi.c      | 28 ----------------------------
+ include/scsi/scsi_host.h |  2 --
+ 2 files changed, 30 deletions(-)
+
+diff --git a/drivers/scsi/scsi.c b/drivers/scsi/scsi.c
+index eaa808e..fe0bcb1 100644
+--- a/drivers/scsi/scsi.c
++++ b/drivers/scsi/scsi.c
+@@ -78,11 +78,6 @@ static void scsi_done(struct scsi_cmnd *cmd);
+  * Definitions and constants.
+  */
+ 
+-#define MIN_RESET_DELAY (2*HZ)
+-
+-/* Do not call reset on error if we just did a reset within 15 sec. */
+-#define MIN_RESET_PERIOD (15*HZ)
+-
+ /*
+  * Note - the initial logging level can be set here to log events at boot time.
+  * After the system is up, you may enable logging via the /proc interface.
+@@ -658,7 +653,6 @@ EXPORT_SYMBOL(scsi_cmd_get_serial);
+ int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
+ {
+ 	struct Scsi_Host *host = cmd->device->host;
+-	unsigned long timeout;
+ 	int rtn = 0;
+ 
+ 	atomic_inc(&cmd->device->iorequest_cnt);
+@@ -704,28 +698,6 @@ int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
+ 			       (cmd->device->lun << 5 & 0xe0);
+ 	}
+ 
+-	/*
+-	 * We will wait MIN_RESET_DELAY clock ticks after the last reset so
+-	 * we can avoid the drive not being ready.
+-	 */
+-	timeout = host->last_reset + MIN_RESET_DELAY;
+-
+-	if (host->resetting && time_before(jiffies, timeout)) {
+-		int ticks_remaining = timeout - jiffies;
+-		/*
+-		 * NOTE: This may be executed from within an interrupt
+-		 * handler!  This is bad, but for now, it'll do.  The irq
+-		 * level of the interrupt handler has been masked out by the
+-		 * platform dependent interrupt handling code already, so the
+-		 * sti() here will not cause another call to the SCSI host's
+-		 * interrupt handler (assuming there is one irq-level per
+-		 * host).
+-		 */
+-		while (--ticks_remaining >= 0)
+-			mdelay(1 + 999 / HZ);
+-		host->resetting = 0;
+-	}
+-
+ 	scsi_log_send(cmd);
+ 
+ 	/*
+diff --git a/include/scsi/scsi_host.h b/include/scsi/scsi_host.h
+index 50769a7..3120d4e 100644
+--- a/include/scsi/scsi_host.h
++++ b/include/scsi/scsi_host.h
+@@ -601,8 +601,6 @@ struct Scsi_Host {
+ 	unsigned int host_eh_scheduled;    /* EH scheduled without command */
+     
+ 	unsigned int host_no;  /* Used for IOCTL_GET_IDLUN, /proc/scsi et al. */
+-	int resetting; /* if set, it means that last_reset is a valid value */
+-	unsigned long last_reset;
+ 
+ 	/*
+ 	 * These three parameters can be used to allow for wide scsi,
+-- 
+1.7.12.4
+

@@ -1,0 +1,54 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Wed, 23 Oct 2013 10:51:22 +0200
+Subject: [SCSI] scsi_error: Escalate to LUN reset if abort fails
+References: bnc#798050
+Patch-Mainline: v3.14
+Git-commit: 6fd046f960354250de3fed411eecdb784601bbad
+
+If a command abort fails there is a fair chance that all other
+aborts will be failing, too.
+So we should be calling LUN reset directly after the first failed
+abort and skip aborting the remaining commands.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/scsi_error.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index dc8471f..733652b 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -1272,18 +1272,20 @@ static int scsi_eh_abort_cmds(struct list_head *work_q,
+ 						  "0x%p\n", current->comm,
+ 						  scmd));
+ 		rtn = scsi_try_to_abort_cmd(shost->hostt, scmd);
+-		if (rtn == SUCCESS || rtn == FAST_IO_FAIL) {
+-			scmd->eh_eflags &= ~SCSI_EH_CANCEL_CMD;
+-			if (rtn == FAST_IO_FAIL)
+-				scsi_eh_finish_cmd(scmd, done_q);
+-			else
+-				list_move_tail(&scmd->eh_entry, &check_list);
+-		} else
++		if (rtn == FAILED) {
+ 			SCSI_LOG_ERROR_RECOVERY(3, printk("%s: aborting"
+ 							  " cmd failed:"
+ 							  "0x%p\n",
+ 							  current->comm,
+ 							  scmd));
++			list_splice_init(&check_list, work_q);
++			return list_empty(work_q);
++		}
++		scmd->eh_eflags &= ~SCSI_EH_CANCEL_CMD;
++		if (rtn == FAST_IO_FAIL)
++			scsi_eh_finish_cmd(scmd, done_q);
++		else
++			list_move_tail(&scmd->eh_entry, &check_list);
+ 	}
+ 
+ 	return scsi_eh_test_devices(&check_list, work_q, done_q, 0);
+-- 
+1.7.12.4
+
