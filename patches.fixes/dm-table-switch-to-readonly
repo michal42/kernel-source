@@ -1,5 +1,6 @@
 From: Hannes Reinecke <hare@suse.de>
-Subject: dm multipath devices are not getting created for readonly devices
+Date: Fri, 17 Jan 2014 10:22:16 +0100
+Subject: multipath devices are not getting created for readonly devices
 References: bnc#382705
 Patch-mainline: not yet
 
@@ -9,15 +10,16 @@ This patch modifies the device-mapper to set the 'READ-ONLY' flag
 automatically whenever a read-only is added to the table.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
-
 ---
- drivers/md/dm-table.c |   10 +++++++++-
- drivers/md/dm.c       |   17 +++++++++++++++--
+ drivers/md/dm-table.c | 10 +++++++++-
+ drivers/md/dm.c       | 17 +++++++++++++++--
  2 files changed, 24 insertions(+), 3 deletions(-)
 
+diff --git a/drivers/md/dm-table.c b/drivers/md/dm-table.c
+index 5b1cbfb..889d4b4 100644
 --- a/drivers/md/dm-table.c
 +++ b/drivers/md/dm-table.c
-@@ -489,11 +489,19 @@ int dm_get_device(struct dm_target *ti,
+@@ -460,11 +460,19 @@ int dm_get_device(struct dm_target *ti, const char *path, fmode_t mode,
  		dd->dm_dev.mode = mode;
  		dd->dm_dev.bdev = NULL;
  
@@ -38,9 +40,11 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  		format_dev_t(dd->dm_dev.name, dev);
  
  		atomic_set(&dd->count, 0);
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 0e00b5f..d589725 100644
 --- a/drivers/md/dm.c
 +++ b/drivers/md/dm.c
-@@ -335,16 +335,25 @@ int dm_deleting_md(struct mapped_device
+@@ -376,16 +376,25 @@ int dm_deleting_md(struct mapped_device *md)
  static int dm_blk_open(struct block_device *bdev, fmode_t mode)
  {
  	struct mapped_device *md;
@@ -67,7 +71,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  		goto out;
  	}
  
-@@ -354,7 +363,7 @@ static int dm_blk_open(struct block_devi
+@@ -395,7 +404,7 @@ static int dm_blk_open(struct block_device *bdev, fmode_t mode)
  out:
  	spin_unlock(&_minor_lock);
  
@@ -76,7 +80,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  }
  
  static void dm_blk_close(struct gendisk *disk, fmode_t mode)
-@@ -2097,6 +2106,10 @@ static struct dm_table *__bind(struct ma
+@@ -2258,6 +2267,10 @@ static struct dm_table *__bind(struct mapped_device *md, struct dm_table *t,
  		set_bit(DMF_MERGE_IS_OPTIONAL, &md->flags);
  	else
  		clear_bit(DMF_MERGE_IS_OPTIONAL, &md->flags);
@@ -87,3 +91,6 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	dm_sync_table(md);
  
  	return old_map;
+-- 
+1.7.12.4
+

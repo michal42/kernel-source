@@ -1,7 +1,8 @@
 From: Hannes Reinecke <hare@suse.de>
-Date: Thu, 19 Nov 2009 13:54:56 +0100
-Subject: Accept failed paths for multipath maps
+Date: Wed, 18 Dec 2013 08:52:35 +0100
+Subject: dm-multipath: Accept failed paths for multipath maps
 References: bnc#458037,bnc#458393
+Patch-Mainline: submitted to dm-devel
 
 The multipath kernel module is rejecting any map with an invalid
 device. However, as the multipathd is processing the events serially
@@ -12,14 +13,25 @@ paths as down.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/md/dm-mpath.c |   68 +++++++++++++++++++++++++++++++++++++++++---------
- drivers/md/dm-mpath.h |    1 
- drivers/md/dm-table.c |    7 +++--
- 3 files changed, 62 insertions(+), 14 deletions(-)
+ drivers/md/dm-mpath.c | 80 ++++++++++++++++++++++++++++++++++++++++-----------
+ drivers/md/dm-mpath.h |  1 +
+ drivers/md/dm-table.c |  7 +++--
+ 3 files changed, 70 insertions(+), 18 deletions(-)
 
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 799e479..1bf0d1d 100644
 --- a/drivers/md/dm-mpath.c
 +++ b/drivers/md/dm-mpath.c
-@@ -276,6 +276,11 @@ static int __choose_path_in_pg(struct mu
+@@ -166,7 +166,7 @@ static void free_pgpaths(struct list_head *pgpaths, struct dm_target *ti)
+ 
+ 	list_for_each_entry_safe(pgpath, tmp, pgpaths, list) {
+ 		list_del(&pgpath->list);
+-		if (m->hw_handler_name)
++		if (m->hw_handler_name && pgpath->path.dev)
+ 			scsi_dh_detach(bdev_get_queue(pgpath->path.dev->bdev));
+ 		dm_put_device(ti, pgpath->path.dev);
+ 		free_pgpath(pgpath);
+@@ -303,6 +303,11 @@ static int __choose_path_in_pg(struct multipath *m, struct priority_group *pg,
  
  	m->current_pgpath = path_to_pgpath(path);
  
@@ -31,15 +43,15 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	if (m->current_pg != pg)
  		__switch_pg(m, m->current_pgpath);
  
-@@ -543,6 +548,7 @@ static struct pgpath *parse_path(struct
+@@ -570,6 +575,7 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
  {
  	int r;
  	struct pgpath *p;
-+	char *path;
++	const char *path;
  	struct multipath *m = ti->private;
- 
- 	/* we need at least a path arg */
-@@ -555,14 +561,37 @@ static struct pgpath *parse_path(struct
+ 	struct request_queue *q = NULL;
+ 	const char *attached_handler_name;
+@@ -584,17 +590,40 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
  	if (!p)
  		return ERR_PTR(-ENOMEM);
  
@@ -76,12 +88,25 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
 +		memcpy(p->path.pdev, p->path.dev->name, 16);
  	}
  
--	if (m->hw_handler_name) {
-+	if (m->hw_handler_name && p->path.dev) {
- 		struct request_queue *q = bdev_get_queue(p->path.dev->bdev);
+-	if (m->retain_attached_hw_handler || m->hw_handler_name)
++	if (p->path.dev)
+ 		q = bdev_get_queue(p->path.dev->bdev);
  
- 		r = scsi_dh_attach(q, m->hw_handler_name);
-@@ -599,6 +628,11 @@ static struct pgpath *parse_path(struct
+-	if (m->retain_attached_hw_handler) {
++	if (q && (m->retain_attached_hw_handler || m->hw_handler_name)) {
+ 		attached_handler_name = scsi_dh_attached_handler_name(q, GFP_KERNEL);
+ 		if (attached_handler_name) {
+ 			/*
+@@ -613,7 +642,7 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
+ 		}
+ 	}
+ 
+-	if (m->hw_handler_name) {
++	if (q && m->hw_handler_name) {
+ 		/*
+ 		 * Increments scsi_dh reference, even when using an
+ 		 * already-attached handler.
+@@ -652,6 +681,11 @@ static struct pgpath *parse_path(struct dm_arg_set *as, struct path_selector *ps
  		goto bad;
  	}
  
@@ -93,8 +118,12 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	return p;
  
   bad:
-@@ -937,7 +971,7 @@ static int fail_path(struct pgpath *pgpa
- 	if (!pgpath->is_active)
+@@ -999,10 +1033,10 @@ static int fail_path(struct pgpath *pgpath)
+ 
+ 	spin_lock_irqsave(&m->lock, flags);
+ 
+-	if (!pgpath->is_active)
++	if (!pgpath->path.dev || !pgpath->is_active)
  		goto out;
  
 -	DMWARN("Failing path %s.", pgpath->path.dev->name);
@@ -102,7 +131,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  
  	pgpath->pg->ps.type->fail_path(&pgpath->pg->ps, &pgpath->path);
  	pgpath->is_active = 0;
-@@ -949,7 +983,7 @@ static int fail_path(struct pgpath *pgpa
+@@ -1014,7 +1048,7 @@ static int fail_path(struct pgpath *pgpath)
  		m->current_pgpath = NULL;
  
  	dm_path_uevent(DM_UEVENT_PATH_FAILED, m->ti,
@@ -111,7 +140,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  
  	schedule_work(&m->trigger_event);
  
-@@ -973,6 +1007,12 @@ static int reinstate_path(struct pgpath
+@@ -1038,6 +1072,12 @@ static int reinstate_path(struct pgpath *pgpath)
  	if (pgpath->is_active)
  		goto out;
  
@@ -124,7 +153,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	if (!pgpath->pg->ps.type->reinstate_path) {
  		DMWARN("Reinstate path not supported by path selector %s",
  		       pgpath->pg->ps.type->name);
-@@ -995,7 +1035,7 @@ static int reinstate_path(struct pgpath
+@@ -1060,7 +1100,7 @@ static int reinstate_path(struct pgpath *pgpath)
  	}
  
  	dm_path_uevent(DM_UEVENT_PATH_REINSTATED, m->ti,
@@ -133,7 +162,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  
  	schedule_work(&m->trigger_event);
  
-@@ -1015,6 +1055,9 @@ static int action_dev(struct multipath *
+@@ -1080,6 +1120,9 @@ static int action_dev(struct multipath *m, struct dm_dev *dev,
  	struct pgpath *pgpath;
  	struct priority_group *pg;
  
@@ -143,19 +172,21 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	list_for_each_entry(pg, &m->priority_groups, list) {
  		list_for_each_entry(pgpath, &pg->pgpaths, list) {
  			if (pgpath->path.dev == dev)
-@@ -1202,8 +1245,9 @@ static void activate_path(struct work_st
+@@ -1269,8 +1312,11 @@ static void activate_path(struct work_struct *work)
  	struct pgpath *pgpath =
  		container_of(work, struct pgpath, activate_path.work);
  
 -	scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
 -				pg_init_done, pgpath);
-+	if (pgpath->path.dev)
++	if (pgpath->path.dev && pgpath->is_active)
 +		scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
 +				 pg_init_done, pgpath);
++	else
++		pg_init_done(pgpath, SCSI_DH_DEV_OFFLINED);
  }
  
- /*
-@@ -1388,7 +1432,7 @@ static int multipath_status(struct dm_ta
+ static int noretry_error(int error)
+@@ -1485,7 +1531,7 @@ static void multipath_status(struct dm_target *ti, status_type_t type,
  			       pg->ps.type->info_args);
  
  			list_for_each_entry(p, &pg->pgpaths, list) {
@@ -164,7 +195,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  				       p->is_active ? "A" : "F",
  				       p->fail_count);
  				if (pg->ps.type->status)
-@@ -1414,7 +1458,7 @@ static int multipath_status(struct dm_ta
+@@ -1511,7 +1557,7 @@ static void multipath_status(struct dm_target *ti, status_type_t type,
  			       pg->ps.type->table_args);
  
  			list_for_each_entry(p, &pg->pgpaths, list) {
@@ -173,15 +204,26 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  				if (pg->ps.type->status)
  					sz += pg->ps.type->status(&pg->ps,
  					      &p->path, type, result + sz,
-@@ -1506,7 +1550,7 @@ static int multipath_ioctl(struct dm_tar
- 	if (!m->current_pgpath)
- 		__choose_pgpath(m, 0);
+@@ -1608,7 +1654,7 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
  
--	if (m->current_pgpath) {
-+	if (m->current_pgpath && m->current_pgpath->path.dev) {
- 		bdev = m->current_pgpath->path.dev->bdev;
- 		mode = m->current_pgpath->path.dev->mode;
+ 	pgpath = m->current_pgpath;
+ 
+-	if (pgpath) {
++	if (pgpath && pgpath->path.dev) {
+ 		bdev = pgpath->path.dev->bdev;
+ 		mode = pgpath->path.dev->mode;
  	}
+@@ -1642,6 +1688,8 @@ static int multipath_iterate_devices(struct dm_target *ti,
+ 
+ 	list_for_each_entry(pg, &m->priority_groups, list) {
+ 		list_for_each_entry(p, &pg->pgpaths, list) {
++			if (!p->path.dev)
++				continue;
+ 			ret = fn(ti, p->path.dev, ti->begin, ti->len, data);
+ 			if (ret)
+ 				goto out;
+diff --git a/drivers/md/dm-mpath.h b/drivers/md/dm-mpath.h
+index e230f71..f97388d 100644
 --- a/drivers/md/dm-mpath.h
 +++ b/drivers/md/dm-mpath.h
 @@ -12,6 +12,7 @@
@@ -192,20 +234,25 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	struct dm_dev *dev;	/* Read-only */
  	void *pscontext;	/* For path-selector use */
  };
+diff --git a/drivers/md/dm-table.c b/drivers/md/dm-table.c
+index 20a8cc0..5b1cbfb 100644
 --- a/drivers/md/dm-table.c
 +++ b/drivers/md/dm-table.c
-@@ -552,9 +552,12 @@ EXPORT_SYMBOL_GPL(dm_set_device_limits);
+@@ -523,9 +523,12 @@ EXPORT_SYMBOL_GPL(dm_set_device_limits);
   */
  void dm_put_device(struct dm_target *ti, struct dm_dev *d)
  {
 -	struct dm_dev_internal *dd = container_of(d, struct dm_dev_internal,
 -						  dm_dev);
 +	struct dm_dev_internal *dd;
- 
++
 +	if (!d)
 +		return;
-+
+ 
 +	dd = container_of(d, struct dm_dev_internal, dm_dev);
  	if (atomic_dec_and_test(&dd->count)) {
  		close_dev(dd, ti->table->md);
  		list_del(&dd->list);
+-- 
+1.7.12.4
+
