@@ -1,0 +1,53 @@
+From: Dan Carpenter <dan.carpenter@oracle.com>
+Date: Wed, 13 Nov 2013 10:48:11 +0300
+Subject: [SCSI] qla4xxx: overflow in qla4xxx_set_chap_entry()
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/jejb/scsi.git
+Git-commit: 4aa5a9549e62573a6334beb9bd2e2b4b43371290
+Patch-mainline: Submitted: 11/13/2013 linux-scsi
+References: FATE#315934 bnc#853687
+
+We should cap the size of memcpy() because it comes from the network
+and can't be trusted.
+
+Fixes: 26ffd7b45fe9 ('[SCSI] qla4xxx: Add support to set CHAP entries')
+
+Signed-off-by: Dan Carpenter <dan.carpenter@oracle.com>
+Acked-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Signed-off-by: Lee Duncan <lduncan@suse.com>
+---
+
+ drivers/scsi/qla4xxx/ql4_os.c |   11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -861,6 +861,7 @@ static int qla4xxx_set_chap_entry(struct Scsi_Host *shost, void *data, int len)
+ 	int type;
+ 	int rem = len;
+ 	int rc = 0;
++	int size;
+ 
+ 	memset(&chap_rec, 0, sizeof(chap_rec));
+ 
+@@ -875,12 +876,14 @@ static int qla4xxx_set_chap_entry(struct Scsi_Host *shost, void *data, int len)
+ 			chap_rec.chap_type = param_info->value[0];
+ 			break;
+ 		case ISCSI_CHAP_PARAM_USERNAME:
+-			memcpy(chap_rec.username, param_info->value,
+-			       param_info->len);
++			size = min_t(size_t, sizeof(chap_rec.username),
++				     param_info->len);
++			memcpy(chap_rec.username, param_info->value, size);
+ 			break;
+ 		case ISCSI_CHAP_PARAM_PASSWORD:
+-			memcpy(chap_rec.password, param_info->value,
+-			       param_info->len);
++			size = min_t(size_t, sizeof(chap_rec.password),
++				     param_info->len);
++			memcpy(chap_rec.password, param_info->value, size);
+ 			break;
+ 		case ISCSI_CHAP_PARAM_PASSWORD_LEN:
+ 			chap_rec.password_length = param_info->value[0];
+
+
