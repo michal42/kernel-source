@@ -1,0 +1,44 @@
+From: "Geyslan G. Bem" <geyslan@gmail.com>
+Date: Mon, 14 Oct 2013 12:18:25 -0300
+Patch-mainline: 3.13
+Git-commit: 229eed4348a482c11cf8d494392305a85ed478f9
+Subject: [PATCH] btrfs: simplify kmalloc+copy_from_user to memdup_user
+
+Use memdup_user rather than duplicating its implementation
+This is a little bit restricted to reduce false positives
+
+The semantic patch that makes this report is available
+in scripts/coccinelle/api/memdup_user.cocci.
+
+More information about semantic patching is available at
+http://coccinelle.lip6.fr/
+
+Signed-off-by: Geyslan G. Bem <geyslan@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ioctl.c |   11 +++--------
+ 1 file changed, 3 insertions(+), 8 deletions(-)
+
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -2716,15 +2716,10 @@ static long btrfs_ioctl_file_extent_same
+ 	size = sizeof(tmp) +
+ 		tmp.dest_count * sizeof(struct btrfs_ioctl_same_extent_info);
+ 
+-	same = kmalloc(size, GFP_NOFS);
+-	if (!same) {
+-		ret = -EFAULT;
+-		goto out;
+-	}
++	same = memdup_user((struct btrfs_ioctl_same_args __user *)argp, size);
+ 
+-	if (copy_from_user(same,
+-			   (struct btrfs_ioctl_same_args __user *)argp, size)) {
+-		ret = -EFAULT;
++	if (IS_ERR(same)) {
++		ret = PTR_ERR(same);
+ 		goto out;
+ 	}
+ 

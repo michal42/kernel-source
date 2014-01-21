@@ -1,0 +1,58 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Fri, 18 Oct 2013 15:42:56 +0100
+Patch-mainline: 3.13
+Git-commit: 55994887082d6e9b3d31b55fc5be158fd97eadbc
+Subject: [PATCH] Btrfs: optimize extent item search in
+ run_delayed_extent_op
+
+Instead of doing another extent tree search if the first search failed
+to find a metadata item, check if the previous item in the leaf is an
+extent item and use it if it is, otherwise do the second tree search
+for an extent item.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |   27 ++++++++++++++++++++-------
+ 1 file changed, 20 insertions(+), 7 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -2130,15 +2130,28 @@ again:
+ 	}
+ 	if (ret > 0) {
+ 		if (metadata) {
+-			btrfs_release_path(path);
+-			metadata = 0;
++			if (path->slots[0] > 0) {
++				path->slots[0]--;
++				btrfs_item_key_to_cpu(path->nodes[0], &key,
++						      path->slots[0]);
++				if (key.objectid == node->bytenr &&
++				    key.type == BTRFS_EXTENT_ITEM_KEY &&
++				    key.offset == node->num_bytes)
++					ret = 0;
++			}
++			if (ret > 0) {
++				btrfs_release_path(path);
++				metadata = 0;
+ 
+-			key.offset = node->num_bytes;
+-			key.type = BTRFS_EXTENT_ITEM_KEY;
+-			goto again;
++				key.objectid = node->bytenr;
++				key.offset = node->num_bytes;
++				key.type = BTRFS_EXTENT_ITEM_KEY;
++				goto again;
++			}
++		} else {
++			err = -EIO;
++			goto out;
+ 		}
+-		err = -EIO;
+-		goto out;
+ 	}
+ 
+ 	leaf = path->nodes[0];

@@ -1,0 +1,66 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Mon, 7 Oct 2013 15:18:52 -0400
+Patch-mainline: 3.13
+Git-commit: 0be5dc67c445230b0889dba63defba9a9e5561b4
+Subject: [PATCH] Btrfs: fixup reserved trace points
+
+In trying to track down where we were leaking reserved space I noticed our
+reserve extent tracepoints are a little off.  First we were saying that the
+reserved space had been alloced in btrfs_reserve_extent, which isn't the case,
+this needs to be triggered when we actually allocate the space when we run the
+delayed ref.  We were also missing a few places where we should have been
+tracing the btrfs_reserve_extent_free tracepoint.  With these in place I was
+able to put together where we were leaking reserved space.  Thanks,
+
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |    8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -5262,6 +5262,8 @@ static int pin_down_extent(struct btrfs_
+ 
+ 	set_extent_dirty(root->fs_info->pinned_extents, bytenr,
+ 			 bytenr + num_bytes - 1, GFP_NOFS | __GFP_NOFAIL);
++	if (reserved)
++		trace_btrfs_reserved_extent_free(root, bytenr, num_bytes);
+ 	return 0;
+ }
+ 
+@@ -5965,6 +5967,7 @@ void btrfs_free_tree_block(struct btrfs_
+ 
+ 		btrfs_add_free_space(cache, buf->start, buf->len);
+ 		btrfs_update_reserved_bytes(cache, buf->len, RESERVE_FREE);
++		trace_btrfs_reserved_extent_free(root, buf->start, buf->len);
+ 		pin = 0;
+ 	}
+ out:
+@@ -6592,8 +6595,6 @@ again:
+ 		}
+ 	}
+ 
+-	trace_btrfs_reserved_extent_alloc(root, ins->objectid, ins->offset);
+-
+ 	return ret;
+ }
+ 
+@@ -6705,6 +6706,7 @@ static int alloc_reserved_file_extent(st
+ 			ins->objectid, ins->offset);
+ 		BUG();
+ 	}
++	trace_btrfs_reserved_extent_alloc(root, ins->objectid, ins->offset);
+ 	return ret;
+ }
+ 
+@@ -6777,6 +6779,8 @@ static int alloc_reserved_tree_block(str
+ 			ins->objectid, ins->offset);
+ 		BUG();
+ 	}
++
++	trace_btrfs_reserved_extent_alloc(root, ins->objectid, root->leafsize);
+ 	return ret;
+ }
+ 

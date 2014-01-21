@@ -1,0 +1,62 @@
+From: Liu Bo <bo.li.liu@oracle.com>
+Date: Tue, 5 Nov 2013 11:45:53 +0800
+Patch-mainline: 3.13
+Git-commit: d52c1bcc647ca41ee563bc38d8231e5f3816112c
+Subject: [PATCH] Btrfs: avoid heavy operations in btrfs_commit_super
+
+The 'git blame' history shows that, the old transaction commit code has to do
+twice to ensure roots are updated and we have to flush metadata and super block
+manually, however, right now all of these can be handled well inside
+the transaction commit code without extra efforts.
+
+And the error handling part remains same with the current code, -- 'return to
+caller once we get error'.
+
+This saves us a transaction commit and a flush of super block, which are both
+heavy operations according to ftrace output analysis.
+
+Signed-off-by: Liu Bo <bo.li.liu@oracle.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |   21 +--------------------
+ 1 file changed, 1 insertion(+), 20 deletions(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3517,7 +3517,6 @@ int btrfs_cleanup_fs_roots(struct btrfs_
+ int btrfs_commit_super(struct btrfs_root *root)
+ {
+ 	struct btrfs_trans_handle *trans;
+-	int ret;
+ 
+ 	mutex_lock(&root->fs_info->cleaner_mutex);
+ 	btrfs_run_delayed_iputs(root);
+@@ -3531,25 +3530,7 @@ int btrfs_commit_super(struct btrfs_root
+ 	trans = btrfs_join_transaction(root);
+ 	if (IS_ERR(trans))
+ 		return PTR_ERR(trans);
+-	ret = btrfs_commit_transaction(trans, root);
+-	if (ret)
+-		return ret;
+-	/* run commit again to drop the original snapshot */
+-	trans = btrfs_join_transaction(root);
+-	if (IS_ERR(trans))
+-		return PTR_ERR(trans);
+-	ret = btrfs_commit_transaction(trans, root);
+-	if (ret)
+-		return ret;
+-	ret = btrfs_write_and_wait_transaction(NULL, root);
+-	if (ret) {
+-		btrfs_error(root->fs_info, ret,
+-			    "Failed to sync btree inode to disk.");
+-		return ret;
+-	}
+-
+-	ret = write_ctree_super(NULL, root, 0);
+-	return ret;
++	return btrfs_commit_transaction(trans, root);
+ }
+ 
+ int close_ctree(struct btrfs_root *root)

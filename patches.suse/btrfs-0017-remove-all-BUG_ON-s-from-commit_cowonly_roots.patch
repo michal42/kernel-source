@@ -1,0 +1,43 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Fri, 27 Sep 2013 16:38:20 -0400
+Patch-mainline: 3.13
+Git-commit: c16ce1901431629fbe5b9387cc966d62a089e4df
+Subject: [PATCH] Btrfs: remove all BUG_ON()'s from
+ commit_cowonly_roots
+
+Noticed this when forcing errors to happen during delayed ref running.  Thanks,
+
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/transaction.c |   13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+--- a/fs/btrfs/transaction.c
++++ b/fs/btrfs/transaction.c
+@@ -950,16 +950,19 @@ static noinline int commit_cowonly_roots
+ 		return ret;
+ 
+ 	ret = btrfs_run_dev_stats(trans, root->fs_info);
+-	WARN_ON(ret);
++	if (ret)
++		return ret;
+ 	ret = btrfs_run_dev_replace(trans, root->fs_info);
+-	WARN_ON(ret);
+-
++	if (ret)
++		return ret;
+ 	ret = btrfs_run_qgroups(trans, root->fs_info);
+-	BUG_ON(ret);
++	if (ret)
++		return ret;
+ 
+ 	/* run_qgroups might have added some more refs */
+ 	ret = btrfs_run_delayed_refs(trans, root, (unsigned long)-1);
+-	BUG_ON(ret);
++	if (ret)
++		return ret;
+ 
+ 	while (!list_empty(&fs_info->dirty_cowonly_roots)) {
+ 		next = fs_info->dirty_cowonly_roots.next;

@@ -1,0 +1,59 @@
+From: Zach Brown <zab@redhat.com>
+Date: Wed, 16 Oct 2013 12:10:33 -0700
+Patch-mainline: 3.13
+Git-commit: 1877e1a747db33d7264d8046e96373962da72a3d
+Subject: [PATCH] btrfs: remove move_pages()
+
+move_pages() has an inefficient backwards byte copy of regions of two
+different pages.  They're different pages so the regions won't overlap
+and it could use memcpy().
+
+At that point, though, move_pages() would be a slightly dimmer
+re-implementation of copy_pages() that lacked the test for overlapping
+page regions.
+
+So remove move_pages() and just call copy_pages().
+
+Signed-off-by: Zach Brown <zab@redhat.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent_io.c |   19 +------------------
+ 1 file changed, 1 insertion(+), 18 deletions(-)
+
+--- a/fs/btrfs/extent_io.c
++++ b/fs/btrfs/extent_io.c
+@@ -5082,23 +5082,6 @@ void copy_extent_buffer(struct extent_bu
+ 	}
+ }
+ 
+-static void move_pages(struct page *dst_page, struct page *src_page,
+-		       unsigned long dst_off, unsigned long src_off,
+-		       unsigned long len)
+-{
+-	char *dst_kaddr = page_address(dst_page);
+-	if (dst_page == src_page) {
+-		memmove(dst_kaddr + dst_off, dst_kaddr + src_off, len);
+-	} else {
+-		char *src_kaddr = page_address(src_page);
+-		char *p = dst_kaddr + dst_off + len;
+-		char *s = src_kaddr + src_off + len;
+-
+-		while (len--)
+-			*--p = *--s;
+-	}
+-}
+-
+ static inline bool areas_overlap(unsigned long src, unsigned long dst, unsigned long len)
+ {
+ 	unsigned long distance = (src > dst) ? src - dst : dst - src;
+@@ -5209,7 +5192,7 @@ void memmove_extent_buffer(struct extent
+ 
+ 		cur = min_t(unsigned long, len, src_off_in_page + 1);
+ 		cur = min(cur, dst_off_in_page + 1);
+-		move_pages(extent_buffer_page(dst, dst_i),
++		copy_pages(extent_buffer_page(dst, dst_i),
+ 			   extent_buffer_page(dst, src_i),
+ 			   dst_off_in_page - cur + 1,
+ 			   src_off_in_page - cur + 1, cur);

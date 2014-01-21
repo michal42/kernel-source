@@ -1,0 +1,44 @@
+From: Chris Mason <chris.mason@fusionio.com>
+Date: Fri, 15 Nov 2013 12:14:55 +0100
+Patch-mainline: 3.13
+Git-commit: 46e0f66a0cf9e1fe25bfdcf4a60c08aface85998
+Subject: [PATCH] btrfs: fix empty_zero_page misusage
+
+Heiko Carstens noticed that btrfs was using empty_zero_page
+incorrectly.  He explained:
+
+	The definition of empty_zero_page is architecture specific.  It
+	is (currently) either a character array, an unsigned long
+	containing the address of the empty_zero_page, or even worse
+	only the address of the struct page belonging to the
+	empty_zero_page.
+
+This commit changes btrfs to use a for-loop instead.  On x86
+the resulting .ko is smaller, and we're no longer worrying about
+how each arch builds its zeros.
+
+Reported-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ioctl.c |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -368,8 +368,13 @@ static noinline int btrfs_ioctl_fitrim(s
+ 
+ int btrfs_is_empty_uuid(u8 *uuid)
+ {
+-	BUILD_BUG_ON(BTRFS_UUID_SIZE > PAGE_SIZE);
+-	return !memcmp(uuid, empty_zero_page, BTRFS_UUID_SIZE);
++	int i;
++
++	for (i = 0; i < BTRFS_UUID_SIZE; i++) {
++		if (uuid[i])
++			return 0;
++	}
++	return 1;
+ }
+ 
+ static noinline int create_subvol(struct inode *dir,

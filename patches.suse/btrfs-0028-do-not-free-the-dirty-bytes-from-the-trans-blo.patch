@@ -1,0 +1,29 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Mon, 7 Oct 2013 10:45:07 -0400
+Patch-mainline: 3.13
+Git-commit: eb58bb371a04d3bbab44ec0c5672ce69487bac1e
+Subject: [PATCH] Btrfs: do not free the dirty bytes from the trans
+ block rsv on cleanup
+
+The transactions should be cleaning up their reservations on failure, this just
+causes us to have warnings on unmount because we go negative by free'ing
+reservations that have already been free'ed.  Thanks,
+
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |    2 --
+ 1 file changed, 2 deletions(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -4046,8 +4046,6 @@ void btrfs_cleanup_one_transaction(struc
+ 	btrfs_destroy_ordered_operations(cur_trans, root);
+ 
+ 	btrfs_destroy_delayed_refs(cur_trans, root);
+-	btrfs_block_rsv_release(root, &root->fs_info->trans_block_rsv,
+-				cur_trans->dirty_pages.dirty_bytes);
+ 
+ 	cur_trans->state = TRANS_STATE_COMMIT_START;
+ 	wake_up(&root->fs_info->transaction_blocked_wait);

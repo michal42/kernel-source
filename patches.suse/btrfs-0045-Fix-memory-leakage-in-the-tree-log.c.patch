@@ -1,0 +1,113 @@
+From: "Geyslan G. Bem" <geyslan@gmail.com>
+Date: Fri, 11 Oct 2013 15:35:45 -0300
+Patch-mainline: 3.13
+Git-commit: 03b2f08b5f96db5d07dba54ae008e9fdf1396e05
+Subject: [PATCH] btrfs: Fix memory leakage in the tree-log.c
+
+In add_inode_ref() function:
+
+Initializes local pointers.
+
+Reduces the logical condition with the __add_inode_ref() return
+value by using only one 'goto out'.
+
+Centralizes the exiting, ensuring the freeing of all used memory.
+
+Signed-off-by: Geyslan G. Bem <geyslan@gmail.com>
+Reviewed-by: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/tree-log.c |   33 +++++++++++++++++++--------------
+ 1 file changed, 19 insertions(+), 14 deletions(-)
+
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -1113,11 +1113,11 @@ static noinline int add_inode_ref(struct
+ 				  struct extent_buffer *eb, int slot,
+ 				  struct btrfs_key *key)
+ {
+-	struct inode *dir;
+-	struct inode *inode;
++	struct inode *dir = NULL;
++	struct inode *inode = NULL;
+ 	unsigned long ref_ptr;
+ 	unsigned long ref_end;
+-	char *name;
++	char *name = NULL;
+ 	int namelen;
+ 	int ret;
+ 	int search_done = 0;
+@@ -1150,13 +1150,15 @@ static noinline int add_inode_ref(struct
+ 	 * care of the rest
+ 	 */
+ 	dir = read_one_inode(root, parent_objectid);
+-	if (!dir)
+-		return -ENOENT;
++	if (!dir) {
++		ret = -ENOENT;
++		goto out;
++	}
+ 
+ 	inode = read_one_inode(root, inode_objectid);
+ 	if (!inode) {
+-		iput(dir);
+-		return -EIO;
++		ret = -EIO;
++		goto out;
+ 	}
+ 
+ 	while (ref_ptr < ref_end) {
+@@ -1169,14 +1171,16 @@ static noinline int add_inode_ref(struct
+ 			 */
+ 			if (!dir)
+ 				dir = read_one_inode(root, parent_objectid);
+-			if (!dir)
+-				return -ENOENT;
++			if (!dir) {
++				ret = -ENOENT;
++				goto out;
++			}
+ 		} else {
+ 			ret = ref_get_fields(eb, ref_ptr, &namelen, &name,
+ 					     &ref_index);
+ 		}
+ 		if (ret)
+-			return ret;
++			goto out;
+ 
+ 		/* if we already have a perfect match, we're done */
+ 		if (!inode_in_dir(root, path, btrfs_ino(dir), btrfs_ino(inode),
+@@ -1196,12 +1200,11 @@ static noinline int add_inode_ref(struct
+ 						      parent_objectid,
+ 						      ref_index, name, namelen,
+ 						      &search_done);
+-				if (ret == 1) {
+-					ret = 0;
++				if (ret) {
++					if (ret == 1)
++						ret = 0;
+ 					goto out;
+ 				}
+-				if (ret)
+-					goto out;
+ 			}
+ 
+ 			/* insert our name */
+@@ -1215,6 +1218,7 @@ static noinline int add_inode_ref(struct
+ 
+ 		ref_ptr = (unsigned long)(ref_ptr + ref_struct_size) + namelen;
+ 		kfree(name);
++		name = NULL;
+ 		if (log_ref_ver) {
+ 			iput(dir);
+ 			dir = NULL;
+@@ -1225,6 +1229,7 @@ static noinline int add_inode_ref(struct
+ 	ret = overwrite_item(trans, root, path, eb, slot, key);
+ out:
+ 	btrfs_release_path(path);
++	kfree(name);
+ 	iput(dir);
+ 	iput(inode);
+ 	return ret;

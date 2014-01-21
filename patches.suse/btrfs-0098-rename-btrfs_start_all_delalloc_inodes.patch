@@ -1,0 +1,103 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Mon, 4 Nov 2013 23:13:26 +0800
+Patch-mainline: 3.13
+Git-commit: 91aef86f3b8ab0685d930a5468254384513d1c97
+Subject: [PATCH] Btrfs: rename btrfs_start_all_delalloc_inodes
+
+rename the function -- btrfs_start_all_delalloc_inodes(), and make its
+name be compatible to btrfs_wait_ordered_roots(), since they are always
+used at the same place.
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ctree.h       |    3 +--
+ fs/btrfs/dev-replace.c |    2 +-
+ fs/btrfs/extent-tree.c |    2 +-
+ fs/btrfs/inode.c       |    3 +--
+ fs/btrfs/ioctl.c       |    2 +-
+ fs/btrfs/relocation.c  |    2 +-
+ fs/btrfs/transaction.c |    2 +-
+ 7 files changed, 7 insertions(+), 9 deletions(-)
+
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -3680,8 +3680,7 @@ int btrfs_truncate_inode_items(struct bt
+ 			       u32 min_type);
+ 
+ int btrfs_start_delalloc_inodes(struct btrfs_root *root, int delay_iput);
+-int btrfs_start_all_delalloc_inodes(struct btrfs_fs_info *fs_info,
+-				    int delay_iput);
++int btrfs_start_delalloc_roots(struct btrfs_fs_info *fs_info, int delay_iput);
+ int btrfs_set_extent_delalloc(struct inode *inode, u64 start, u64 end,
+ 			      struct extent_state **cached_state);
+ int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,
+--- a/fs/btrfs/dev-replace.c
++++ b/fs/btrfs/dev-replace.c
+@@ -461,7 +461,7 @@ static int btrfs_dev_replace_finishing(s
+ 	 * flush all outstanding I/O and inode extent mappings before the
+ 	 * copy operation is declared as being finished
+ 	 */
+-	ret = btrfs_start_all_delalloc_inodes(root->fs_info, 0);
++	ret = btrfs_start_delalloc_roots(root->fs_info, 0);
+ 	if (ret) {
+ 		mutex_unlock(&dev_replace->lock_finishing_cancel_unmount);
+ 		return ret;
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -4016,7 +4016,7 @@ static void btrfs_writeback_inodes_sb_nr
+ 		 * the filesystem is readonly(all dirty pages are written to
+ 		 * the disk).
+ 		 */
+-		btrfs_start_all_delalloc_inodes(root->fs_info, 0);
++		btrfs_start_delalloc_roots(root->fs_info, 0);
+ 		if (!current->journal_info)
+ 			btrfs_wait_ordered_roots(root->fs_info, -1);
+ 	}
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -8306,8 +8306,7 @@ int btrfs_start_delalloc_inodes(struct b
+ 	return ret;
+ }
+ 
+-int btrfs_start_all_delalloc_inodes(struct btrfs_fs_info *fs_info,
+-				    int delay_iput)
++int btrfs_start_delalloc_roots(struct btrfs_fs_info *fs_info, int delay_iput)
+ {
+ 	struct btrfs_root *root;
+ 	struct list_head splice;
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -4543,7 +4543,7 @@ long btrfs_ioctl(struct file *file, unsi
+ 	case BTRFS_IOC_SYNC: {
+ 		int ret;
+ 
+-		ret = btrfs_start_all_delalloc_inodes(root->fs_info, 0);
++		ret = btrfs_start_delalloc_roots(root->fs_info, 0);
+ 		if (ret)
+ 			return ret;
+ 		ret = btrfs_sync_fs(file->f_dentry->d_sb, 1);
+--- a/fs/btrfs/relocation.c
++++ b/fs/btrfs/relocation.c
+@@ -4222,7 +4222,7 @@ int btrfs_relocate_block_group(struct bt
+ 	printk(KERN_INFO "btrfs: relocating block group %llu flags %llu\n",
+ 	       rc->block_group->key.objectid, rc->block_group->flags);
+ 
+-	ret = btrfs_start_all_delalloc_inodes(fs_info, 0);
++	ret = btrfs_start_delalloc_roots(fs_info, 0);
+ 	if (ret < 0) {
+ 		err = ret;
+ 		goto out;
+--- a/fs/btrfs/transaction.c
++++ b/fs/btrfs/transaction.c
+@@ -1629,7 +1629,7 @@ static int btrfs_flush_all_pending_stuff
+ static inline int btrfs_start_delalloc_flush(struct btrfs_fs_info *fs_info)
+ {
+ 	if (btrfs_test_opt(fs_info->tree_root, FLUSHONCOMMIT))
+-		return btrfs_start_all_delalloc_inodes(fs_info, 1);
++		return btrfs_start_delalloc_roots(fs_info, 1);
+ 	return 0;
+ }
+ 

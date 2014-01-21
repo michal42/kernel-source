@@ -1,0 +1,36 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Mon, 7 Oct 2013 15:14:44 -0400
+Patch-mainline: 3.13
+Git-commit: 2b1360da35877cd969ed83884d8989ba778254d0
+Subject: [PATCH] Btrfs: free up block groups after everything
+
+If we abort a transaction we will do the tree log cleanup at unmount, but this
+happens after we free up the block groups.  This makes all the leak detection
+warnings go off because we think we've leaked space but in reality we just
+haven't cleaned it up yet.  So instead do the block group cleanup stuff after
+free'ing the fs roots so we don't get these warnings.  Thanks,
+
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3637,12 +3637,12 @@ int close_ctree(struct btrfs_root *root)
+ 		       percpu_counter_sum(&fs_info->delalloc_bytes));
+ 	}
+ 
+-	btrfs_free_block_groups(fs_info);
+-
+ 	btrfs_stop_all_workers(fs_info);
+ 
+ 	del_fs_roots(fs_info);
+ 
++	btrfs_free_block_groups(fs_info);
++
+ 	free_root_pointers(fs_info, 1);
+ 
+ 	iput(fs_info->btree_inode);

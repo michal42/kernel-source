@@ -1,0 +1,56 @@
+From: Liu Bo <bo.li.liu@oracle.com>
+Date: Fri, 11 Oct 2013 16:30:23 +0800
+Patch-mainline: 3.13
+Git-commit: 30d133fc221a0ec50030c33aa7bf6931503894c7
+Subject: [PATCH] Btrfs: fixup error path in __btrfs_inc_extent_ref
+
+When we fail to add a reference after a non-inline insertion by some reasons,
+eg. ENOSPC, we'll abort the transaction, but we don't return this error to
+the caller who has to walk around again to find something wrong, that's
+unnecessary.
+
+Also fixup other error paths to keep it simple.
+
+Signed-off-by: Liu Bo <bo.li.liu@oracle.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |   10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -1979,7 +1979,6 @@ static int __btrfs_inc_extent_ref(struct
+ 	struct btrfs_extent_item *item;
+ 	u64 refs;
+ 	int ret;
+-	int err = 0;
+ 
+ 	path = btrfs_alloc_path();
+ 	if (!path)
+@@ -1992,14 +1991,9 @@ static int __btrfs_inc_extent_ref(struct
+ 					   path, bytenr, num_bytes, parent,
+ 					   root_objectid, owner, offset,
+ 					   refs_to_add, extent_op);
+-	if (ret == 0)
++	if (ret != -EAGAIN)
+ 		goto out;
+ 
+-	if (ret != -EAGAIN) {
+-		err = ret;
+-		goto out;
+-	}
+-
+ 	leaf = path->nodes[0];
+ 	item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_extent_item);
+ 	refs = btrfs_extent_refs(leaf, item);
+@@ -2021,7 +2015,7 @@ static int __btrfs_inc_extent_ref(struct
+ 		btrfs_abort_transaction(trans, root, ret);
+ out:
+ 	btrfs_free_path(path);
+-	return err;
++	return ret;
+ }
+ 
+ static int run_delayed_data_ref(struct btrfs_trans_handle *trans,

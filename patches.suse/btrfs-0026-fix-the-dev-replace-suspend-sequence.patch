@@ -1,0 +1,54 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Mon, 7 Oct 2013 13:42:57 +0300
+Patch-mainline: 3.13
+Git-commit: 539f358a30d5113bad81c41a2e7ba8770d6c9f6e
+Subject: [PATCH] Btrfs: fix the dev-replace suspend sequence
+
+Replace progresses strictly from lower to higher offsets, and the
+progress is tracked in chunks, by storing the physical offset of the
+dev_extent which is being copied in the cursor_left field of
+btrfs_dev_replace_item.  When we are done copying the chunk,
+left_cursor is updated to point one byte past the dev_extent, so that
+on resume we can skip the dev_extents that have already been copied.
+
+There is a major bug (which goes all the way back to the inception of
+dev-replace in 3.8) in the way left_cursor is bumped: the bump is done
+unconditionally, without any regard to the scrub_chunk return value.
+On suspend (and also on any kind of error) scrub_chunk returns early,
+i.e. without completing the copy.  This leads to us skipping the chunk
+that hasn't been fully copied yet when resuming.
+
+Fix this by doing the cursor_left update only if scrub_chunk ret is 0.
+(On suspend scrub_chunk returns with -ECANCELED, so this fix covers
+both suspend and error cases.)
+
+Cc: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/scrub.c |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/scrub.c
++++ b/fs/btrfs/scrub.c
+@@ -2717,8 +2717,6 @@ int scrub_enumerate_chunks(struct scrub_
+ 		mutex_unlock(&fs_info->scrub_lock);
+ 		wake_up(&fs_info->scrub_pause_wait);
+ 
+-		dev_replace->cursor_left = dev_replace->cursor_right;
+-		dev_replace->item_needs_writeback = 1;
+ 		btrfs_put_block_group(cache);
+ 		if (ret)
+ 			break;
+@@ -2732,6 +2730,9 @@ int scrub_enumerate_chunks(struct scrub_
+ 			break;
+ 		}
+ 
++		dev_replace->cursor_left = dev_replace->cursor_right;
++		dev_replace->item_needs_writeback = 1;
++
+ 		key.offset = found_key.offset + length;
+ 		btrfs_release_path(path);
+ 	}

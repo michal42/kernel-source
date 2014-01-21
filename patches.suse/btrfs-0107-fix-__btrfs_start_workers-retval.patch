@@ -1,0 +1,29 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Sun, 3 Nov 2013 19:06:40 +0200
+Patch-mainline: 3.13
+Git-commit: ba69994a40b242bef26ab2683ea84aa29e2e429f
+Subject: [PATCH] Btrfs: fix __btrfs_start_workers retval
+
+__btrfs_start_workers returns 0 in case it raced with
+btrfs_stop_workers and lost the race.  This is wrong because worker in
+this case is not allowed to start and is in fact destroyed.  Return
+-EINVAL instead.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/async-thread.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/fs/btrfs/async-thread.c
++++ b/fs/btrfs/async-thread.c
+@@ -495,6 +495,7 @@ static int __btrfs_start_workers(struct
+ 	spin_lock_irq(&workers->lock);
+ 	if (workers->stopping) {
+ 		spin_unlock_irq(&workers->lock);
++		ret = -EINVAL;
+ 		goto fail_kthread;
+ 	}
+ 	list_add_tail(&worker->worker_list, &workers->idle_list);

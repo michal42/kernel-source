@@ -1,0 +1,47 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Mon, 16 Sep 2013 09:53:28 +0100
+Patch-mainline: 3.13
+Git-commit: f06becc4119856c984e3beef54aa75538e656c6d
+Subject: [PATCH] Btrfs: don't store NULL byte in symlink extents
+
+It is not necessary to store the NULL byte in a symlink inline file
+extent. There's currently no code that requires the NULL byte to be
+present in the extent. This change also doesn't break file format
+compatibility nor the send/receive feature.
+
+The VFS also doesn't need the NULL byte to be present in the extent,
+as it reads up to inode->i_size bytes (which already excluded the NULL
+byte) and sets the NULL byte for us (in fs/namei.c:page_getlink()).
+
+So with this change we save 1 byte per symlink file extent (which is
+always inlined in the btree leaf) without losing backward and forward
+compatibility.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/inode.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -8348,7 +8348,7 @@ static int btrfs_symlink(struct inode *d
+ 	struct btrfs_file_extent_item *ei;
+ 	struct extent_buffer *leaf;
+ 
+-	name_len = strlen(symname) + 1;
++	name_len = strlen(symname);
+ 	if (name_len > BTRFS_MAX_INLINE_DATA_SIZE(root))
+ 		return -ENAMETOOLONG;
+ 
+@@ -8436,7 +8436,7 @@ static int btrfs_symlink(struct inode *d
+ 	inode->i_mapping->a_ops = &btrfs_symlink_aops;
+ 	inode->i_mapping->backing_dev_info = &root->fs_info->bdi;
+ 	inode_set_bytes(inode, name_len);
+-	btrfs_i_size_write(inode, name_len - 1);
++	btrfs_i_size_write(inode, name_len);
+ 	err = btrfs_update_inode(trans, root, inode);
+ 	if (err)
+ 		drop_inode = 1;

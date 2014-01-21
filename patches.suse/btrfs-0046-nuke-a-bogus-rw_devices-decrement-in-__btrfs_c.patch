@@ -1,0 +1,36 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Thu, 10 Oct 2013 20:37:29 +0300
+Patch-mainline: 3.13
+Git-commit: f747cab7b75ba298df3ac234de9f1655957786cc
+Subject: [PATCH] Btrfs: nuke a bogus rw_devices decrement in
+ __btrfs_close_devices
+
+On mount failures, __btrfs_close_devices can be called well before
+dev-replace state is read and ->is_tgtdev_for_dev_replace is set.  This
+leads to a bogus decrement of ->rw_devices and sets off a WARN_ON in
+__btrfs_close_devices if replace target device happens to be on the
+lists and we fail early in the mount sequence.  Fix this by checking
+the devid instead of ->is_tgtdev_for_dev_replace before the decrement:
+for replace targets devid is always equal to BTRFS_DEV_REPLACE_DEVID.
+
+Cc: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/volumes.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -666,7 +666,8 @@ static int __btrfs_close_devices(struct
+ 		if (device->bdev)
+ 			fs_devices->open_devices--;
+ 
+-		if (device->writeable && !device->is_tgtdev_for_dev_replace) {
++		if (device->writeable &&
++		    device->devid != BTRFS_DEV_REPLACE_DEVID) {
+ 			list_del_init(&device->dev_alloc_list);
+ 			fs_devices->rw_devices--;
+ 		}

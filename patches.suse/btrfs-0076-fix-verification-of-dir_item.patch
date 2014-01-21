@@ -1,0 +1,32 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Mon, 28 Oct 2013 16:28:30 +0000
+Patch-mainline: 3.13
+Git-commit: e46f5388cdde0f402f2dded6f1cad614536c6429
+Subject: [PATCH] Btrfs: fix verification of dir_item
+
+We were ignoring the name component of the dir_item. Both the
+name and data must fit within BTRFS_MAX_XATTR_SIZE(root).
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/dir-item.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/dir-item.c
++++ b/fs/btrfs/dir-item.c
+@@ -474,8 +474,10 @@ int verify_dir_item(struct btrfs_root *r
+ 	}
+ 
+ 	/* BTRFS_MAX_XATTR_SIZE is the same for all dir items */
+-	if (btrfs_dir_data_len(leaf, dir_item) > BTRFS_MAX_XATTR_SIZE(root)) {
+-		printk(KERN_CRIT "btrfs: invalid dir item data len: %u\n",
++	if ((btrfs_dir_data_len(leaf, dir_item) +
++	     btrfs_dir_name_len(leaf, dir_item)) > BTRFS_MAX_XATTR_SIZE(root)) {
++		printk(KERN_CRIT "btrfs: invalid dir item name + data len: %u + %u\n",
++		       (unsigned)btrfs_dir_name_len(leaf, dir_item),
+ 		       (unsigned)btrfs_dir_data_len(leaf, dir_item));
+ 		return 1;
+ 	}
