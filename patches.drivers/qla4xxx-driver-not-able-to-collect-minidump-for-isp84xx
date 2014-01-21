@@ -1,0 +1,68 @@
+From: Tej Parkash <tej.parkash@qlogic.com>
+Date: Wed, 20 Nov 2013 16:59:10 +0530
+Subject: qla4xxx: Driver not able to collect minidump for ISP84xx
+Patch-mainline: Submitted: 12/16/2013 linux-scsi
+References: FATE#315934 bnc#853687
+
+Issue:
+minidump data collection fails as driver reports data mismatch
+
+Fix:
+When the driver encounters a new entry type that it cannot process,
+it should just skip the entry and adjust the total buffer size by from
+subtracting the skipped bytes from it. This is to ensure that there
+is no data mismatch because of the new entries.
+
+Signed-off-by: Tej Parkash <tej.parkash@qlogic.com>
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Signed-off-by: Lee Duncan <lduncan@suse.com>
+---
+
+ drivers/scsi/qla4xxx/ql4_def.h |    1 +
+ drivers/scsi/qla4xxx/ql4_nx.c  |    8 +++++++-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -767,6 +767,7 @@ struct scsi_qla_host {
+ 	uint32_t fw_dump_capture_mask;
+ 	void *fw_dump_tmplt_hdr;
+ 	uint32_t fw_dump_tmplt_size;
++	uint32_t fw_dump_skip_size;
+ 
+ 	struct completion mbx_intr_comp;
+ 
+
+--- a/drivers/scsi/qla4xxx/ql4_nx.c
++++ b/drivers/scsi/qla4xxx/ql4_nx.c
+@@ -2383,6 +2383,11 @@ static void qla4_8xxx_mark_entry_skipped(struct scsi_qla_host *ha,
+ 			  "scsi(%ld): Skipping entry[%d]: ETYPE[0x%x]-ELEVEL[0x%x]\n",
+ 			  ha->host_no, index, entry_hdr->entry_type,
+ 			  entry_hdr->d_ctrl.entry_capture_mask));
++	/* If driver encounters a new entry type that it cannot process,
++	 * it should just skip the entry and adjust the total buffer size by
++	 * from subtracting the skipped bytes from it
++	 */
++	ha->fw_dump_skip_size += entry_hdr->entry_capture_size;
+ }
+ 
+ /* ISP83xx functions to process new minidump entries... */
+@@ -2590,6 +2595,7 @@ static int qla4_8xxx_collect_md_data(struct scsi_qla_host *ha)
+ 	uint64_t now;
+ 	uint32_t timestamp;
+ 
++	ha->fw_dump_skip_size = 0;
+ 	if (!ha->fw_dump) {
+ 		ql4_printk(KERN_INFO, ha, "%s(%ld) No buffer to dump\n",
+ 			   __func__, ha->host_no);
+@@ -2761,7 +2767,7 @@ skip_nxt_entry:
+ 				 entry_hdr->entry_size);
+ 	}
+ 
+-	if (data_collected != ha->fw_dump_size) {
++	if ((data_collected + ha->fw_dump_skip_size) != ha->fw_dump_size) {
+ 		ql4_printk(KERN_INFO, ha,
+ 			   "Dump data mismatch: Data collected: [0x%x], total_data_size:[0x%x]\n",
+ 			   data_collected, ha->fw_dump_size);
+
+
