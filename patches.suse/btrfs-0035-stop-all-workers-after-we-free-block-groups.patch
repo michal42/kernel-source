@@ -1,0 +1,40 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Wed, 16 Oct 2013 13:53:28 -0400
+Patch-mainline: 3.13
+Git-commit: 96192499c27e8b58d71f4370f29ca86d4ca915d7
+Subject: [PATCH] Btrfs: stop all workers after we free block groups
+
+Stefan was hitting a panic in the async worker stuff because we had outstanding
+read bios while we were stopping the worker threads.  You could reproduce this
+easily if you mount -o nospace_cache and ran generic/273.  This is because the
+caching thread stuff is still going and we were stopping all the worker threads.
+We need to stop the workers after this work is done, and the free block groups
+code will wait for all the caching threads to stop first so we don't run into
+this problem.  With this patch we no longer panic.  Thanks,
+
+Cc: stable@vger.kernel.org
+Reported-by: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3637,12 +3637,12 @@ int close_ctree(struct btrfs_root *root)
+ 		       percpu_counter_sum(&fs_info->delalloc_bytes));
+ 	}
+ 
+-	btrfs_stop_all_workers(fs_info);
+-
+ 	del_fs_roots(fs_info);
+ 
+ 	btrfs_free_block_groups(fs_info);
+ 
++	btrfs_stop_all_workers(fs_info);
++
+ 	free_root_pointers(fs_info, 1);
+ 
+ 	iput(fs_info->btree_inode);

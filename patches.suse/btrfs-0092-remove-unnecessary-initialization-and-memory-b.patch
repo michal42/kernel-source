@@ -1,0 +1,51 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Mon, 4 Nov 2013 23:13:20 +0800
+Patch-mainline: 3.13
+Git-commit: d3ee29e39653455b7d799f77872d7df8c4060613
+Subject: [PATCH] Btrfs: remove unnecessary initialization and memory
+ barrior in shrink_delalloc()
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |    7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -4034,15 +4034,14 @@ static void shrink_delalloc(struct btrfs
+ 	u64 delalloc_bytes;
+ 	u64 max_reclaim;
+ 	long time_left;
+-	unsigned long nr_pages = (2 * 1024 * 1024) >> PAGE_CACHE_SHIFT;
+-	int loops = 0;
++	unsigned long nr_pages;
++	int loops;
+ 	enum btrfs_reserve_flush_enum flush;
+ 
+ 	trans = (struct btrfs_trans_handle *)current->journal_info;
+ 	block_rsv = &root->fs_info->delalloc_block_rsv;
+ 	space_info = block_rsv->space_info;
+ 
+-	smp_mb();
+ 	delalloc_bytes = percpu_counter_sum_positive(
+ 						&root->fs_info->delalloc_bytes);
+ 	if (delalloc_bytes == 0) {
+@@ -4052,6 +4051,7 @@ static void shrink_delalloc(struct btrfs
+ 		return;
+ 	}
+ 
++	loops = 0;
+ 	while (delalloc_bytes && loops < 3) {
+ 		max_reclaim = min(delalloc_bytes, to_reclaim);
+ 		nr_pages = max_reclaim >> PAGE_CACHE_SHIFT;
+@@ -4082,7 +4082,6 @@ static void shrink_delalloc(struct btrfs
+ 			if (time_left)
+ 				break;
+ 		}
+-		smp_mb();
+ 		delalloc_bytes = percpu_counter_sum_positive(
+ 						&root->fs_info->delalloc_bytes);
+ 	}

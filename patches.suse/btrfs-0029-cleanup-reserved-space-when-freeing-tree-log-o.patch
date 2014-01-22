@@ -1,0 +1,98 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Mon, 7 Oct 2013 15:11:00 -0400
+Patch-mainline: 3.13
+Git-commit: 681ae50917df9fd1fae2571fb36a579d1e872b12
+Subject: [PATCH] Btrfs: cleanup reserved space when freeing tree log
+ on error
+
+On error we will wait and free the tree log at unmount without a transaction.
+This means that the actual freeing of the blocks doesn't happen which means we
+complain about space leaks on unmount.  So to fix this just skip the transaction
+specific cleanup part of the tree log free'ing if we don't have a transaction
+and that way we can free up our reserved space and our counters stay happy.
+Thanks,
+
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/tree-log.c |   47 +++++++++++++++++++++++++----------------------
+ 1 file changed, 25 insertions(+), 22 deletions(-)
+
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -2151,11 +2151,13 @@ static noinline int walk_down_log_tree(s
+ 					return ret;
+ 				}
+ 
+-				btrfs_tree_lock(next);
+-				btrfs_set_lock_blocking(next);
+-				clean_tree_block(trans, root, next);
+-				btrfs_wait_tree_block_writeback(next);
+-				btrfs_tree_unlock(next);
++				if (trans) {
++					btrfs_tree_lock(next);
++					btrfs_set_lock_blocking(next);
++					clean_tree_block(trans, root, next);
++					btrfs_wait_tree_block_writeback(next);
++					btrfs_tree_unlock(next);
++				}
+ 
+ 				WARN_ON(root_owner !=
+ 					BTRFS_TREE_LOG_OBJECTID);
+@@ -2227,11 +2229,13 @@ static noinline int walk_up_log_tree(str
+ 
+ 				next = path->nodes[*level];
+ 
+-				btrfs_tree_lock(next);
+-				btrfs_set_lock_blocking(next);
+-				clean_tree_block(trans, root, next);
+-				btrfs_wait_tree_block_writeback(next);
+-				btrfs_tree_unlock(next);
++				if (trans) {
++					btrfs_tree_lock(next);
++					btrfs_set_lock_blocking(next);
++					clean_tree_block(trans, root, next);
++					btrfs_wait_tree_block_writeback(next);
++					btrfs_tree_unlock(next);
++				}
+ 
+ 				WARN_ON(root_owner != BTRFS_TREE_LOG_OBJECTID);
+ 				ret = btrfs_free_and_pin_reserved_extent(root,
+@@ -2301,11 +2305,13 @@ static int walk_log_tree(struct btrfs_tr
+ 
+ 			next = path->nodes[orig_level];
+ 
+-			btrfs_tree_lock(next);
+-			btrfs_set_lock_blocking(next);
+-			clean_tree_block(trans, log, next);
+-			btrfs_wait_tree_block_writeback(next);
+-			btrfs_tree_unlock(next);
++			if (trans) {
++				btrfs_tree_lock(next);
++				btrfs_set_lock_blocking(next);
++				clean_tree_block(trans, log, next);
++				btrfs_wait_tree_block_writeback(next);
++				btrfs_tree_unlock(next);
++			}
+ 
+ 			WARN_ON(log->root_key.objectid !=
+ 				BTRFS_TREE_LOG_OBJECTID);
+@@ -2608,13 +2614,10 @@ static void free_log_tree(struct btrfs_t
+ 		.process_func = process_one_buffer
+ 	};
+ 
+-	if (trans) {
+-		ret = walk_log_tree(trans, log, &wc);
+-
+-		/* I don't think this can happen but just in case */
+-		if (ret)
+-			btrfs_abort_transaction(trans, log, ret);
+-	}
++	ret = walk_log_tree(trans, log, &wc);
++	/* I don't think this can happen but just in case */
++	if (ret)
++		btrfs_abort_transaction(trans, log, ret);
+ 
+ 	while (1) {
+ 		ret = find_first_extent_bit(&log->dirty_log_pages,

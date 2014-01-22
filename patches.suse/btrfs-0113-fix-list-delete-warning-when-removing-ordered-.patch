@@ -1,0 +1,33 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Thu, 14 Nov 2013 17:33:21 +0800
+Patch-mainline: 3.13
+Git-commit: 931aa87791af46640a46b11fa503a119e36943ec
+Subject: [PATCH] Btrfs: fix list delete warning when removing ordered
+ root from the list
+
+Commit b02441999efcc6152b87cd58e7970bb7843f76cf "Btrfs: don't wait for
+the completion of all the ordered extents" introduced a bug that broke
+the ordered root list:
+ WARNING: CPU: 1 PID: 7119 at lib/list_debug.c:59 __list_del_entry+0x5a/0x98()
+
+It is because we forgot to return the roots in the splice list to the
+ordered list of the fs. Fix it.
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ordered-data.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/fs/btrfs/ordered-data.c
++++ b/fs/btrfs/ordered-data.c
+@@ -638,6 +638,7 @@ void btrfs_wait_ordered_roots(struct btr
+ 			WARN_ON(nr < 0);
+ 		}
+ 	}
++	list_splice_tail(&splice, &fs_info->ordered_roots);
+ 	spin_unlock(&fs_info->ordered_root_lock);
+ }
+ 

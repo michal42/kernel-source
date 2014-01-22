@@ -1,0 +1,64 @@
+From: Matthew Garrett <matthew.garrett@nebula.com>
+Subject: [PATCH V3 01/11] Add secure_modules() call
+Date: Tue,  3 Sep 2013 19:50:08 -0400
+
+Git-commit: Not yet
+Patch-mainline: Not yet, fedora 20
+References: fate#314486
+Target: SLE-12
+
+Provide a single call to allow kernel code to determine whether the system
+has been configured to either disable module loading entirely or to load
+only modules signed with a trusted key.
+
+Signed-off-by: Matthew Garrett <matthew.garrett@nebula.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ include/linux/module.h |  7 +++++++
+ kernel/module.c        | 10 ++++++++++
+ 2 files changed, 17 insertions(+)
+
+Index: linux-3.12-SLE12/include/linux/module.h
+===================================================================
+--- linux-3.12-SLE12.orig/include/linux/module.h
++++ linux-3.12-SLE12/include/linux/module.h
+@@ -521,6 +521,8 @@ int unregister_module_notifier(struct no
+ 
+ extern void print_modules(void);
+ 
++extern bool secure_modules(void);
++
+ #else /* !CONFIG_MODULES... */
+ 
+ /* Given an address, look for it in the exception tables. */
+@@ -631,6 +633,11 @@ static inline int unregister_module_noti
+ static inline void print_modules(void)
+ {
+ }
++
++static inline bool secure_modules(void)
++{
++	return false;
++}
+ #endif /* CONFIG_MODULES */
+ 
+ #ifdef CONFIG_SYSFS
+Index: linux-3.12-SLE12/kernel/module.c
+===================================================================
+--- linux-3.12-SLE12.orig/kernel/module.c
++++ linux-3.12-SLE12/kernel/module.c
+@@ -3973,3 +3973,13 @@ void module_layout(struct module *mod,
+ }
+ EXPORT_SYMBOL(module_layout);
+ #endif
++
++bool secure_modules(void)
++{
++#ifdef CONFIG_MODULE_SIG
++	return (sig_enforce || modules_disabled);
++#else
++	return modules_disabled;
++#endif
++}
++EXPORT_SYMBOL(secure_modules);

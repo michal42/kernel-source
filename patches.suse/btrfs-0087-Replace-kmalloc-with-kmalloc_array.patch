@@ -1,0 +1,72 @@
+From: Dulshani Gunawardhana <dulshani.gunawardhana89@gmail.com>
+Date: Thu, 31 Oct 2013 10:32:18 +0530
+Patch-mainline: 3.13
+Git-commit: d9b0d9ba04cf99abff9125b688c03e154598a644
+Subject: [PATCH] btrfs: Replace kmalloc with kmalloc_array
+
+Replace kmalloc(size * nr, ) with kmalloc_array(nr, size), thus making
+it easier to check is that the calculation doesn't wrap or return a smaller allocation
+
+Signed-off-by: Dulshani Gunawardhana <dulshani.gunawardhana89@gmail.com>
+Reviewed-by: Zach Brown <zab@redhat.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/delayed-inode.c |    4 ++--
+ fs/btrfs/ioctl.c         |    2 +-
+ fs/btrfs/super.c         |    2 +-
+ fs/btrfs/volumes.c       |    2 +-
+ 4 files changed, 5 insertions(+), 5 deletions(-)
+
+--- a/fs/btrfs/delayed-inode.c
++++ b/fs/btrfs/delayed-inode.c
+@@ -770,13 +770,13 @@ static int btrfs_batch_insert_items(stru
+ 	 */
+ 	btrfs_set_path_blocking(path);
+ 
+-	keys = kmalloc(sizeof(struct btrfs_key) * nitems, GFP_NOFS);
++	keys = kmalloc_array(nitems, sizeof(struct btrfs_key), GFP_NOFS);
+ 	if (!keys) {
+ 		ret = -ENOMEM;
+ 		goto out;
+ 	}
+ 
+-	data_size = kmalloc(sizeof(u32) * nitems, GFP_NOFS);
++	data_size = kmalloc_array(nitems, sizeof(u32), GFP_NOFS);
+ 	if (!data_size) {
+ 		ret = -ENOMEM;
+ 		goto error;
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -1198,7 +1198,7 @@ int btrfs_defrag_file(struct inode *inod
+ 		ra = &file->f_ra;
+ 	}
+ 
+-	pages = kmalloc(sizeof(struct page *) * max_cluster,
++	pages = kmalloc_array(max_cluster, sizeof(struct page *),
+ 			GFP_NOFS);
+ 	if (!pages) {
+ 		ret = -ENOMEM;
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -1470,7 +1470,7 @@ static int btrfs_calc_avail_data_space(s
+ 	nr_devices = fs_info->fs_devices->open_devices;
+ 	BUG_ON(!nr_devices);
+ 
+-	devices_info = kmalloc(sizeof(*devices_info) * nr_devices,
++	devices_info = kmalloc_array(nr_devices, sizeof(*devices_info),
+ 			       GFP_NOFS);
+ 	if (!devices_info)
+ 		return -ENOMEM;
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -4901,7 +4901,7 @@ static int __btrfs_map_block(struct btrf
+ 			num_stripes = map->num_stripes;
+ 			max_errors = nr_parity_stripes(map);
+ 
+-			raid_map = kmalloc(sizeof(u64) * num_stripes,
++			raid_map = kmalloc_array(num_stripes, sizeof(u64),
+ 					   GFP_NOFS);
+ 			if (!raid_map) {
+ 				ret = -ENOMEM;

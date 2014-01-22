@@ -1,0 +1,66 @@
+From: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+Date: Fri, 22 Nov 2013 05:28:21 -0500
+Subject: libiscsi: Add local_ipaddr parameter in iscsi_conn struct
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/jejb/scsi.git
+Git-commit: ae56ff4084129c7d8a5bf946d48602f551bff2f5
+Patch-mainline: Submitted: 11/22/2013 linux-scsi
+References: FATE#315934 bnc#853687
+
+Add local_ipaddr param and support get/set operations on it.
+
+Signed-off-by: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Reviewed-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Signed-off-by: Lee Duncan <lduncan@suse.com>
+---
+ drivers/scsi/libiscsi.c | 6 ++++++
+ include/scsi/libiscsi.h | 1 +
+ 2 files changed, 7 insertions(+)
+
+diff --git a/drivers/scsi/libiscsi.c b/drivers/scsi/libiscsi.c
+index e399561..4046241 100644
+--- a/drivers/scsi/libiscsi.c
++++ b/drivers/scsi/libiscsi.c
+@@ -2945,6 +2945,7 @@ void iscsi_conn_teardown(struct iscsi_cls_conn *cls_conn)
+ 	free_pages((unsigned long) conn->data,
+ 		   get_order(ISCSI_DEF_MAX_RECV_SEG_LEN));
+ 	kfree(conn->persistent_address);
++	kfree(conn->local_ipaddr);
+ 	kfifo_in(&session->cmdpool.queue, (void*)&conn->login_task,
+ 		    sizeof(void*));
+ 	if (session->leadconn == conn)
+@@ -3269,6 +3270,8 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
+ 		sscanf(buf, "%d", &val);
+ 		session->discovery_sess = !!val;
+ 		break;
++	case ISCSI_PARAM_LOCAL_IPADDR:
++		return iscsi_switch_str_param(&conn->local_ipaddr, buf);
+ 	default:
+ 		return -ENOSYS;
+ 	}
+@@ -3542,6 +3545,9 @@ int iscsi_conn_get_param(struct iscsi_cls_conn *cls_conn,
+ 	case ISCSI_PARAM_TCP_RECV_WSF:
+ 		len = sprintf(buf, "%u\n", conn->tcp_recv_wsf);
+ 		break;
++	case ISCSI_PARAM_LOCAL_IPADDR:
++		len = sprintf(buf, "%s\n", conn->local_ipaddr);
++		break;
+ 	default:
+ 		return -ENOSYS;
+ 	}
+diff --git a/include/scsi/libiscsi.h b/include/scsi/libiscsi.h
+index 6ac9e17a..309f513 100644
+--- a/include/scsi/libiscsi.h
++++ b/include/scsi/libiscsi.h
+@@ -231,6 +231,7 @@ struct iscsi_conn {
+ 	uint8_t			ipv6_traffic_class;
+ 	uint8_t			ipv6_flow_label;
+ 	uint8_t			is_fw_assigned_ipv6;
++	char			*local_ipaddr;
+ 
+ 	/* MIB-statistics */
+ 	uint64_t		txdata_octets;
+-- 
+1.7.12.4
+

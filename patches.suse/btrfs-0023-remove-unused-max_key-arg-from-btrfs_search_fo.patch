@@ -1,0 +1,181 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Tue, 1 Oct 2013 16:13:42 +0100
+Patch-mainline: 3.13
+Git-commit: 6174d3cb43aa974d0c8590a3e628ac35ab0bbc13
+Subject: [PATCH] Btrfs: remove unused max_key arg from
+ btrfs_search_forward
+
+It is not used for anything.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ctree.c       |    1 -
+ fs/btrfs/ctree.h       |    1 -
+ fs/btrfs/ioctl.c       |   16 ++--------------
+ fs/btrfs/tree-defrag.c |    2 +-
+ fs/btrfs/tree-log.c    |    9 ++-------
+ fs/btrfs/uuid-tree.c   |    6 +-----
+ fs/btrfs/volumes.c     |    2 +-
+ 7 files changed, 7 insertions(+), 30 deletions(-)
+
+--- a/fs/btrfs/ctree.c
++++ b/fs/btrfs/ctree.c
+@@ -4870,7 +4870,6 @@ static int btrfs_prev_leaf(struct btrfs_
+  * was nothing in the tree that matched the search criteria.
+  */
+ int btrfs_search_forward(struct btrfs_root *root, struct btrfs_key *min_key,
+-			 struct btrfs_key *max_key,
+ 			 struct btrfs_path *path,
+ 			 u64 min_trans)
+ {
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -3309,7 +3309,6 @@ int btrfs_find_next_key(struct btrfs_roo
+ 			struct btrfs_key *key, int lowest_level,
+ 			u64 min_trans);
+ int btrfs_search_forward(struct btrfs_root *root, struct btrfs_key *min_key,
+-			 struct btrfs_key *max_key,
+ 			 struct btrfs_path *path,
+ 			 u64 min_trans);
+ enum btrfs_compare_tree_result {
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -842,7 +842,6 @@ static int find_new_extents(struct btrfs
+ {
+ 	struct btrfs_path *path;
+ 	struct btrfs_key min_key;
+-	struct btrfs_key max_key;
+ 	struct extent_buffer *leaf;
+ 	struct btrfs_file_extent_item *extent;
+ 	int type;
+@@ -857,15 +856,10 @@ static int find_new_extents(struct btrfs
+ 	min_key.type = BTRFS_EXTENT_DATA_KEY;
+ 	min_key.offset = *off;
+ 
+-	max_key.objectid = ino;
+-	max_key.type = (u8)-1;
+-	max_key.offset = (u64)-1;
+-
+ 	path->keep_locks = 1;
+ 
+ 	while(1) {
+-		ret = btrfs_search_forward(root, &min_key, &max_key,
+-					   path, newer_than);
++		ret = btrfs_search_forward(root, &min_key, path, newer_than);
+ 		if (ret != 0)
+ 			goto none;
+ 		if (min_key.objectid != ino)
+@@ -1893,7 +1887,6 @@ static noinline int search_ioctl(struct
+ {
+ 	struct btrfs_root *root;
+ 	struct btrfs_key key;
+-	struct btrfs_key max_key;
+ 	struct btrfs_path *path;
+ 	struct btrfs_ioctl_search_key *sk = &args->key;
+ 	struct btrfs_fs_info *info = BTRFS_I(inode)->root->fs_info;
+@@ -1925,15 +1918,10 @@ static noinline int search_ioctl(struct
+ 	key.type = sk->min_type;
+ 	key.offset = sk->min_offset;
+ 
+-	max_key.objectid = sk->max_objectid;
+-	max_key.type = sk->max_type;
+-	max_key.offset = sk->max_offset;
+-
+ 	path->keep_locks = 1;
+ 
+ 	while(1) {
+-		ret = btrfs_search_forward(root, &key, &max_key, path,
+-					   sk->min_transid);
++		ret = btrfs_search_forward(root, &key, path, sk->min_transid);
+ 		if (ret != 0) {
+ 			if (ret > 0)
+ 				ret = 0;
+--- a/fs/btrfs/tree-defrag.c
++++ b/fs/btrfs/tree-defrag.c
+@@ -85,7 +85,7 @@ int btrfs_defrag_leaves(struct btrfs_tra
+ 
+ 	path->keep_locks = 1;
+ 
+-	ret = btrfs_search_forward(root, &key, NULL, path, min_trans);
++	ret = btrfs_search_forward(root, &key, path, min_trans);
+ 	if (ret < 0)
+ 		goto out;
+ 	if (ret > 0) {
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -2867,7 +2867,6 @@ static noinline int log_dir_items(struct
+ 			  u64 min_offset, u64 *last_offset_ret)
+ {
+ 	struct btrfs_key min_key;
+-	struct btrfs_key max_key;
+ 	struct btrfs_root *log = root->log_root;
+ 	struct extent_buffer *src;
+ 	int err = 0;
+@@ -2879,9 +2878,6 @@ static noinline int log_dir_items(struct
+ 	u64 ino = btrfs_ino(inode);
+ 
+ 	log = root->log_root;
+-	max_key.objectid = ino;
+-	max_key.offset = (u64)-1;
+-	max_key.type = key_type;
+ 
+ 	min_key.objectid = ino;
+ 	min_key.type = key_type;
+@@ -2889,8 +2885,7 @@ static noinline int log_dir_items(struct
+ 
+ 	path->keep_locks = 1;
+ 
+-	ret = btrfs_search_forward(root, &min_key, &max_key,
+-				   path, trans->transid);
++	ret = btrfs_search_forward(root, &min_key, path, trans->transid);
+ 
+ 	/*
+ 	 * we didn't find anything from this transaction, see if there
+@@ -3719,7 +3714,7 @@ static int btrfs_log_inode(struct btrfs_
+ 
+ 	while (1) {
+ 		ins_nr = 0;
+-		ret = btrfs_search_forward(root, &min_key, &max_key,
++		ret = btrfs_search_forward(root, &min_key,
+ 					   path, trans->transid);
+ 		if (ret != 0)
+ 			break;
+--- a/fs/btrfs/uuid-tree.c
++++ b/fs/btrfs/uuid-tree.c
+@@ -260,7 +260,6 @@ int btrfs_uuid_tree_iterate(struct btrfs
+ {
+ 	struct btrfs_root *root = fs_info->uuid_root;
+ 	struct btrfs_key key;
+-	struct btrfs_key max_key;
+ 	struct btrfs_path *path;
+ 	int ret = 0;
+ 	struct extent_buffer *leaf;
+@@ -277,13 +276,10 @@ int btrfs_uuid_tree_iterate(struct btrfs
+ 	key.objectid = 0;
+ 	key.type = 0;
+ 	key.offset = 0;
+-	max_key.objectid = (u64)-1;
+-	max_key.type = (u8)-1;
+-	max_key.offset = (u64)-1;
+ 
+ again_search_slot:
+ 	path->keep_locks = 1;
+-	ret = btrfs_search_forward(root, &key, &max_key, path, 0);
++	ret = btrfs_search_forward(root, &key, path, 0);
+ 	if (ret) {
+ 		if (ret > 0)
+ 			ret = 0;
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -3488,7 +3488,7 @@ static int btrfs_uuid_scan_kthread(void
+ 	path->keep_locks = 1;
+ 
+ 	while (1) {
+-		ret = btrfs_search_forward(root, &key, &max_key, path, 0);
++		ret = btrfs_search_forward(root, &key, path, 0);
+ 		if (ret) {
+ 			if (ret > 0)
+ 				ret = 0;

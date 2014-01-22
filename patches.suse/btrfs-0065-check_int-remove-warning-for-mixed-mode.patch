@@ -1,0 +1,49 @@
+From: Stefan Behrens <sbehrens@giantdisaster.de>
+Date: Mon, 21 Oct 2013 18:46:58 +0200
+Patch-mainline: 3.13
+Git-commit: 301993a4a13b34c13f7f2a7ed3429d231a6d6166
+Subject: [PATCH] Btrfs: check_int, remove warning for mixed-mode
+
+In mixed-mode, when a data-block was later reused for metadata, a
+warning was printed. This condition is now filtered out and the
+warning is eliminated in this case.
+
+Signed-off-by: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/check-integrity.c |    9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+--- a/fs/btrfs/check-integrity.c
++++ b/fs/btrfs/check-integrity.c
+@@ -1900,7 +1900,9 @@ again:
+ 							       dev_state,
+ 							       dev_bytenr);
+ 			}
+-			if (block->logical_bytenr != bytenr) {
++			if (block->logical_bytenr != bytenr &&
++			    !(!block->is_metadata &&
++			      block->logical_bytenr == 0))
+ 				printk(KERN_INFO
+ 				       "Written block @%llu (%s/%llu/%d)"
+ 				       " found in hash table, %c,"
+@@ -1910,15 +1912,14 @@ again:
+ 				       block->mirror_num,
+ 				       btrfsic_get_block_type(state, block),
+ 				       block->logical_bytenr);
+-				block->logical_bytenr = bytenr;
+-			} else if (state->print_mask &
+-				   BTRFSIC_PRINT_MASK_VERBOSE)
++			else if (state->print_mask & BTRFSIC_PRINT_MASK_VERBOSE)
+ 				printk(KERN_INFO
+ 				       "Written block @%llu (%s/%llu/%d)"
+ 				       " found in hash table, %c.\n",
+ 				       bytenr, dev_state->name, dev_bytenr,
+ 				       block->mirror_num,
+ 				       btrfsic_get_block_type(state, block));
++			block->logical_bytenr = bytenr;
+ 		} else {
+ 			if (num_pages * PAGE_CACHE_SIZE <
+ 			    state->datablock_size) {

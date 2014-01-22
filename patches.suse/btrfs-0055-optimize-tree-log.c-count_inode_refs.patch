@@ -1,0 +1,39 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Mon, 14 Oct 2013 22:49:11 +0100
+Patch-mainline: 3.13
+Git-commit: e93ae26fe1123e9077e79cc7af8a0d42adf4812f
+Subject: [PATCH] Btrfs: optimize tree-log.c:count_inode_refs()
+
+Avoid repeated tree searches by processing all inode ref items in
+a leaf at once instead of processing one at a time, followed by a
+path release and a tree search for a key with a decremented offset.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/tree-log.c |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -1312,6 +1312,7 @@ static int count_inode_refs(struct btrfs
+ 				break;
+ 			path->slots[0]--;
+ 		}
++process_slot:
+ 		btrfs_item_key_to_cpu(path->nodes[0], &key,
+ 				      path->slots[0]);
+ 		if (key.objectid != ino ||
+@@ -1332,6 +1333,10 @@ static int count_inode_refs(struct btrfs
+ 
+ 		if (key.offset == 0)
+ 			break;
++		if (path->slots[0] > 0) {
++			path->slots[0]--;
++			goto process_slot;
++		}
+ 		key.offset--;
+ 		btrfs_release_path(path);
+ 	}

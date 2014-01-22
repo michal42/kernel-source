@@ -3,6 +3,11 @@ Subject: Fix calculation of unmapped page cache size
 References: FATE309111
 Patch-mainline: Never
 
+Remarks from sle11sp3->sle12 porting by mhocko@suse.cz:
+- nr_swap_pages is atomic now
+
+Original changelog as per 11sp3:
+--------------------------------
 Unfortunately, the assumption that NR_FILE_PAGES - NR_FILE_MAPPED
 is easily freeable was wrong -- this could lead to us repeatedly
 calling shrink_page_cache() from add_to_page_cache() without
@@ -21,11 +26,13 @@ the number we're looking for.
 
 Signed-off-by: Kurt Garloff <garloff@suse.de>
 
-Index: linux-3.0-SLE11-SP2-3.0/mm/page_alloc.c
-===================================================================
---- linux-3.0-SLE11-SP2-3.0.orig/mm/page_alloc.c
-+++ linux-3.0-SLE11-SP2-3.0/mm/page_alloc.c
-@@ -5610,14 +5610,44 @@ out:
+---
+ mm/page_alloc.c |   33 +++++++++++++++++++++++++++++++--
+ 1 file changed, 31 insertions(+), 2 deletions(-)
+
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -6324,14 +6324,43 @@ void zone_pcp_reset(struct zone *zone)
   */
  unsigned long pagecache_over_limit()
  {
@@ -47,8 +54,7 @@ Index: linux-3.0-SLE11-SP2-3.0/mm/page_alloc.c
 +				        + global_page_state(NR_INACTIVE_FILE)
 +					- global_page_state(NR_FILE_DIRTY);
  	unsigned long free_pages = global_page_state(NR_FREE_PAGES);
-+	/* In theory, we'd need to take the swap lock here ... */
-+	unsigned long swap_pages = total_swap_pages - nr_swap_pages;
++	unsigned long swap_pages = total_swap_pages - atomic_long_read(&nr_swap_pages);
  	unsigned long limit;
  
 +	/* Paranoia */

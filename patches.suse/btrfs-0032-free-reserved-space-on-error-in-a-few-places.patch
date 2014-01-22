@@ -1,0 +1,80 @@
+From: Josef Bacik <jbacik@fusionio.com>
+Date: Mon, 7 Oct 2013 15:21:08 -0400
+Patch-mainline: 3.13
+Git-commit: 857cc2fc29cfaf4ee98fe9967bbf6a3942191136
+Subject: [PATCH] Btrfs: free reserved space on error in a few places
+
+While trying to track down a reserved space leak I noticed a few places where we
+won't properly clean up reserved space if we have an error, this patch fixes
+those up.  Thanks,
+
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |   21 +++++++++++++++++++--
+ fs/btrfs/inode.c       |    2 ++
+ 2 files changed, 21 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -2234,8 +2234,12 @@ static int run_one_delayed_ref(struct bt
+ {
+ 	int ret = 0;
+ 
+-	if (trans->aborted)
++	if (trans->aborted) {
++		if (insert_reserved)
++			btrfs_pin_extent(root, node->bytenr,
++					 node->num_bytes, 1);
+ 		return 0;
++	}
+ 
+ 	if (btrfs_delayed_ref_is_head(node)) {
+ 		struct btrfs_delayed_ref_head *head;
+@@ -2411,6 +2415,14 @@ static noinline int run_clustered_refs(s
+ 				btrfs_free_delayed_extent_op(extent_op);
+ 
+ 				if (ret) {
++					/*
++					 * Need to reset must_insert_reserved if
++					 * there was an error so the abort stuff
++					 * can cleanup the reserved space
++					 * properly.
++					 */
++					if (must_insert_reserved)
++						locked_ref->must_insert_reserved = 1;
+ 					btrfs_debug(fs_info, "run_delayed_extent_op returned %d", ret);
+ 					spin_lock(&delayed_refs->lock);
+ 					btrfs_delayed_ref_unlock(locked_ref);
+@@ -6731,13 +6743,18 @@ static int alloc_reserved_tree_block(str
+ 		size += sizeof(*block_info);
+ 
+ 	path = btrfs_alloc_path();
+-	if (!path)
++	if (!path) {
++		btrfs_free_and_pin_reserved_extent(root, ins->objectid,
++						   root->leafsize);
+ 		return -ENOMEM;
++	}
+ 
+ 	path->leave_spinning = 1;
+ 	ret = btrfs_insert_empty_item(trans, fs_info->extent_root, path,
+ 				      ins, size);
+ 	if (ret) {
++		btrfs_free_and_pin_reserved_extent(root, ins->objectid,
++						   root->leafsize);
+ 		btrfs_free_path(path);
+ 		return ret;
+ 	}
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -8507,6 +8507,8 @@ static int __btrfs_prealloc_file_range(s
+ 						  ins.offset, 0, 0, 0,
+ 						  BTRFS_FILE_EXTENT_PREALLOC);
+ 		if (ret) {
++			btrfs_free_reserved_extent(root, ins.objectid,
++						   ins.offset);
+ 			btrfs_abort_transaction(trans, root, ret);
+ 			if (own_trans)
+ 				btrfs_end_transaction(trans, root);

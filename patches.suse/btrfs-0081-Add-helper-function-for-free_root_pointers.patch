@@ -1,0 +1,90 @@
+From: Rashika <rashika.kheria@gmail.com>
+Date: Thu, 31 Oct 2013 02:45:20 +0530
+Patch-mainline: 3.13
+Git-commit: 2e9f5954978cd5b0c26e6eeb9fd4ccbdce0f5ecc
+Subject: [PATCH] btrfs: Add helper function for free_root_pointers()
+
+The function free_root_pointers() in disk-io.h contains redundant code.
+Therefore, this patch adds a helper function free_root_extent_buffers()
+to free_root_pointers() to eliminate redundancy.
+
+Reviewed-by: Zach Brown <zab@redhat.com>
+Signed-off-by: Rashika Kheria <rashika.kheria@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |   58 ++++++++++++++++-------------------------------------
+ 1 file changed, 18 insertions(+), 40 deletions(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -2033,50 +2033,28 @@ static void btrfs_stop_all_workers(struc
+ 	btrfs_stop_workers(&fs_info->qgroup_rescan_workers);
+ }
+ 
++static void free_root_extent_buffers(struct btrfs_root *root)
++{
++	if (root) {
++		free_extent_buffer(root->node);
++		free_extent_buffer(root->commit_root);
++		root->node = NULL;
++		root->commit_root = NULL;
++	}
++}
++
+ /* helper to cleanup tree roots */
+ static void free_root_pointers(struct btrfs_fs_info *info, int chunk_root)
+ {
+-	free_extent_buffer(info->tree_root->node);
+-	free_extent_buffer(info->tree_root->commit_root);
+-	info->tree_root->node = NULL;
+-	info->tree_root->commit_root = NULL;
++	free_root_extent_buffers(info->tree_root);
+ 
+-	if (info->dev_root) {
+-		free_extent_buffer(info->dev_root->node);
+-		free_extent_buffer(info->dev_root->commit_root);
+-		info->dev_root->node = NULL;
+-		info->dev_root->commit_root = NULL;
+-	}
+-	if (info->extent_root) {
+-		free_extent_buffer(info->extent_root->node);
+-		free_extent_buffer(info->extent_root->commit_root);
+-		info->extent_root->node = NULL;
+-		info->extent_root->commit_root = NULL;
+-	}
+-	if (info->csum_root) {
+-		free_extent_buffer(info->csum_root->node);
+-		free_extent_buffer(info->csum_root->commit_root);
+-		info->csum_root->node = NULL;
+-		info->csum_root->commit_root = NULL;
+-	}
+-	if (info->quota_root) {
+-		free_extent_buffer(info->quota_root->node);
+-		free_extent_buffer(info->quota_root->commit_root);
+-		info->quota_root->node = NULL;
+-		info->quota_root->commit_root = NULL;
+-	}
+-	if (info->uuid_root) {
+-		free_extent_buffer(info->uuid_root->node);
+-		free_extent_buffer(info->uuid_root->commit_root);
+-		info->uuid_root->node = NULL;
+-		info->uuid_root->commit_root = NULL;
+-	}
+-	if (chunk_root) {
+-		free_extent_buffer(info->chunk_root->node);
+-		free_extent_buffer(info->chunk_root->commit_root);
+-		info->chunk_root->node = NULL;
+-		info->chunk_root->commit_root = NULL;
+-	}
++	free_root_extent_buffers(info->dev_root);
++	free_root_extent_buffers(info->extent_root);
++	free_root_extent_buffers(info->csum_root);
++	free_root_extent_buffers(info->quota_root);
++	free_root_extent_buffers(info->uuid_root);
++	if (chunk_root)
++		free_root_extent_buffers(info->chunk_root);
+ }
+ 
+ static void del_fs_roots(struct btrfs_fs_info *fs_info)

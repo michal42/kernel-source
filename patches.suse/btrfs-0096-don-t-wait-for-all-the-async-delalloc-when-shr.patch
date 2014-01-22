@@ -1,0 +1,43 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Mon, 4 Nov 2013 23:13:24 +0800
+Patch-mainline: 3.13
+Git-commit: 9f3a074d108810139ad4af49a29d347a4cf41e9a
+Subject: [PATCH] Btrfs: don't wait for all the async delalloc when
+ shrinking delalloc
+
+It was very likely that there were lots of async delalloc pages in the
+filesystem, if we waited until all the pages were flushed, we would be
+blocked for a long time, and the performance would also drop down.
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |   14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -4079,9 +4079,19 @@ static void shrink_delalloc(struct btrfs
+ 		 * We need to wait for the async pages to actually start before
+ 		 * we do anything.
+ 		 */
+-		wait_event(root->fs_info->async_submit_wait,
+-			   !atomic_read(&root->fs_info->async_delalloc_pages));
++		max_reclaim = atomic_read(&root->fs_info->async_delalloc_pages);
++		if (!max_reclaim)
++			goto skip_async;
++
++		if (max_reclaim <= nr_pages)
++			max_reclaim = 0;
++		else
++			max_reclaim -= nr_pages;
+ 
++		wait_event(root->fs_info->async_submit_wait,
++			   atomic_read(&root->fs_info->async_delalloc_pages) <=
++			   (int)max_reclaim);
++skip_async:
+ 		if (!trans)
+ 			flush = BTRFS_RESERVE_FLUSH_ALL;
+ 		else

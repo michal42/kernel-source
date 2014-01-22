@@ -1,0 +1,50 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Mon, 28 Oct 2013 16:30:29 +0000
+Patch-mainline: 3.13
+Git-commit: 488111aa0e17102d42e0328299fd782dc6a4a051
+Subject: [PATCH] Btrfs: fix csum search offset/length calculation in
+ log tree
+
+We were setting the csums search offset and length to the right values if
+the extent is compressed, but later on right before doing the csums lookup
+we were overriding these two parameters regardless of compression being
+set or not for the extent.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/tree-log.c |   14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -3421,11 +3421,6 @@ static int log_one_extent(struct btrfs_t
+ 	if (skip_csum)
+ 		return 0;
+ 
+-	if (em->compress_type) {
+-		csum_offset = 0;
+-		csum_len = block_len;
+-	}
+-
+ 	/*
+ 	 * First check and see if our csums are on our outstanding ordered
+ 	 * extents.
+@@ -3509,8 +3504,13 @@ unlocked:
+ 	if (!mod_len || ret)
+ 		return ret;
+ 
+-	csum_offset = mod_start - em->start;
+-	csum_len = mod_len;
++	if (em->compress_type) {
++		csum_offset = 0;
++		csum_len = block_len;
++	} else {
++		csum_offset = mod_start - em->start;
++		csum_len = mod_len;
++	}
+ 
+ 	/* block start is already adjusted for the file extent offset. */
+ 	ret = btrfs_lookup_csums_range(log->fs_info->csum_root,

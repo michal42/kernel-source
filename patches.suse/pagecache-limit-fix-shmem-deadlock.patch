@@ -42,31 +42,13 @@ would end up reclaiming NR_CPUs * over_limit pages at maximum.
 Signed-off-by: Michal Hocko <mhocko@suse.cz>
 
 ---
- mm/filemap.c |    8 +++++++-
- mm/shmem.c   |   11 +++++++++++
- mm/vmscan.c  |    5 +++++
- 3 files changed, 23 insertions(+), 1 deletion(-)
+ mm/shmem.c  |   11 +++++++++++
+ mm/vmscan.c |    5 +++++
+ 2 files changed, 16 insertions(+)
 
---- a/mm/filemap.c
-+++ b/mm/filemap.c
-@@ -493,7 +493,13 @@ int add_to_page_cache(struct page *page,
- {
- 	int error;
- 
--	if (unlikely(vm_pagecache_limit_mb) && pagecache_over_limit() > 0)
-+	/* 
-+	 * Make sure we are not going into reclaim if we are requiring
-+	 * atomicity (e.g. shmem_getpage). The caller has to handle pagecache
-+	 * limiting on its own.
-+	 */
-+	if (unlikely(vm_pagecache_limit_mb) && (gfp_mask & __GFP_WAIT) &&
-+			pagecache_over_limit() > 0)
- 		shrink_page_cache(gfp_mask, page);
- 	/* FIXME: If we add dirty pages to pagecache here, and we call
- 	 * shrink_page_cache(), it might need to write out some pages to
 --- a/mm/shmem.c
 +++ b/mm/shmem.c
-@@ -719,6 +719,17 @@ int shmem_unuse(swp_entry_t swap, struct
+@@ -755,6 +755,17 @@ int shmem_unuse(swp_entry_t swap, struct
  		goto out;
  	/* No radix_tree_preload: swap entry keeps a place for page in tree */
  
@@ -86,7 +68,7 @@ Signed-off-by: Michal Hocko <mhocko@suse.cz>
  		info = list_entry(this, struct shmem_inode_info, swaplist);
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
-@@ -3121,6 +3121,11 @@ static void __shrink_page_cache(gfp_t ma
+@@ -3518,6 +3518,11 @@ static void __shrink_page_cache(gfp_t ma
  	struct reclaim_state *old_rs = current->reclaim_state;
  	long nr_pages;
  

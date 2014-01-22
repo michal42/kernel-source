@@ -1,0 +1,45 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Thu, 10 Oct 2013 20:40:21 +0300
+Patch-mainline: 3.13
+Git-commit: e649e587cbc66287b2a4bff8b2113ad679a2b8d8
+Subject: [PATCH] Btrfs: disallow 'btrfs {balance,replace} cancel' on
+ ro mounts
+
+For both balance and replace, cancelling involves changing the on-disk
+state and committing a transaction, which is not a good thing to do on
+read-only filesystems.
+
+Cc: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/dev-replace.c |    3 +++
+ fs/btrfs/volumes.c     |    3 +++
+ 2 files changed, 6 insertions(+)
+
+--- a/fs/btrfs/dev-replace.c
++++ b/fs/btrfs/dev-replace.c
+@@ -650,6 +650,9 @@ static u64 __btrfs_dev_replace_cancel(st
+ 	u64 result;
+ 	int ret;
+ 
++	if (fs_info->sb->s_flags & MS_RDONLY)
++		return -EROFS;
++
+ 	mutex_lock(&dev_replace->lock_finishing_cancel_unmount);
+ 	btrfs_dev_replace_lock(dev_replace);
+ 	switch (dev_replace->replace_state) {
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -3424,6 +3424,9 @@ int btrfs_pause_balance(struct btrfs_fs_
+ 
+ int btrfs_cancel_balance(struct btrfs_fs_info *fs_info)
+ {
++	if (fs_info->sb->s_flags & MS_RDONLY)
++		return -EROFS;
++
+ 	mutex_lock(&fs_info->balance_mutex);
+ 	if (!fs_info->balance_ctl) {
+ 		mutex_unlock(&fs_info->balance_mutex);

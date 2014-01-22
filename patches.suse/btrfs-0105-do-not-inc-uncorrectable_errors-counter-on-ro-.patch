@@ -1,0 +1,37 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Sun, 3 Nov 2013 19:06:38 +0200
+Patch-mainline: 3.13
+Git-commit: 33ef30add16905f99bbe799ee5ccea15ba497803
+Subject: [PATCH] Btrfs: do not inc uncorrectable_errors counter on ro
+ scrubs
+
+Currently if we discover an error when scrubbing in ro mode we a)
+blindly increment the uncorrectable_errors counter, and b) spam the
+dmesg with the 'unable to fixup (regular) error at ...' message, even
+though a) we haven't tried to determine if the error is correctable or
+not, and b) we haven't tried to fixup anything.  Fix this.
+
+Cc: Stefan Behrens <sbehrens@giantdisaster.de>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/scrub.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/scrub.c
++++ b/fs/btrfs/scrub.c
+@@ -938,8 +938,10 @@ static int scrub_handle_errored_block(st
+ 				BTRFS_DEV_STAT_CORRUPTION_ERRS);
+ 	}
+ 
+-	if (sctx->readonly && !sctx->is_dev_replace)
+-		goto did_not_correct_error;
++	if (sctx->readonly) {
++		ASSERT(!sctx->is_dev_replace);
++		goto out;
++	}
+ 
+ 	if (!is_metadata && !have_csum) {
+ 		struct scrub_fixup_nodatasum *fixup_nodatasum;

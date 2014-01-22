@@ -1,0 +1,68 @@
+From: Al Viro <viro@zeniv.linux.org.uk>
+Date: Sun, 1 Sep 2013 15:57:51 -0400
+Patch-mainline: 3.13
+Git-commit: 54563d41a58be77e9bd9ef7af1ea4026cf0e7e07
+Subject: [PATCH] btrfs: get rid of fdentry()
+
+3 of 4 callers actually want file_inode()...
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Chris Mason <chris.mason@fusionio.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ctree.h |    5 -----
+ fs/btrfs/ioctl.c |    8 ++++----
+ 2 files changed, 4 insertions(+), 9 deletions(-)
+
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -3111,11 +3111,6 @@ static inline u32 btrfs_level_size(struc
+ 	((unsigned long)(btrfs_leaf_data(leaf) + \
+ 	btrfs_item_offset_nr(leaf, slot)))
+ 
+-static inline struct dentry *fdentry(struct file *file)
+-{
+-	return file->f_path.dentry;
+-}
+-
+ static inline bool btrfs_mixed_space_info(struct btrfs_space_info *space_info)
+ {
+ 	return ((space_info->flags & BTRFS_BLOCK_GROUP_METADATA) &&
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -320,7 +320,7 @@ static int btrfs_ioctl_getversion(struct
+ 
+ static noinline int btrfs_ioctl_fitrim(struct file *file, void __user *arg)
+ {
+-	struct btrfs_fs_info *fs_info = btrfs_sb(fdentry(file)->d_sb);
++	struct btrfs_fs_info *fs_info = btrfs_sb(file_inode(file)->i_sb);
+ 	struct btrfs_device *device;
+ 	struct request_queue *q;
+ 	struct fstrim_range range;
+@@ -2089,7 +2089,7 @@ static noinline int btrfs_ioctl_ino_look
+ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
+ 					     void __user *arg)
+ {
+-	struct dentry *parent = fdentry(file);
++	struct dentry *parent = file->f_path.dentry;
+ 	struct dentry *dentry;
+ 	struct inode *dir = parent->d_inode;
+ 	struct inode *inode;
+@@ -3106,7 +3106,7 @@ out:
+ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
+ 				       u64 off, u64 olen, u64 destoff)
+ {
+-	struct inode *inode = fdentry(file)->d_inode;
++	struct inode *inode = file_inode(file);
+ 	struct btrfs_root *root = BTRFS_I(inode)->root;
+ 	struct fd src_file;
+ 	struct inode *src;
+@@ -4305,7 +4305,7 @@ static long btrfs_ioctl_quota_rescan_sta
+ 
+ static long btrfs_ioctl_quota_rescan_wait(struct file *file, void __user *arg)
+ {
+-	struct btrfs_root *root = BTRFS_I(fdentry(file)->d_inode)->root;
++	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EPERM;
