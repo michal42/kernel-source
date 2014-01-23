@@ -1,0 +1,44 @@
+From: David Howells <dhowells@redhat.com>
+Date: Fri, 30 Aug 2013 17:13:15 +0100
+Subject: [PATCH 24/33] KEYS: Have make canonicalise the paths of the X.509 certs better to deduplicate
+Git-commit: 0fbd39cf7ffe3b6a787b66b672d21b84e4675352
+Patch-mainline: v3.13
+References: fate#314574
+Target: SLE-12
+
+Have make canonicalise the paths of the X.509 certificates before we sort them
+as this allows $(sort) to better remove duplicates.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ kernel/Makefile |   12 +++++++++---
+ 1 files changed, 9 insertions(+), 3 deletions(-)
+
+Index: linux-3.12-SLE12/kernel/Makefile
+===================================================================
+--- linux-3.12-SLE12.orig/kernel/Makefile
++++ linux-3.12-SLE12/kernel/Makefile
+@@ -145,13 +145,19 @@ $(obj)/timeconst.h: $(obj)/hz.bc $(src)/
+ ifeq ($(CONFIG_MODULE_SIG),y)
+ ###############################################################################
+ #
+-# Roll all the X.509 certificates that we can find together and pull
+-# them into the kernel.
++# Roll all the X.509 certificates that we can find together and pull them into
++# the kernel.
++#
++# We look in the source root and the build root for all files whose name ends
++# in ".x509".  Unfortunately, this will generate duplicate filenames, so we
++# have make canonicalise the pathnames and then sort them to discard the
++# duplicates.
+ #
+ ###############################################################################
+ X509_CERTIFICATES-y := $(wildcard *.x509) $(wildcard $(srctree)/*.x509)
+ X509_CERTIFICATES-$(CONFIG_MODULE_SIG) += signing_key.x509
+-X509_CERTIFICATES := $(sort $(X509_CERTIFICATES-y))
++X509_CERTIFICATES := $(sort $(foreach CERT,$(X509_CERTIFICATES-y), \
++				$(or $(realpath $(CERT)),$(CERT))))
+ 
+ ifeq ($(X509_CERTIFICATES),)
+ $(warning *** No X.509 certificates found ***)
