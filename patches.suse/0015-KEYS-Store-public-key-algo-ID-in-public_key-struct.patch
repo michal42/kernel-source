@@ -1,0 +1,85 @@
+From: David Howells <dhowells@redhat.com>
+Date: Fri, 30 Aug 2013 16:15:24 +0100
+Subject: [PATCH 15/33] KEYS: Store public key algo ID in public_key struct
+Git-commit: 67f7d60b3a08a3e3ec51c29c25767a9d9d0bd2b1
+Patch-mainline: v3.13
+References: fate#314574
+Target: SLE-12
+
+Store public key algo ID in public_key struct for reference purposes.  This
+allows it to be removed from the x509_certificate struct and used to find a
+default in public_key_verify_signature().
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Reviewed-by: Kees Cook <keescook@chromium.org>
+Reviewed-by: Josh Boyer <jwboyer@redhat.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ crypto/asymmetric_keys/x509_cert_parser.c |    5 +++--
+ crypto/asymmetric_keys/x509_parser.h      |    1 -
+ crypto/asymmetric_keys/x509_public_key.c  |    4 ++--
+ include/crypto/public_key.h               |    1 +
+ 4 files changed, 6 insertions(+), 5 deletions(-)
+
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/x509_cert_parser.c
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/x509_cert_parser.c
++++ linux-3.12-SLE12/crypto/asymmetric_keys/x509_cert_parser.c
+@@ -343,8 +343,9 @@ int x509_extract_key_data(void *context,
+ 	if (ctx->last_oid != OID_rsaEncryption)
+ 		return -ENOPKG;
+ 
+-	/* There seems to be an extraneous 0 byte on the front of the data */
+-	ctx->cert->pkey_algo = PKEY_ALGO_RSA;
++	ctx->cert->pub->pkey_algo = PKEY_ALGO_RSA;
++
++	/* Discard the BIT STRING metadata */
+ 	ctx->key = value + 1;
+ 	ctx->key_size = vlen - 1;
+ 	return 0;
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/x509_parser.h
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/x509_parser.h
++++ linux-3.12-SLE12/crypto/asymmetric_keys/x509_parser.h
+@@ -21,7 +21,6 @@ struct x509_certificate {
+ 	char		*authority;		/* Authority key fingerprint as hex */
+ 	struct tm	valid_from;
+ 	struct tm	valid_to;
+-	enum pkey_algo	pkey_algo : 8;		/* Public key algorithm */
+ 	enum pkey_algo	sig_pkey_algo : 8;	/* Signature public key algorithm */
+ 	enum pkey_hash_algo sig_hash_algo : 8;	/* Signature hash algorithm */
+ 	const void	*tbs;			/* Signed data */
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/x509_public_key.c
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/x509_public_key.c
++++ linux-3.12-SLE12/crypto/asymmetric_keys/x509_public_key.c
+@@ -107,7 +107,7 @@ static int x509_key_preparse(struct key_
+ 
+ 	pr_devel("Cert Issuer: %s\n", cert->issuer);
+ 	pr_devel("Cert Subject: %s\n", cert->subject);
+-	pr_devel("Cert Key Algo: %s\n", pkey_algo_name[cert->pkey_algo]);
++	pr_devel("Cert Key Algo: %s\n", pkey_algo_name[cert->pub->pkey_algo]);
+ 	pr_devel("Cert Valid From: %04ld-%02d-%02d %02d:%02d:%02d\n",
+ 		 cert->valid_from.tm_year + 1900, cert->valid_from.tm_mon + 1,
+ 		 cert->valid_from.tm_mday, cert->valid_from.tm_hour,
+@@ -127,7 +127,7 @@ static int x509_key_preparse(struct key_
+ 		goto error_free_cert;
+ 	}
+ 
+-	cert->pub->algo = pkey_algo[cert->pkey_algo];
++	cert->pub->algo = pkey_algo[cert->pub->pkey_algo];
+ 	cert->pub->id_type = PKEY_ID_X509;
+ 
+ 	/* Check the signature on the key */
+Index: linux-3.12-SLE12/include/crypto/public_key.h
+===================================================================
+--- linux-3.12-SLE12.orig/include/crypto/public_key.h
++++ linux-3.12-SLE12/include/crypto/public_key.h
+@@ -60,6 +60,7 @@ struct public_key {
+ #define PKEY_CAN_DECRYPT	0x02
+ #define PKEY_CAN_SIGN		0x04
+ #define PKEY_CAN_VERIFY		0x08
++	enum pkey_algo pkey_algo : 8;
+ 	enum pkey_id_type id_type : 8;
+ 	union {
+ 		MPI	mpi[5];
