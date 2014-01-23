@@ -1,0 +1,37 @@
+From: Matthew Garrett <matthew.garrett@nebula.com>
+Subject: [PATCH V3 06/11] Restrict /dev/mem and /dev/kmem when module loading is restricted
+Date: Tue,  3 Sep 2013 19:50:13 -0400
+
+Patch-mainline: Not yet, fedora 20
+References: fate#314486
+Target: SLE-12
+
+Allowing users to write to address space makes it possible for the kernel
+to be subverted, avoiding module loading restrictions. Prevent this when
+any restrictions have been imposed on loading modules.
+
+Signed-off-by: Matthew Garrett <matthew.garrett@nebula.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+Automatically created from "patches.suse/0006_V3_Restrict__dev_mem_and__dev_kmem_when_module_loading_is_restricted.patch" by xen-port-patches.py
+
+--- sle12.orig/drivers/xen/char/mem.c	2013-08-12 13:00:59.000000000 +0200
++++ sle12/drivers/xen/char/mem.c	2014-01-23 14:51:29.000000000 +0100
+@@ -13,6 +13,7 @@
+ #include <linux/fs.h>
+ #include <linux/capability.h>
+ #include <linux/ptrace.h>
++#include <linux/module.h>
+ #include <asm/uaccess.h>
+ #include <asm/io.h>
+ #include <asm/hypervisor.h>
+@@ -113,6 +114,9 @@ static ssize_t write_mem(struct file *fi
+ 	ssize_t written = 0, sz, ignored;
+ 	void __iomem *v;
+ 
++	if (secure_modules())
++		return -EPERM;
++
+ 	while (count > 0) {
+ 		sz = size_inside_page(p, count);
+ 

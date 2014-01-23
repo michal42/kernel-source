@@ -1,0 +1,29 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: Linux 3.12.7
+Patch-mainline: 3.12.7
+References: (fate#315482) (http://www.spinics.net/lists/linux-mm/msg66182.html) (http://www.spinics.net/lists/linux-mm/msg66650.html) Automatic Balancing Functionality NUMA VM bnc#833097
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Automatically created from "patches.kernel.org/patch-3.12.6-7" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/include/mach-xen/asm/pgtable.h	2013-10-10 17:50:46.000000000 +0200
++++ sle12/arch/x86/include/mach-xen/asm/pgtable.h	2014-01-09 11:59:02.000000000 +0100
+@@ -454,9 +454,16 @@ static inline int pte_present(pte_t a)
+ }
+ 
+ #define pte_accessible pte_accessible
+-static inline int pte_accessible(pte_t a)
++static inline bool pte_accessible(struct mm_struct *mm, pte_t a)
+ {
+-	return pte_flags(a) & _PAGE_PRESENT;
++	if (pte_flags(a) & _PAGE_PRESENT)
++		return true;
++
++	if ((pte_flags(a) & (_PAGE_PROTNONE | _PAGE_NUMA)) &&
++			mm_tlb_flush_pending(mm))
++		return true;
++
++	return false;
+ }
+ 
+ static inline int pte_hidden(pte_t pte)

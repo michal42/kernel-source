@@ -16,7 +16,7 @@ Acked-by: jbeulich@suse.com
 +	.quad compat_sys_process_vm_readv
 +	.quad compat_sys_process_vm_writev
  ia32_syscall_end:
---- sle12.orig/arch/x86/include/asm/mach_traps.h	2014-01-09 11:02:00.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/mach_traps.h	2014-01-23 14:48:34.000000000 +0100
 +++ sle12/arch/x86/include/asm/mach_traps.h	2011-11-28 11:36:37.000000000 +0100
 @@ -5,6 +5,8 @@
  #ifndef _ASM_X86_MACH_DEFAULT_MACH_TRAPS_H
@@ -1739,7 +1739,7 @@ Acked-by: jbeulich@suse.com
  
  	/*
  	 * Clear/Set all flags overriden by options, need do it
---- sle12.orig/arch/x86/kernel/cpu/intel.c	2013-08-09 15:08:47.000000000 +0200
+--- sle12.orig/arch/x86/kernel/cpu/intel.c	2014-01-23 11:19:15.000000000 +0100
 +++ sle12/arch/x86/kernel/cpu/intel.c	2013-03-21 15:29:01.000000000 +0100
 @@ -51,6 +51,7 @@ static void early_init_intel(struct cpui
  		(c->x86 == 0x6 && c->x86_model >= 0x0e))
@@ -1857,7 +1857,7 @@ Acked-by: jbeulich@suse.com
  
  #include <asm/apic.h>
  #include <asm/io_apic.h>
---- sle12.orig/arch/x86/kernel/nmi.c	2014-01-09 11:02:00.000000000 +0100
+--- sle12.orig/arch/x86/kernel/nmi.c	2014-01-23 14:48:34.000000000 +0100
 +++ sle12/arch/x86/kernel/nmi.c	2013-08-09 15:25:46.000000000 +0200
 @@ -224,15 +224,12 @@ pci_serr_error(unsigned char reason, str
  	pr_emerg("Dazed and confused, but trying to continue\n");
@@ -1986,9 +1986,9 @@ Acked-by: jbeulich@suse.com
  			local_irq_disable();
  			enter_idle();
  			/* Don't trace irqs off for idle */
---- sle12.orig/arch/x86/kernel/setup-xen.c	2012-06-08 10:36:40.000000000 +0200
-+++ sle12/arch/x86/kernel/setup-xen.c	2012-06-08 10:38:03.000000000 +0200
-@@ -1274,6 +1274,8 @@ void __init setup_arch(char **cmdline_p)
+--- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 12:35:38.000000000 +0100
++++ sle12/arch/x86/kernel/setup-xen.c	2014-01-23 12:35:51.000000000 +0100
+@@ -1270,6 +1270,8 @@ void __init setup_arch(char **cmdline_p)
  
  	x86_init.timers.wallclock_init();
  
@@ -2379,7 +2379,7 @@ Acked-by: jbeulich@suse.com
  	depends on PCI_MMCONFIG
  	help
  	  Support for error detection and correction the Intel
---- sle12.orig/drivers/edac/sb_edac.c	2014-01-09 11:02:00.000000000 +0100
+--- sle12.orig/drivers/edac/sb_edac.c	2014-01-23 14:48:34.000000000 +0100
 +++ sle12/drivers/edac/sb_edac.c	2013-05-23 17:47:43.000000000 +0200
 @@ -1557,7 +1557,11 @@ static int sbridge_mce_check_error(struc
  		mce->socketid, mce->apicid);
@@ -2741,41 +2741,29 @@ Acked-by: jbeulich@suse.com
  	err = xenbus_printf(xbt, dev->nodename, "sectors", "%llu",
  			    vbd_size(&be->blkif->vbd));
 --- sle12.orig/drivers/xen/blkfront/blkfront.c	2013-05-31 13:36:24.000000000 +0200
-+++ sle12/drivers/xen/blkfront/blkfront.c	2013-05-31 13:38:15.000000000 +0200
-@@ -328,6 +328,32 @@ static void backend_changed(struct xenbu
++++ sle12/drivers/xen/blkfront/blkfront.c	2014-01-22 14:13:52.000000000 +0100
+@@ -328,6 +328,20 @@ static void backend_changed(struct xenbu
  
  /* ** Connection ** */
  
 +static void blkfront_setup_discard(struct blkfront_info *info)
 +{
-+	int err;
-+	char *type;
 +	unsigned int discard_granularity;
 +	unsigned int discard_alignment;
 +
-+	type = xenbus_read(XBT_NIL, info->xbdev->otherend, "type", NULL);
-+	if (IS_ERR(type))
-+		return;
-+
-+	if (strncmp(type, "phy", 3) == 0) {
-+		err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
-+			"discard-granularity", "%u", &discard_granularity,
-+			"discard-alignment", "%u", &discard_alignment,
-+			NULL);
-+		if (!err) {
-+			info->feature_discard = 1;
-+			info->discard_granularity = discard_granularity;
-+			info->discard_alignment = discard_alignment;
-+		}
-+	} else if (strncmp(type, "file", 4) == 0)
-+		info->feature_discard = 1;
-+
-+	kfree(type);
++	info->feature_discard = 1;
++	if (!xenbus_gather(XBT_NIL, info->xbdev->otherend,
++			   "discard-granularity", "%u", &discard_granularity,
++			   "discard-alignment", "%u", &discard_alignment,
++			   NULL)) {
++		info->discard_granularity = discard_granularity;
++		info->discard_alignment = discard_alignment;
++	}
 +}
  
  /*
   * Invoked when the backend is finally 'ready' (and has told produced
-@@ -337,7 +363,7 @@ static void connect(struct blkfront_info
+@@ -337,7 +351,7 @@ static void connect(struct blkfront_info
  {
  	unsigned long long sectors;
  	unsigned int binfo, sector_size, physical_sector_size;
@@ -2784,7 +2772,7 @@ Acked-by: jbeulich@suse.com
  
  	switch (info->connected) {
  	case BLKIF_STATE_CONNECTED:
-@@ -418,6 +444,12 @@ static void connect(struct blkfront_info
+@@ -418,6 +432,12 @@ static void connect(struct blkfront_info
  		info->feature_flush = QUEUE_ORDERED_NONE;
  #endif
  
@@ -2797,7 +2785,7 @@ Acked-by: jbeulich@suse.com
  	err = xlvbd_add(sectors, info->vdevice, binfo, sector_size,
  			physical_sector_size, info);
  	if (err) {
-@@ -825,9 +857,17 @@ static int blkif_queue_request(struct re
+@@ -825,9 +845,17 @@ static int blkif_queue_request(struct re
  #endif
  		ring_req->operation = info->flush_op;
  
@@ -2818,7 +2806,7 @@ Acked-by: jbeulich@suse.com
  			buffer_mfn = page_to_phys(sg_page(sg)) >> PAGE_SHIFT;
  			fsect = sg->offset >> 9;
  			lsect = fsect + (sg->length >> 9) - 1;
-@@ -847,6 +887,7 @@ static int blkif_queue_request(struct re
+@@ -847,6 +875,7 @@ static int blkif_queue_request(struct re
  					.gref       = ref,
  					.first_sect = fsect,
  					.last_sect  = lsect };
@@ -2826,7 +2814,7 @@ Acked-by: jbeulich@suse.com
  	}
  
  	info->ring.req_prod_pvt++;
-@@ -999,6 +1040,18 @@ static irqreturn_t blkif_int(int irq, vo
+@@ -999,6 +1028,18 @@ static irqreturn_t blkif_int(int irq, vo
  
  			__blk_end_request_all(req, ret);
  			break;
@@ -3418,7 +3406,7 @@ Acked-by: jbeulich@suse.com
  
  		__skb_queue_tail(&tx_queue, skb);
  
---- sle12.orig/drivers/xen/netback/xenbus.c	2013-01-30 11:55:44.000000000 +0100
+--- sle12.orig/drivers/xen/netback/xenbus.c	2014-01-23 11:21:16.000000000 +0100
 +++ sle12/drivers/xen/netback/xenbus.c	2011-11-18 15:49:36.000000000 +0100
 @@ -18,7 +18,6 @@
  */
@@ -3438,9 +3426,9 @@ Acked-by: jbeulich@suse.com
  #include <linux/mutex.h>
  #include <asm/hypervisor.h>
  #include <xen/xenbus.h>
---- sle12.orig/drivers/xen/netfront/netfront.c	2014-01-09 11:32:27.000000000 +0100
-+++ sle12/drivers/xen/netfront/netfront.c	2014-01-09 11:32:38.000000000 +0100
-@@ -753,7 +753,7 @@ no_skb:
+--- sle12.orig/drivers/xen/netfront/netfront.c	2014-01-23 11:21:24.000000000 +0100
++++ sle12/drivers/xen/netfront/netfront.c	2014-01-23 11:21:28.000000000 +0100
+@@ -754,7 +754,7 @@ no_skb:
  		}
  
  		skb_reserve(skb, 16 + NET_IP_ALIGN); /* mimic dev_alloc_skb() */
@@ -3449,7 +3437,7 @@ Acked-by: jbeulich@suse.com
  		skb_shinfo(skb)->nr_frags = 1;
  		__skb_queue_tail(&np->rx_batch, skb);
  	}
-@@ -786,8 +786,9 @@ no_skb:
+@@ -787,8 +787,9 @@ no_skb:
  		BUG_ON((signed short)ref < 0);
  		np->grant_rx_ref[id] = ref;
  
@@ -3461,7 +3449,7 @@ Acked-by: jbeulich@suse.com
  
  		req = RING_GET_REQUEST(&np->rx, req_prod + i);
  		if (!np->copying_receiver) {
-@@ -914,13 +915,13 @@ static void xennet_make_frags(struct sk_
+@@ -915,13 +916,13 @@ static void xennet_make_frags(struct sk_
  		ref = gnttab_claim_grant_reference(&np->gref_tx_head);
  		BUG_ON((signed short)ref < 0);
  
@@ -3477,7 +3465,7 @@ Acked-by: jbeulich@suse.com
  		tx->flags = 0;
  	}
  
-@@ -1198,8 +1199,8 @@ static int xennet_get_responses(struct n
+@@ -1199,8 +1200,8 @@ static int xennet_get_responses(struct n
  
  			if (!xen_feature(XENFEAT_auto_translated_physmap)) {
  				/* Remap the page. */
@@ -3488,7 +3476,7 @@ Acked-by: jbeulich@suse.com
  				unsigned long pfn = page_to_pfn(page);
  				void *vaddr = page_address(page);
  
-@@ -1265,23 +1266,21 @@ static RING_IDX xennet_fill_frags(struct
+@@ -1266,23 +1267,21 @@ static RING_IDX xennet_fill_frags(struct
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
  	int nr_frags = shinfo->nr_frags;
  	RING_IDX cons = np->rx.rsp_cons;
@@ -3515,7 +3503,7 @@ Acked-by: jbeulich@suse.com
  		nr_frags++;
  	}
  
-@@ -1389,7 +1388,8 @@ err:	
+@@ -1390,7 +1389,8 @@ err:	
  			}
  		}
  
@@ -3525,7 +3513,7 @@ Acked-by: jbeulich@suse.com
  		NETFRONT_SKB_CB(skb)->offset = rx->offset;
  
  		len = rx->status;
-@@ -1400,10 +1400,11 @@ err:	
+@@ -1401,10 +1401,11 @@ err:	
  		if (rx->status > len) {
  			skb_shinfo(skb)->frags[0].page_offset =
  				rx->offset + len;
@@ -3539,7 +3527,7 @@ Acked-by: jbeulich@suse.com
  			skb_shinfo(skb)->nr_frags = 0;
  		}
  
-@@ -1470,7 +1471,7 @@ err:	
+@@ -1471,7 +1472,7 @@ err:	
  
  		memcpy(skb->data, vaddr + offset, skb_headlen(skb));
  
@@ -3548,7 +3536,7 @@ Acked-by: jbeulich@suse.com
  			__free_page(page);
  
  		/* Ethernet work: Delayed to here as it peeks the header. */
-@@ -1575,6 +1576,8 @@ static void netif_release_rx_bufs_flip(s
+@@ -1576,6 +1577,8 @@ static void netif_release_rx_bufs_flip(s
  	spin_lock_bh(&np->rx_lock);
  
  	for (id = 0; id < NET_RX_RING_SIZE; id++) {
@@ -3557,7 +3545,7 @@ Acked-by: jbeulich@suse.com
  		if ((ref = np->grant_rx_ref[id]) == GRANT_INVALID_REF) {
  			unused++;
  			continue;
-@@ -1586,8 +1589,9 @@ static void netif_release_rx_bufs_flip(s
+@@ -1587,8 +1590,9 @@ static void netif_release_rx_bufs_flip(s
  		np->grant_rx_ref[id] = GRANT_INVALID_REF;
  		add_id_to_freelist(np->rx_skbs, id);
  
@@ -3568,7 +3556,7 @@ Acked-by: jbeulich@suse.com
  			balloon_release_driver_page(page);
  			skb_shinfo(skb)->nr_frags = 0;
  			dev_kfree_skb(skb);
-@@ -1597,7 +1601,6 @@ static void netif_release_rx_bufs_flip(s
+@@ -1598,7 +1602,6 @@ static void netif_release_rx_bufs_flip(s
  
  		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
  			/* Remap the page. */
@@ -3576,7 +3564,7 @@ Acked-by: jbeulich@suse.com
  			unsigned long pfn = page_to_pfn(page);
  			void *vaddr = page_address(page);
  
-@@ -1850,23 +1853,23 @@ static int network_connect(struct net_de
+@@ -1851,23 +1854,23 @@ static int network_connect(struct net_de
  
  	/* Step 2: Rebuild the RX buffer freelist and the RX ring itself. */
  	for (requeue_idx = 0, i = 0; i < NET_RX_RING_SIZE; i++) {
@@ -3605,7 +3593,7 @@ Acked-by: jbeulich@suse.com
  		}
  		req->gref = ref;
  		req->id   = requeue_idx;
-@@ -2093,7 +2096,7 @@ static const struct net_device_ops xenne
+@@ -2094,7 +2097,7 @@ static const struct net_device_ops xenne
  	.ndo_open               = network_open,
  	.ndo_stop               = network_close,
  	.ndo_start_xmit         = network_start_xmit,

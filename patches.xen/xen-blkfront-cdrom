@@ -3,8 +3,8 @@ Subject: implement forwarding of CD-ROM specific commands
 Patch-mainline: obsolete
 References: fate#300964
 
---- head.orig/drivers/cdrom/Makefile	2013-05-31 13:09:55.000000000 +0200
-+++ head/drivers/cdrom/Makefile	2010-11-23 15:06:54.000000000 +0100
+--- sle12.orig/drivers/cdrom/Makefile	2014-01-23 11:08:13.000000000 +0100
++++ sle12/drivers/cdrom/Makefile	2010-11-23 15:06:54.000000000 +0100
 @@ -9,6 +9,7 @@ obj-$(CONFIG_BLK_DEV_IDECD)	+=          
  obj-$(CONFIG_BLK_DEV_SR)	+=              cdrom.o
  obj-$(CONFIG_PARIDE_PCD)	+=		cdrom.o
@@ -13,8 +13,8 @@ References: fate#300964
  
  obj-$(CONFIG_VIOCD)		+= viocd.o      cdrom.o
  obj-$(CONFIG_GDROM)		+= gdrom.o      cdrom.o
---- head.orig/drivers/xen/blkfront/Makefile	2007-06-12 13:13:44.000000000 +0200
-+++ head/drivers/xen/blkfront/Makefile	2010-11-23 15:06:54.000000000 +0100
+--- sle12.orig/drivers/xen/blkfront/Makefile	2007-06-12 13:13:44.000000000 +0200
++++ sle12/drivers/xen/blkfront/Makefile	2010-11-23 15:06:54.000000000 +0100
 @@ -1,5 +1,5 @@
  
  obj-$(CONFIG_XEN_BLKDEV_FRONTEND)	:= xenblk.o
@@ -22,9 +22,9 @@ References: fate#300964
 -xenblk-objs := blkfront.o vbd.o
 +xenblk-objs := blkfront.o vbd.o vcd.o
  
---- head.orig/drivers/xen/blkfront/blkfront.c	2013-05-31 13:41:27.000000000 +0200
-+++ head/drivers/xen/blkfront/blkfront.c	2013-05-31 13:41:45.000000000 +0200
-@@ -490,6 +490,13 @@ static void connect(struct blkfront_info
+--- sle12.orig/drivers/xen/blkfront/blkfront.c	2014-01-23 14:19:08.000000000 +0100
++++ sle12/drivers/xen/blkfront/blkfront.c	2014-01-23 14:19:12.000000000 +0100
+@@ -476,6 +476,13 @@ static void connect(struct blkfront_info
  				   "sectors", "%Lu", &sectors);
  		if (err != 1)
  			return;
@@ -38,7 +38,7 @@ References: fate#300964
  		pr_info("Setting capacity to %Lu\n", sectors);
  		set_capacity(info->gd, sectors);
  		revalidate_disk(info->gd);
-@@ -591,6 +598,8 @@ static void connect(struct blkfront_info
+@@ -577,6 +584,8 @@ static void connect(struct blkfront_info
  	add_disk(info->gd);
  
  	info->is_ready = 1;
@@ -47,7 +47,7 @@ References: fate#300964
  }
  
  /**
-@@ -620,6 +629,8 @@ static void blkfront_closing(struct blkf
+@@ -606,6 +615,8 @@ static void blkfront_closing(struct blkf
  
  	xlvbd_sysfs_delif(info);
  
@@ -56,8 +56,8 @@ References: fate#300964
  	xlvbd_del(info);
  
   out:
---- head.orig/drivers/xen/blkfront/block.h	2012-06-08 10:50:19.000000000 +0200
-+++ head/drivers/xen/blkfront/block.h	2013-05-31 13:41:46.000000000 +0200
+--- sle12.orig/drivers/xen/blkfront/block.h	2012-06-08 10:50:19.000000000 +0200
++++ sle12/drivers/xen/blkfront/block.h	2013-05-31 13:41:46.000000000 +0200
 @@ -169,4 +169,8 @@ static inline void xlvbd_sysfs_delif(str
  
  void xlbd_release_major_info(void);
@@ -67,8 +67,8 @@ References: fate#300964
 +extern void unregister_vcd(struct blkfront_info *info);
 +
  #endif /* __XEN_DRIVERS_BLOCK_H__ */
---- head.orig/drivers/xen/blkfront/vbd.c	2013-05-31 13:38:28.000000000 +0200
-+++ head/drivers/xen/blkfront/vbd.c	2013-05-31 13:41:46.000000000 +0200
+--- sle12.orig/drivers/xen/blkfront/vbd.c	2013-05-31 13:38:28.000000000 +0200
++++ sle12/drivers/xen/blkfront/vbd.c	2013-05-31 13:41:46.000000000 +0200
 @@ -442,15 +442,16 @@ xlvbd_add(blkif_sector_t capacity, int v
  		goto out;
  	info->mi = mi;
@@ -107,7 +107,7 @@ References: fate#300964
  	info->mi = NULL;
  
 --- /dev/null	1970-01-01 00:00:00.000000000 +0000
-+++ head/drivers/xen/blkfront/vcd.c	2013-05-28 10:10:44.000000000 +0200
++++ sle12/drivers/xen/blkfront/vcd.c	2013-05-28 10:10:44.000000000 +0200
 @@ -0,0 +1,504 @@
 +/*******************************************************************************
 + * vcd.c
@@ -614,7 +614,7 @@ References: fate#300964
 +	spin_unlock(&vcd_disks_lock);
 +}
 --- /dev/null	1970-01-01 00:00:00.000000000 +0000
-+++ head/include/xen/interface/io/cdromif.h	2010-11-23 15:06:54.000000000 +0100
++++ sle12/include/xen/interface/io/cdromif.h	2010-11-23 15:06:54.000000000 +0100
 @@ -0,0 +1,120 @@
 +/******************************************************************************
 + * cdromif.h

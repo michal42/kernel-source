@@ -4,8 +4,8 @@ Patch-mainline: n/a
 
 Once validated this could be merged into the 2.6.?? patch.
 
---- head.orig/arch/x86/Kconfig	2013-09-26 13:26:51.000000000 +0200
-+++ head/arch/x86/Kconfig	2013-10-01 16:48:09.000000000 +0200
+--- sle12.orig/arch/x86/Kconfig	2014-01-23 11:23:54.000000000 +0100
++++ sle12/arch/x86/Kconfig	2013-10-01 16:48:09.000000000 +0200
 @@ -104,7 +104,7 @@ config X86
  	select GENERIC_CMOS_UPDATE
  	select HAVE_ARCH_SOFT_DIRTY if !XEN
@@ -15,8 +15,8 @@ Once validated this could be merged into the 2.6.?? patch.
  	select ARCH_CLOCKSOURCE_DATA if X86_64
  	select GENERIC_CLOCKEVENTS_BROADCAST if (X86_64 || (X86_32 && X86_LOCAL_APIC)) && !XEN
  	select GENERIC_TIME_VSYSCALL if X86_64
---- head.orig/arch/x86/include/mach-xen/asm/hypervisor.h	2012-06-14 12:25:31.000000000 +0200
-+++ head/arch/x86/include/mach-xen/asm/hypervisor.h	2012-05-11 16:22:53.000000000 +0200
+--- sle12.orig/arch/x86/include/mach-xen/asm/hypervisor.h	2012-06-14 12:25:31.000000000 +0200
++++ sle12/arch/x86/include/mach-xen/asm/hypervisor.h	2012-05-11 16:22:53.000000000 +0200
 @@ -71,7 +71,6 @@ extern start_info_t *xen_start_info;
  #define init_hypervisor_platform() init_hypervisor(&boot_cpu_data)
  
@@ -25,8 +25,8 @@ Once validated this could be merged into the 2.6.?? patch.
  #define vcpu_running(cpu) (per_cpu(runstate.state, cpu) == RUNSTATE_running)
  
  /* arch/xen/kernel/evtchn.c */
---- head.orig/arch/x86/include/mach-xen/asm/irqflags.h	2011-09-08 16:54:08.000000000 +0200
-+++ head/arch/x86/include/mach-xen/asm/irqflags.h	2012-05-24 09:13:47.000000000 +0200
+--- sle12.orig/arch/x86/include/mach-xen/asm/irqflags.h	2011-09-08 16:54:08.000000000 +0200
++++ sle12/arch/x86/include/mach-xen/asm/irqflags.h	2012-05-24 09:13:47.000000000 +0200
 @@ -5,6 +5,7 @@
  
  #ifndef __ASSEMBLY__
@@ -71,8 +71,8 @@ Once validated this could be merged into the 2.6.?? patch.
  
  /*
   * For spinlocks, etc:
---- head.orig/arch/x86/kernel/time-xen.c	2013-08-12 16:04:20.000000000 +0200
-+++ head/arch/x86/kernel/time-xen.c	2013-08-12 16:05:29.000000000 +0200
+--- sle12.orig/arch/x86/kernel/time-xen.c	2014-01-23 14:13:31.000000000 +0100
++++ sle12/arch/x86/kernel/time-xen.c	2014-01-23 14:15:24.000000000 +0100
 @@ -20,15 +20,12 @@
  #include <linux/cpufreq.h>
  #include <linux/clocksource.h>
@@ -131,19 +131,19 @@ Once validated this could be merged into the 2.6.?? patch.
 +	return (jiffies_64 - jiffies_bias) * NS_PER_TICK + system_time_bias;
 +}
 +
- static void update_wallclock(bool local)
+ static void update_wallclock(void)
  {
- 	static DEFINE_MUTEX(uwc_mutex);
-@@ -167,7 +153,7 @@ static void update_wallclock(bool local)
- 	} while ((s->wc_version & 1) | (shadow_tv_version ^ s->wc_version));
+ 	static DEFINE_SPINLOCK(uwc_lock);
+@@ -179,7 +165,7 @@ static void _update_wallclock(struct wor
  
- 	if (local) {
--		u64 tmp = processed_system_time;
-+		u64 tmp = processed_system_time(get_jiffies_64());
- 		long nsec = do_div(tmp, NSEC_PER_SEC);
- 		struct timespec tv;
+ 	update_wallclock();
  
-@@ -185,6 +171,14 @@ static void _update_wallclock(struct wor
+-	stamp = processed_system_time;
++	stamp = processed_system_time(get_jiffies_64());
+ 	nsec = do_div(stamp, NSEC_PER_SEC);
+ 	set_normalized_timespec(&tv, shadow_tv.tv_sec + stamp,
+ 				shadow_tv.tv_nsec + nsec);
+@@ -187,6 +173,14 @@ static void _update_wallclock(struct wor
  }
  static DECLARE_WORK(update_wallclock_work, _update_wallclock);
  
@@ -158,7 +158,7 @@ Once validated this could be merged into the 2.6.?? patch.
  /*
   * Reads a consistent set of time-base values from Xen, into a shadow data
   * area.
-@@ -286,7 +280,7 @@ static void sync_xen_wallclock(unsigned 
+@@ -288,7 +282,7 @@ static void sync_xen_wallclock(unsigned 
  	op.cmd = XENPF_settime;
  	op.u.settime.secs        = now.tv_sec;
  	op.u.settime.nsecs       = now.tv_nsec;
@@ -166,8 +166,8 @@ Once validated this could be merged into the 2.6.?? patch.
 +	op.u.settime.system_time = processed_system_time(get_jiffies_64());
  	WARN_ON(HYPERVISOR_platform_op(&op));
  
- 	update_wallclock(false);
-@@ -296,7 +290,7 @@ static void sync_xen_wallclock(unsigned 
+ 	update_wallclock();
+@@ -298,7 +292,7 @@ static void sync_xen_wallclock(unsigned 
  }
  #endif /* CONFIG_XEN_PRIVILEGED_GUEST */
  
@@ -176,7 +176,7 @@ Once validated this could be merged into the 2.6.?? patch.
  {
  	unsigned int cpu = get_cpu();
  	struct shadow_time_info *shadow = &per_cpu(shadow_time, cpu);
-@@ -331,7 +325,7 @@ void xen_read_wallclock(struct timespec 
+@@ -333,7 +327,7 @@ void xen_read_wallclock(struct timespec 
  		rmb();
  	} while ((s->wc_version & 1) | (version ^ s->wc_version));
  
@@ -185,7 +185,7 @@ Once validated this could be merged into the 2.6.?? patch.
  	now->tv_nsec = do_div(delta, NSEC_PER_SEC);
  	now->tv_sec = delta;
  }
-@@ -387,7 +381,7 @@ unsigned long long sched_clock(void)
+@@ -389,7 +383,7 @@ unsigned long long sched_clock(void)
  	 */
  	preempt_disable();
  
@@ -194,7 +194,7 @@ Once validated this could be merged into the 2.6.?? patch.
  
  	get_runstate_snapshot(&runstate);
  
-@@ -430,136 +424,6 @@ unsigned long profile_pc(struct pt_regs 
+@@ -432,136 +426,6 @@ unsigned long profile_pc(struct pt_regs 
  }
  EXPORT_SYMBOL(profile_pc);
  
@@ -331,7 +331,7 @@ Once validated this could be merged into the 2.6.?? patch.
  void mark_tsc_unstable(char *reason)
  {
  #ifndef CONFIG_XEN /* XXX Should tell the hypervisor about this fact. */
-@@ -568,24 +432,13 @@ void mark_tsc_unstable(char *reason)
+@@ -570,24 +434,13 @@ void mark_tsc_unstable(char *reason)
  }
  EXPORT_SYMBOL_GPL(mark_tsc_unstable);
  
@@ -357,7 +357,7 @@ Once validated this could be merged into the 2.6.?? patch.
  
  	if (unlikely((s64)(ret - last) < 0)) {
  		if (last - ret > permitted_clock_jitter
-@@ -611,7 +464,7 @@ static cycle_t xen_clocksource_read(stru
+@@ -613,7 +466,7 @@ static cycle_t xen_clocksource_read(stru
  		last = cur;
  	}
  #else
@@ -366,7 +366,7 @@ Once validated this could be merged into the 2.6.?? patch.
  #endif
  }
  
-@@ -622,26 +475,13 @@ static void xen_clocksource_resume(struc
+@@ -624,26 +477,13 @@ static void xen_clocksource_resume(struc
  
  	init_cpu_khz();
  
@@ -397,7 +397,7 @@ Once validated this could be merged into the 2.6.?? patch.
  }
  
  static struct clocksource clocksource_xen = {
-@@ -655,7 +495,7 @@ static struct clocksource clocksource_xe
+@@ -657,7 +497,7 @@ static struct clocksource clocksource_xe
  	.resume			= xen_clocksource_resume,
  };
  
@@ -406,7 +406,7 @@ Once validated this could be merged into the 2.6.?? patch.
  {
  	struct vcpu_register_runstate_memory_area area;
  	struct vcpu_runstate_info *rs = &per_cpu(runstate, cpu);
-@@ -668,28 +508,12 @@ struct vcpu_runstate_info *setup_runstat
+@@ -670,28 +510,12 @@ struct vcpu_runstate_info *setup_runstat
  		memset(rs, 0, sizeof(*rs));
  		WARN_ON(rc != -ENOSYS);
  	}
@@ -430,13 +430,13 @@ Once validated this could be merged into the 2.6.?? patch.
  
  static void __init _late_time_init(void)
  {
- 	update_wallclock(false);
+ 	update_wallclock();
 -	setup_cpu0_timer_irq();
 +	xen_clockevents_init();
  }
  
  void __init time_init(void)
-@@ -698,22 +522,11 @@ void __init time_init(void)
+@@ -700,22 +524,11 @@ void __init time_init(void)
  	printk(KERN_INFO "Xen reported: %u.%03u MHz processor.\n",
  	       cpu_khz / 1000, cpu_khz % 1000);
  
@@ -462,7 +462,7 @@ Once validated this could be merged into the 2.6.?? patch.
  
  	clocksource_register_hz(&clocksource_xen, NSEC_PER_SEC);
  
-@@ -729,146 +542,23 @@ void __init time_init(void)
+@@ -731,146 +544,23 @@ void __init time_init(void)
  /* Convert jiffies to system time. */
  u64 jiffies_to_st(unsigned long j)
  {
@@ -621,8 +621,8 @@ Once validated this could be merged into the 2.6.?? patch.
  #ifdef CONFIG_CPU_FREQ
  static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val, 
  				void *data)
---- head.orig/drivers/xen/Kconfig	2013-05-23 17:57:18.000000000 +0200
-+++ head/drivers/xen/Kconfig	2012-10-04 13:48:11.000000000 +0200
+--- sle12.orig/drivers/xen/Kconfig	2013-05-23 17:57:18.000000000 +0200
++++ sle12/drivers/xen/Kconfig	2012-10-04 13:48:11.000000000 +0200
 @@ -290,9 +290,6 @@ endmenu
  config HAVE_IRQ_IGNORE_UNHANDLED
  	def_bool y
@@ -633,15 +633,15 @@ Once validated this could be merged into the 2.6.?? patch.
  config ARCH_HAS_WALK_MEMORY
  	def_bool y
  	depends on X86
---- head.orig/drivers/xen/core/Makefile	2012-11-14 14:29:01.000000000 +0100
-+++ head/drivers/xen/core/Makefile	2012-02-17 14:37:13.000000000 +0100
+--- sle12.orig/drivers/xen/core/Makefile	2012-11-14 14:29:01.000000000 +0100
++++ sle12/drivers/xen/core/Makefile	2012-02-17 14:37:13.000000000 +0100
 @@ -10,3 +10,4 @@ obj-$(CONFIG_HOTPLUG_CPU)	+= cpu_hotplug
  obj-$(CONFIG_XEN_SMPBOOT)	+= smpboot.o
  obj-$(CONFIG_SMP)		+= spinlock.o
  obj-$(CONFIG_KEXEC)		+= machine_kexec.o
 +obj-$(CONFIG_GENERIC_CLOCKEVENTS) += clockevents.o
 --- /dev/null	1970-01-01 00:00:00.000000000 +0000
-+++ head/drivers/xen/core/clockevents.c	2013-03-05 14:17:28.000000000 +0100
++++ sle12/drivers/xen/core/clockevents.c	2013-03-05 14:17:28.000000000 +0100
 @@ -0,0 +1,304 @@
 +/*
 + *	Xen clockevent functions
@@ -947,8 +947,8 @@ Once validated this could be merged into the 2.6.?? patch.
 +
 +	xen_setup_cpu_clockevents();
 +}
---- head.orig/drivers/xen/core/evtchn.c	2013-08-08 11:51:56.000000000 +0200
-+++ head/drivers/xen/core/evtchn.c	2013-08-08 11:52:21.000000000 +0200
+--- sle12.orig/drivers/xen/core/evtchn.c	2013-08-08 11:51:56.000000000 +0200
++++ sle12/drivers/xen/core/evtchn.c	2013-08-08 11:52:21.000000000 +0200
 @@ -404,6 +404,7 @@ asmlinkage void __irq_entry evtchn_do_up
  		wmb();
  #endif
@@ -965,8 +965,8 @@ Once validated this could be merged into the 2.6.?? patch.
  
  		l1 = xchg(&vcpu_info->evtchn_pending_sel, 0);
  
---- head.orig/drivers/xen/core/machine_reboot.c	2012-04-11 16:09:22.000000000 +0200
-+++ head/drivers/xen/core/machine_reboot.c	2013-03-05 13:44:10.000000000 +0100
+--- sle12.orig/drivers/xen/core/machine_reboot.c	2012-04-11 16:09:22.000000000 +0200
++++ sle12/drivers/xen/core/machine_reboot.c	2013-03-05 13:44:10.000000000 +0100
 @@ -13,6 +13,7 @@
  #include <asm/hypervisor.h>
  #include <xen/xenbus.h>
@@ -1006,8 +1006,8 @@ Once validated this could be merged into the 2.6.?? patch.
  	return err;
  }
  #endif
---- head.orig/drivers/xen/core/smpboot.c	2013-06-04 16:41:40.000000000 +0200
-+++ head/drivers/xen/core/smpboot.c	2013-06-04 16:41:43.000000000 +0200
+--- sle12.orig/drivers/xen/core/smpboot.c	2013-06-04 16:41:40.000000000 +0200
++++ sle12/drivers/xen/core/smpboot.c	2013-06-04 16:41:43.000000000 +0200
 @@ -17,6 +17,7 @@
  #include <linux/tick.h>
  #include <asm/desc.h>
@@ -1024,8 +1024,8 @@ Once validated this could be merged into the 2.6.?? patch.
  	cpu = smp_processor_id();
  	notify_cpu_starting(cpu);
  	set_cpu_online(cpu, true);
---- head.orig/drivers/xen/core/spinlock.c	2013-08-08 11:49:27.000000000 +0200
-+++ head/drivers/xen/core/spinlock.c	2013-08-08 11:52:23.000000000 +0200
+--- sle12.orig/drivers/xen/core/spinlock.c	2014-01-09 12:12:13.000000000 +0100
++++ sle12/drivers/xen/core/spinlock.c	2013-08-08 11:52:23.000000000 +0200
 @@ -14,6 +14,7 @@
  #include <linux/kernel.h>
  #include <linux/moduleparam.h>
@@ -1035,7 +1035,7 @@ Once validated this could be merged into the 2.6.?? patch.
  
  struct spinning {
 --- /dev/null	1970-01-01 00:00:00.000000000 +0000
-+++ head/include/xen/clock.h	2013-03-05 13:44:28.000000000 +0100
++++ sle12/include/xen/clock.h	2013-03-05 13:44:28.000000000 +0100
 @@ -0,0 +1,18 @@
 +#ifndef __XEN_CPU_CLOCK_H__
 +#define __XEN_CPU_CLOCK_H__
@@ -1055,8 +1055,8 @@ Once validated this could be merged into the 2.6.?? patch.
 +#endif
 +
 +#endif /* __XEN_CPU_CLOCK_H__ */
---- head.orig/kernel/sched/cputime.c	2013-09-26 10:46:35.000000000 +0200
-+++ head/kernel/sched/cputime.c	2013-05-24 15:31:46.000000000 +0200
+--- sle12.orig/kernel/sched/cputime.c	2014-01-23 11:08:13.000000000 +0100
++++ sle12/kernel/sched/cputime.c	2013-05-24 15:31:46.000000000 +0200
 @@ -126,6 +126,48 @@ static inline void task_group_account_fi
  	cpuacct_account_field(p, index, tmp);
  }
