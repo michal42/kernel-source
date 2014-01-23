@@ -1,0 +1,75 @@
+From 64e0ee642b08178a2709a3beb732a8d2d9e35a00 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Patch-Mainline: v3.15
+References: FATE#315595
+Git-Commit: c47865dd2242fa8bd4735812c587c9cc4ef5835f
+Date: Fri, 8 Nov 2013 16:37:26 +0100
+Subject: [PATCH 29/60] usb: Clear host_endpoint->streams when implicitly
+ freeing streams
+
+If streams are still allocated on device-reset or set-interface then the hcd
+code implictly frees the streams. Clear host_endpoint->streams in this case
+so that if a driver later tries to re-allocate them it won't run afoul of the
+device already having streams check in usb_alloc_streams().
+
+Note normally streams still being allocated at reset / set-intf  would be a
+driver bug, but this can happen without it being a driver bug on reset-resume.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/core/hub.c     | 5 ++++-
+ drivers/usb/core/message.c | 7 +++++--
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 4cb60ad..60ba38b 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -5107,7 +5107,7 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+ 	struct usb_hcd			*hcd = bus_to_hcd(udev->bus);
+ 	struct usb_device_descriptor	descriptor = udev->descriptor;
+ 	struct usb_host_bos		*bos;
+-	int 				i, ret = 0;
++	int				i, j, ret = 0;
+ 	int				port1 = udev->portnum;
+ 
+ 	if (udev->state == USB_STATE_NOTATTACHED ||
+@@ -5233,6 +5233,9 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+ 				ret);
+ 			goto re_enumerate;
+ 		}
++		/* Resetting also frees any allocated streams */
++		for (j = 0; j < intf->cur_altsetting->desc.bNumEndpoints; j++)
++			intf->cur_altsetting->endpoint[j].streams = 0;
+ 	}
+ 
+ done:
+diff --git a/drivers/usb/core/message.c b/drivers/usb/core/message.c
+index bb31597..08c12a0 100644
+--- a/drivers/usb/core/message.c
++++ b/drivers/usb/core/message.c
+@@ -1294,8 +1294,7 @@ int usb_set_interface(struct usb_device *dev, int interface, int alternate)
+ 	struct usb_interface *iface;
+ 	struct usb_host_interface *alt;
+ 	struct usb_hcd *hcd = bus_to_hcd(dev->bus);
+-	int ret;
+-	int manual = 0;
++	int i, ret, manual = 0;
+ 	unsigned int epaddr;
+ 	unsigned int pipe;
+ 
+@@ -1330,6 +1329,10 @@ int usb_set_interface(struct usb_device *dev, int interface, int alternate)
+ 		mutex_unlock(hcd->bandwidth_mutex);
+ 		return -ENOMEM;
+ 	}
++	/* Changing alt-setting also frees any allocated streams */
++	for (i = 0; i < iface->cur_altsetting->desc.bNumEndpoints; i++)
++		iface->cur_altsetting->endpoint[i].streams = 0;
++
+ 	ret = usb_hcd_alloc_bandwidth(dev, NULL, iface->cur_altsetting, alt);
+ 	if (ret < 0) {
+ 		dev_info(&dev->dev, "Not enough bandwidth for altsetting %d\n",
+-- 
+1.8.4
+
