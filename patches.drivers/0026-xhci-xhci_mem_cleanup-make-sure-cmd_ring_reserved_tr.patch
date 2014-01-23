@@ -1,0 +1,45 @@
+From ba1beb26abb3b60b6ced24ddb35eea728101341c Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Patch-Mainline: v3.15
+References: FATE#315595
+Git-Commit: 36b31af88e3906f374fea89fcd6f745b76fbd5a8
+Date: Thu, 7 Nov 2013 08:19:45 +0100
+Subject: [PATCH 26/60] xhci: xhci_mem_cleanup: make sure
+ cmd_ring_reserved_trbs really is 0
+
+cmd_ring_reserved_trbs gets decremented by xhci_free_stream_info(), so set it
+to 0 after freeing all rings, otherwise it wraps around to a very large value
+when rings with streams are free-ed.
+
+Before this patch the wrap-around could be triggered when xhci_resume
+calls xhci_mem_cleanup if the controller resume fails.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci-mem.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/usb/host/xhci-mem.c b/drivers/usb/host/xhci-mem.c
+index 9e45471..6fa439a 100644
+--- a/drivers/usb/host/xhci-mem.c
++++ b/drivers/usb/host/xhci-mem.c
+@@ -1812,7 +1812,6 @@ void xhci_mem_cleanup(struct xhci_hcd *xhci)
+ 
+ 	if (xhci->lpm_command)
+ 		xhci_free_command(xhci, xhci->lpm_command);
+-	xhci->cmd_ring_reserved_trbs = 0;
+ 	if (xhci->cmd_ring)
+ 		xhci_ring_free(xhci, xhci->cmd_ring);
+ 	xhci->cmd_ring = NULL;
+@@ -1877,6 +1876,7 @@ void xhci_mem_cleanup(struct xhci_hcd *xhci)
+ 	}
+ 
+ no_bw:
++	xhci->cmd_ring_reserved_trbs = 0;
+ 	xhci->num_usb2_ports = 0;
+ 	xhci->num_usb3_ports = 0;
+ 	xhci->num_active_eps = 0;
+-- 
+1.8.4
+
