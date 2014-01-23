@@ -1,0 +1,107 @@
+From: David Howells <dhowells@redhat.com>
+Date: Fri, 30 Aug 2013 16:15:18 +0100
+Subject: [PATCH 14/14] KEYS: Move the algorithm pointer array from x509 to public_key.c
+Git-commit: 206ce59a109f3b4bb352845bcd04f3cf504ae592
+Patch-mainline: v3.13
+References: fate#314574
+Target: SLE-12
+
+Move the public-key algorithm pointer array from x509_public_key.c to
+public_key.c as it isn't X.509 specific.
+
+Note that to make this configure correctly, the public key part must be
+dependent on the RSA module rather than the other way round.  This needs a
+further patch to make use of the crypto module loading stuff rather than using
+a fixed table.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Reviewed-by: Kees Cook <keescook@chromium.org>
+Reviewed-by: Josh Boyer <jwboyer@redhat.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ crypto/asymmetric_keys/Kconfig           |    2 +-
+ crypto/asymmetric_keys/public_key.c      |    8 ++++++++
+ crypto/asymmetric_keys/x509_public_key.c |   11 +----------
+ include/crypto/public_key.h              |    1 +
+ 4 files changed, 11 insertions(+), 11 deletions(-)
+
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/Kconfig
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/Kconfig
++++ linux-3.12-SLE12/crypto/asymmetric_keys/Kconfig
+@@ -12,6 +12,7 @@ if ASYMMETRIC_KEY_TYPE
+ config ASYMMETRIC_PUBLIC_KEY_SUBTYPE
+ 	tristate "Asymmetric public-key crypto algorithm subtype"
+ 	select MPILIB
++	select PUBLIC_KEY_ALGO_RSA
+ 	help
+ 	  This option provides support for asymmetric public key type handling.
+ 	  If signature generation and/or verification are to be used,
+@@ -20,7 +21,6 @@ config ASYMMETRIC_PUBLIC_KEY_SUBTYPE
+ 
+ config PUBLIC_KEY_ALGO_RSA
+ 	tristate "RSA public-key algorithm"
+-	depends on ASYMMETRIC_PUBLIC_KEY_SUBTYPE
+ 	select MPILIB_EXTRA
+ 	help
+ 	  This option enables support for the RSA algorithm (PKCS#1, RFC3447).
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/public_key.c
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/public_key.c
++++ linux-3.12-SLE12/crypto/asymmetric_keys/public_key.c
+@@ -28,6 +28,14 @@ const char *const pkey_algo_name[PKEY_AL
+ };
+ EXPORT_SYMBOL_GPL(pkey_algo_name);
+ 
++const struct public_key_algorithm *pkey_algo[PKEY_ALGO__LAST] = {
++#if defined(CONFIG_PUBLIC_KEY_ALGO_RSA) || \
++	defined(CONFIG_PUBLIC_KEY_ALGO_RSA_MODULE)
++	[PKEY_ALGO_RSA]		= &RSA_public_key_algorithm,
++#endif
++};
++EXPORT_SYMBOL_GPL(pkey_algo);
++
+ const char *const pkey_hash_algo_name[PKEY_HASH__LAST] = {
+ 	[PKEY_HASH_MD4]		= "md4",
+ 	[PKEY_HASH_MD5]		= "md5",
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/x509_public_key.c
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/x509_public_key.c
++++ linux-3.12-SLE12/crypto/asymmetric_keys/x509_public_key.c
+@@ -23,15 +23,6 @@
+ #include "public_key.h"
+ #include "x509_parser.h"
+ 
+-static const
+-struct public_key_algorithm *x509_public_key_algorithms[PKEY_ALGO__LAST] = {
+-	[PKEY_ALGO_DSA]		= NULL,
+-#if defined(CONFIG_PUBLIC_KEY_ALGO_RSA) || \
+-	defined(CONFIG_PUBLIC_KEY_ALGO_RSA_MODULE)
+-	[PKEY_ALGO_RSA]		= &RSA_public_key_algorithm,
+-#endif
+-};
+-
+ /*
+  * Check the signature on a certificate using the provided public key
+  */
+@@ -136,7 +127,7 @@ static int x509_key_preparse(struct key_
+ 		goto error_free_cert;
+ 	}
+ 
+-	cert->pub->algo = x509_public_key_algorithms[cert->pkey_algo];
++	cert->pub->algo = pkey_algo[cert->pkey_algo];
+ 	cert->pub->id_type = PKEY_ID_X509;
+ 
+ 	/* Check the signature on the key */
+Index: linux-3.12-SLE12/include/crypto/public_key.h
+===================================================================
+--- linux-3.12-SLE12.orig/include/crypto/public_key.h
++++ linux-3.12-SLE12/include/crypto/public_key.h
+@@ -23,6 +23,7 @@ enum pkey_algo {
+ };
+ 
+ extern const char *const pkey_algo_name[PKEY_ALGO__LAST];
++extern const struct public_key_algorithm *pkey_algo[PKEY_ALGO__LAST];
+ 
+ enum pkey_hash_algo {
+ 	PKEY_HASH_MD4,
