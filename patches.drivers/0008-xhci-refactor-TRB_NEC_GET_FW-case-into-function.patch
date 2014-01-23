@@ -1,0 +1,64 @@
+From 5f8f26e589c28eef21f05d9fb31f748efbb9c35b Mon Sep 17 00:00:00 2001
+From: Xenia Ragiadakou <burzalodowa@gmail.com>
+Date: Mon, 9 Sep 2013 13:29:52 +0300
+Git-Commit: 2c070821e2b2ce2e75861b2b56062df1757b9183
+Patch-Mainline: v3.13
+References: FATE#315595
+Subject: [PATCH 08/17] xhci: refactor TRB_NEC_GET_FW case into function
+
+The function that handles xHCI command completion is much too long and
+there is need to be broken up into individual functions for each command
+completion to improve code readablity.
+This patch refactors the code in TRB_NEC_GET_FW switch case in
+handle_cmd_completion() into a fuction named xhci_handle_cmd_nec_get_fw().
+
+Signed-off-by: Xenia Ragiadakou <burzalodowa@gmail.com>
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci-ring.c | 22 ++++++++++++++--------
+ 1 file changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/host/xhci-ring.c b/drivers/usb/host/xhci-ring.c
+index 82ef856..ce9b4a3 100644
+--- a/drivers/usb/host/xhci-ring.c
++++ b/drivers/usb/host/xhci-ring.c
+@@ -1427,6 +1427,19 @@ static void xhci_handle_cmd_reset_dev(struct xhci_hcd *xhci, int slot_id,
+ 				"for disabled slot %u\n", slot_id);
+ }
+ 
++static void xhci_handle_cmd_nec_get_fw(struct xhci_hcd *xhci,
++		struct xhci_event_cmd *event)
++{
++	if (!(xhci->quirks & XHCI_NEC_HOST)) {
++		xhci->error_bitmask |= 1 << 6;
++		return;
++	}
++	xhci_dbg_trace(xhci, trace_xhci_dbg_quirks,
++			"NEC firmware version %2x.%02x",
++			NEC_FW_MAJOR(le32_to_cpu(event->status)),
++			NEC_FW_MINOR(le32_to_cpu(event->status)));
++}
++
+ static void handle_cmd_completion(struct xhci_hcd *xhci,
+ 		struct xhci_event_cmd *event)
+ {
+@@ -1565,14 +1578,7 @@ bandwidth_change:
+ 		xhci_handle_cmd_reset_dev(xhci, slot_id, event);
+ 		break;
+ 	case TRB_TYPE(TRB_NEC_GET_FW):
+-		if (!(xhci->quirks & XHCI_NEC_HOST)) {
+-			xhci->error_bitmask |= 1 << 6;
+-			break;
+-		}
+-		xhci_dbg_trace(xhci, trace_xhci_dbg_quirks,
+-			"NEC firmware version %2x.%02x",
+-			 NEC_FW_MAJOR(le32_to_cpu(event->status)),
+-			 NEC_FW_MINOR(le32_to_cpu(event->status)));
++		xhci_handle_cmd_nec_get_fw(xhci, event);
+ 		break;
+ 	default:
+ 		/* Skip over unknown commands on the event ring */
+-- 
+1.8.4
+
