@@ -1,0 +1,66 @@
+From 04320c49e117f045d92293322c502f01ae9f9cfe Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Fri, 4 Oct 2013 00:29:46 +0200
+Patch-Mainline:v3.15
+References: FATE#315595
+Git-Commit: 13d68092006aa751547004ff50269fb508b9d6d8
+Subject: [PATCH 3/9] xhci: Check size rather then number of streams when
+ allocating stream ctxs
+
+Before this a device needing ie 32 stream ctxs would end up with an entry from
+the small_streams_pool which has 256 bytes entries, where as 32 stream ctxs
+need 512 bytes. Things actually keep running for a surprisingly long time
+before crashing because of this.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci-mem.c | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/usb/host/xhci-mem.c b/drivers/usb/host/xhci-mem.c
+index 2d8d33c..7a9afe5 100644
+--- a/drivers/usb/host/xhci-mem.c
++++ b/drivers/usb/host/xhci-mem.c
+@@ -519,13 +519,13 @@ static void xhci_free_stream_ctx(struct xhci_hcd *xhci,
+ 		unsigned int num_stream_ctxs,
+ 		struct xhci_stream_ctx *stream_ctx, dma_addr_t dma)
+ {
+-	struct device *dev = xhci_to_hcd(xhci)->self.controller;
++	struct pci_dev *pdev = to_pci_dev(xhci_to_hcd(xhci)->self.controller);
++	size_t size = sizeof(struct xhci_stream_ctx) * num_stream_ctxs;
+ 
+-	if (num_stream_ctxs > MEDIUM_STREAM_ARRAY_SIZE)
+-		dma_free_coherent(dev,
+-				sizeof(struct xhci_stream_ctx)*num_stream_ctxs,
++	if (size > MEDIUM_STREAM_ARRAY_SIZE)
++		dma_free_coherent(&pdev->dev, size,
+ 				stream_ctx, dma);
+-	else if (num_stream_ctxs <= SMALL_STREAM_ARRAY_SIZE)
++	else if (size <= SMALL_STREAM_ARRAY_SIZE)
+ 		return dma_pool_free(xhci->small_streams_pool,
+ 				stream_ctx, dma);
+ 	else
+@@ -547,13 +547,13 @@ static struct xhci_stream_ctx *xhci_alloc_stream_ctx(struct xhci_hcd *xhci,
+ 		unsigned int num_stream_ctxs, dma_addr_t *dma,
+ 		gfp_t mem_flags)
+ {
+-	struct device *dev = xhci_to_hcd(xhci)->self.controller;
++	struct pci_dev *pdev = to_pci_dev(xhci_to_hcd(xhci)->self.controller);
++	size_t size = sizeof(struct xhci_stream_ctx) * num_stream_ctxs;
+ 
+-	if (num_stream_ctxs > MEDIUM_STREAM_ARRAY_SIZE)
+-		return dma_alloc_coherent(dev,
+-				sizeof(struct xhci_stream_ctx)*num_stream_ctxs,
++	if (size > MEDIUM_STREAM_ARRAY_SIZE)
++		return dma_alloc_coherent(&pdev->dev, size,
+ 				dma, mem_flags);
+-	else if (num_stream_ctxs <= SMALL_STREAM_ARRAY_SIZE)
++	else if (size <= SMALL_STREAM_ARRAY_SIZE)
+ 		return dma_pool_alloc(xhci->small_streams_pool,
+ 				mem_flags, dma);
+ 	else
+-- 
+1.8.4
+
