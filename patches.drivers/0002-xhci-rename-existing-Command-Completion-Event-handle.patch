@@ -1,0 +1,81 @@
+From b2b22b1aeea2990a145499993505144442937b52 Mon Sep 17 00:00:00 2001
+From: Xenia Ragiadakou <burzalodowa@gmail.com>
+Date: Mon, 9 Sep 2013 13:29:46 +0300
+Git-Commit: 60b9593cf225827b6b887db4061ea9ece052fbf3
+Patch-Mainline: v3.13
+References: FATE#315595
+Subject: [PATCH 02/17] xhci: rename existing Command Completion Event handlers
+
+This patch renames the function handlers of a triggered Command Completion
+Event that correspond to each command type into 'xhci_handle_cmd_<type>'.
+That is done to give a consistent naming space to all the functions that
+handle Command Completion Events and that will permit the code reader to
+reference to them more easily.
+
+Signed-off-by: Xenia Ragiadakou <burzalodowa@gmail.com>
+Acked-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci-ring.c | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/usb/host/xhci-ring.c b/drivers/usb/host/xhci-ring.c
+index 90b911a..45590e1 100644
+--- a/drivers/usb/host/xhci-ring.c
++++ b/drivers/usb/host/xhci-ring.c
+@@ -764,7 +764,7 @@ static void xhci_giveback_urb_in_irq(struct xhci_hcd *xhci,
+  *  2. Otherwise, we turn all the TRBs in the TD into No-op TRBs (with the chain
+  *     bit cleared) so that the HW will skip over them.
+  */
+-static void handle_stopped_endpoint(struct xhci_hcd *xhci,
++static void xhci_handle_cmd_stop_ep(struct xhci_hcd *xhci,
+ 		union xhci_trb *trb, struct xhci_event_cmd *event)
+ {
+ 	unsigned int slot_id;
+@@ -1076,9 +1076,8 @@ static void update_ring_for_set_deq_completion(struct xhci_hcd *xhci,
+  * endpoint doorbell to restart the ring, but only if there aren't more
+  * cancellations pending.
+  */
+-static void handle_set_deq_completion(struct xhci_hcd *xhci,
+-		struct xhci_event_cmd *event,
+-		union xhci_trb *trb)
++static void xhci_handle_cmd_set_deq(struct xhci_hcd *xhci,
++		struct xhci_event_cmd *event, union xhci_trb *trb)
+ {
+ 	unsigned int slot_id;
+ 	unsigned int ep_index;
+@@ -1170,9 +1169,8 @@ static void handle_set_deq_completion(struct xhci_hcd *xhci,
+ 	ring_doorbell_for_active_rings(xhci, slot_id, ep_index);
+ }
+ 
+-static void handle_reset_ep_completion(struct xhci_hcd *xhci,
+-		struct xhci_event_cmd *event,
+-		union xhci_trb *trb)
++static void xhci_handle_cmd_reset_ep(struct xhci_hcd *xhci,
++		struct xhci_event_cmd *event, union xhci_trb *trb)
+ {
+ 	int slot_id;
+ 	unsigned int ep_index;
+@@ -1516,15 +1514,15 @@ bandwidth_change:
+ 		complete(&xhci->addr_dev);
+ 		break;
+ 	case TRB_TYPE(TRB_STOP_RING):
+-		handle_stopped_endpoint(xhci, xhci->cmd_ring->dequeue, event);
++		xhci_handle_cmd_stop_ep(xhci, xhci->cmd_ring->dequeue, event);
+ 		break;
+ 	case TRB_TYPE(TRB_SET_DEQ):
+-		handle_set_deq_completion(xhci, event, xhci->cmd_ring->dequeue);
++		xhci_handle_cmd_set_deq(xhci, event, xhci->cmd_ring->dequeue);
+ 		break;
+ 	case TRB_TYPE(TRB_CMD_NOOP):
+ 		break;
+ 	case TRB_TYPE(TRB_RESET_EP):
+-		handle_reset_ep_completion(xhci, event, xhci->cmd_ring->dequeue);
++		xhci_handle_cmd_reset_ep(xhci, event, xhci->cmd_ring->dequeue);
+ 		break;
+ 	case TRB_TYPE(TRB_RESET_DEV):
+ 		xhci_dbg(xhci, "Completed reset device command.\n");
+-- 
+1.8.4
+
