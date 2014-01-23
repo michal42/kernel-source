@@ -1,0 +1,67 @@
+From ad5bc0205b5f6232051bfa4538ff318e8ceab212 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Patch-Mainline: v3.15
+References: FATE#315595
+Git-Commit: 9f713c7150ba88e57a25eaa12504e6d5e1f65f53
+Date: Wed, 9 Oct 2013 17:19:26 +0200
+Subject: [PATCH 03/60] usb-core: Free bulk streams on interface release
+
+Documentation/usb/bulk-streams.txt says:
+
+All stream IDs will be deallocated when the driver releases the interface, to
+ensure that drivers that don't support streams will be able to use the endpoint
+
+This commit actually implements this.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/core/driver.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/core/driver.c b/drivers/usb/core/driver.c
+index 689433c..84be416 100644
+--- a/drivers/usb/core/driver.c
++++ b/drivers/usb/core/driver.c
+@@ -369,8 +369,9 @@ static int usb_unbind_interface(struct device *dev)
+ {
+ 	struct usb_driver *driver = to_usb_driver(dev->driver);
+ 	struct usb_interface *intf = to_usb_interface(dev);
++	struct usb_host_endpoint *ep, **eps = NULL;
+ 	struct usb_device *udev;
+-	int error, r, lpm_disable_error;
++	int i, j, error, r, lpm_disable_error;
+ 
+ 	intf->condition = USB_INTERFACE_UNBINDING;
+ 
+@@ -394,6 +395,26 @@ static int usb_unbind_interface(struct device *dev)
+ 	driver->disconnect(intf);
+ 	usb_cancel_queued_reset(intf);
+ 
++	/* Free streams */
++	for (i = 0, j = 0; i < intf->cur_altsetting->desc.bNumEndpoints; i++) {
++		ep = &intf->cur_altsetting->endpoint[i];
++		if (ep->streams == 0)
++			continue;
++		if (j == 0) {
++			eps = kmalloc(USB_MAXENDPOINTS * sizeof(void *),
++				      GFP_KERNEL);
++			if (!eps) {
++				dev_warn(dev, "oom, leaking streams\n");
++				break;
++			}
++		}
++		eps[j++] = ep;
++	}
++	if (j) {
++		usb_free_streams(intf, eps, j, GFP_KERNEL);
++		kfree(eps);
++	}
++
+ 	/* Reset other interface state.
+ 	 * We cannot do a Set-Interface if the device is suspended or
+ 	 * if it is prepared for a system sleep (since installing a new
+-- 
+1.8.4
+
