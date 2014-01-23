@@ -1,0 +1,40 @@
+From: David Howells <dhowells@redhat.com>
+Date: Fri, 30 Aug 2013 16:18:15 +0100
+Subject: [PATCH 20/33] X.509: Check the algorithm IDs obtained from parsing an X.509 certificate
+Git-commit: 2ecdb23b8c545fbee95caad0f2e45082787563ee
+Patch-mainline: v3.13
+References: fate#314574
+Target: SLE-12
+
+Check that the algorithm IDs obtained from the ASN.1 parse by OID lookup
+corresponds to algorithms that are available to us.
+
+Reported-by: Kees Cook <keescook@chromium.org>
+Signed-off-by: David Howells <dhowells@redhat.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ crypto/asymmetric_keys/x509_public_key.c |   11 +++++++++++
+ 1 files changed, 11 insertions(+), 0 deletions(-)
+
+Index: linux-3.12-SLE12/crypto/asymmetric_keys/x509_public_key.c
+===================================================================
+--- linux-3.12-SLE12.orig/crypto/asymmetric_keys/x509_public_key.c
++++ linux-3.12-SLE12/crypto/asymmetric_keys/x509_public_key.c
+@@ -118,6 +118,17 @@ static int x509_key_preparse(struct key_
+ 
+ 	pr_devel("Cert Issuer: %s\n", cert->issuer);
+ 	pr_devel("Cert Subject: %s\n", cert->subject);
++
++	if (cert->pub->pkey_algo >= PKEY_ALGO__LAST ||
++	    cert->sig.pkey_algo >= PKEY_ALGO__LAST ||
++	    cert->sig.pkey_hash_algo >= PKEY_HASH__LAST ||
++	    !pkey_algo[cert->pub->pkey_algo] ||
++	    !pkey_algo[cert->sig.pkey_algo] ||
++	    !pkey_hash_algo_name[cert->sig.pkey_hash_algo]) {
++		ret = -ENOPKG;
++		goto error_free_cert;
++	}
++
+ 	pr_devel("Cert Key Algo: %s\n", pkey_algo_name[cert->pub->pkey_algo]);
+ 	pr_devel("Cert Valid From: %04ld-%02d-%02d %02d:%02d:%02d\n",
+ 		 cert->valid_from.tm_year + 1900, cert->valid_from.tm_mon + 1,
