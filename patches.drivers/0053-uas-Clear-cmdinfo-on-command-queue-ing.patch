@@ -1,0 +1,39 @@
+From bd343dfd5ec2aaa75b2eb617b636ade2a518d01c Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Patch-Mainline: v3.15
+References: FATE#315595
+Git-Commit: 8a8bad285793e197b2f9e3d1cd16798374428d76
+Date: Thu, 14 Nov 2013 11:06:13 +0100
+Subject: [PATCH 53/60] uas: Clear cmdinfo on command queue-ing
+
+The scsi error handling path re-uses previously queued up (and errored-out)
+cmds. If such a re-used cmd had a data-phase then cmdinfo will have
+data_in_urb / data_out_urb still set to the free-ed urbs from the errored-out
+cmd, and they will get free-ed a second time when the error handling cmd
+completes, corrupting the kernel heap.
+
+Clearing cmdinfo on command queue-ing fixes this, and seems like a good idea
+in general.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/storage/uas.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index d81d041..fceffcc 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -684,6 +684,8 @@ static int uas_queuecommand_lck(struct scsi_cmnd *cmnd,
+ 		return SCSI_MLQUEUE_DEVICE_BUSY;
+ 	}
+ 
++	memset(cmdinfo, 0, sizeof(*cmdinfo));
++
+ 	if (blk_rq_tagged(cmnd->request)) {
+ 		cmdinfo->stream = cmnd->request->tag + 2;
+ 	} else {
+-- 
+1.8.4
+
