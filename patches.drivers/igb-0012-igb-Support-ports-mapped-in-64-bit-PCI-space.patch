@@ -1,0 +1,55 @@
+From: Aaron Sierra <asierra@xes-inc.com>
+Date: Thu, 31 Oct 2013 00:32:34 +0000
+Subject: igb: Support ports mapped in 64-bit PCI space
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-next.git
+Git-commit: 89dbefb213a0b3e53fe1a99ec9c1a230aad5f404
+References: bnc#857394 FATE#315661
+
+
+This patch resolves an issue with 64-bit PCI addresses being truncated
+because the return values of pci_resource_start() and pci_resource_end()
+were being cast to unsigned long.
+
+Signed-off-by: Aaron Sierra <asierra@xes-inc.com>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/intel/igb/igb_main.c |   10 +++-------
+ 1 file changed, 3 insertions(+), 7 deletions(-)
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -2022,7 +2022,6 @@ static int igb_probe(struct pci_dev *pde
+ 	s32 ret_val;
+ 	static int global_quad_port_a; /* global quad port a indication */
+ 	const struct e1000_info *ei = igb_info_tbl[ent->driver_data];
+-	unsigned long mmio_start, mmio_len;
+ 	int err, pci_using_dac;
+ 	u8 part_str[E1000_PBANUM_LENGTH];
+ 
+@@ -2079,11 +2078,8 @@ static int igb_probe(struct pci_dev *pde
+ 	hw->back = adapter;
+ 	adapter->msg_enable = netif_msg_init(debug, DEFAULT_MSG_ENABLE);
+ 
+-	mmio_start = pci_resource_start(pdev, 0);
+-	mmio_len = pci_resource_len(pdev, 0);
+-
+ 	err = -EIO;
+-	hw->hw_addr = ioremap(mmio_start, mmio_len);
++	hw->hw_addr = pci_iomap(pdev, 0, 0);
+ 	if (!hw->hw_addr)
+ 		goto err_ioremap;
+ 
+@@ -2093,8 +2089,8 @@ static int igb_probe(struct pci_dev *pde
+ 
+ 	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
+ 
+-	netdev->mem_start = mmio_start;
+-	netdev->mem_end = mmio_start + mmio_len;
++	netdev->mem_start = pci_resource_start(pdev, 0);
++	netdev->mem_end = pci_resource_end(pdev, 0);
+ 
+ 	/* PCI config space info */
+ 	hw->vendor_id = pdev->vendor;
