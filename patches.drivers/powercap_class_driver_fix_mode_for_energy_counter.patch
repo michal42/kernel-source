@@ -1,0 +1,38 @@
+From: Srinivas Pandruvada <srinivas.pandruvada@linux.intel.com>
+Subject: PowerCap: Fix mode for energy counter
+References: fate#315628
+Patch-Mainline: v3.13-rc3
+Git-commit: 95677a9a3847de4f37e0f463aeb94aa8d5cccc50
+
+
+Signed-off-by: Thomas Renninger <trenn@suse.de>
+
+As per the documentation of powercap sysfs, energy_uj field is read only,
+if it can't be reset. Currently it always allows write but will fail,
+if there is no reset callback.
+Changing mode field, to read only if there is no reset callback.
+
+Signed-off-by: Srinivas Pandruvada <srinivas.pandruvada@linux.intel.com>
+Reported-by: Dirk Brandewie <dirk.j.brandewie@intel.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+
+diff --git a/drivers/powercap/powercap_sys.c b/drivers/powercap/powercap_sys.c
+index 8d0fe43..84419af 100644
+--- a/drivers/powercap/powercap_sys.c
++++ b/drivers/powercap/powercap_sys.c
+@@ -377,9 +377,14 @@ static void create_power_zone_common_attributes(
+ 	if (power_zone->ops->get_max_energy_range_uj)
+ 		power_zone->zone_dev_attrs[count++] =
+ 					&dev_attr_max_energy_range_uj.attr;
+-	if (power_zone->ops->get_energy_uj)
++	if (power_zone->ops->get_energy_uj) {
++		if (power_zone->ops->reset_energy_uj)
++			dev_attr_energy_uj.attr.mode = S_IWUSR | S_IRUGO;
++		else
++			dev_attr_energy_uj.attr.mode = S_IRUGO;
+ 		power_zone->zone_dev_attrs[count++] =
+ 					&dev_attr_energy_uj.attr;
++	}
+ 	if (power_zone->ops->get_power_uw)
+ 		power_zone->zone_dev_attrs[count++] =
+ 					&dev_attr_power_uw.attr;
