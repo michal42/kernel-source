@@ -18,8 +18,8 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  include/uapi/linux/raid/md_p.h |    1 
  5 files changed, 69 insertions(+), 14 deletions(-)
 
---- linux-3.12-SLE12.orig/drivers/md/md.c
-+++ linux-3.12-SLE12/drivers/md/md.c
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
 @@ -767,8 +767,10 @@ static void super_written(struct bio *bi
  		       error, test_bit(BIO_UPTODATE, &bio->bi_flags));
  		WARN_ON(test_bit(BIO_UPTODATE, &bio->bi_flags));
@@ -39,17 +39,17 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	clear_bit(Faulty, &rdev->flags);
 +	clear_bit(Timeout, &rdev->flags);
  	clear_bit(In_sync, &rdev->flags);
+ 	clear_bit(Bitmap_sync, &rdev->flags);
  	clear_bit(WriteMostly, &rdev->flags);
- 
-@@ -1628,6 +1631,7 @@ static int super_1_validate(struct mddev
+@@ -1631,6 +1634,7 @@ static int super_1_validate(struct mddev
  
  	rdev->raid_disk = -1;
  	clear_bit(Faulty, &rdev->flags);
 +	clear_bit(Timeout, &rdev->flags);
  	clear_bit(In_sync, &rdev->flags);
+ 	clear_bit(Bitmap_sync, &rdev->flags);
  	clear_bit(WriteMostly, &rdev->flags);
- 
-@@ -1702,7 +1706,7 @@ static int super_1_validate(struct mddev
+@@ -1706,7 +1710,7 @@ static int super_1_validate(struct mddev
  		++ev1;
  		if (rdev->desc_nr >= 0 &&
  		    rdev->desc_nr < le32_to_cpu(sb->max_dev) &&
@@ -58,7 +58,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			if (ev1 < mddev->events)
  				return -EINVAL;
  	} else if (mddev->bitmap) {
-@@ -1730,6 +1734,10 @@ static int super_1_validate(struct mddev
+@@ -1736,6 +1740,10 @@ static int super_1_validate(struct mddev
  		case 0xfffe: /* faulty */
  			set_bit(Faulty, &rdev->flags);
  			break;
@@ -69,7 +69,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  		default:
  			if ((le32_to_cpu(sb->feature_map) &
  			     MD_FEATURE_RECOVERY_OFFSET))
-@@ -1880,9 +1888,12 @@ retry:
+@@ -1886,9 +1894,12 @@ retry:
  	
  	rdev_for_each(rdev2, mddev) {
  		i = rdev2->desc_nr;
@@ -85,7 +85,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			sb->dev_roles[i] = cpu_to_le16(rdev2->raid_disk);
  		else if (rdev2->raid_disk >= 0)
  			sb->dev_roles[i] = cpu_to_le16(rdev2->raid_disk);
-@@ -2637,6 +2648,10 @@ state_show(struct md_rdev *rdev, char *p
+@@ -2643,6 +2654,10 @@ state_show(struct md_rdev *rdev, char *p
  		len+= sprintf(page+len, "%sfaulty",sep);
  		sep = ",";
  	}
@@ -96,7 +96,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	if (test_bit(In_sync, &rdev->flags)) {
  		len += sprintf(page+len, "%sin_sync",sep);
  		sep = ",";
-@@ -2698,6 +2713,11 @@ state_store(struct md_rdev *rdev, const
+@@ -2704,6 +2719,11 @@ state_store(struct md_rdev *rdev, const
  			err = 0;
  		else
  			err = -EBUSY;
@@ -108,7 +108,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	} else if (cmd_match(buf, "remove")) {
  		if (rdev->raid_disk >= 0)
  			err = -EBUSY;
-@@ -2891,6 +2911,7 @@ slot_store(struct md_rdev *rdev, const c
+@@ -2898,6 +2918,7 @@ slot_store(struct md_rdev *rdev, const c
  		rdev->raid_disk = slot;
  		/* assume it is working */
  		clear_bit(Faulty, &rdev->flags);
@@ -116,7 +116,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  		clear_bit(WriteMostly, &rdev->flags);
  		set_bit(In_sync, &rdev->flags);
  		sysfs_notify_dirent_safe(rdev->sysfs_state);
-@@ -5727,9 +5748,11 @@ static int get_disk_info(struct mddev *
+@@ -5734,9 +5755,11 @@ static int get_disk_info(struct mddev *
  		info.minor = MINOR(rdev->bdev->bd_dev);
  		info.raid_disk = rdev->raid_disk;
  		info.state = 0;
@@ -130,7 +130,7 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  			info.state |= (1<<MD_DISK_ACTIVE);
  			info.state |= (1<<MD_DISK_SYNC);
  		}
-@@ -7126,7 +7149,10 @@ static int md_seq_show(struct seq_file *
+@@ -7134,7 +7157,10 @@ static int md_seq_show(struct seq_file *
  			if (test_bit(WriteMostly, &rdev->flags))
  				seq_printf(seq, "(W)");
  			if (test_bit(Faulty, &rdev->flags)) {
@@ -142,9 +142,9 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  				continue;
  			}
  			if (rdev->raid_disk < 0)
---- linux-3.12-SLE12.orig/drivers/md/md.h
-+++ linux-3.12-SLE12/drivers/md/md.h
-@@ -177,6 +177,9 @@ enum flag_bits {
+--- a/drivers/md/md.h
++++ b/drivers/md/md.h
+@@ -180,6 +180,9 @@ enum flag_bits {
  				 * it didn't fail, so don't use FailFast
  				 * any more for metadata
  				 */
@@ -154,8 +154,8 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  };
  
  #define BB_LEN_MASK	(0x00000000000001FFULL)
---- linux-3.12-SLE12.orig/drivers/md/raid10.c
-+++ linux-3.12-SLE12/drivers/md/raid10.c
+--- a/drivers/md/raid10.c
++++ b/drivers/md/raid10.c
 @@ -370,6 +370,7 @@ static void raid10_end_read_request(stru
  	slot = r10_bio->read_slot;
  	dev = r10_bio->devs[slot].devnum;
@@ -263,8 +263,8 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	}
  
  	rdev_dec_pending(rdev, mddev);
---- linux-3.12-SLE12.orig/drivers/md/raid10.h
-+++ linux-3.12-SLE12/drivers/md/raid10.h
+--- a/drivers/md/raid10.h
++++ b/drivers/md/raid10.h
 @@ -125,6 +125,7 @@ struct r10bio {
  		};
  		sector_t	addr;
@@ -273,8 +273,8 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	} devs[0];
  };
  
---- linux-3.12-SLE12.orig/include/uapi/linux/raid/md_p.h
-+++ linux-3.12-SLE12/include/uapi/linux/raid/md_p.h
+--- a/include/uapi/linux/raid/md_p.h
++++ b/include/uapi/linux/raid/md_p.h
 @@ -86,6 +86,7 @@
  				    * devices available - and don't try to
  				    * correct read errors.

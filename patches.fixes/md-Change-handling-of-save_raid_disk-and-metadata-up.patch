@@ -78,9 +78,9 @@ Acked-by: NeilBrown <neilb@suse.de
  include/uapi/linux/raid/md_p.h |    6 ++++-
  2 files changed, 28 insertions(+), 20 deletions(-)
 
---- linux-3.12-SLE12.orig/drivers/md/md.c
-+++ linux-3.12-SLE12/drivers/md/md.c
-@@ -1234,6 +1234,7 @@ static int super_90_validate(struct mdde
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -1237,6 +1237,7 @@ static int super_90_validate(struct mdde
  			    desc->raid_disk < mddev->raid_disks */) {
  			set_bit(In_sync, &rdev->flags);
  			rdev->raid_disk = desc->raid_disk;
@@ -88,7 +88,7 @@ Acked-by: NeilBrown <neilb@suse.de
  		} else if (desc->state & (1<<MD_DISK_ACTIVE)) {
  			/* active but not in sync implies recovery up to
  			 * reshape position.  We don't know exactly where
-@@ -1739,10 +1740,14 @@ static int super_1_validate(struct mddev
+@@ -1745,10 +1746,14 @@ static int super_1_validate(struct mddev
  			set_bit(Timeout, &rdev->flags);
  			break;
  		default:
@@ -105,7 +105,7 @@ Acked-by: NeilBrown <neilb@suse.de
  				set_bit(In_sync, &rdev->flags);
  			rdev->raid_disk = role;
  			break;
-@@ -1810,6 +1815,9 @@ static void super_1_sync(struct mddev *m
+@@ -1816,6 +1821,9 @@ static void super_1_sync(struct mddev *m
  			cpu_to_le32(MD_FEATURE_RECOVERY_OFFSET);
  		sb->recovery_offset =
  			cpu_to_le64(rdev->recovery_offset);
@@ -115,7 +115,7 @@ Acked-by: NeilBrown <neilb@suse.de
  	}
  	if (test_bit(Replacement, &rdev->flags))
  		sb->feature_map |=
-@@ -2556,8 +2564,7 @@ rewrite:
+@@ -2562,8 +2570,7 @@ rewrite:
  		if (rdev->sb_loaded != 1)
  			continue; /* no noise on spare devices */
  
@@ -125,7 +125,7 @@ Acked-by: NeilBrown <neilb@suse.de
  			md_super_write(mddev,rdev,
  				       rdev->sb_start, rdev->sb_size,
  				       rdev->sb_page);
-@@ -2573,11 +2580,9 @@ rewrite:
+@@ -2579,11 +2586,9 @@ rewrite:
  				rdev->badblocks.size = 0;
  			}
  
@@ -138,7 +138,7 @@ Acked-by: NeilBrown <neilb@suse.de
  
  		if (mddev->level == LEVEL_MULTIPATH)
  			/* only need to write one superblock... */
-@@ -2702,6 +2707,8 @@ state_store(struct md_rdev *rdev, const
+@@ -2708,6 +2713,8 @@ state_store(struct md_rdev *rdev, const
  	 *  blocked - sets the Blocked flags
  	 *  -blocked - clears the Blocked and possibly simulates an error
  	 *  insync - sets Insync providing device isn't active
@@ -147,7 +147,7 @@ Acked-by: NeilBrown <neilb@suse.de
  	 *  write_error - sets WriteErrorSeen
  	 *  -write_error - clears WriteErrorSeen
  	 *  {,-}failfast - set/clear FailFast
-@@ -2764,6 +2771,11 @@ state_store(struct md_rdev *rdev, const
+@@ -2770,6 +2777,11 @@ state_store(struct md_rdev *rdev, const
  	} else if (cmd_match(buf, "-failfast")) {
  		clear_bit(FailFast, &rdev->flags);
  		err = 0;
@@ -159,15 +159,15 @@ Acked-by: NeilBrown <neilb@suse.de
  	} else if (cmd_match(buf, "write_error")) {
  		set_bit(WriteErrorSeen, &rdev->flags);
  		err = 0;
-@@ -5840,6 +5852,7 @@ static int add_new_disk(struct mddev * m
- 				set_bit(In_sync, &rdev->flags);
+@@ -5848,6 +5860,7 @@ static int add_new_disk(struct mddev * m
+ 				clear_bit(Bitmap_sync, &rdev->flags);
  			} else
  				rdev->raid_disk = -1;
 +			rdev->saved_raid_disk = rdev->raid_disk;
  		} else
  			super_types[mddev->major_version].
  				validate_super(mddev, rdev);
-@@ -5852,11 +5865,6 @@ static int add_new_disk(struct mddev * m
+@@ -5860,11 +5873,6 @@ static int add_new_disk(struct mddev * m
  			return -EINVAL;
  		}
  
@@ -179,7 +179,7 @@ Acked-by: NeilBrown <neilb@suse.de
  		clear_bit(In_sync, &rdev->flags); /* just to be sure */
  		if (info->state & (1<<MD_DISK_WRITEMOSTLY))
  			set_bit(WriteMostly, &rdev->flags);
-@@ -8042,14 +8050,10 @@ void md_reap_sync_thread(struct mddev *m
+@@ -8054,14 +8062,10 @@ void md_reap_sync_thread(struct mddev *m
  		mddev->pers->finish_reshape(mddev);
  
  	/* If array is no-longer degraded, then any saved_raid_disk
@@ -197,8 +197,8 @@ Acked-by: NeilBrown <neilb@suse.de
  			rdev->saved_raid_disk = -1;
  
  	md_update_sb(mddev, 1);
---- linux-3.12-SLE12.orig/include/uapi/linux/raid/md_p.h
-+++ linux-3.12-SLE12/include/uapi/linux/raid/md_p.h
+--- a/include/uapi/linux/raid/md_p.h
++++ b/include/uapi/linux/raid/md_p.h
 @@ -297,6 +297,9 @@ struct mdp_superblock_1 {
  					    * backwards anyway.
  					    */
