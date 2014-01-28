@@ -1,0 +1,32 @@
+From: Weijie Yang <weijie.yang@samsung.com>
+Subject: mm/zswap: avoid unnecessary page scanning 
+Patch-mainline: v3.13-rc1
+Git-commit: b349acc76b7f65400b85abd09a5379ddd6fa5a97
+References: FATE#315454
+
+    Add SetPageReclaim() before __swap_writepage() so that page can be moved
+    to the tail of the inactive list, which can avoid unnecessary page
+    scanning as this page was reclaimed by swap subsystem before.
+    
+Signed-off-by: Weijie Yang <weijie.yang@samsung.com>
+Reviewed-by: Bob Liu <bob.liu@oracle.com>
+Reviewed-by: Minchan Kim <minchan@kernel.org>
+Acked-by: Seth Jennings <sjenning@linux.vnet.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Shirish Pargaonkar <spargaonkar@suse.com>
+---
+diff --git a/mm/zswap.c b/mm/zswap.c
+index d93510c..001474c 100644
+--- a/mm/zswap.c
++++ b/mm/zswap.c
+@@ -556,6 +556,9 @@ static int zswap_writeback_entry(struct zbud_pool *pool, unsigned long handle)
+ 		SetPageUptodate(page);
+ 	}
+ 
++	/* move it to the tail of the inactive list after end_writeback */
++	SetPageReclaim(page);
++
+ 	/* start writeback */
+ 	__swap_writepage(page, &wbc, end_swap_bio_write);
+ 	page_cache_release(page);
