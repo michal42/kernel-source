@@ -1,0 +1,54 @@
+From: Yann Droneaud <ydroneaud@opteya.com>
+Date: Wed, 11 Dec 2013 23:01:51 +0100
+Subject: IB/uverbs: Check access to userspace response buffer in extended
+ command
+Patch-mainline: v3.13-rc6
+Git-commit: 6cc3df840a84dc4e8a874e74cd62a138074922ba
+References: bnc#858727 FATE#315946
+
+This patch adds a check on the output buffer with access_ok(VERIFY_WRITE, ...)
+to ensure the whole buffer is in userspace memory before using the
+pointer in uverbs functions.  If the buffer or a subset of it is not
+valid, returns -EFAULT to the caller.
+
+This will also catch invalid buffer before the final call to
+copy_to_user() which happen late in most uverb functions.
+
+Just like the check in read(2) syscall, it's a sanity check to detect
+invalid parameters provided by userspace. This particular check was added
+in vfs_read() by Linus Torvalds for v2.6.12 with following commit message:
+
+https://git.kernel.org/cgit/linux/kernel/git/tglx/history.git/commit/?id=fd770e66c9a65b14ce114e171266cf6f393df502
+
+  Make read/write always do the full "access_ok()" tests.
+
+  The actual user copy will do them too, but only for the
+  range that ends up being actually copied. That hides
+  bugs when the range has been clamped by file size or other
+  issues.
+
+Note: there's no need to check input buffer since vfs_write() already does
+access_ok(VERIFY_READ, ...) as part of write() syscall.
+
+Link: http://marc.info/?i=cover.1387273677.git.ydroneaud@opteya.com
+Signed-off-by: Yann Droneaud <ydroneaud@opteya.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/core/uverbs_main.c |    5 +++++
+ 1 file changed, 5 insertions(+)
+--- a/drivers/infiniband/core/uverbs_main.c
++++ b/drivers/infiniband/core/uverbs_main.c
+@@ -674,6 +674,11 @@ static ssize_t ib_uverbs_write(struct fi
+ 		if (ex_hdr.response) {
+ 			if (!hdr.out_words && !ex_hdr.provider_out_words)
+ 				return -EINVAL;
++
++			if (!access_ok(VERIFY_WRITE,
++				       (void __user *) (unsigned long) ex_hdr.response,
++				       (hdr.out_words + ex_hdr.provider_out_words) * 8))
++				return -EFAULT;
+ 		} else {
+ 			if (hdr.out_words || ex_hdr.provider_out_words)
+ 				return -EINVAL;
