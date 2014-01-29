@@ -1,0 +1,57 @@
+From: Yann Droneaud <ydroneaud@opteya.com>
+Date: Wed, 11 Dec 2013 23:01:49 +0100
+Subject: IB/uverbs: Check reserved fields in create_flow
+Patch-mainline: v3.13-rc6
+Git-commit: c780d82a74cdf247a81f877ecae569b3a248f89b
+References: bnc#858727 FATE#315946
+
+As noted by Daniel Vetter in its article "Botching up ioctls"[1]
+
+  "Check *all* unused fields and flags and all the padding for whether
+   it's 0, and reject the ioctl if that's not the case.  Otherwise
+   your nice plan for future extensions is going right down the
+   gutters since someone *will* submit an ioctl struct with random
+   stack garbage in the yet unused parts. Which then bakes in the ABI
+   that those fields can never be used for anything else but garbage."
+
+It's important to ensure that reserved fields are set to known value,
+so that it will be possible to use them latter to extend the ABI.
+
+The same reasonning apply to comp_mask field present in newer uverbs
+command: per commit 22878dbc9173 ("IB/core: Better checking of
+userspace values for receive flow steering"), unsupported values in
+comp_mask are rejected.
+
+[1] http://blog.ffwll.ch/2013/11/botching-up-ioctls.html
+
+Link: http://marc.info/?i=cover.1386798254.git.ydroneaud@opteya.com>
+Signed-off-by: Yann Droneaud <ydroneaud@opteya.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/core/uverbs_cmd.c |    7 +++++++
+ 1 file changed, 7 insertions(+)
+--- a/drivers/infiniband/core/uverbs_cmd.c
++++ b/drivers/infiniband/core/uverbs_cmd.c
+@@ -2594,6 +2594,9 @@ out_put:
+ static int kern_spec_to_ib_spec(struct ib_uverbs_flow_spec *kern_spec,
+ 				union ib_flow_spec *ib_spec)
+ {
++	if (kern_spec->reserved)
++		return -EINVAL;
++
+ 	ib_spec->type = kern_spec->type;
+ 
+ 	switch (ib_spec->type) {
+@@ -2672,6 +2675,10 @@ int ib_uverbs_ex_create_flow(struct ib_u
+ 	    (cmd.flow_attr.num_of_specs * sizeof(struct ib_uverbs_flow_spec)))
+ 		return -EINVAL;
+ 
++	if (cmd.flow_attr.reserved[0] ||
++	    cmd.flow_attr.reserved[1])
++		return -EINVAL;
++
+ 	if (cmd.flow_attr.num_of_specs) {
+ 		kern_flow_attr = kmalloc(sizeof(*kern_flow_attr) + cmd.flow_attr.size,
+ 					 GFP_KERNEL);
