@@ -1,0 +1,201 @@
+From: Matan Barak <matanb@mellanox.com>
+Date: Wed, 6 Nov 2013 23:21:50 +0100
+Subject: IB/core: Re-enable create_flow/destroy_flow uverbs
+Patch-mainline: v3.13-rc1
+Git-commit: 69ad5da41b4ed94aef31d4111a3442cfd73ce570
+References: bnc#858727 FATE#315946
+
+This commit reverts commit 7afbddfae993 ("IB/core: Temporarily disable
+create_flow/destroy_flow uverbs").  Since the uverbs extensions
+functionality was experimental for v3.12, this patch re-enables the
+support for them and flow-steering for v3.13.
+
+Change-Id: I608455e00453e07f59dc587d8cb6bf87aa3ae970
+Signed-off-by: Matan Barak <matanb@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/Kconfig            |   11 -----------
+ drivers/infiniband/core/uverbs.h      |    6 ------
+ drivers/infiniband/core/uverbs_cmd.c  |    4 ----
+ drivers/infiniband/core/uverbs_main.c |    5 -----
+ drivers/infiniband/hw/mlx4/main.c     |    2 --
+ include/uapi/rdma/ib_user_verbs.h     |    6 ------
+ 6 files changed, 34 deletions(-)
+--- a/drivers/infiniband/Kconfig
++++ b/drivers/infiniband/Kconfig
+@@ -31,17 +31,6 @@ config INFINIBAND_USER_ACCESS
+ 	  libibverbs, libibcm and a hardware driver library from
+ 	  <http://www.openfabrics.org/git/>.
+ 
+-config INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+-       bool "Experimental and unstable ABI for userspace access to flow steering verbs"
+-       depends on INFINIBAND_USER_ACCESS
+-       depends on STAGING
+-	---help---
+-	  The final ABI for userspace access to flow steering verbs
+-	  has not been defined.  To use the current ABI, *WHICH WILL
+-	  CHANGE IN THE FUTURE*, say Y here.
+-
+-	  If unsure, say N.
+-
+ config INFINIBAND_USER_MEM
+ 	bool
+ 	depends on INFINIBAND_USER_ACCESS != n
+--- a/drivers/infiniband/core/uverbs.h
++++ b/drivers/infiniband/core/uverbs.h
+@@ -186,7 +186,6 @@ void ib_uverbs_event_handler(struct ib_e
+ 			     struct ib_event *event);
+ void ib_uverbs_dealloc_xrcd(struct ib_uverbs_device *dev, struct ib_xrcd *xrcd);
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ struct ib_uverbs_flow_spec {
+ 	union {
+ 		union {
+@@ -202,7 +201,6 @@ struct ib_uverbs_flow_spec {
+ 		struct ib_uverbs_flow_spec_tcp_udp tcp_udp;
+ 	};
+ };
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ #define IB_UVERBS_DECLARE_CMD(name)					\
+ 	ssize_t ib_uverbs_##name(struct ib_uverbs_file *file,		\
+@@ -244,8 +242,6 @@ IB_UVERBS_DECLARE_CMD(create_xsrq);
+ IB_UVERBS_DECLARE_CMD(open_xrcd);
+ IB_UVERBS_DECLARE_CMD(close_xrcd);
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+-
+ #define IB_UVERBS_DECLARE_EX_CMD(name)				\
+ 	int ib_uverbs_ex_##name(struct ib_uverbs_file *file,	\
+ 				struct ib_udata *ucore,		\
+@@ -254,6 +250,4 @@ IB_UVERBS_DECLARE_CMD(close_xrcd);
+ IB_UVERBS_DECLARE_EX_CMD(create_flow);
+ IB_UVERBS_DECLARE_EX_CMD(destroy_flow);
+ 
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+-
+ #endif /* UVERBS_H */
+--- a/drivers/infiniband/core/uverbs_cmd.c
++++ b/drivers/infiniband/core/uverbs_cmd.c
+@@ -54,9 +54,7 @@ static struct uverbs_lock_class qp_lock_
+ static struct uverbs_lock_class ah_lock_class	= { .name = "AH-uobj" };
+ static struct uverbs_lock_class srq_lock_class	= { .name = "SRQ-uobj" };
+ static struct uverbs_lock_class xrcd_lock_class = { .name = "XRCD-uobj" };
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ static struct uverbs_lock_class rule_lock_class = { .name = "RULE-uobj" };
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ /*
+  * The ib_uobject locking scheme is as follows:
+@@ -2593,7 +2591,6 @@ out_put:
+ 	return ret ? ret : in_len;
+ }
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ static int kern_spec_to_ib_spec(struct ib_uverbs_flow_spec *kern_spec,
+ 				union ib_flow_spec *ib_spec)
+ {
+@@ -2821,7 +2818,6 @@ int ib_uverbs_ex_destroy_flow(struct ib_
+ 
+ 	return ret;
+ }
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ static int __uverbs_create_xsrq(struct ib_uverbs_file *file,
+ 				struct ib_uverbs_create_xsrq *cmd,
+--- a/drivers/infiniband/core/uverbs_main.c
++++ b/drivers/infiniband/core/uverbs_main.c
+@@ -117,14 +117,12 @@ static ssize_t (*uverbs_cmd_table[])(str
+ 	[IB_USER_VERBS_CMD_OPEN_QP]		= ib_uverbs_open_qp,
+ };
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ static int (*uverbs_ex_cmd_table[])(struct ib_uverbs_file *file,
+ 				    struct ib_udata *ucore,
+ 				    struct ib_udata *uhw) = {
+ 	[IB_USER_VERBS_EX_CMD_CREATE_FLOW]	= ib_uverbs_ex_create_flow,
+ 	[IB_USER_VERBS_EX_CMD_DESTROY_FLOW]	= ib_uverbs_ex_destroy_flow
+ };
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ static void ib_uverbs_add_one(struct ib_device *device);
+ static void ib_uverbs_remove_one(struct ib_device *device);
+@@ -633,8 +631,6 @@ static ssize_t ib_uverbs_write(struct fi
+ 						 hdr.in_words * 4,
+ 						 hdr.out_words * 4);
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+-
+ 	} else if (flags == IB_USER_VERBS_CMD_FLAG_EXTENDED) {
+ 		__u32 command;
+ 
+@@ -701,7 +697,6 @@ static ssize_t ib_uverbs_write(struct fi
+ 
+ 		return written_count;
+ 	}
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ 	return -ENOSYS;
+ }
+--- a/drivers/infiniband/hw/mlx4/main.c
++++ b/drivers/infiniband/hw/mlx4/main.c
+@@ -1685,11 +1685,9 @@ static void *mlx4_ib_add(struct mlx4_dev
+ 		ibdev->ib_dev.create_flow	= mlx4_ib_create_flow;
+ 		ibdev->ib_dev.destroy_flow	= mlx4_ib_destroy_flow;
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ 		ibdev->ib_dev.uverbs_ex_cmd_mask	|=
+ 			(1ull << IB_USER_VERBS_EX_CMD_CREATE_FLOW) |
+ 			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_FLOW);
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 	}
+ 
+ 	mlx4_ib_alloc_eqs(dev, ibdev);
+--- a/include/uapi/rdma/ib_user_verbs.h
++++ b/include/uapi/rdma/ib_user_verbs.h
+@@ -89,12 +89,10 @@ enum {
+ 	IB_USER_VERBS_CMD_OPEN_QP,
+ };
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ enum {
+ 	IB_USER_VERBS_EX_CMD_CREATE_FLOW = IB_USER_VERBS_CMD_THRESHOLD,
+ 	IB_USER_VERBS_EX_CMD_DESTROY_FLOW
+ };
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ /*
+  * Make sure that all structs defined in this file remain laid out so
+@@ -137,14 +135,12 @@ struct ib_uverbs_cmd_hdr {
+ 	__u16 out_words;
+ };
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ struct ib_uverbs_ex_cmd_hdr {
+ 	__u64 response;
+ 	__u16 provider_in_words;
+ 	__u16 provider_out_words;
+ 	__u32 cmd_hdr_reserved;
+ };
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ struct ib_uverbs_get_context {
+ 	__u64 response;
+@@ -707,7 +703,6 @@ struct ib_uverbs_detach_mcast {
+ 	__u64 driver_data[0];
+ };
+ 
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+ struct ib_uverbs_flow_spec_hdr {
+ 	__u32 type;
+ 	__u16 size;
+@@ -802,7 +797,6 @@ struct ib_uverbs_destroy_flow  {
+ 	__u32 comp_mask;
+ 	__u32 flow_handle;
+ };
+-#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ 
+ struct ib_uverbs_create_srq {
+ 	__u64 response;
