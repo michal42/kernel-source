@@ -1,0 +1,295 @@
+From 51187308a388037c271c319e7e7526e220799265 Mon Sep 17 00:00:00 2001
+From: Nick Piggin <npiggin@suse.de>
+Date: Wed, 31 Aug 2011 11:44:18 +0100
+Subject: [PATCH] mm: filemap: Avoid unnecessary barries and waitqueue lookup
+ in unlock_page fastpath
+
+References: VM performance, lock page scalability (bnc#436953, bnc#629170)
+Patch-mainline: No (Never, no compelling use case other than boot times on very large machines)
+
+This patch introduces a new page flag, PG_waiters, to signal there
+are processes waiting on PG_lock and uses it to avoid memory barriers
+and waitqueue hash lookup in the unlock_page fastpath.
+
+lat_mmap profile goes from looking like this
+CPU: AMD64 family10, speed 2000 MHz (estimated)
+Counted CPU_CLK_UNHALTED events (Cycles outside of halt state) with a unit mask of 0x00 (No unit mask) count 10000
+samples  %        symbol name
+254150   14.5889  __do_fault
+163003    9.3568  unmap_vmas
+110232    6.3276  mark_page_accessed
+77864     4.4696  __up_read
+75864     4.3548  page_waitqueue     <<<<
+69984     4.0173  handle_mm_fault
+66945     3.8428  do_page_fault
+66457     3.8148  retint_swapgs
+65413     3.7549  shmem_getpage
+62904     3.6109  file_update_time
+61430     3.5262  set_page_dirty
+53425     3.0667  unlock_page        <<<<
+
+To this:
+3119      0.1430  unlock_page
+0         0.0000  page_waitqueue
+
+Care is taken to avoid updating struct page unnecessarily. This adds a
+few branches to the fast path but avoids bouncing a dirty cache line
+between CPUs.
+
+Notes: There are a few oddities with this patch based on its history of
+	forward porting where a motivation was to keep it similar
+	looking. There are a few areas that are worth looking at as
+	improvement
+
+	o Consider making this a 64-bit only feature using extended
+	  flags to avoid consuming a valuable page flag. This feature
+	  only really helps massive machines (512-way and bigger) and
+	  it is unlikely they are 32-bit.
+
+	o The use of __wait_on_page_locked_killable is kludgy and bolted
+	  onto the side. Consider converting to a generic
+	  spinwait_on_page_bit_killable that takes an arbitrary flag.
+	  Initially it'll be only PG_locked we care about
+
+	o Similarly convert __wait_on_page_locked to
+	  spinwait_on_page_bit
+
+	o __lock_page and __lock_page_killable should be using a common
+	  function that takes the type of sleep as a parameter
+
+	o Almost certainly the same for __wait_on_page_locked_killable
+	  and __wait_on_page_locked_killable
+
+[jack@suse.cz: Fix add_page_wait_queue]
+[mhocko@suse.cz: Use sleep_on_page_killable in __wait_on_page_locked_killable]
+[steiner@sgi.com: Do not update struct page unnecessarily]
+Signed-off-by: Nick Piggin <npiggin@suse.de>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/page-flags.h |  3 ++
+ include/linux/pagemap.h    |  6 ++-
+ kernel/wait.c              |  3 +-
+ mm/filemap.c               | 95 +++++++++++++++++++++++++++++++++++++++++++---
+ mm/page_alloc.c            |  1 +
+ 5 files changed, 98 insertions(+), 10 deletions(-)
+
+diff --git a/include/linux/page-flags.h b/include/linux/page-flags.h
+index 2a31d17..59d7c11 100644
+--- a/include/linux/page-flags.h
++++ b/include/linux/page-flags.h
+@@ -73,6 +73,7 @@
+  */
+ enum pageflags {
+ 	PG_locked,		/* Page is locked. Don't touch. */
++	PG_waiters,		/* Page has PG_locked waiters. */
+ 	PG_error,
+ 	PG_referenced,
+ 	PG_uptodate,
+@@ -208,6 +209,7 @@ static inline int __TestClearPage##uname(struct page *page) { return 0; }
+ struct page;	/* forward declaration */
+ 
+ TESTPAGEFLAG(Locked, locked)
++PAGEFLAG(Waiters, waiters)
+ PAGEFLAG(Error, error) TESTCLEARFLAG(Error, error)
+ PAGEFLAG(Referenced, referenced) TESTCLEARFLAG(Referenced, referenced)
+ PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
+@@ -542,6 +544,7 @@ static inline void ClearPageSlabPfmemalloc(struct page *page)
+  */
+ #define PAGE_FLAGS_CHECK_AT_FREE \
+ 	(1 << PG_lru	 | 1 << PG_locked    | \
++	 1 << PG_waiters | \
+ 	 1 << PG_private | 1 << PG_private_2 | \
+ 	 1 << PG_writeback | 1 << PG_reserved | \
+ 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
+diff --git a/include/linux/pagemap.h b/include/linux/pagemap.h
+index aa6359d..a51aeb8 100644
+--- a/include/linux/pagemap.h
++++ b/include/linux/pagemap.h
+@@ -382,13 +382,15 @@ static inline int lock_page_or_retry(struct page *page, struct mm_struct *mm,
+  * Never use this directly!
+  */
+ extern void wait_on_page_bit(struct page *page, int bit_nr);
++extern void __wait_on_page_locked(struct page *page);
+ 
+ extern int wait_on_page_bit_killable(struct page *page, int bit_nr);
++extern int __wait_on_page_locked_killable(struct page *page);
+ 
+ static inline int wait_on_page_locked_killable(struct page *page)
+ {
+ 	if (PageLocked(page))
+-		return wait_on_page_bit_killable(page, PG_locked);
++		return __wait_on_page_locked_killable(page);
+ 	return 0;
+ }
+ 
+@@ -402,7 +404,7 @@ static inline int wait_on_page_locked_killable(struct page *page)
+ static inline void wait_on_page_locked(struct page *page)
+ {
+ 	if (PageLocked(page))
+-		wait_on_page_bit(page, PG_locked);
++		__wait_on_page_locked(page);
+ }
+ 
+ /* 
+diff --git a/kernel/wait.c b/kernel/wait.c
+index d550920..8aadf81 100644
+--- a/kernel/wait.c
++++ b/kernel/wait.c
+@@ -177,8 +177,7 @@ int wake_bit_function(wait_queue_t *wait, unsigned mode, int sync, void *arg)
+ 		= container_of(wait, struct wait_bit_queue, wait);
+ 
+ 	if (wait_bit->key.flags != key->flags ||
+-			wait_bit->key.bit_nr != key->bit_nr ||
+-			test_bit(key->bit_nr, key->flags))
++			wait_bit->key.bit_nr != key->bit_nr)
+ 		return 0;
+ 	else
+ 		return autoremove_wake_function(wait, mode, sync, key);
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 40543fc7..d60a7b8 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -609,10 +609,28 @@ void add_page_wait_queue(struct page *page, wait_queue_t *waiter)
+ 
+ 	spin_lock_irqsave(&q->lock, flags);
+ 	__add_wait_queue(q, waiter);
++	if (!PageWaiters(page))
++		SetPageWaiters(page);
+ 	spin_unlock_irqrestore(&q->lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(add_page_wait_queue);
+ 
++/*
++ * If PageWaiters was found to be set at unlock time, __wake_page_waiters
++ * should be called to actually perform the wakeup of waiters.
++ */
++static void __wake_page_waiters(struct page *page)
++{
++	ClearPageWaiters(page);
++	/*
++	 * The smp_mb() is necessary to enforce ordering between the clear_bit
++	 * and the read of the waitqueue (to avoid SMP races with a parallel
++	 * __wait_on_page_locked()).
++	 */
++	smp_mb__after_clear_bit();
++	wake_up_page(page, PG_locked);
++}
++
+ /**
+  * unlock_page - unlock a locked page
+  * @page: the page
+@@ -629,8 +647,8 @@ void unlock_page(struct page *page)
+ {
+ 	VM_BUG_ON(!PageLocked(page));
+ 	clear_bit_unlock(PG_locked, &page->flags);
+-	smp_mb__after_clear_bit();
+-	wake_up_page(page, PG_locked);
++	if (unlikely(PageWaiters(page)))
++		__wake_page_waiters(page);
+ }
+ EXPORT_SYMBOL(unlock_page);
+ 
+@@ -657,22 +675,87 @@ EXPORT_SYMBOL(end_page_writeback);
+  */
+ void __lock_page(struct page *page)
+ {
++	wait_queue_head_t *wq = page_waitqueue(page);
+ 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
+ 
+-	__wait_on_bit_lock(page_waitqueue(page), &wait, sleep_on_page,
+-							TASK_UNINTERRUPTIBLE);
++	do {
++		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
++		if (!PageWaiters(page))
++			SetPageWaiters(page);
++		if (likely(PageLocked(page)))
++			sleep_on_page(page);
++	} while (!trylock_page(page));
++	finish_wait(wq, &wait.wait);
+ }
+ EXPORT_SYMBOL(__lock_page);
+ 
+ int __lock_page_killable(struct page *page)
+ {
++	wait_queue_head_t *wq = page_waitqueue(page);
+ 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
++	int err = 0;
++
++	do {
++		prepare_to_wait(wq, &wait.wait, TASK_KILLABLE);
++		if (!PageWaiters(page))
++			SetPageWaiters(page);
++		if (likely(PageLocked(page))) {
++			err = sleep_on_page_killable(page);
++			if (err)
++				break;
++		}
++	} while (!trylock_page(page));
++	finish_wait(wq, &wait.wait);
+ 
+-	return __wait_on_bit_lock(page_waitqueue(page), &wait,
+-					sleep_on_page_killable, TASK_KILLABLE);
++	return err;
+ }
+ EXPORT_SYMBOL_GPL(__lock_page_killable);
+ 
++int  __wait_on_page_locked_killable(struct page *page)
++{
++	int ret = 0;
++	wait_queue_head_t *wq = page_waitqueue(page);
++	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
++
++	if (!test_bit(PG_locked, &page->flags))
++		return 0;
++	do {
++		prepare_to_wait(wq, &wait.wait, TASK_KILLABLE);
++		if (!PageWaiters(page))
++			SetPageWaiters(page);
++		if (likely(PageLocked(page)))
++			ret = sleep_on_page_killable(page);
++		finish_wait(wq, &wait.wait);
++	} while (PageLocked(page) && !ret);
++
++	/* Clean up a potentially dangling PG_waiters */
++	if (unlikely(PageWaiters(page)))
++		__wake_page_waiters(page);
++
++	return ret;
++}
++EXPORT_SYMBOL(__wait_on_page_locked_killable);
++
++void  __wait_on_page_locked(struct page *page)
++{
++	wait_queue_head_t *wq = page_waitqueue(page);
++	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
++
++	do {
++		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
++		if (!PageWaiters(page))
++			SetPageWaiters(page);
++		if (likely(PageLocked(page)))
++			sleep_on_page(page);
++	} while (PageLocked(page));
++	finish_wait(wq, &wait.wait);
++
++	/* Clean up a potentially dangling PG_waiters */
++	if (unlikely(PageWaiters(page)))
++		__wake_page_waiters(page);
++}
++EXPORT_SYMBOL(__wait_on_page_locked);
++
+ int __lock_page_or_retry(struct page *page, struct mm_struct *mm,
+ 			 unsigned int flags)
+ {
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index e8369d4..57e0659 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -6473,6 +6473,7 @@ bool is_free_buddy_page(struct page *page)
+ 
+ static const struct trace_print_flags pageflag_names[] = {
+ 	{1UL << PG_locked,		"locked"	},
++	{1UL << PG_waiters,		"waiters"	},
+ 	{1UL << PG_error,		"error"		},
+ 	{1UL << PG_referenced,		"referenced"	},
+ 	{1UL << PG_uptodate,		"uptodate"	},
