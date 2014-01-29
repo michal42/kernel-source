@@ -16,9 +16,7 @@ Current:
 - mount: autodefrag - deny mount
 - ioctl: fallocate and hole punch - return, warning printed only once
 - ioctl: receive - completely disallow
-- ioctl: send - allowed only NO_FILE_DATA mode
-- ioctl: device add and rm - completely disallow
-- mount: multiple devices - deny mount
+- ioctl: device replace - disallow
 - mount: big metadata blocks - remount RO
 - mount: compression - deny mount
 - mount: seeding device - deny mount
@@ -26,12 +24,12 @@ Current:
 Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
  fs/btrfs/ctree.h   |    5 ++++
- fs/btrfs/disk-io.c |   15 ++++++++++++
- fs/btrfs/file.c    |    8 +++++-
- fs/btrfs/ioctl.c   |   23 +++++++++++++++++-
+ fs/btrfs/disk-io.c |    8 ++++++
+ fs/btrfs/file.c    |    8 ++++++
+ fs/btrfs/ioctl.c   |   13 ++++++++++-
  fs/btrfs/send.c    |    5 ++++
- fs/btrfs/super.c   |   66 +++++++++++++++++++++++++++++++++++++++++++++++++++++
- 6 files changed, 120 insertions(+), 2 deletions(-)
+ fs/btrfs/super.c   |   61 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 98 insertions(+), 2 deletions(-)
 
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
@@ -62,20 +60,6 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	/*
  	 * run through our array of backup supers and setup
  	 * our ring pointer to the oldest one
-@@ -2434,6 +2442,13 @@ int open_ctree(struct super_block *sb,
- 		features |= BTRFS_FEATURE_INCOMPAT_BIG_METADATA;
- 	}
- 
-+	if (features & BTRFS_FEATURE_INCOMPAT_BIG_METADATA) {
-+		if (!allow_unsupported) {
-+			printk(KERN_WARNING "btrfs: big metadata feature supported read-only, load module with allow_unsupported=1\n");
-+			sb->s_flags |= MS_RDONLY;
-+		}
-+	}
-+
- 	nodesize = btrfs_super_nodesize(disk_super);
- 	leafsize = btrfs_super_leafsize(disk_super);
- 	sectorsize = btrfs_super_sectorsize(disk_super);
 --- a/fs/btrfs/file.c
 +++ b/fs/btrfs/file.c
 @@ -2273,8 +2273,14 @@ static long btrfs_fallocate(struct file
@@ -104,26 +88,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  	switch (cmd) {
  	case FS_IOC_GETFLAGS:
-@@ -4693,8 +4694,18 @@ long btrfs_ioctl(struct file *file, unsi
- 	case BTRFS_IOC_RESIZE:
- 		return btrfs_ioctl_resize(file, argp);
- 	case BTRFS_IOC_ADD_DEV:
-+		if (!allow_unsupported) {
-+			printk(KERN_WARNING "btrfs: IOC_ADD_DEV is not supported, load module with allow_unsupported=1\n");
-+			ret = -EOPNOTSUPP;
-+			break;
-+		}
- 		return btrfs_ioctl_add_dev(root, argp);
- 	case BTRFS_IOC_RM_DEV:
-+		if (!allow_unsupported) {
-+			printk(KERN_WARNING "btrfs: IOC_RM_DEV is not supported, load module with allow_unsupported=1\n");
-+			ret = -EOPNOTSUPP;
-+			break;
-+		}
- 		return btrfs_ioctl_rm_dev(file, argp);
- 	case BTRFS_IOC_FS_INFO:
- 		return btrfs_ioctl_fs_info(root, argp);
-@@ -4748,6 +4759,11 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4748,6 +4749,11 @@ long btrfs_ioctl(struct file *file, unsi
  	case BTRFS_IOC_BALANCE_PROGRESS:
  		return btrfs_ioctl_balance_progress(root, argp);
  	case BTRFS_IOC_SET_RECEIVED_SUBVOL:
@@ -135,7 +100,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		return btrfs_ioctl_set_received_subvol(file, argp);
  	case BTRFS_IOC_SEND:
  		return btrfs_ioctl_send(file, argp);
-@@ -4768,6 +4784,11 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4768,6 +4774,11 @@ long btrfs_ioctl(struct file *file, unsi
  	case BTRFS_IOC_QUOTA_RESCAN_WAIT:
  		return btrfs_ioctl_quota_rescan_wait(file, argp);
  	case BTRFS_IOC_DEV_REPLACE:
@@ -147,7 +112,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		return btrfs_ioctl_dev_replace(root, argp);
  	case BTRFS_IOC_GET_FSLABEL:
  		return btrfs_ioctl_get_fslabel(file, argp);
-@@ -4783,5 +4804,5 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4783,5 +4794,5 @@ long btrfs_ioctl(struct file *file, unsi
  		return btrfs_ioctl_set_features(file, argp);
  	}
  
@@ -214,19 +179,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  			printk(KERN_INFO "btrfs: enabling auto defrag\n");
  			btrfs_set_opt(info->mount_opt, AUTO_DEFRAG);
  			break;
-@@ -1162,6 +1178,11 @@ static struct dentry *btrfs_mount(struct
- 	if (error)
- 		return ERR_PTR(error);
- 
-+	if (!allow_unsupported && fs_devices->total_devices > 1) {
-+		printk(KERN_WARNING "btrfs: multiple devices not supported, load module with allow_unsupported=1\n");
-+		return ERR_PTR(-EOPNOTSUPP);
-+	}
-+
- 	/*
- 	 * Setup a dummy root and fs_info for test/set super.  This is because
- 	 * we don't actually fill this stuff out until open_ctree, but we need
-@@ -1864,6 +1885,13 @@ static int __init init_btrfs_fs(void)
+@@ -1864,6 +1880,13 @@ static int __init init_btrfs_fs(void)
  
  	btrfs_print_info();
  
@@ -240,7 +193,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	err = btrfs_run_sanity_tests();
  	if (err)
  		goto unregister_ioctl;
-@@ -1915,6 +1943,44 @@ static void __exit exit_btrfs_fs(void)
+@@ -1915,6 +1938,44 @@ static void __exit exit_btrfs_fs(void)
  	btrfs_exit_compress();
  }
  
