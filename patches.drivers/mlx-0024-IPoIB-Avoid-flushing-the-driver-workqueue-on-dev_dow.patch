@@ -1,0 +1,33 @@
+From: Erez Shitrit <erezsh@mellanox.com>
+Date: Wed, 16 Oct 2013 17:37:50 +0300
+Subject: IPoIB: Avoid flushing the driver workqueue on dev_down
+Patch-mainline: v3.13-rc1
+Git-commit: aede25011fddf559dcf216d86975187e3f64b109
+References: bnc#858727 FATE#315946
+
+The driver should not flush the whole workqueue when only one work (the
+pkey poll one) needs to be cancelled.  Use cancel_delayed_work_sync()
+instead.
+
+Signed-off-by: Erez Shitrit <erezsh@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/ulp/ipoib/ipoib_ib.c |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+--- a/drivers/infiniband/ulp/ipoib/ipoib_ib.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_ib.c
+@@ -749,10 +749,8 @@ int ipoib_ib_dev_down(struct net_device
+ 	if (!test_bit(IPOIB_PKEY_ASSIGNED, &priv->flags)) {
+ 		mutex_lock(&pkey_mutex);
+ 		set_bit(IPOIB_PKEY_STOP, &priv->flags);
+-		cancel_delayed_work(&priv->pkey_poll_task);
++		cancel_delayed_work_sync(&priv->pkey_poll_task);
+ 		mutex_unlock(&pkey_mutex);
+-		if (flush)
+-			flush_workqueue(ipoib_workqueue);
+ 	}
+ 
+ 	ipoib_mcast_stop_thread(dev, flush);
