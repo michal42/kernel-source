@@ -1,0 +1,48 @@
+From: Yann Droneaud <ydroneaud@opteya.com>
+Date: Wed, 11 Dec 2013 23:01:52 +0100
+Subject: IB/uverbs: Check input length in flow steering uverbs
+Patch-mainline: v3.13-rc6
+Git-commit: 6bcca3d4a3bcc9859cf001a0a21c8796edae2dc0
+References: bnc#858727 FATE#315946
+
+Since ib_copy_from_udata() doesn't check yet the available input data
+length before accessing userspace memory, an explicit check of this
+length is required to prevent:
+
+- reading past the user provided buffer,
+- underflow when subtracting the expected command size from the input
+  length.
+
+This will ensure the newly added flow steering uverbs don't try to
+process truncated commands.
+
+Link: http://marc.info/?i=cover.1386798254.git.ydroneaud@opteya.com>
+Signed-off-by: Yann Droneaud <ydroneaud@opteya.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/core/uverbs_cmd.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+--- a/drivers/infiniband/core/uverbs_cmd.c
++++ b/drivers/infiniband/core/uverbs_cmd.c
+@@ -2650,6 +2650,9 @@ int ib_uverbs_ex_create_flow(struct ib_u
+ 	void *ib_spec;
+ 	int i;
+ 
++	if (ucore->inlen < sizeof(cmd))
++		return -EINVAL;
++
+ 	if (ucore->outlen < sizeof(resp))
+ 		return -ENOSPC;
+ 
+@@ -2800,6 +2803,9 @@ int ib_uverbs_ex_destroy_flow(struct ib_
+ 	struct ib_uobject		*uobj;
+ 	int				ret;
+ 
++	if (ucore->inlen < sizeof(cmd))
++		return -EINVAL;
++
+ 	ret = ib_copy_from_udata(&cmd, ucore, sizeof(cmd));
+ 	if (ret)
+ 		return ret;
