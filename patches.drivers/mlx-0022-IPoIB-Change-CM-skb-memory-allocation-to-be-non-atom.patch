@@ -1,0 +1,72 @@
+From: Tal Alon <talal@mellanox.com>
+Date: Wed, 16 Oct 2013 17:37:48 +0300
+Subject: IPoIB: Change CM skb memory allocation to be non-atomic during init
+Patch-mainline: v3.13-rc1
+Git-commit: 22252b4e09f19431f82dc26428e0edf697d19a04
+References: bnc#858727 FATE#315946
+
+Change CM skb memory allocation to use GFP_KERNEL when possible.
+
+During device init there's no need to use GFP_ATOMIC when allocating
+memory for the CM skbs -- use GFP_KERNEL instead.
+
+Signed-off-by: Tal Alon <talal@mellanox.com>
+Signed-off-by: Erez Shitrit <erezsh@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/ulp/ipoib/ipoib_cm.c |   14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+--- a/drivers/infiniband/ulp/ipoib/ipoib_cm.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+@@ -140,7 +140,8 @@ static int ipoib_cm_post_receive_nonsrq(
+ static struct sk_buff *ipoib_cm_alloc_rx_skb(struct net_device *dev,
+ 					     struct ipoib_cm_rx_buf *rx_ring,
+ 					     int id, int frags,
+-					     u64 mapping[IPOIB_CM_RX_SG])
++					     u64 mapping[IPOIB_CM_RX_SG],
++					     gfp_t gfp)
+ {
+ 	struct ipoib_dev_priv *priv = netdev_priv(dev);
+ 	struct sk_buff *skb;
+@@ -164,7 +165,7 @@ static struct sk_buff *ipoib_cm_alloc_rx
+ 	}
+ 
+ 	for (i = 0; i < frags; i++) {
+-		struct page *page = alloc_page(GFP_ATOMIC);
++		struct page *page = alloc_page(gfp);
+ 
+ 		if (!page)
+ 			goto partial_error;
+@@ -382,7 +383,8 @@ static int ipoib_cm_nonsrq_init_rx(struc
+ 
+ 	for (i = 0; i < ipoib_recvq_size; ++i) {
+ 		if (!ipoib_cm_alloc_rx_skb(dev, rx->rx_ring, i, IPOIB_CM_RX_SG - 1,
+-					   rx->rx_ring[i].mapping)) {
++					   rx->rx_ring[i].mapping,
++					   GFP_KERNEL)) {
+ 			ipoib_warn(priv, "failed to allocate receive buffer %d\n", i);
+ 				ret = -ENOMEM;
+ 				goto err_count;
+@@ -639,7 +641,8 @@ void ipoib_cm_handle_rx_wc(struct net_de
+ 	frags = PAGE_ALIGN(wc->byte_len - min(wc->byte_len,
+ 					      (unsigned)IPOIB_CM_HEAD_SIZE)) / PAGE_SIZE;
+ 
+-	newskb = ipoib_cm_alloc_rx_skb(dev, rx_ring, wr_id, frags, mapping);
++	newskb = ipoib_cm_alloc_rx_skb(dev, rx_ring, wr_id, frags,
++				       mapping, GFP_ATOMIC);
+ 	if (unlikely(!newskb)) {
+ 		/*
+ 		 * If we can't allocate a new RX buffer, dump
+@@ -1556,7 +1559,8 @@ int ipoib_cm_dev_init(struct net_device
+ 		for (i = 0; i < ipoib_recvq_size; ++i) {
+ 			if (!ipoib_cm_alloc_rx_skb(dev, priv->cm.srq_ring, i,
+ 						   priv->cm.num_frags - 1,
+-						   priv->cm.srq_ring[i].mapping)) {
++						   priv->cm.srq_ring[i].mapping,
++						   GFP_KERNEL)) {
+ 				ipoib_warn(priv, "failed to allocate "
+ 					   "receive buffer %d\n", i);
+ 				ipoib_cm_dev_cleanup(dev);
