@@ -1,0 +1,66 @@
+From: Hadar Hen Zion <hadarh@mellanox.com>
+Date: Thu, 19 Dec 2013 21:20:13 +0200
+Subject: net/mlx4_en: Implement ndo_get_phys_port_id
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-next.git
+Git-commit: 84c864038d6d991be81344fc3168ec2c2f7a8d06
+References: bnc#858727 FATE#315946
+
+Use the port GUID read from the firmware to identify the physical port.
+This port identifier is available via ndo_get_phys_port_id for both PF
+and VF net-devices.
+
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Signed-off-by: Amir Vadai <amirv@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/mellanox/mlx4/en_netdev.c |   23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+--- a/drivers/net/ethernet/mellanox/mlx4/en_netdev.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_netdev.c
+@@ -2154,6 +2154,27 @@ static int mlx4_en_set_vf_link_state(str
+ 
+ 	return mlx4_set_vf_link_state(mdev->dev, en_priv->port, vf, link_state);
+ }
++
++#define PORT_ID_BYTE_LEN 8
++static int mlx4_en_get_phys_port_id(struct net_device *dev,
++				    struct netdev_phys_port_id *ppid)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++	struct mlx4_dev *mdev = priv->mdev->dev;
++	int i;
++	u64 phys_port_id = mdev->caps.phys_port_id[priv->port];
++
++	if (!phys_port_id)
++		return -EOPNOTSUPP;
++
++	ppid->id_len = sizeof(phys_port_id);
++	for (i = PORT_ID_BYTE_LEN - 1; i >= 0; --i) {
++		ppid->id[i] =  phys_port_id & 0xff;
++		phys_port_id >>= 8;
++	}
++	return 0;
++}
++
+ static const struct net_device_ops mlx4_netdev_ops = {
+ 	.ndo_open		= mlx4_en_open,
+ 	.ndo_stop		= mlx4_en_close,
+@@ -2179,6 +2200,7 @@ static const struct net_device_ops mlx4_
+ #ifdef CONFIG_NET_RX_BUSY_POLL
+ 	.ndo_busy_poll		= mlx4_en_low_latency_recv,
+ #endif
++	.ndo_get_phys_port_id	= mlx4_en_get_phys_port_id,
+ };
+ 
+ static const struct net_device_ops mlx4_netdev_ops_master = {
+@@ -2207,6 +2229,7 @@ static const struct net_device_ops mlx4_
+ #ifdef CONFIG_RFS_ACCEL
+ 	.ndo_rx_flow_steer	= mlx4_en_filter_rfs,
+ #endif
++	.ndo_get_phys_port_id	= mlx4_en_get_phys_port_id,
+ };
+ 
+ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
