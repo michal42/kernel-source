@@ -1,0 +1,85 @@
+From: Yann Droneaud <ydroneaud@opteya.com>
+Date: Wed, 6 Nov 2013 23:21:48 +0100
+Subject: IB/core: Remove ib_uverbs_flow_spec structure from userspace
+Patch-mainline: v3.13-rc1
+Git-commit: 2490f20be496c2da14ae4632a8c60e0633e97fd0
+References: bnc#858727 FATE#315946
+
+The structure holding any types of flow_spec is of no use to
+userspace.  It would be wrong for userspace to do:
+
+  struct ib_uverbs_flow_spec flow_spec;
+
+  flow_spec.type = IB_FLOW_SPEC_TCP;
+  flow_spec.size = sizeof(flow_spec);
+
+Instead, userspace should use the dedicated flow_spec structure for
+  - Ethernet : struct ib_uverbs_flow_spec_eth,
+  - IPv4     : struct ib_uverbs_flow_spec_ipv4,
+  - TCP/UDP  : struct ib_uverbs_flow_spec_tcp_udp.
+
+In other words, struct ib_uverbs_flow_spec is a "virtual" data
+structure that can only be use by the kernel as an alias to the other.
+
+Change-Id: I4b7ca090c527aff47c9968b18af7f3c3acaddde3
+Signed-off-by: Yann Droneaud <ydroneaud@opteya.com>
+Link: http://marc.info/?i=cover.1383773832.git.ydroneaud@opteya.com
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/core/uverbs.h  |   18 ++++++++++++++++++
+ include/uapi/rdma/ib_user_verbs.h |   16 ----------------
+ 2 files changed, 18 insertions(+), 16 deletions(-)
+--- a/drivers/infiniband/core/uverbs.h
++++ b/drivers/infiniband/core/uverbs.h
+@@ -178,6 +178,24 @@ void ib_uverbs_event_handler(struct ib_e
+ 			     struct ib_event *event);
+ void ib_uverbs_dealloc_xrcd(struct ib_uverbs_device *dev, struct ib_xrcd *xrcd);
+ 
++#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
++struct ib_uverbs_flow_spec {
++	union {
++		union {
++			struct ib_uverbs_flow_spec_hdr hdr;
++			struct {
++				__u32 type;
++				__u16 size;
++				__u16 reserved;
++			};
++		};
++		struct ib_uverbs_flow_spec_eth     eth;
++		struct ib_uverbs_flow_spec_ipv4    ipv4;
++		struct ib_uverbs_flow_spec_tcp_udp tcp_udp;
++	};
++};
++#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
++
+ #define IB_UVERBS_DECLARE_CMD(name)					\
+ 	ssize_t ib_uverbs_##name(struct ib_uverbs_file *file,		\
+ 				 const char __user *buf, int in_len,	\
+--- a/include/uapi/rdma/ib_user_verbs.h
++++ b/include/uapi/rdma/ib_user_verbs.h
+@@ -765,22 +765,6 @@ struct ib_uverbs_flow_spec_tcp_udp {
+ 	struct ib_uverbs_flow_tcp_udp_filter mask;
+ };
+ 
+-struct ib_uverbs_flow_spec {
+-	union {
+-		union {
+-			struct ib_uverbs_flow_spec_hdr hdr;
+-			struct {
+-				__u32 type;
+-				__u16 size;
+-				__u16 reserved;
+-			};
+-		};
+-		struct ib_uverbs_flow_spec_eth	    eth;
+-		struct ib_uverbs_flow_spec_ipv4    ipv4;
+-		struct ib_uverbs_flow_spec_tcp_udp tcp_udp;
+-	};
+-};
+-
+ struct ib_uverbs_flow_attr {
+ 	__u32 type;
+ 	__u16 size;
