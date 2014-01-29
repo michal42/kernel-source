@@ -2,7 +2,7 @@ From: Peter Zijlstra <a.p.zijlstra@chello.nl>
 Date: Thu, 24 May 2012 14:44:38 +0100
 Subject: [PATCH] mm: Optimize put_mems_allowed() usage
 References: VM performance
-Patch-mainline: No, should have been merged but got lost. Retry upstreaming
+Patch-mainline: No, got lost. Resent for merging
 
 Since put_mems_allowed() is strictly optional, its a seqcount retry,
 we don't need to evaluate the function if the allocation was in fact
@@ -19,27 +19,23 @@ return value of the latter call is inverted from its previous
 incarnation.
 
 Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
-Acked-by: Mel Gorman <mgorman@suse.de>
-Cc: Andrew Morton <akpm@linux-foundation.org>
-Cc: David Rientjes <rientjes@google.com>
-Cc: Christoph Lameter <cl@linux.com>
-Link: http://lkml.kernel.org/r/1332759384.16159.92.camel@twins
-Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/cpuset.h |   27 ++++++++++++++-------------
- kernel/cpuset.c        |    2 +-
- mm/filemap.c           |    4 ++--
- mm/hugetlb.c           |    8 ++------
- mm/mempolicy.c         |   14 +++++++-------
- mm/page_alloc.c        |    8 ++++----
- mm/slab.c              |    4 ++--
- mm/slub.c              |   16 +++-------------
- 8 files changed, 35 insertions(+), 48 deletions(-)
+ include/linux/cpuset.h | 27 ++++++++++++++-------------
+ kernel/cpuset.c        |  2 +-
+ mm/filemap.c           |  4 ++--
+ mm/hugetlb.c           |  4 ++--
+ mm/mempolicy.c         | 12 ++++++------
+ mm/page_alloc.c        |  8 ++++----
+ mm/slab.c              |  4 ++--
+ mm/slub.c              | 16 +++++++---------
+ 8 files changed, 38 insertions(+), 39 deletions(-)
 
+diff --git a/include/linux/cpuset.h b/include/linux/cpuset.h
+index 3fe661f..b19d3dc 100644
 --- a/include/linux/cpuset.h
 +++ b/include/linux/cpuset.h
-@@ -89,25 +89,26 @@ extern void rebuild_sched_domains(void);
+@@ -87,25 +87,26 @@ extern void rebuild_sched_domains(void);
  extern void cpuset_print_task_mems_allowed(struct task_struct *p);
  
  /*
@@ -76,7 +72,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  }
  
  static inline void set_mems_allowed(nodemask_t nodemask)
-@@ -225,14 +226,14 @@ static inline void set_mems_allowed(node
+@@ -225,14 +226,14 @@ static inline void set_mems_allowed(nodemask_t nodemask)
  {
  }
  
@@ -94,9 +90,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  }
  
  #endif /* !CONFIG_CPUSETS */
+diff --git a/kernel/cpuset.c b/kernel/cpuset.c
+index 4772034..f44d21e 100644
 --- a/kernel/cpuset.c
 +++ b/kernel/cpuset.c
-@@ -976,7 +976,7 @@ static void cpuset_change_task_nodemask(
+@@ -1026,7 +1026,7 @@ static void cpuset_change_task_nodemask(struct task_struct *tsk,
  	task_lock(tsk);
  	/*
  	 * Determine if a loop is necessary if another thread is doing
@@ -105,9 +103,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	 * tsk does not have a mempolicy, then an empty nodemask will not be
  	 * possible when mems_allowed is larger than a word.
  	 */
+diff --git a/mm/filemap.c b/mm/filemap.c
+index b7749a9..5d53cd3 100644
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
-@@ -543,10 +543,10 @@ struct page *__page_cache_alloc(gfp_t gf
+@@ -520,10 +520,10 @@ struct page *__page_cache_alloc(gfp_t gfp)
  	if (cpuset_do_page_mem_spread()) {
  		unsigned int cpuset_mems_cookie;
  		do {
@@ -120,18 +120,20 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  		return page;
  	}
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index dee6cf4..0c1fe51 100644
 --- a/mm/hugetlb.c
 +++ b/mm/hugetlb.c
-@@ -463,7 +463,7 @@ static struct page *dequeue_huge_page_vm
- 	unsigned int cpuset_mems_cookie;
+@@ -540,7 +540,7 @@ static struct page *dequeue_huge_page_vma(struct hstate *h,
+ 		goto err;
  
  retry_cpuset:
 -	cpuset_mems_cookie = get_mems_allowed();
 +	cpuset_mems_cookie = read_mems_allowed_begin();
  	zonelist = huge_zonelist(vma, address,
- 					htlb_alloc_mask, &mpol, &nodemask);
- 	/*
-@@ -492,16 +492,12 @@ retry_cpuset:
+ 					htlb_alloc_mask(h), &mpol, &nodemask);
+ 
+@@ -562,7 +562,7 @@ retry_cpuset:
  	}
  
  	mpol_cond_put(mpol);
@@ -140,18 +142,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		goto retry_cpuset;
  	return page;
  
- err:
- 	mpol_cond_put(mpol);
--
--	/* No need to retry after a failed put_mems_allowed in the error path */
--	put_mems_allowed(cpuset_mems_cookie);
--
- 	return NULL;
- }
- 
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 0cd2c4d..745fb70 100644
 --- a/mm/mempolicy.c
 +++ b/mm/mempolicy.c
-@@ -1676,7 +1676,7 @@ int node_random(const nodemask_t *maskp)
+@@ -1902,7 +1902,7 @@ int node_random(const nodemask_t *maskp)
   * If the effective policy is 'BIND, returns a pointer to the mempolicy's
   * @nodemask for filtering the zonelist.
   *
@@ -160,7 +155,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
   */
  struct zonelist *huge_zonelist(struct vm_area_struct *vma, unsigned long addr,
  				gfp_t gfp_flags, struct mempolicy **mpol,
-@@ -1841,7 +1841,7 @@ alloc_pages_vma(gfp_t gfp, int order, st
+@@ -2066,7 +2066,7 @@ alloc_pages_vma(gfp_t gfp, int order, struct vm_area_struct *vma,
  
  retry_cpuset:
  	pol = get_vma_policy(current, vma, addr);
@@ -169,7 +164,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	if (unlikely(pol->mode == MPOL_INTERLEAVE)) {
  		unsigned nid;
-@@ -1849,7 +1849,7 @@ retry_cpuset:
+@@ -2074,7 +2074,7 @@ retry_cpuset:
  		nid = interleave_nid(pol, vma, addr, PAGE_SHIFT + order);
  		mpol_cond_put(pol);
  		page = alloc_page_interleave(gfp, order, nid);
@@ -178,25 +173,16 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			goto retry_cpuset;
  
  		return page;
-@@ -1862,7 +1862,7 @@ retry_cpuset:
- 		struct page *page =  __alloc_pages_nodemask(gfp, order,
- 						zl, policy_nodemask(gfp, pol));
- 		__mpol_put(pol);
--		if (unlikely(!put_mems_allowed(cpuset_mems_cookie) && !page))
-+		if (unlikely(!page && read_mems_allowed_retry(cpuset_mems_cookie)))
- 			goto retry_cpuset;
- 		return page;
- 	}
-@@ -1871,7 +1871,7 @@ retry_cpuset:
- 	 */
- 	page = __alloc_pages_nodemask(gfp, order, zl,
+@@ -2084,7 +2084,7 @@ retry_cpuset:
  				      policy_nodemask(gfp, pol));
+ 	if (unlikely(mpol_needs_cond_ref(pol)))
+ 		__mpol_put(pol);
 -	if (unlikely(!put_mems_allowed(cpuset_mems_cookie) && !page))
 +	if (unlikely(!page && read_mems_allowed_retry(cpuset_mems_cookie)))
  		goto retry_cpuset;
  	return page;
  }
-@@ -1905,7 +1905,7 @@ struct page *alloc_pages_current(gfp_t g
+@@ -2118,7 +2118,7 @@ struct page *alloc_pages_current(gfp_t gfp, unsigned order)
  		pol = &default_policy;
  
  retry_cpuset:
@@ -205,7 +191,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	/*
  	 * No reference counting needed for current->mempolicy
-@@ -1918,7 +1918,7 @@ retry_cpuset:
+@@ -2131,7 +2131,7 @@ retry_cpuset:
  				policy_zonelist(gfp, pol, numa_node_id()),
  				policy_nodemask(gfp, pol));
  
@@ -214,9 +200,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		goto retry_cpuset;
  
  	return page;
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 5248fe0..dd98837 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -2330,7 +2330,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, u
+@@ -2697,7 +2697,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
  		return NULL;
  
  retry_cpuset:
@@ -225,7 +213,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	/* The preferred zone is used for statistics later */
  	first_zones_zonelist(zonelist, high_zoneidx,
-@@ -2357,7 +2357,7 @@ out:
+@@ -2735,7 +2735,7 @@ out:
  	 * the mask is being updated. If a page allocation is about to fail,
  	 * check if the cpuset changed during allocation and if so, retry.
  	 */
@@ -233,8 +221,8 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 +	if (unlikely(!page && read_mems_allowed_retry(cpuset_mems_cookie)))
  		goto retry_cpuset;
  
- 	return page;
-@@ -2589,9 +2589,9 @@ bool skip_free_areas_node(unsigned int f
+ 	memcg_kmem_commit_charge(page, memcg, order);
+@@ -3003,9 +3003,9 @@ bool skip_free_areas_node(unsigned int flags, int nid)
  		goto out;
  
  	do {
@@ -246,18 +234,20 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  out:
  	return ret;
  }
+diff --git a/mm/slab.c b/mm/slab.c
+index eb043bf..dc4b0e8 100644
 --- a/mm/slab.c
 +++ b/mm/slab.c
-@@ -3252,7 +3252,7 @@ static void *fallback_alloc(struct kmem_
+@@ -3073,7 +3073,7 @@ static void *fallback_alloc(struct kmem_cache *cache, gfp_t flags)
  	local_flags = flags & (GFP_CONSTRAINT_MASK|GFP_RECLAIM_MASK);
  
  retry_cpuset:
 -	cpuset_mems_cookie = get_mems_allowed();
 +	cpuset_mems_cookie = read_mems_allowed_begin();
- 	zonelist = node_zonelist(slab_node(current->mempolicy), flags);
+ 	zonelist = node_zonelist(slab_node(), flags);
  
  retry:
-@@ -3308,7 +3308,7 @@ retry:
+@@ -3131,7 +3131,7 @@ retry:
  		}
  	}
  
@@ -266,34 +256,38 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		goto retry_cpuset;
  	return obj;
  }
+diff --git a/mm/slub.c b/mm/slub.c
+index 545a170..367a97f 100644
 --- a/mm/slub.c
 +++ b/mm/slub.c
-@@ -1482,7 +1482,7 @@ static struct page *get_any_partial(stru
+@@ -1662,7 +1662,7 @@ static void *get_any_partial(struct kmem_cache *s, gfp_t flags,
  		return NULL;
  
  	do {
 -		cpuset_mems_cookie = get_mems_allowed();
 +		cpuset_mems_cookie = read_mems_allowed_begin();
- 		zonelist = node_zonelist(slab_node(current->mempolicy), flags);
+ 		zonelist = node_zonelist(slab_node(), flags);
  		for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
  			struct kmem_cache_node *n;
-@@ -1492,21 +1492,11 @@ static struct page *get_any_partial(stru
- 			if (n && cpuset_zone_allowed_hardwall(zone, flags) &&
- 					n->nr_partial > s->min_partial) {
- 				page = get_partial_node(n);
--				if (page) {
--					/*
+@@ -1674,19 +1674,17 @@ static void *get_any_partial(struct kmem_cache *s, gfp_t flags,
+ 				object = get_partial_node(s, n, c, flags);
+ 				if (object) {
+ 					/*
 -					 * Return the object even if
 -					 * put_mems_allowed indicated that
 -					 * the cpuset mems_allowed was
 -					 * updated in parallel. It's a
 -					 * harmless race between the alloc
 -					 * and the cpuset update.
--					 */
++					 * Don't check read_mems_allowed_retry()
++					 * here - if mems_allowed was updated in
++					 * parallel, that was a harmless race
++					 * between allocation and the cpuset
++					 * update
+ 					 */
 -					put_mems_allowed(cpuset_mems_cookie);
-+				if (object)
- 					return page;
--				}
+ 					return object;
+ 				}
  			}
  		}
 -	} while (!put_mems_allowed(cpuset_mems_cookie));
