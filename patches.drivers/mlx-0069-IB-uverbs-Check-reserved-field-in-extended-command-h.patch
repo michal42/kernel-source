@@ -1,0 +1,46 @@
+From: Yann Droneaud <ydroneaud@opteya.com>
+Date: Wed, 11 Dec 2013 23:01:47 +0100
+Subject: IB/uverbs: Check reserved field in extended command header
+Patch-mainline: v3.13-rc6
+Git-commit: 7efb1b19b3414d7dec792f39e1c1a7db57a23961
+References: bnc#858727 FATE#315946
+
+As noted by Daniel Vetter in its article "Botching up ioctls"[1]
+
+  "Check *all* unused fields and flags and all the padding for whether
+   it's 0, and reject the ioctl if that's not the case.  Otherwise
+   your nice plan for future extensions is going right down the
+   gutters since someone *will* submit an ioctl struct with random
+   stack garbage in the yet unused parts. Which then bakes in the ABI
+   that those fields can never be used for anything else but garbage."
+
+It's important to ensure that reserved fields are set to known value,
+so that it will be possible to use them latter to extend the ABI.
+
+The same reasonning apply to comp_mask field present in newer uverbs
+command: per commit 22878dbc9173 ("IB/core: Better checking of
+userspace values for receive flow steering"), unsupported values in
+comp_mask are rejected.
+
+[1] http://blog.ffwll.ch/2013/11/botching-up-ioctls.html
+
+Link: http://marc.info/?i=cover.1386798254.git.ydroneaud@opteya.com>
+Signed-off-by: Yann Droneaud <ydroneaud@opteya.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/core/uverbs_main.c |    3 +++
+ 1 file changed, 3 insertions(+)
+--- a/drivers/infiniband/core/uverbs_main.c
++++ b/drivers/infiniband/core/uverbs_main.c
+@@ -668,6 +668,9 @@ static ssize_t ib_uverbs_write(struct fi
+ 		if ((hdr.in_words + ex_hdr.provider_in_words) * 8 != count)
+ 			return -EINVAL;
+ 
++		if (ex_hdr.cmd_hdr_reserved)
++			return -EINVAL;
++
+ 		if (ex_hdr.response) {
+ 			if (!hdr.out_words && !ex_hdr.provider_out_words)
+ 				return -EINVAL;
