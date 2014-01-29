@@ -1,0 +1,49 @@
+From: Erez Shitrit <erezsh@mellanox.com>
+Date: Wed, 16 Oct 2013 17:37:53 +0300
+Subject: IPoIB: Start multicast join process only on active ports
+Patch-mainline: v3.13-rc1
+Git-commit: 94232d9ce81755c4b0c1536648442383442b27e0
+References: bnc#858727 FATE#315946
+
+The driver starts the mcast_join task whenever the netdev interface is
+UP without relation to the underlying IB port state.
+
+Until the port state is ACTIVE all the join requests are irrelevant,
+and the IB core returns -EINVAL. So the user will see errors such as:
+"multicast join failed for ff12:401b:... , status -22".
+
+Instead, have ipoib_mcast_join_task() return when the port is not active.
+
+It will be called again when the port state is changed and the
+low-level driver triggers the IB_EVENT_PORT_ACTIVE event or the
+IB_EVENT_CLIENT_REREGISTER event.
+
+Signed-off-by: Erez Shitrit <erezsh@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/ulp/ipoib/ipoib_multicast.c |    8 ++++++++
+ 1 file changed, 8 insertions(+)
+--- a/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
+@@ -518,10 +518,18 @@ void ipoib_mcast_join_task(struct work_s
+ 	struct ipoib_dev_priv *priv =
+ 		container_of(work, struct ipoib_dev_priv, mcast_task.work);
+ 	struct net_device *dev = priv->dev;
++	struct ib_port_attr port_attr;
+ 
+ 	if (!test_bit(IPOIB_MCAST_RUN, &priv->flags))
+ 		return;
+ 
++	if (ib_query_port(priv->ca, priv->port, &port_attr) ||
++	    port_attr.state != IB_PORT_ACTIVE) {
++		ipoib_dbg(priv, "port state is not ACTIVE (state = %d) suspending join task\n",
++			  port_attr.state);
++		return;
++	}
++
+ 	if (ib_query_gid(priv->ca, priv->port, 0, &priv->local_gid))
+ 		ipoib_warn(priv, "ib_query_gid() failed\n");
+ 	else
