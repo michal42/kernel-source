@@ -1,0 +1,44 @@
+From: Eli Cohen <eli@dev.mellanox.co.il>
+Date: Tue, 14 Jan 2014 17:45:22 +0200
+Subject: IB/mlx5: Abort driver cleanup if teardown hca fails
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-next.git
+Git-commit: 1bde6e301cf6217da9238086c958f532b16e504d
+References: bnc#858727 FATE#315946
+
+Do not continue with cleanup flow. If this ever happens we can check which
+resources remained open.
+
+Signed-off-by: Eli Cohen <eli@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/main.c |   10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+--- a/drivers/net/ethernet/mellanox/mlx5/core/main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/main.c
+@@ -460,7 +460,10 @@ disable_msix:
+ 
+ err_stop_poll:
+ 	mlx5_stop_health_poll(dev);
+-	mlx5_cmd_teardown_hca(dev);
++	if (mlx5_cmd_teardown_hca(dev)) {
++		dev_err(&dev->pdev->dev, "tear_down_hca failed, skip cleanup\n");
++		return err;
++	}
+ 
+ err_pagealloc_stop:
+ 	mlx5_pagealloc_stop(dev);
+@@ -503,7 +506,10 @@ void mlx5_dev_cleanup(struct mlx5_core_d
+ 	mlx5_eq_cleanup(dev);
+ 	mlx5_disable_msix(dev);
+ 	mlx5_stop_health_poll(dev);
+-	mlx5_cmd_teardown_hca(dev);
++	if (mlx5_cmd_teardown_hca(dev)) {
++		dev_err(&dev->pdev->dev, "tear_down_hca failed, skip cleanup\n");
++		return;
++	}
+ 	mlx5_pagealloc_stop(dev);
+ 	mlx5_reclaim_startup_pages(dev);
+ 	mlx5_core_disable_hca(dev);
