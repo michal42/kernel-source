@@ -1,15 +1,19 @@
 From: Petr Tesarik <ptesarik@suse.cz>
-Subject: Return EOF on out-of-bounds read from /dev/mem
-Patch-Mainline: no
+Subject: /dev/mem: handle out-of-bounds read/write
+Patch-Mainline: Submitted to linux-kernel, 30 Jan 2014
 References: FATE#310031
 
-The off parameter (type loff_t) may specify an offset that cannot
-be represented by a long. Currently, /dev/mem wraps around, which
-may to cause applications to read/write incorrect regions of memory
-by accident.
+The loff_t type may be wider than phys_addr_t (e.g. on 32-bit systems).
+Consequently, the file offset may be truncated in the assignment.
+Currently, /dev/mem wraps around, which may cause applications to read
+or write incorrect regions of memory by accident.
 
-Follow the usual file semantics here and return 0 when reading or
--EFBIG when writing beyond the accessible range.
+Let's follow POSIX file semantics here and return 0 when reading from
+and -EFBIG when writing to an offset that cannot be represented by a
+phys_addr_t.
+
+Note that the conditional is optimized out by the compiler if loff_t
+has the same size as phys_addr_t.
 
 Signed-off-by: Petr Tesarik <ptesarik@suse.cz>
 ---
