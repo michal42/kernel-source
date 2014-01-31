@@ -1,0 +1,66 @@
+From 585d721d954557aecdcf0660d844bfbab8b41aea Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 27 Jan 2014 17:03:46 -0500
+Subject: [PATCH] sched/numa: Do statistics calculation using local variables
+ only
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (Expected 3.15)
+
+The current code in task_numa_placement calculates the difference
+between the old and the new value, but also temporarily stores half
+of the old value in the per-process variables.
+
+The NUMA balancing code looks at those per-process variables, and
+having other tasks temporarily see halved statistics could lead to
+unwanted numa migrations. This can be avoided by doing all the math
+in local variables.
+
+This change also simplifies the code a little.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Acked-by: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Chegu Vinod <chegu_vinod@hp.com>
+Link: http://lkml.kernel.org/r/1390860228-21539-8-git-send-email-riel@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 66b2575..a0845ca 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1548,12 +1548,9 @@ static void task_numa_placement(struct task_struct *p)
+ 			long diff, f_diff, f_weight;
+ 
+ 			i = task_faults_idx(nid, priv);
+-			diff = -p->numa_faults_memory[i];
+-			f_diff = -p->numa_faults_cpu[i];
+ 
+ 			/* Decay existing window, copy faults since last scan */
+-			p->numa_faults_memory[i] >>= 1;
+-			p->numa_faults_memory[i] += p->numa_faults_buffer_memory[i];
++			diff = p->numa_faults_buffer_memory[i] - p->numa_faults_memory[i] / 2;
+ 			fault_types[priv] += p->numa_faults_buffer_memory[i];
+ 			p->numa_faults_buffer_memory[i] = 0;
+ 
+@@ -1567,13 +1564,12 @@ static void task_numa_placement(struct task_struct *p)
+ 			f_weight = div64_u64(runtime << 16, period + 1);
+ 			f_weight = (f_weight * p->numa_faults_buffer_cpu[i]) /
+ 				   (total_faults + 1);
+-			p->numa_faults_cpu[i] >>= 1;
+-			p->numa_faults_cpu[i] += f_weight;
++			f_diff = f_weight - p->numa_faults_cpu[i] / 2;
+ 			p->numa_faults_buffer_cpu[i] = 0;
+ 
++			p->numa_faults_memory[i] += diff;
++			p->numa_faults_cpu[i] += f_diff;
+ 			faults += p->numa_faults_memory[i];
+-			diff += p->numa_faults_memory[i];
+-			f_diff += p->numa_faults_cpu[i];
+ 			p->total_numa_faults += diff;
+ 			if (p->numa_group) {
+ 				/* safe because we can only change our own group */
