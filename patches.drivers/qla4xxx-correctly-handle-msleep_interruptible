@@ -1,0 +1,46 @@
+From: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Date: Tue, 19 Nov 2013 16:25:22 +0530
+Subject: qla4xxx: Correctly handle msleep_interruptible
+Patch-mainline: Submitted: 12/16/2013 linux-scsi
+References: FATE#315934 bnc#862073
+
+If waiting for signals was interrupted then the device was put to
+FAILED state. Use msleep instead of msleep_interruptible to handle
+this correctly.
+
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+
+ drivers/scsi/qla4xxx/ql4_nx.c |   10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+--- a/drivers/scsi/qla4xxx/ql4_nx.c
++++ b/drivers/scsi/qla4xxx/ql4_nx.c
+@@ -2826,7 +2826,7 @@ void qla4_8xxx_get_minidump(struct scsi_qla_host *ha)
+ int qla4_8xxx_device_bootstrap(struct scsi_qla_host *ha)
+ {
+ 	int rval = QLA_ERROR;
+-	int i, timeout;
++	int i;
+ 	uint32_t old_count, count;
+ 	int need_reset = 0, peg_stuck = 1;
+ 
+@@ -2834,13 +2834,7 @@ int qla4_8xxx_device_bootstrap(struct scsi_qla_host *ha)
+ 	old_count = qla4_8xxx_rd_direct(ha, QLA8XXX_PEG_ALIVE_COUNTER);
+ 
+ 	for (i = 0; i < 10; i++) {
+-		timeout = msleep_interruptible(200);
+-		if (timeout) {
+-			qla4_8xxx_wr_direct(ha, QLA8XXX_CRB_DEV_STATE,
+-					    QLA8XXX_DEV_FAILED);
+-			return rval;
+-		}
+-
++		msleep(200);
+ 		count = qla4_8xxx_rd_direct(ha, QLA8XXX_PEG_ALIVE_COUNTER);
+ 		if (count != old_count)
+ 			peg_stuck = 0;
+
+
+
