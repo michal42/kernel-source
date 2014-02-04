@@ -1,0 +1,96 @@
+From: Tej Parkash <tej.parkash@qlogic.com>
+Date: Wed, 20 Nov 2013 13:55:23 +0530
+Subject: qla4xxx: Fix processing response queue during probe
+Patch-mainline: Submitted: 12/16/2013 linux-scsi
+References: FATE#315934 bnc#862073
+
+Issue:
+While booting with kdump kernel, driver receive IOCB interrupts
+for which it is not ready which results in processing them
+before init_firmware during driver probe
+
+Fix:
+Two steps solution
+1. Make driver ready to process the interrupt before interupts
+   handlers is registered.
+2. Stop driver processing iocb interrupts if not generated as per
+   firmware protocol i.e R2H bit set
+
+Signed-off-by: Tej Parkash <tej.parkash@qlogic.com>
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+
+ drivers/scsi/qla4xxx/ql4_isr.c |   15 ++++++++++++---
+ drivers/scsi/qla4xxx/ql4_mbx.c |    3 ---
+ drivers/scsi/qla4xxx/ql4_nx.c  |    4 ++++
+ 3 files changed, 16 insertions(+), 6 deletions(-)
+
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -1022,7 +1022,8 @@ void qla4_82xx_interrupt_service_routine(struct scsi_qla_host *ha,
+     uint32_t intr_status)
+ {
+ 	/* Process response queue interrupt. */
+-	if (intr_status & HSRX_RISC_IOCB_INT)
++	if ((intr_status & HSRX_RISC_IOCB_INT) &&
++	    test_bit(AF_INIT_DONE, &ha->flags))
+ 		qla4xxx_process_response_queue(ha);
+ 
+ 	/* Process mailbox/asynch event interrupt.*/
+@@ -1399,6 +1400,7 @@ qla4_8xxx_msix_rsp_q(int irq, void *dev_id)
+ {
+ 	struct scsi_qla_host *ha = dev_id;
+ 	unsigned long flags;
++	int intr_status;
+ 	uint32_t ival = 0;
+ 
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+@@ -1412,8 +1414,15 @@ qla4_8xxx_msix_rsp_q(int irq, void *dev_id)
+ 		qla4xxx_process_response_queue(ha);
+ 		writel(0, &ha->qla4_83xx_reg->iocb_int_mask);
+ 	} else {
+-		qla4xxx_process_response_queue(ha);
+-		writel(0, &ha->qla4_82xx_reg->host_int);
++		intr_status = readl(&ha->qla4_82xx_reg->host_status);
++		if (intr_status & HSRX_RISC_IOCB_INT) {
++			qla4xxx_process_response_queue(ha);
++			writel(0, &ha->qla4_82xx_reg->host_int);
++		} else {
++			ql4_printk(KERN_INFO, ha, "%s: spurious iocb interrupt...\n",
++				   __func__);
++			goto exit_msix_rsp_q;
++		}
+ 	}
+ 	ha->isr_count++;
+ exit_msix_rsp_q:
+
+--- a/drivers/scsi/qla4xxx/ql4_mbx.c
++++ b/drivers/scsi/qla4xxx/ql4_mbx.c
+@@ -648,9 +648,6 @@ int qla4xxx_initialize_fw_cb(struct scsi_qla_host * ha)
+ 		goto exit_init_fw_cb;
+ 	}
+ 
+-	/* Initialize request and response queues. */
+-	qla4xxx_init_rings(ha);
+-
+ 	/* Fill in the request and response queue information. */
+ 	init_fw_cb->rqq_consumer_idx = cpu_to_le16(ha->request_out);
+ 	init_fw_cb->compq_producer_idx = cpu_to_le16(ha->response_in);
+
+--- a/drivers/scsi/qla4xxx/ql4_nx.c
++++ b/drivers/scsi/qla4xxx/ql4_nx.c
+@@ -3196,6 +3196,10 @@ int qla4_8xxx_load_risc(struct scsi_qla_host *ha)
+ 
+ 	retval = qla4_8xxx_device_state_handler(ha);
+ 
++	/* Initialize request and response queues. */
++	if (retval == QLA_SUCCESS)
++		qla4xxx_init_rings(ha);
++
+ 	if (retval == QLA_SUCCESS && !test_bit(AF_IRQ_ATTACHED, &ha->flags))
+ 		retval = qla4xxx_request_irqs(ha);
+ 
+
+
+
