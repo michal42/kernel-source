@@ -1,0 +1,41 @@
+From 56c07a9c95afa93c089824cb02bf4133ca4eb180 Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Mon, 21 Oct 2013 11:03:53 +0300
+Subject: [PATCH 68/73] iwlwifi: mvm: BT Coex fix another NULL pointer dereference
+Git-commit: 56c07a9c95afa93c089824cb02bf4133ca4eb180
+Patch-mainline: 3.13-rc8
+References: FATE#316958
+
+This patch is very similar to a previous fix: 22cba0c0852f
+
+When we disassociate, mac80211 removes the station and
+then, it sets the bss it unsets the assoc bool in bss_info.
+
+Since the firwmware wants it the opposite (first set the
+MAC context as unassoc, and only then, remove the STA of
+the API), we have a small period of time in which the STA
+in firmware doesn't have a valid ieee80211_sta pointer.
+During that time, iwl_mvm_vif->ap_sta_id, is still set
+to the STA in firmware that represent the AP.
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -841,6 +841,11 @@ static void iwl_mvm_bt_rssi_iterator(voi
+ 
+ 	sta = rcu_dereference_protected(mvm->fw_id_to_mac_id[mvmvif->ap_sta_id],
+ 					lockdep_is_held(&mvm->mutex));
++
++	/* This can happen if the station has been removed right now */
++	if (IS_ERR_OR_NULL(sta))
++		return;
++
+ 	mvmsta = (void *)sta->drv_priv;
+ 
+ 	data->num_bss_ifaces++;
