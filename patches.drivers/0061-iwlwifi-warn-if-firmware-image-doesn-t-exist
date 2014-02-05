@@ -1,0 +1,63 @@
+From befe9b6fd897e1bfce224b662ce62dd751843c34 Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Fri, 25 Oct 2013 12:32:51 +0200
+Subject: [PATCH 61/63] iwlwifi: warn if firmware image doesn't exist
+Git-commit: befe9b6fd897e1bfce224b662ce62dd751843c34
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+If the firmware image that we attempt to load doesn't
+actually exist we have a broken firmware file or other
+code not checking things correctly, so warn in such a
+case. Also avoid assigning cur_ucode/ucode_loaded then.
+
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/dvm/ucode.c |    9 ++++-----
+ drivers/net/wireless/iwlwifi/mvm/fw.c    |    8 +++-----
+ 2 files changed, 7 insertions(+), 10 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/dvm/ucode.c
++++ b/drivers/net/wireless/iwlwifi/dvm/ucode.c
+@@ -330,15 +330,14 @@ int iwl_load_ucode_wait_alive(struct iwl
+ 	enum iwl_ucode_type old_type;
+ 	static const u8 alive_cmd[] = { REPLY_ALIVE };
+ 
+-	old_type = priv->cur_ucode;
+-	priv->cur_ucode = ucode_type;
+ 	fw = iwl_get_ucode_image(priv, ucode_type);
++	if (WARN_ON(!fw))
++		return -EINVAL;
+ 
++	old_type = priv->cur_ucode;
++	priv->cur_ucode = ucode_type;
+ 	priv->ucode_loaded = false;
+ 
+-	if (!fw)
+-		return -EINVAL;
+-
+ 	iwl_init_notification_wait(&priv->notif_wait, &alive_wait,
+ 				   alive_cmd, ARRAY_SIZE(alive_cmd),
+ 				   iwl_alive_fn, &alive_data);
+--- a/drivers/net/wireless/iwlwifi/mvm/fw.c
++++ b/drivers/net/wireless/iwlwifi/mvm/fw.c
+@@ -151,13 +151,11 @@ static int iwl_mvm_load_ucode_wait_alive
+ 	enum iwl_ucode_type old_type = mvm->cur_ucode;
+ 	static const u8 alive_cmd[] = { MVM_ALIVE };
+ 
+-	mvm->cur_ucode = ucode_type;
+ 	fw = iwl_get_ucode_image(mvm, ucode_type);
+-
+-	mvm->ucode_loaded = false;
+-
+-	if (!fw)
++	if (WARN_ON(!fw))
+ 		return -EINVAL;
++	mvm->cur_ucode = ucode_type;
++	mvm->ucode_loaded = false;
+ 
+ 	iwl_init_notification_wait(&mvm->notif_wait, &alive_wait,
+ 				   alive_cmd, ARRAY_SIZE(alive_cmd),
