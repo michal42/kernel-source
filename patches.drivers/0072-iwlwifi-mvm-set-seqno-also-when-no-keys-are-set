@@ -1,0 +1,40 @@
+From cfa88893709fbf27b62c6b0cf99c72265b9a21ca Mon Sep 17 00:00:00 2001
+From: Luciano Coelho <luciano.coelho@intel.com>
+Date: Tue, 19 Nov 2013 15:38:55 +0200
+Subject: [PATCH 72/73] iwlwifi: mvm: set seqno also when no keys are set
+Git-commit: cfa88893709fbf27b62c6b0cf99c72265b9a21ca
+Patch-mainline: 3.13-rc8
+References: FATE#316958
+
+In an open BSS, after suspend/resume, we don't set the last seqno
+because the iwl_mvm_setup_connection_keep() returns too early.  This
+happens because the check to see if we have any keys was returning
+immediately, without setting seqno and seqno_valid.  Fix this.
+
+Signed-off-by: Luciano Coelho <luciano.coelho@intel.com>
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/d3.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/d3.c
++++ b/drivers/net/wireless/iwlwifi/mvm/d3.c
+@@ -1549,7 +1549,7 @@ static bool iwl_mvm_setup_connection_kee
+ 	if (gtkdata.unhandled_cipher)
+ 		return false;
+ 	if (!gtkdata.num_keys)
+-		return true;
++		goto out;
+ 	if (!gtkdata.last_gtk)
+ 		return false;
+ 
+@@ -1600,6 +1600,7 @@ static bool iwl_mvm_setup_connection_kee
+ 					   (void *)&replay_ctr, GFP_KERNEL);
+ 	}
+ 
++out:
+ 	mvmvif->seqno_valid = true;
+ 	/* +0x10 because the set API expects next-to-use, not last-used */
+ 	mvmvif->seqno = le16_to_cpu(status->non_qos_seq_ctr) + 0x10;
