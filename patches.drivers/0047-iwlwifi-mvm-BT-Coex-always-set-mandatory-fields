@@ -1,0 +1,78 @@
+From 7352cac0a33dc622d03797604531cc5475b9506c Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Mon, 14 Oct 2013 18:52:23 +0300
+Subject: [PATCH 47/50] iwlwifi: mvm: BT Coex - always set mandatory fields
+Git-commit: 7352cac0a33dc622d03797604531cc5475b9506c
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+The firmware always expects the Coex Mode to be set.
+Moreover, the firmware expects bit 0 is the valid bits to
+be set all the times.
+I misunderstood the API and didn't set these bits when
+commands are sent to update the paramters of the Coex. As
+a result, the firmware understood that the BT Coex was
+disabled (Coex mode = 0) and ignored all the updates (valid
+bit 0 clear).
+
+Fix that.
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c        |   10 +++++++---
+ drivers/net/wireless/iwlwifi/mvm/fw-api-bt-coex.h |    4 ++++
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -471,11 +471,13 @@ static int iwl_mvm_bt_udpate_ctrl_kill_m
+ 	if (!bt_cmd)
+ 		return -ENOMEM;
+ 	cmd.data[0] = bt_cmd;
++	bt_cmd->flags = cpu_to_le32(BT_COEX_NW);
+ 
+ 	bt_cmd->kill_ack_msk = cpu_to_le32(iwl_bt_ack_kill_msk[bt_kill_msk]);
+ 	bt_cmd->kill_cts_msk = cpu_to_le32(iwl_bt_cts_kill_msk[bt_kill_msk]);
+-	bt_cmd->valid_bit_msk =
+-		cpu_to_le32(BT_VALID_KILL_ACK | BT_VALID_KILL_CTS);
++	bt_cmd->valid_bit_msk |= cpu_to_le32(BT_VALID_ENABLE |
++					     BT_VALID_KILL_ACK |
++					     BT_VALID_KILL_CTS);
+ 
+ 	IWL_DEBUG_COEX(mvm, "ACK Kill msk = 0x%08x, CTS Kill msk = 0x%08x\n",
+ 		       iwl_bt_ack_kill_msk[bt_kill_msk],
+@@ -519,8 +521,10 @@ static int iwl_mvm_bt_coex_reduced_txp(s
+ 	if (!bt_cmd)
+ 		return -ENOMEM;
+ 	cmd.data[0] = bt_cmd;
++	bt_cmd->flags = cpu_to_le32(BT_COEX_NW);
+ 
+-	bt_cmd->valid_bit_msk = cpu_to_le32(BT_VALID_REDUCED_TX_POWER),
++	bt_cmd->valid_bit_msk =
++		cpu_to_le32(BT_VALID_ENABLE | BT_VALID_REDUCED_TX_POWER);
+ 	bt_cmd->bt_reduced_tx_power = sta_id;
+ 
+ 	if (enable)
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api-bt-coex.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api-bt-coex.h
+@@ -82,6 +82,8 @@
+  * @BT_USE_DEFAULTS:
+  * @BT_SYNC_2_BT_DISABLE:
+  * @BT_COEX_CORUNNING_TBL_EN:
++ *
++ * The COEX_MODE must be set for each command. Even if it is not changed.
+  */
+ enum iwl_bt_coex_flags {
+ 	BT_CH_PRIMARY_EN		= BIT(0),
+@@ -103,6 +105,8 @@ enum iwl_bt_coex_flags {
+ 
+ /*
+  * indicates what has changed in the BT_COEX command.
++ * BT_VALID_ENABLE must be set for each command. Commands without this bit will
++ * discarded by the firmware
+  */
+ enum iwl_bt_coex_valid_bit_msk {
+ 	BT_VALID_ENABLE			= BIT(0),
