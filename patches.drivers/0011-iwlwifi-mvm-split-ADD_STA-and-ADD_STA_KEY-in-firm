@@ -1,0 +1,489 @@
+From 5a258aaeecba57f1bf8bb5d1603c7c094377992b Mon Sep 17 00:00:00 2001
+From: Max Stepanov <Max.Stepanov@intel.com>
+Date: Sun, 7 Apr 2013 09:11:21 +0300
+Subject: [PATCH 11/36] iwlwifi: mvm: split ADD_STA and ADD_STA_KEY in firmware API
+Git-commit: 5a258aaeecba57f1bf8bb5d1603c7c094377992b
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Add support for new station management firmware API. The old
+ADD_MODIFY_STA command has been replaced with two: a modified
+ADD_MODIFY_STA and a new ADD_MODIFY_STA_KEY command.
+
+Signed-off-by: Max Stepanov <Max.Stepanov@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/iwl-fw.h         |    2 
+ drivers/net/wireless/iwlwifi/mvm/fw-api-sta.h |   55 +++++++
+ drivers/net/wireless/iwlwifi/mvm/fw-api.h     |    1 
+ drivers/net/wireless/iwlwifi/mvm/ops.c        |    1 
+ drivers/net/wireless/iwlwifi/mvm/sta.c        |  186 +++++++++++++++++++-------
+ 5 files changed, 200 insertions(+), 45 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/iwl-fw.h
++++ b/drivers/net/wireless/iwlwifi/iwl-fw.h
+@@ -80,6 +80,7 @@
+  * @IWL_UCODE_TLV_FLAGS_D3_6_IPV6_ADDRS: D3 image supports up to six
+  *	(rather than two) IPv6 addresses
+  * @IWL_UCODE_TLV_FLAGS_BF_UPDATED: new beacon filtering API
++ * @IWL_UCODE_TLV_FLAGS_STA_KEY_CMD: new ADD_STA and ADD_STA_KEY command API
+  */
+ enum iwl_ucode_tlv_flag {
+ 	IWL_UCODE_TLV_FLAGS_PAN			= BIT(0),
+@@ -92,6 +93,7 @@ enum iwl_ucode_tlv_flag {
+ 	IWL_UCODE_TLV_FLAGS_TIME_EVENT_API_V2	= BIT(9),
+ 	IWL_UCODE_TLV_FLAGS_D3_6_IPV6_ADDRS	= BIT(10),
+ 	IWL_UCODE_TLV_FLAGS_BF_UPDATED		= BIT(11),
++	IWL_UCODE_TLV_FLAGS_STA_KEY_CMD		= BIT(19),
+ };
+ 
+ /* The default calibrate table size if not specified by firmware file */
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api-sta.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api-sta.h
+@@ -247,7 +247,7 @@ struct iwl_mvm_keyinfo {
+ } __packed;
+ 
+ /**
+- * struct iwl_mvm_add_sta_cmd - Add / modify a station in the fw's station table
++ * struct iwl_mvm_add_sta_cmd_v5 - Add/modify a station in the fw's sta table.
+  * ( REPLY_ADD_STA = 0x18 )
+  * @add_modify: 1: modify existing, 0: add new station
+  * @unicast_tx_key_id: unicast tx key id. Relevant only when unicast key sent
+@@ -286,7 +286,7 @@ struct iwl_mvm_keyinfo {
+  * ADD_STA sets up the table entry for one station, either creating a new
+  * entry, or modifying a pre-existing one.
+  */
+-struct iwl_mvm_add_sta_cmd {
++struct iwl_mvm_add_sta_cmd_v5 {
+ 	u8 add_modify;
+ 	u8 unicast_tx_key_id;
+ 	u8 multicast_tx_key_id;
+@@ -313,6 +313,57 @@ struct iwl_mvm_add_sta_cmd {
+ } __packed; /* ADD_STA_CMD_API_S_VER_5 */
+ 
+ /**
++ * struct iwl_mvm_add_sta_cmd_v6 - Add / modify a station
++ * VER_6 of this command is quite similar to VER_5 except
++ * exclusion of all fields related to the security key installation.
++ */
++struct iwl_mvm_add_sta_cmd_v6 {
++	u8 add_modify;
++	u8 reserved1;
++	__le16 tid_disable_tx;
++	__le32 mac_id_n_color;
++	u8 addr[ETH_ALEN];	/* _STA_ID_MODIFY_INFO_API_S_VER_1 */
++	__le16 reserved2;
++	u8 sta_id;
++	u8 modify_mask;
++	__le16 reserved3;
++	__le32 station_flags;
++	__le32 station_flags_msk;
++	u8 add_immediate_ba_tid;
++	u8 remove_immediate_ba_tid;
++	__le16 add_immediate_ba_ssn;
++	__le16 sleep_tx_count;
++	__le16 sleep_state_flags;
++	__le16 assoc_id;
++	__le16 beamform_flags;
++	__le32 tfd_queue_msk;
++} __packed; /* ADD_STA_CMD_API_S_VER_6 */
++
++/**
++ * struct iwl_mvm_add_sta_key_cmd - add/modify sta key
++ * ( REPLY_ADD_STA_KEY = 0x17 )
++ * @sta_id: index of station in uCode's station table
++ * @key_offset: key offset in key storage
++ * @key_flags: type %iwl_sta_key_flag
++ * @key: key material data
++ * @key2: key material data
++ * @rx_secur_seq_cnt: RX security sequence counter for the key
++ * @tkip_rx_tsc_byte2: TSC[2] for key mix ph1 detection
++ * @tkip_rx_ttak: 10-byte unicast TKIP TTAK for Rx
++ */
++struct iwl_mvm_add_sta_key_cmd {
++	u8 sta_id;
++	u8 key_offset;
++	__le16 key_flags;
++	u8 key[16];
++	u8 key2[16];
++	u8 rx_secur_seq_cnt[16];
++	u8 tkip_rx_tsc_byte2;
++	u8 reserved;
++	__le16 tkip_rx_ttak[5];
++} __packed; /* ADD_MODIFY_STA_KEY_API_S_VER_1 */
++
++/**
+  * enum iwl_mvm_add_sta_rsp_status - status in the response to ADD_STA command
+  * @ADD_STA_SUCCESS: operation was executed successfully
+  * @ADD_STA_STATIONS_OVERLOAD: no room left in the fw's station table
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api.h
+@@ -97,6 +97,7 @@ enum {
+ 	DBG_CFG = 0x9,
+ 
+ 	/* station table */
++	ADD_STA_KEY = 0x17,
+ 	ADD_STA = 0x18,
+ 	REMOVE_STA = 0x19,
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/ops.c
++++ b/drivers/net/wireless/iwlwifi/mvm/ops.c
+@@ -261,6 +261,7 @@ static const char *iwl_mvm_cmd_strings[R
+ 	CMD(CALIB_RES_NOTIF_PHY_DB),
+ 	CMD(SET_CALIB_DEFAULT_CMD),
+ 	CMD(CALIBRATION_COMPLETE_NOTIFICATION),
++	CMD(ADD_STA_KEY),
+ 	CMD(ADD_STA),
+ 	CMD(REMOVE_STA),
+ 	CMD(LQ_CMD),
+--- a/drivers/net/wireless/iwlwifi/mvm/sta.c
++++ b/drivers/net/wireless/iwlwifi/mvm/sta.c
+@@ -66,6 +66,115 @@
+ #include "sta.h"
+ #include "rs.h"
+ 
++static void iwl_mvm_add_sta_cmd_v6_to_v5(struct iwl_mvm_add_sta_cmd_v6 *cmd_v6,
++					 struct iwl_mvm_add_sta_cmd_v5 *cmd_v5)
++{
++	memset(cmd_v5, 0, sizeof(*cmd_v5));
++
++	cmd_v5->add_modify = cmd_v6->add_modify;
++	cmd_v5->tid_disable_tx = cmd_v6->tid_disable_tx;
++	cmd_v5->mac_id_n_color = cmd_v6->mac_id_n_color;
++	memcpy(cmd_v5->addr, cmd_v6->addr, ETH_ALEN);
++	cmd_v5->sta_id = cmd_v6->sta_id;
++	cmd_v5->modify_mask = cmd_v6->modify_mask;
++	cmd_v5->station_flags = cmd_v6->station_flags;
++	cmd_v5->station_flags_msk = cmd_v6->station_flags_msk;
++	cmd_v5->add_immediate_ba_tid = cmd_v6->add_immediate_ba_tid;
++	cmd_v5->remove_immediate_ba_tid = cmd_v6->remove_immediate_ba_tid;
++	cmd_v5->add_immediate_ba_ssn = cmd_v6->add_immediate_ba_ssn;
++	cmd_v5->sleep_tx_count = cmd_v6->sleep_tx_count;
++	cmd_v5->sleep_state_flags = cmd_v6->sleep_state_flags;
++	cmd_v5->assoc_id = cmd_v6->assoc_id;
++	cmd_v5->beamform_flags = cmd_v6->beamform_flags;
++	cmd_v5->tfd_queue_msk = cmd_v6->tfd_queue_msk;
++}
++
++static void
++iwl_mvm_add_sta_key_to_add_sta_cmd_v5(struct iwl_mvm_add_sta_key_cmd *key_cmd,
++				      struct iwl_mvm_add_sta_cmd_v5 *sta_cmd,
++				      u32 mac_id_n_color)
++{
++	memset(sta_cmd, 0, sizeof(*sta_cmd));
++
++	sta_cmd->sta_id = key_cmd->sta_id;
++	sta_cmd->add_modify = STA_MODE_MODIFY;
++	sta_cmd->modify_mask = STA_MODIFY_KEY;
++	sta_cmd->mac_id_n_color = cpu_to_le32(mac_id_n_color);
++
++	sta_cmd->key.key_offset = key_cmd->key_offset;
++	sta_cmd->key.key_flags = key_cmd->key_flags;
++	memcpy(sta_cmd->key.key, key_cmd->key, sizeof(sta_cmd->key.key));
++	sta_cmd->key.tkip_rx_tsc_byte2 = key_cmd->tkip_rx_tsc_byte2;
++	memcpy(sta_cmd->key.tkip_rx_ttak, key_cmd->tkip_rx_ttak,
++	       sizeof(sta_cmd->key.tkip_rx_ttak));
++}
++
++static int iwl_mvm_send_add_sta_cmd_status(struct iwl_mvm *mvm,
++					   struct iwl_mvm_add_sta_cmd_v6 *cmd,
++					   int *status)
++{
++	struct iwl_mvm_add_sta_cmd_v5 cmd_v5;
++
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_STA_KEY_CMD)
++		return iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(*cmd),
++						   cmd, status);
++
++	iwl_mvm_add_sta_cmd_v6_to_v5(cmd, &cmd_v5);
++
++	return iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd_v5),
++					   &cmd_v5, status);
++}
++
++static int iwl_mvm_send_add_sta_cmd(struct iwl_mvm *mvm, u32 flags,
++				    struct iwl_mvm_add_sta_cmd_v6 *cmd)
++{
++	struct iwl_mvm_add_sta_cmd_v5 cmd_v5;
++
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_STA_KEY_CMD)
++		return iwl_mvm_send_cmd_pdu(mvm, ADD_STA, flags,
++					    sizeof(*cmd), cmd);
++
++	iwl_mvm_add_sta_cmd_v6_to_v5(cmd, &cmd_v5);
++
++	return iwl_mvm_send_cmd_pdu(mvm, ADD_STA, flags, sizeof(cmd_v5),
++				    &cmd_v5);
++}
++
++static int
++iwl_mvm_send_add_sta_key_cmd_status(struct iwl_mvm *mvm,
++				    struct iwl_mvm_add_sta_key_cmd *cmd,
++				    u32 mac_id_n_color,
++				    int *status)
++{
++	struct iwl_mvm_add_sta_cmd_v5 sta_cmd;
++
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_STA_KEY_CMD)
++		return iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA_KEY,
++						   sizeof(*cmd), cmd, status);
++
++	iwl_mvm_add_sta_key_to_add_sta_cmd_v5(cmd, &sta_cmd, mac_id_n_color);
++
++	return iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(sta_cmd),
++					   &sta_cmd, status);
++}
++
++static int iwl_mvm_send_add_sta_key_cmd(struct iwl_mvm *mvm,
++					u32 flags,
++					struct iwl_mvm_add_sta_key_cmd *cmd,
++					u32 mac_id_n_color)
++{
++	struct iwl_mvm_add_sta_cmd_v5 sta_cmd;
++
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_STA_KEY_CMD)
++		return iwl_mvm_send_cmd_pdu(mvm, ADD_STA_KEY, flags,
++					    sizeof(*cmd), cmd);
++
++	iwl_mvm_add_sta_key_to_add_sta_cmd_v5(cmd, &sta_cmd, mac_id_n_color);
++
++	return iwl_mvm_send_cmd_pdu(mvm, ADD_STA, flags, sizeof(sta_cmd),
++				    &sta_cmd);
++}
++
+ static int iwl_mvm_find_free_sta_id(struct iwl_mvm *mvm)
+ {
+ 	int sta_id;
+@@ -87,7 +196,7 @@ int iwl_mvm_sta_send_to_fw(struct iwl_mv
+ 			   bool update)
+ {
+ 	struct iwl_mvm_sta *mvm_sta = (void *)sta->drv_priv;
+-	struct iwl_mvm_add_sta_cmd add_sta_cmd;
++	struct iwl_mvm_add_sta_cmd_v6 add_sta_cmd;
+ 	int ret;
+ 	u32 status;
+ 	u32 agg_size = 0, mpdu_dens = 0;
+@@ -175,8 +284,7 @@ int iwl_mvm_sta_send_to_fw(struct iwl_mv
+ 		cpu_to_le32(mpdu_dens << STA_FLG_AGG_MPDU_DENS_SHIFT);
+ 
+ 	status = ADD_STA_SUCCESS;
+-	ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(add_sta_cmd),
+-					  &add_sta_cmd, &status);
++	ret = iwl_mvm_send_add_sta_cmd_status(mvm, &add_sta_cmd, &status);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -256,7 +364,7 @@ int iwl_mvm_update_sta(struct iwl_mvm *m
+ int iwl_mvm_drain_sta(struct iwl_mvm *mvm, struct iwl_mvm_sta *mvmsta,
+ 		      bool drain)
+ {
+-	struct iwl_mvm_add_sta_cmd cmd = {};
++	struct iwl_mvm_add_sta_cmd_v6 cmd = {};
+ 	int ret;
+ 	u32 status;
+ 
+@@ -269,8 +377,7 @@ int iwl_mvm_drain_sta(struct iwl_mvm *mv
+ 	cmd.station_flags_msk = cpu_to_le32(STA_FLG_DRAIN_FLOW);
+ 
+ 	status = ADD_STA_SUCCESS;
+-	ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd),
+-					  &cmd, &status);
++	ret = iwl_mvm_send_add_sta_cmd_status(mvm, &cmd, &status);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -469,13 +576,13 @@ static int iwl_mvm_add_int_sta_common(st
+ 				      const u8 *addr,
+ 				      u16 mac_id, u16 color)
+ {
+-	struct iwl_mvm_add_sta_cmd cmd;
++	struct iwl_mvm_add_sta_cmd_v6 cmd;
+ 	int ret;
+ 	u32 status;
+ 
+ 	lockdep_assert_held(&mvm->mutex);
+ 
+-	memset(&cmd, 0, sizeof(struct iwl_mvm_add_sta_cmd));
++	memset(&cmd, 0, sizeof(struct iwl_mvm_add_sta_cmd_v6));
+ 	cmd.sta_id = sta->sta_id;
+ 	cmd.mac_id_n_color = cpu_to_le32(FW_CMD_ID_AND_COLOR(mac_id,
+ 							     color));
+@@ -485,8 +592,7 @@ static int iwl_mvm_add_int_sta_common(st
+ 	if (addr)
+ 		memcpy(cmd.addr, addr, ETH_ALEN);
+ 
+-	ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd),
+-					  &cmd, &status);
++	ret = iwl_mvm_send_add_sta_cmd_status(mvm, &cmd, &status);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -614,7 +720,7 @@ int iwl_mvm_sta_rx_agg(struct iwl_mvm *m
+ 		       int tid, u16 ssn, bool start)
+ {
+ 	struct iwl_mvm_sta *mvm_sta = (void *)sta->drv_priv;
+-	struct iwl_mvm_add_sta_cmd cmd = {};
++	struct iwl_mvm_add_sta_cmd_v6 cmd = {};
+ 	int ret;
+ 	u32 status;
+ 
+@@ -638,8 +744,7 @@ int iwl_mvm_sta_rx_agg(struct iwl_mvm *m
+ 				  STA_MODIFY_REMOVE_BA_TID;
+ 
+ 	status = ADD_STA_SUCCESS;
+-	ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd),
+-					  &cmd, &status);
++	ret = iwl_mvm_send_add_sta_cmd_status(mvm, &cmd, &status);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -674,7 +779,7 @@ static int iwl_mvm_sta_tx_agg(struct iwl
+ 			      int tid, u8 queue, bool start)
+ {
+ 	struct iwl_mvm_sta *mvm_sta = (void *)sta->drv_priv;
+-	struct iwl_mvm_add_sta_cmd cmd = {};
++	struct iwl_mvm_add_sta_cmd_v6 cmd = {};
+ 	int ret;
+ 	u32 status;
+ 
+@@ -696,8 +801,7 @@ static int iwl_mvm_sta_tx_agg(struct iwl
+ 	cmd.tid_disable_tx = cpu_to_le16(mvm_sta->tid_disable_agg);
+ 
+ 	status = ADD_STA_SUCCESS;
+-	ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd),
+-					  &cmd, &status);
++	ret = iwl_mvm_send_add_sta_cmd_status(mvm, &cmd, &status);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -987,10 +1091,11 @@ static int iwl_mvm_send_sta_key(struct i
+ 				u32 cmd_flags)
+ {
+ 	__le16 key_flags;
+-	struct iwl_mvm_add_sta_cmd cmd = {};
++	struct iwl_mvm_add_sta_key_cmd cmd = {};
+ 	int ret, status;
+ 	u16 keyidx;
+ 	int i;
++	u32 mac_id_n_color = mvm_sta->mac_id_n_color;
+ 
+ 	keyidx = (keyconf->keyidx << STA_KEY_FLG_KEYID_POS) &
+ 		 STA_KEY_FLG_KEYID_MSK;
+@@ -1000,14 +1105,14 @@ static int iwl_mvm_send_sta_key(struct i
+ 	switch (keyconf->cipher) {
+ 	case WLAN_CIPHER_SUITE_TKIP:
+ 		key_flags |= cpu_to_le16(STA_KEY_FLG_TKIP);
+-		cmd.key.tkip_rx_tsc_byte2 = tkip_iv32;
++		cmd.tkip_rx_tsc_byte2 = tkip_iv32;
+ 		for (i = 0; i < 5; i++)
+-			cmd.key.tkip_rx_ttak[i] = cpu_to_le16(tkip_p1k[i]);
+-		memcpy(cmd.key.key, keyconf->key, keyconf->keylen);
++			cmd.tkip_rx_ttak[i] = cpu_to_le16(tkip_p1k[i]);
++		memcpy(cmd.key, keyconf->key, keyconf->keylen);
+ 		break;
+ 	case WLAN_CIPHER_SUITE_CCMP:
+ 		key_flags |= cpu_to_le16(STA_KEY_FLG_CCM);
+-		memcpy(cmd.key.key, keyconf->key, keyconf->keylen);
++		memcpy(cmd.key, keyconf->key, keyconf->keylen);
+ 		break;
+ 	default:
+ 		WARN_ON(1);
+@@ -1017,20 +1122,18 @@ static int iwl_mvm_send_sta_key(struct i
+ 	if (!(keyconf->flags & IEEE80211_KEY_FLAG_PAIRWISE))
+ 		key_flags |= cpu_to_le16(STA_KEY_MULTICAST);
+ 
+-	cmd.mac_id_n_color = cpu_to_le32(mvm_sta->mac_id_n_color);
+-	cmd.key.key_offset = keyconf->hw_key_idx;
+-	cmd.key.key_flags = key_flags;
+-	cmd.add_modify = STA_MODE_MODIFY;
+-	cmd.modify_mask = STA_MODIFY_KEY;
++	cmd.key_offset = keyconf->hw_key_idx;
++	cmd.key_flags = key_flags;
+ 	cmd.sta_id = sta_id;
+ 
+ 	status = ADD_STA_SUCCESS;
+ 	if (cmd_flags == CMD_SYNC)
+-		ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd),
+-						  &cmd, &status);
++		ret = iwl_mvm_send_add_sta_key_cmd_status(mvm, &cmd,
++							  mac_id_n_color,
++							  &status);
+ 	else
+-		ret = iwl_mvm_send_cmd_pdu(mvm, ADD_STA, CMD_ASYNC,
+-					   sizeof(cmd), &cmd);
++		ret = iwl_mvm_send_add_sta_key_cmd(mvm, CMD_ASYNC, &cmd,
++						   mac_id_n_color);
+ 
+ 	switch (status) {
+ 	case ADD_STA_SUCCESS:
+@@ -1197,7 +1300,7 @@ int iwl_mvm_remove_sta_key(struct iwl_mv
+ 			   struct ieee80211_key_conf *keyconf)
+ {
+ 	struct iwl_mvm_sta *mvm_sta;
+-	struct iwl_mvm_add_sta_cmd cmd = {};
++	struct iwl_mvm_add_sta_key_cmd cmd = {};
+ 	__le16 key_flags;
+ 	int ret, status;
+ 	u8 sta_id;
+@@ -1252,17 +1355,14 @@ int iwl_mvm_remove_sta_key(struct iwl_mv
+ 	if (!(keyconf->flags & IEEE80211_KEY_FLAG_PAIRWISE))
+ 		key_flags |= cpu_to_le16(STA_KEY_MULTICAST);
+ 
+-	cmd.mac_id_n_color = cpu_to_le32(mvm_sta->mac_id_n_color);
+-	cmd.key.key_flags = key_flags;
+-	cmd.key.key_offset = keyconf->hw_key_idx;
++	cmd.key_flags = key_flags;
++	cmd.key_offset = keyconf->hw_key_idx;
+ 	cmd.sta_id = sta_id;
+ 
+-	cmd.modify_mask = STA_MODIFY_KEY;
+-	cmd.add_modify = STA_MODE_MODIFY;
+-
+ 	status = ADD_STA_SUCCESS;
+-	ret = iwl_mvm_send_cmd_pdu_status(mvm, ADD_STA, sizeof(cmd),
+-					  &cmd, &status);
++	ret = iwl_mvm_send_add_sta_key_cmd_status(mvm, &cmd,
++						  mvm_sta->mac_id_n_color,
++						  &status);
+ 
+ 	switch (status) {
+ 	case ADD_STA_SUCCESS:
+@@ -1309,7 +1409,7 @@ void iwl_mvm_sta_modify_ps_wake(struct i
+ 				struct ieee80211_sta *sta)
+ {
+ 	struct iwl_mvm_sta *mvmsta = (void *)sta->drv_priv;
+-	struct iwl_mvm_add_sta_cmd cmd = {
++	struct iwl_mvm_add_sta_cmd_v6 cmd = {
+ 		.add_modify = STA_MODE_MODIFY,
+ 		.sta_id = mvmsta->sta_id,
+ 		.station_flags_msk = cpu_to_le32(STA_FLG_PS),
+@@ -1317,7 +1417,7 @@ void iwl_mvm_sta_modify_ps_wake(struct i
+ 	};
+ 	int ret;
+ 
+-	ret = iwl_mvm_send_cmd_pdu(mvm, ADD_STA, CMD_ASYNC, sizeof(cmd), &cmd);
++	ret = iwl_mvm_send_add_sta_cmd(mvm, CMD_ASYNC, &cmd);
+ 	if (ret)
+ 		IWL_ERR(mvm, "Failed to send ADD_STA command (%d)\n", ret);
+ }
+@@ -1331,7 +1431,7 @@ void iwl_mvm_sta_modify_sleep_tx_count(s
+ 		(reason == IEEE80211_FRAME_RELEASE_UAPSD) ?
+ 			STA_SLEEP_STATE_UAPSD : STA_SLEEP_STATE_PS_POLL;
+ 	struct iwl_mvm_sta *mvmsta = (void *)sta->drv_priv;
+-	struct iwl_mvm_add_sta_cmd cmd = {
++	struct iwl_mvm_add_sta_cmd_v6 cmd = {
+ 		.add_modify = STA_MODE_MODIFY,
+ 		.sta_id = mvmsta->sta_id,
+ 		.modify_mask = STA_MODIFY_SLEEPING_STA_TX_COUNT,
+@@ -1346,7 +1446,7 @@ void iwl_mvm_sta_modify_sleep_tx_count(s
+ 	int ret;
+ 
+ 	/* TODO: somehow the fw doesn't seem to take PS_POLL into account */
+-	ret = iwl_mvm_send_cmd_pdu(mvm, ADD_STA, CMD_ASYNC, sizeof(cmd), &cmd);
++	ret = iwl_mvm_send_add_sta_cmd(mvm, CMD_ASYNC, &cmd);
+ 	if (ret)
+ 		IWL_ERR(mvm, "Failed to send ADD_STA command (%d)\n", ret);
+ }
