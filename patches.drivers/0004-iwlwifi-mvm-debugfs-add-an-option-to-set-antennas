@@ -1,0 +1,132 @@
+From 91b05d103545500285790a09d02e763a61f2020f Mon Sep 17 00:00:00 2001
+From: Oren Givon <oren.givon@intel.com>
+Date: Mon, 19 Aug 2013 08:36:48 +0300
+Subject: [PATCH 04/36] iwlwifi: mvm: debugfs: add an option to set antennas for scan command
+Git-commit: 91b05d103545500285790a09d02e763a61f2020f
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Add an option to set rx antennas for the scan command from debugfs.
+Create a file called ant_rxchain in the mvm debugfs directory.
+To choose antennas, write a number between 1-7 to ant_rxchain.
+Write 1 for A, 2 for B, 3 for AB and so on.
+
+Signed-off-by: Oren Givon <oren.givon@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/debugfs.c |   57 +++++++++++++++++++++++++++++
+ drivers/net/wireless/iwlwifi/mvm/mvm.h     |    3 +
+ drivers/net/wireless/iwlwifi/mvm/scan.c    |    6 ++-
+ 3 files changed, 65 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/debugfs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/debugfs.c
+@@ -761,6 +761,59 @@ static ssize_t iwl_dbgfs_fw_restart_writ
+ 	return count;
+ }
+ 
++static ssize_t
++iwl_dbgfs_scan_ant_rxchain_read(struct file *file,
++				char __user *user_buf,
++				size_t count, loff_t *ppos)
++{
++	struct iwl_mvm *mvm = file->private_data;
++	int pos = 0;
++	char buf[32];
++	const size_t bufsz = sizeof(buf);
++
++	/* print which antennas were set for the scan command by the user */
++	pos += scnprintf(buf + pos, bufsz - pos, "Antennas for scan: ");
++	if (mvm->scan_rx_ant & ANT_A)
++		pos += scnprintf(buf + pos, bufsz - pos, "A");
++	if (mvm->scan_rx_ant & ANT_B)
++		pos += scnprintf(buf + pos, bufsz - pos, "B");
++	if (mvm->scan_rx_ant & ANT_C)
++		pos += scnprintf(buf + pos, bufsz - pos, "C");
++	pos += scnprintf(buf + pos, bufsz - pos, " (%hhx)\n", mvm->scan_rx_ant);
++
++	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
++}
++
++static ssize_t
++iwl_dbgfs_scan_ant_rxchain_write(struct file *file,
++				 const char __user *user_buf,
++				 size_t count, loff_t *ppos)
++{
++	struct iwl_mvm *mvm = file->private_data;
++	char buf[8];
++	int buf_size;
++	u8 scan_rx_ant;
++
++	memset(buf, 0, sizeof(buf));
++	buf_size = min(count, sizeof(buf) - 1);
++
++	/* get the argument from the user and check if it is valid */
++	if (copy_from_user(buf, user_buf, buf_size))
++		return -EFAULT;
++	if (sscanf(buf, "%hhx", &scan_rx_ant) != 1)
++		return -EINVAL;
++	if (scan_rx_ant > ANT_ABC)
++		return -EINVAL;
++	if (scan_rx_ant & ~iwl_fw_valid_rx_ant(mvm->fw))
++		return -EINVAL;
++
++	/* change the rx antennas for scan command */
++	mvm->scan_rx_ant = scan_rx_ant;
++
++	return count;
++}
++
++
+ static void iwl_dbgfs_update_bf(struct ieee80211_vif *vif,
+ 				enum iwl_dbgfs_bf_mask param, int value)
+ {
+@@ -1071,6 +1124,8 @@ MVM_DEBUGFS_WRITE_FILE_OPS(power_down_al
+ MVM_DEBUGFS_WRITE_FILE_OPS(power_down_d3_allow);
+ MVM_DEBUGFS_READ_FILE_OPS(fw_rx_stats);
+ MVM_DEBUGFS_WRITE_FILE_OPS(fw_restart);
++MVM_DEBUGFS_READ_WRITE_FILE_OPS(scan_ant_rxchain);
++
+ #ifdef CONFIG_PM_SLEEP
+ MVM_DEBUGFS_READ_WRITE_FILE_OPS(d3_sram);
+ #endif
+@@ -1095,6 +1150,8 @@ int iwl_mvm_dbgfs_register(struct iwl_mv
+ 	MVM_DEBUGFS_ADD_FILE(power_down_d3_allow, mvm->debugfs_dir, S_IWUSR);
+ 	MVM_DEBUGFS_ADD_FILE(fw_rx_stats, mvm->debugfs_dir, S_IRUSR);
+ 	MVM_DEBUGFS_ADD_FILE(fw_restart, mvm->debugfs_dir, S_IWUSR);
++	MVM_DEBUGFS_ADD_FILE(scan_ant_rxchain, mvm->debugfs_dir,
++			     S_IWUSR | S_IRUSR);
+ #ifdef CONFIG_PM_SLEEP
+ 	MVM_DEBUGFS_ADD_FILE(d3_sram, mvm->debugfs_dir, S_IRUSR | S_IWUSR);
+ 	MVM_DEBUGFS_ADD_FILE(d3_test, mvm->debugfs_dir, S_IRUSR);
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -470,6 +470,9 @@ struct iwl_mvm {
+ 	enum iwl_scan_status scan_status;
+ 	struct iwl_scan_cmd *scan_cmd;
+ 
++	/* rx chain antennas set through debugfs for the scan command */
++	u8 scan_rx_ant;
++
+ 	/* Internal station */
+ 	struct iwl_mvm_int_sta aux_sta;
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/scan.c
++++ b/drivers/net/wireless/iwlwifi/mvm/scan.c
+@@ -74,8 +74,12 @@
+ static inline __le16 iwl_mvm_scan_rx_chain(struct iwl_mvm *mvm)
+ {
+ 	u16 rx_chain;
+-	u8 rx_ant = iwl_fw_valid_rx_ant(mvm->fw);
++	u8 rx_ant;
+ 
++	if (mvm->scan_rx_ant != ANT_NONE)
++		rx_ant = mvm->scan_rx_ant;
++	else
++		rx_ant = iwl_fw_valid_rx_ant(mvm->fw);
+ 	rx_chain = rx_ant << PHY_RX_CHAIN_VALID_POS;
+ 	rx_chain |= rx_ant << PHY_RX_CHAIN_FORCE_MIMO_SEL_POS;
+ 	rx_chain |= rx_ant << PHY_RX_CHAIN_FORCE_SEL_POS;
