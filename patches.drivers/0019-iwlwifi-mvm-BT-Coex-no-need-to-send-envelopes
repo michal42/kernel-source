@@ -1,0 +1,83 @@
+From 18bc6996c74ba475061fd1532e4a9f4409c8bc63 Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Tue, 25 Jun 2013 15:42:03 +0300
+Subject: [PATCH 19/36] iwlwifi: mvm: BT Coex - no need to send envelopes
+Git-commit: 18bc6996c74ba475061fd1532e4a9f4409c8bc63
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+This was due to a fw remainder of old implementation.
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c        |   25 ----------------------
+ drivers/net/wireless/iwlwifi/mvm/fw-api-bt-coex.h |   16 --------------
+ 2 files changed, 41 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -120,20 +120,6 @@ int iwl_send_bt_prio_tbl(struct iwl_mvm
+ 				    &iwl_bt_prio_tbl);
+ }
+ 
+-static int iwl_send_bt_env(struct iwl_mvm *mvm, u8 action, u8 type)
+-{
+-	struct iwl_bt_coex_prot_env_cmd env_cmd;
+-	int ret;
+-
+-	env_cmd.action = action;
+-	env_cmd.type = type;
+-	ret = iwl_mvm_send_cmd_pdu(mvm, BT_COEX_PROT_ENV, CMD_SYNC,
+-				   sizeof(env_cmd), &env_cmd);
+-	if (ret)
+-		IWL_ERR(mvm, "failed to send BT env command\n");
+-	return ret;
+-}
+-
+ enum iwl_bt_kill_msk {
+ 	BT_KILL_MSK_DEFAULT,
+ 	BT_KILL_MSK_SCO_HID_A2DP,
+@@ -304,17 +290,6 @@ int iwl_send_bt_init_conf(struct iwl_mvm
+ 	if (!(mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_NEWBT_COEX))
+ 		return 0;
+ 
+-	/* go to CALIB state in internal BT-Coex state machine */
+-	ret = iwl_send_bt_env(mvm, BT_COEX_ENV_OPEN,
+-			      BT_COEX_PRIO_TBL_EVT_INIT_CALIB2);
+-	if (ret)
+-		return ret;
+-
+-	ret  = iwl_send_bt_env(mvm, BT_COEX_ENV_CLOSE,
+-			       BT_COEX_PRIO_TBL_EVT_INIT_CALIB2);
+-	if (ret)
+-		return ret;
+-
+ 	bt_cmd = kzalloc(sizeof(*bt_cmd), GFP_KERNEL);
+ 	if (!bt_cmd)
+ 		return -ENOMEM;
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api-bt-coex.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api-bt-coex.h
+@@ -353,20 +353,4 @@ struct iwl_bt_coex_prio_tbl_cmd {
+ 	u8 prio_tbl[BT_COEX_PRIO_TBL_EVT_MAX];
+ } __packed;
+ 
+-enum iwl_bt_coex_env_action {
+-	BT_COEX_ENV_CLOSE	 = 0,
+-	BT_COEX_ENV_OPEN	 = 1,
+-}; /* BT_COEX_PROT_ENV_ACTION_API_E_VER_1 */
+-
+-/**
+- * struct iwl_bt_coex_prot_env_cmd - BT Protection Envelope
+- * @action: enum %iwl_bt_coex_env_action
+- * @type: enum %iwl_bt_coex_prio_table_event
+- */
+-struct iwl_bt_coex_prot_env_cmd {
+-	u8 action; /* 0 = closed, 1 = open */
+-	u8 type; /* 0 .. 15 */
+-	u8 reserved[2];
+-} __packed;
+-
+ #endif /* __fw_api_bt_coex_h__ */
