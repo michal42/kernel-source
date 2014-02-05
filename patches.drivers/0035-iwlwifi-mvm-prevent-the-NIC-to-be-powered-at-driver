@@ -1,0 +1,268 @@
+From 81a67e32c444f05b9f7ba5d33c9221db9d0133e1 Mon Sep 17 00:00:00 2001
+From: Eytan Lifshitz <eytan.lifshitz@intel.com>
+Date: Wed, 11 Sep 2013 12:39:18 +0200
+Subject: [PATCH 35/36] iwlwifi: mvm: prevent the NIC to be powered at driver load time.
+Git-commit: 81a67e32c444f05b9f7ba5d33c9221db9d0133e1
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Some NICs aren't allowed to be powered up at driver load time.
+Fix it, and move the external NVM loading from driver load time to
+driver up time (parsing the external nvm file remains at driver load time).
+
+Signed-off-by: Eytan Lifshitz <eytan.lifshitz@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/fw.c  |    5 +
+ drivers/net/wireless/iwlwifi/mvm/mvm.h |    1 
+ drivers/net/wireless/iwlwifi/mvm/nvm.c |   99 ++++++++++++++++++++++-----------
+ drivers/net/wireless/iwlwifi/mvm/ops.c |   41 ++++++++-----
+ 4 files changed, 97 insertions(+), 49 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/fw.c
++++ b/drivers/net/wireless/iwlwifi/mvm/fw.c
+@@ -264,6 +264,7 @@ int iwl_run_init_mvm_ucode(struct iwl_mv
+ 	if (ret)
+ 		goto error;
+ 
++	/* Read the NVM only at driver load time, no need to do this twice */
+ 	if (read_nvm) {
+ 		/* Read nvm */
+ 		ret = iwl_nvm_init(mvm);
+@@ -273,6 +274,10 @@ int iwl_run_init_mvm_ucode(struct iwl_mv
+ 		}
+ 	}
+ 
++	/* In case we read the NVM from external file, load it to the NIC */
++	if (iwlwifi_mod_params.nvm_file)
++		iwl_mvm_load_nvm_to_nic(mvm);
++
+ 	ret = iwl_nvm_check_version(mvm->nvm_data, mvm->trans);
+ 	WARN_ON(ret);
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -629,6 +629,7 @@ int iwl_mvm_rx_statistics(struct iwl_mvm
+ 
+ /* NVM */
+ int iwl_nvm_init(struct iwl_mvm *mvm);
++int iwl_mvm_load_nvm_to_nic(struct iwl_mvm *mvm);
+ 
+ int iwl_mvm_up(struct iwl_mvm *mvm);
+ int iwl_mvm_load_d3_fw(struct iwl_mvm *mvm);
+--- a/drivers/net/wireless/iwlwifi/mvm/nvm.c
++++ b/drivers/net/wireless/iwlwifi/mvm/nvm.c
+@@ -259,6 +259,8 @@ iwl_parse_nvm_sections(struct iwl_mvm *m
+ #define MAX_NVM_FILE_LEN	16384
+ 
+ /*
++ * Reads external NVM from a file into mvm->nvm_sections
++ *
+  * HOW TO CREATE THE NVM FILE FORMAT:
+  * ------------------------------
+  * 1. create hex file, format:
+@@ -277,20 +279,23 @@ iwl_parse_nvm_sections(struct iwl_mvm *m
+  *
+  * 4. save as "iNVM_xxx.bin" under /lib/firmware
+  */
+-static int iwl_mvm_load_external_nvm(struct iwl_mvm *mvm)
++static int iwl_mvm_read_external_nvm(struct iwl_mvm *mvm)
+ {
+-	int ret, section_id, section_size;
++	int ret, section_size;
++	u16 section_id;
+ 	const struct firmware *fw_entry;
+ 	const struct {
+ 		__le16 word1;
+ 		__le16 word2;
+ 		u8 data[];
+ 	} *file_sec;
+-	const u8 *eof;
++	const u8 *eof, *temp;
+ 
+ #define NVM_WORD1_LEN(x) (8 * (x & 0x03FF))
+ #define NVM_WORD2_ID(x) (x >> 12)
+ 
++	IWL_DEBUG_EEPROM(mvm->trans->dev, "Read from external NVM\n");
++
+ 	/*
+ 	 * Obtain NVM image via request_firmware. Since we already used
+ 	 * request_firmware_nowait() for the firmware binary load and only
+@@ -362,12 +367,18 @@ static int iwl_mvm_load_external_nvm(str
+ 			break;
+ 		}
+ 
+-		ret = iwl_nvm_write_section(mvm, section_id, file_sec->data,
+-					    section_size);
+-		if (ret < 0) {
+-			IWL_ERR(mvm, "iwl_mvm_send_cmd failed: %d\n", ret);
++		temp = kmemdup(file_sec->data, section_size, GFP_KERNEL);
++		if (!temp) {
++			ret = -ENOMEM;
++			break;
++		}
++		if (WARN_ON(section_id >= NVM_NUM_OF_SECTIONS)) {
++			IWL_ERR(mvm, "Invalid NVM section ID\n");
++			ret = -EINVAL;
+ 			break;
+ 		}
++		mvm->nvm_sections[section_id].data = temp;
++		mvm->nvm_sections[section_id].length = section_size;
+ 
+ 		/* advance to the next section */
+ 		file_sec = (void *)(file_sec->data + section_size);
+@@ -377,6 +388,28 @@ out:
+ 	return ret;
+ }
+ 
++/* Loads the NVM data stored in mvm->nvm_sections into the NIC */
++int iwl_mvm_load_nvm_to_nic(struct iwl_mvm *mvm)
++{
++	int i, ret;
++	u16 section_id;
++	struct iwl_nvm_section *sections = mvm->nvm_sections;
++
++	IWL_DEBUG_EEPROM(mvm->trans->dev, "'Write to NVM\n");
++
++	for (i = 0; i < ARRAY_SIZE(nvm_to_read); i++) {
++		section_id = nvm_to_read[i];
++		ret = iwl_nvm_write_section(mvm, section_id,
++					    sections[section_id].data,
++					    sections[section_id].length);
++		if (ret < 0) {
++			IWL_ERR(mvm, "iwl_mvm_send_cmd failed: %d\n", ret);
++			break;
++		}
++	}
++	return ret;
++}
++
+ int iwl_nvm_init(struct iwl_mvm *mvm)
+ {
+ 	int ret, i, section;
+@@ -385,36 +418,36 @@ int iwl_nvm_init(struct iwl_mvm *mvm)
+ 	/* load external NVM if configured */
+ 	if (iwlwifi_mod_params.nvm_file) {
+ 		/* move to External NVM flow */
+-		ret = iwl_mvm_load_external_nvm(mvm);
++		ret = iwl_mvm_read_external_nvm(mvm);
+ 		if (ret)
+ 			return ret;
+-	}
+-
+-	/* Read From FW NVM */
+-	IWL_DEBUG_EEPROM(mvm->trans->dev, "Read from NVM\n");
+-
+-	/* TODO: find correct NVM max size for a section */
+-	nvm_buffer = kmalloc(mvm->cfg->base_params->eeprom_size,
+-			     GFP_KERNEL);
+-	if (!nvm_buffer)
+-		return -ENOMEM;
+-	for (i = 0; i < ARRAY_SIZE(nvm_to_read); i++) {
+-		section = nvm_to_read[i];
+-		/* we override the constness for initial read */
+-		ret = iwl_nvm_read_section(mvm, section, nvm_buffer);
+-		if (ret < 0)
+-			break;
+-		temp = kmemdup(nvm_buffer, ret, GFP_KERNEL);
+-		if (!temp) {
+-			ret = -ENOMEM;
+-			break;
++	} else {
++		/* Read From FW NVM */
++		IWL_DEBUG_EEPROM(mvm->trans->dev, "Read from NVM\n");
++
++		/* TODO: find correct NVM max size for a section */
++		nvm_buffer = kmalloc(mvm->cfg->base_params->eeprom_size,
++				     GFP_KERNEL);
++		if (!nvm_buffer)
++			return -ENOMEM;
++		for (i = 0; i < ARRAY_SIZE(nvm_to_read); i++) {
++			section = nvm_to_read[i];
++			/* we override the constness for initial read */
++			ret = iwl_nvm_read_section(mvm, section, nvm_buffer);
++			if (ret < 0)
++				break;
++			temp = kmemdup(nvm_buffer, ret, GFP_KERNEL);
++			if (!temp) {
++				ret = -ENOMEM;
++				break;
++			}
++			mvm->nvm_sections[section].data = temp;
++			mvm->nvm_sections[section].length = ret;
+ 		}
+-		mvm->nvm_sections[section].data = temp;
+-		mvm->nvm_sections[section].length = ret;
++		kfree(nvm_buffer);
++		if (ret < 0)
++			return ret;
+ 	}
+-	kfree(nvm_buffer);
+-	if (ret < 0)
+-		return ret;
+ 
+ 	mvm->nvm_data = iwl_parse_nvm_sections(mvm);
+ 	if (!mvm->nvm_data)
+--- a/drivers/net/wireless/iwlwifi/mvm/ops.c
++++ b/drivers/net/wireless/iwlwifi/mvm/ops.c
+@@ -409,25 +409,33 @@ iwl_op_mode_mvm_start(struct iwl_trans *
+ 	IWL_INFO(mvm, "Detected %s, REV=0x%X\n",
+ 		 mvm->cfg->name, mvm->trans->hw_rev);
+ 
+-	err = iwl_trans_start_hw(mvm->trans);
+-	if (err)
+-		goto out_free;
+-
+ 	iwl_mvm_tt_initialize(mvm);
+ 
+-	mutex_lock(&mvm->mutex);
+-	err = iwl_run_init_mvm_ucode(mvm, true);
+-	mutex_unlock(&mvm->mutex);
+-	/* returns 0 if successful, 1 if success but in rfkill */
+-	if (err < 0 && !iwlmvm_mod_params.init_dbg) {
+-		IWL_ERR(mvm, "Failed to run INIT ucode: %d\n", err);
+-		goto out_free;
++	/*
++	 * If the NVM exists in an external file,
++	 * there is no need to unnecessarily power up the NIC at driver load
++	 */
++	if (iwlwifi_mod_params.nvm_file) {
++			iwl_nvm_init(mvm);
++	} else {
++		err = iwl_trans_start_hw(mvm->trans);
++		if (err)
++			goto out_free;
++
++		mutex_lock(&mvm->mutex);
++		err = iwl_run_init_mvm_ucode(mvm, true);
++		mutex_unlock(&mvm->mutex);
++		/* returns 0 if successful, 1 if success but in rfkill */
++		if (err < 0 && !iwlmvm_mod_params.init_dbg) {
++			IWL_ERR(mvm, "Failed to run INIT ucode: %d\n", err);
++			goto out_free;
++		}
++
++		/* Stop the hw after the ALIVE and NVM has been read */
++		if (!iwlmvm_mod_params.init_dbg)
++			iwl_trans_stop_hw(mvm->trans, false);
+ 	}
+ 
+-	/* Stop the hw after the ALIVE and NVM has been read */
+-	if (!iwlmvm_mod_params.init_dbg)
+-		iwl_trans_stop_hw(mvm->trans, false);
+-
+ 	scan_size = sizeof(struct iwl_scan_cmd) +
+ 		mvm->fw->ucode_capa.max_probe_length +
+ 		(MAX_NUM_SCAN_CHANNELS * sizeof(struct iwl_scan_channel));
+@@ -457,7 +465,8 @@ iwl_op_mode_mvm_start(struct iwl_trans *
+  out_free:
+ 	iwl_phy_db_free(mvm->phy_db);
+ 	kfree(mvm->scan_cmd);
+-	iwl_trans_stop_hw(trans, true);
++	if (!iwlwifi_mod_params.nvm_file)
++		iwl_trans_stop_hw(trans, true);
+ 	ieee80211_free_hw(mvm->hw);
+ 	return NULL;
+ }
