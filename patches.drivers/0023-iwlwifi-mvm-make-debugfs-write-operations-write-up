@@ -1,0 +1,66 @@
+From 0e9d84ea89a588a6ed7b4e9809cd4a8af0bb6a88 Mon Sep 17 00:00:00 2001
+From: Djalal Harouni <tixxdz@opendz.org>
+Date: Sat, 24 Aug 2013 14:35:53 +0100
+Subject: [PATCH 23/36] iwlwifi: mvm: make debugfs write() operations write up to count bytes
+Git-commit: 0e9d84ea89a588a6ed7b4e9809cd4a8af0bb6a88
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Some debugfs write() operations of the MVM Firmware will ignore the
+count argument, and will copy more bytes than what was specified.
+Fix this by getting the right count of bytes.
+
+This will honor restrictions put on the number of bytes to write and
+avoid strcmp() calls on garbage data.
+
+Signed-off-by: Djalal Harouni <tixxdz@opendz.org>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/debugfs.c |   12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/debugfs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/debugfs.c
+@@ -261,7 +261,8 @@ static ssize_t iwl_dbgfs_power_down_allo
+ 	if (!mvm->ucode_loaded)
+ 		return -EIO;
+ 
+-	if (copy_from_user(buf, user_buf, sizeof(buf)))
++	count = min_t(size_t, count, sizeof(buf) - 1);
++	if (copy_from_user(buf, user_buf, count))
+ 		return -EFAULT;
+ 
+ 	if (sscanf(buf, "%d", &allow) != 1)
+@@ -285,7 +286,8 @@ static ssize_t iwl_dbgfs_power_down_d3_a
+ 	char buf[8] = {};
+ 	int allow;
+ 
+-	if (copy_from_user(buf, user_buf, sizeof(buf)))
++	count = min_t(size_t, count, sizeof(buf) - 1);
++	if (copy_from_user(buf, user_buf, count))
+ 		return -EFAULT;
+ 
+ 	if (sscanf(buf, "%d", &allow) != 1)
+@@ -375,7 +377,8 @@ static ssize_t iwl_dbgfs_pm_params_write
+ 	int val;
+ 	int ret;
+ 
+-	if (copy_from_user(buf, user_buf, sizeof(buf)))
++	count = min_t(size_t, count, sizeof(buf) - 1);
++	if (copy_from_user(buf, user_buf, count))
+ 		return -EFAULT;
+ 
+ 	if (!strncmp("keep_alive=", buf, 11)) {
+@@ -1025,7 +1028,8 @@ static ssize_t iwl_dbgfs_d3_sram_write(s
+ 	char buf[8] = {};
+ 	int store;
+ 
+-	if (copy_from_user(buf, user_buf, sizeof(buf)))
++	count = min_t(size_t, count, sizeof(buf) - 1);
++	if (copy_from_user(buf, user_buf, count))
+ 		return -EFAULT;
+ 
+ 	if (sscanf(buf, "%d", &store) != 1)
