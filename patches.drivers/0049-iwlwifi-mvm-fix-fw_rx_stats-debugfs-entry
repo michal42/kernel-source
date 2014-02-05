@@ -1,0 +1,51 @@
+From 3f617281a64b8a9c1c9f9fb76ea6bc642e1a1b01 Mon Sep 17 00:00:00 2001
+From: Luciano Coelho <luciano.coelho@intel.com>
+Date: Mon, 14 Oct 2013 13:18:41 +0300
+Subject: [PATCH 49/50] iwlwifi: mvm: fix fw_rx_stats debugfs entry
+Git-commit: 3f617281a64b8a9c1c9f9fb76ea6bc642e1a1b01
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+The fw_rx_stats entry in debugfs was getting truncated because the
+internal buffer used to hold the string was too short.  The
+calculation of the needed buffer size was rather bogus.
+
+Simplify the calculation by multiplying the number of entries in the
+entire structure by the size of each data line and adding the size of
+the header lines.
+
+Additionally, add the mac_id value, which was missing.
+
+Signed-off-by: Luciano Coelho <luciano.coelho@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/debugfs.c |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/debugfs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/debugfs.c
+@@ -658,9 +658,11 @@ static ssize_t iwl_dbgfs_fw_rx_stats_rea
+ 	int pos = 0;
+ 	char *buf;
+ 	int ret;
+-	int bufsz = sizeof(struct mvm_statistics_rx_phy) * 20 +
+-		    sizeof(struct mvm_statistics_rx_non_phy) * 10 +
+-		    sizeof(struct mvm_statistics_rx_ht_phy) * 10 + 200;
++	/* 43 is the size of each data line, 33 is the size of each header */
++	size_t bufsz =
++		((sizeof(struct mvm_statistics_rx) / sizeof(__le32)) * 43) +
++		(4 * 33) + 1;
++
+ 	struct mvm_statistics_rx_phy *ofdm;
+ 	struct mvm_statistics_rx_phy *cck;
+ 	struct mvm_statistics_rx_non_phy *general;
+@@ -755,6 +757,7 @@ static ssize_t iwl_dbgfs_fw_rx_stats_rea
+ 	PRINT_STATS_LE32("beacon_energy_b", general->beacon_energy_b);
+ 	PRINT_STATS_LE32("beacon_energy_c", general->beacon_energy_c);
+ 	PRINT_STATS_LE32("num_bt_kills", general->num_bt_kills);
++	PRINT_STATS_LE32("mac_id", general->mac_id);
+ 	PRINT_STATS_LE32("directed_data_mpdu", general->directed_data_mpdu);
+ 
+ 	pos += scnprintf(buf + pos, bufsz - pos, fmt_header,
