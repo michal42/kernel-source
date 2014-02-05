@@ -1,0 +1,85 @@
+From 6860bd15c23653123585a18e4dc7b760b6fec365 Mon Sep 17 00:00:00 2001
+From: Alexander Bondar <alexander.bondar@intel.com>
+Date: Tue, 5 Nov 2013 17:35:14 +0200
+Subject: [PATCH 71/73] iwlwifi: pcie: stop sending commands to dead firmware
+Git-commit: 6860bd15c23653123585a18e4dc7b760b6fec365
+Patch-mainline: 3.13-rc8
+References: FATE#316958
+
+If we call ieee80211_hw_restart, it means that the
+firmware is in bad condition and will be reset soon.
+Since the firmware will be reset, there is no good
+reason to keep sending host commands.
+
+Signed-off-by: Alexander Bondar <alexander.bondar@intel.com>
+Reviewed-by: Johannes Berg <johannes.berg@intel.com>
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/pcie/internal.h |    8 ++++++++
+ drivers/net/wireless/iwlwifi/pcie/rx.c       |    3 ++-
+ drivers/net/wireless/iwlwifi/pcie/tx.c       |    6 +++---
+ 3 files changed, 13 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/pcie/internal.h
++++ b/drivers/net/wireless/iwlwifi/pcie/internal.h
+@@ -477,4 +477,12 @@ static inline bool iwl_is_rfkill_set(str
+ 		CSR_GP_CNTRL_REG_FLAG_HW_RF_KILL_SW);
+ }
+ 
++static inline void iwl_nic_error(struct iwl_trans *trans)
++{
++	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
++
++	set_bit(STATUS_FW_ERROR, &trans_pcie->status);
++	iwl_op_mode_nic_error(trans->op_mode);
++}
++
+ #endif /* __iwl_trans_int_pcie_h__ */
+--- a/drivers/net/wireless/iwlwifi/pcie/rx.c
++++ b/drivers/net/wireless/iwlwifi/pcie/rx.c
+@@ -800,12 +800,13 @@ static void iwl_pcie_irq_handle_error(st
+ 	iwl_pcie_dump_csr(trans);
+ 	iwl_dump_fh(trans, NULL);
+ 
++	/* set the ERROR bit before we wake up the caller */
+ 	set_bit(STATUS_FW_ERROR, &trans_pcie->status);
+ 	clear_bit(STATUS_HCMD_ACTIVE, &trans_pcie->status);
+ 	wake_up(&trans_pcie->wait_command_queue);
+ 
+ 	local_bh_disable();
+-	iwl_op_mode_nic_error(trans->op_mode);
++	iwl_nic_error(trans);
+ 	local_bh_enable();
+ }
+ 
+--- a/drivers/net/wireless/iwlwifi/pcie/tx.c
++++ b/drivers/net/wireless/iwlwifi/pcie/tx.c
+@@ -207,7 +207,7 @@ static void iwl_pcie_txq_stuck_timer(uns
+ 		IWL_ERR(trans, "scratch %d = 0x%08x\n", i,
+ 			le32_to_cpu(txq->scratchbufs[i].scratch));
+ 
+-	iwl_op_mode_nic_error(trans->op_mode);
++	iwl_nic_error(trans);
+ }
+ 
+ /*
+@@ -1023,7 +1023,7 @@ static void iwl_pcie_cmdq_reclaim(struct
+ 		if (nfreed++ > 0) {
+ 			IWL_ERR(trans, "HCMD skipped: index (%d) %d %d\n",
+ 				idx, q->write_ptr, q->read_ptr);
+-			iwl_op_mode_nic_error(trans->op_mode);
++			iwl_nic_error(trans);
+ 		}
+ 	}
+ 
+@@ -1562,7 +1562,7 @@ static int iwl_pcie_send_hcmd_sync(struc
+ 				       get_cmd_string(trans_pcie, cmd->id));
+ 			ret = -ETIMEDOUT;
+ 
+-			iwl_op_mode_nic_error(trans->op_mode);
++			iwl_nic_error(trans);
+ 
+ 			goto cancel;
+ 		}
