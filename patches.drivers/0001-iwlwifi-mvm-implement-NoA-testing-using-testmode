@@ -1,0 +1,276 @@
+From 507cadf262fe67cd71e02247b240706be12f1042 Mon Sep 17 00:00:00 2001
+From: David Spinadel <david.spinadel@intel.com>
+Date: Wed, 31 Jul 2013 18:07:21 +0300
+Subject: [PATCH 01/36] iwlwifi: mvm: implement NoA testing using testmode cmd
+Git-commit: 507cadf262fe67cd71e02247b240706be12f1042
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+For testing, implement setting continuous NoA duration
+using a new MVM-specific testmode command.
+
+Signed-off-by: David Spinadel <david.spinadel@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/mac80211.c |   65 ++++++++++++++++++++
+ drivers/net/wireless/iwlwifi/mvm/mvm.h      |    5 +
+ drivers/net/wireless/iwlwifi/mvm/quota.c    |   34 ++++++++++
+ drivers/net/wireless/iwlwifi/mvm/testmode.h |   91 ++++++++++++++++++++++++++++
+ 4 files changed, 195 insertions(+)
+ create mode 100644 drivers/net/wireless/iwlwifi/mvm/testmode.h
+
+--- a/drivers/net/wireless/iwlwifi/mvm/mac80211.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac80211.c
+@@ -77,6 +77,7 @@
+ #include "iwl-eeprom-parse.h"
+ #include "fw-api-scan.h"
+ #include "iwl-phy-db.h"
++#include "testmode.h"
+ 
+ static const struct ieee80211_iface_limit iwl_mvm_limits[] = {
+ 	{
+@@ -699,6 +700,12 @@ static void iwl_mvm_mac_remove_interface
+ 	 * interface is be handled as part of the stop_ap flow.
+ 	 */
+ 	if (vif->type == NL80211_IFTYPE_AP) {
++#ifdef CONFIG_NL80211_TESTMODE
++		if (vif == mvm->noa_vif) {
++			mvm->noa_vif = NULL;
++			mvm->noa_duration = 0;
++		}
++#endif
+ 		iwl_mvm_dealloc_int_sta(mvm, &mvmvif->bcast_sta);
+ 		goto out_release;
+ 	}
+@@ -1559,6 +1566,62 @@ static void iwl_mvm_mac_rssi_callback(st
+ 	iwl_mvm_bt_rssi_event(mvm, vif, rssi_event);
+ }
+ 
++#ifdef CONFIG_NL80211_TESTMODE
++static const struct nla_policy iwl_mvm_tm_policy[IWL_MVM_TM_ATTR_MAX + 1] = {
++	[IWL_MVM_TM_ATTR_CMD] = { .type = NLA_U32 },
++	[IWL_MVM_TM_ATTR_NOA_DURATION] = { .type = NLA_U32 },
++};
++
++static int __iwl_mvm_mac_testmode_cmd(struct iwl_mvm *mvm,
++				      struct ieee80211_vif *vif,
++				      void *data, int len)
++{
++	struct nlattr *tb[IWL_MVM_TM_ATTR_MAX + 1];
++	int err;
++	u32 noa_duration;
++
++	err = nla_parse(tb, IWL_MVM_TM_ATTR_MAX, data, len, iwl_mvm_tm_policy);
++	if (err)
++		return err;
++
++	if (!tb[IWL_MVM_TM_ATTR_CMD])
++		return -EINVAL;
++
++	switch (nla_get_u32(tb[IWL_MVM_TM_ATTR_CMD])) {
++	case IWL_MVM_TM_CMD_SET_NOA:
++		if (!vif || vif->type != NL80211_IFTYPE_AP || !vif->p2p ||
++		    !vif->bss_conf.enable_beacon ||
++		    !tb[IWL_MVM_TM_ATTR_NOA_DURATION])
++			return -EINVAL;
++
++		noa_duration = nla_get_u32(tb[IWL_MVM_TM_ATTR_NOA_DURATION]);
++		if (noa_duration >= vif->bss_conf.beacon_int)
++			return -EINVAL;
++
++		mvm->noa_duration = noa_duration;
++		mvm->noa_vif = vif;
++
++		return iwl_mvm_update_quotas(mvm, NULL);
++	}
++
++	return -EOPNOTSUPP;
++}
++
++static int iwl_mvm_mac_testmode_cmd(struct ieee80211_hw *hw,
++				    struct ieee80211_vif *vif,
++				    void *data, int len)
++{
++	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
++	int err;
++
++	mutex_lock(&mvm->mutex);
++	err = __iwl_mvm_mac_testmode_cmd(mvm, vif, data, len);
++	mutex_unlock(&mvm->mutex);
++
++	return err;
++}
++#endif
++
+ struct ieee80211_ops iwl_mvm_hw_ops = {
+ 	.tx = iwl_mvm_mac_tx,
+ 	.ampdu_action = iwl_mvm_mac_ampdu_action,
+@@ -1595,6 +1658,8 @@ struct ieee80211_ops iwl_mvm_hw_ops = {
+ 
+ 	.set_tim = iwl_mvm_set_tim,
+ 
++	CFG80211_TESTMODE_CMD(iwl_mvm_mac_testmode_cmd)
++
+ #ifdef CONFIG_PM_SLEEP
+ 	/* look at d3.c */
+ 	.suspend = iwl_mvm_suspend,
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -529,6 +529,11 @@ struct iwl_mvm {
+ 	s32 temperature;	/* Celsius */
+ 
+ 	const struct iwl_mvm_power_ops *pm_ops;
++
++#ifdef CONFIG_NL80211_TESTMODE
++	u32 noa_duration;
++	struct ieee80211_vif *noa_vif;
++#endif
+ };
+ 
+ /* Extract MVM priv from op_mode and _hw */
+--- a/drivers/net/wireless/iwlwifi/mvm/quota.c
++++ b/drivers/net/wireless/iwlwifi/mvm/quota.c
+@@ -129,6 +129,38 @@ static void iwl_mvm_quota_iterator(void
+ 	}
+ }
+ 
++static void iwl_mvm_adjust_quota_for_noa(struct iwl_mvm *mvm,
++					 struct iwl_time_quota_cmd *cmd)
++{
++#ifdef CONFIG_NL80211_TESTMODE
++	struct iwl_mvm_vif *mvmvif;
++	int i, phy_id = -1, beacon_int = 0;
++
++	if (!mvm->noa_duration || !mvm->noa_vif)
++		return;
++
++	mvmvif = iwl_mvm_vif_from_mac80211(mvm->noa_vif);
++	if (!mvmvif->ap_active)
++		return;
++
++	phy_id = mvmvif->phy_ctxt->id;
++	beacon_int = mvm->noa_vif->bss_conf.beacon_int;
++
++	for (i = 0; i < MAX_BINDINGS; i++) {
++		u32 id_n_c = le32_to_cpu(cmd->quotas[i].id_and_color);
++		u32 id = (id_n_c & FW_CTXT_ID_MSK) >> FW_CTXT_ID_POS;
++		u32 quota = le32_to_cpu(cmd->quotas[i].quota);
++
++		if (id != phy_id)
++			continue;
++
++		quota *= (beacon_int - mvm->noa_duration) / beacon_int;
++
++		cmd->quotas[i].quota = cpu_to_le32(quota);
++	}
++#endif
++}
++
+ int iwl_mvm_update_quotas(struct iwl_mvm *mvm, struct ieee80211_vif *newvif)
+ {
+ 	struct iwl_time_quota_cmd cmd = {};
+@@ -196,6 +228,8 @@ int iwl_mvm_update_quotas(struct iwl_mvm
+ 	/* Give the remainder of the session to the first binding */
+ 	le32_add_cpu(&cmd.quotas[0].quota, quota_rem);
+ 
++	iwl_mvm_adjust_quota_for_noa(mvm, &cmd);
++
+ 	ret = iwl_mvm_send_cmd_pdu(mvm, TIME_QUOTA_CMD, CMD_SYNC,
+ 				   sizeof(cmd), &cmd);
+ 	if (ret)
+--- /dev/null
++++ b/drivers/net/wireless/iwlwifi/mvm/testmode.h
+@@ -0,0 +1,91 @@
++/******************************************************************************
++ *
++ * This file is provided under a dual BSD/GPLv2 license.  When using or
++ * redistributing this file, you may do so under either license.
++ *
++ * GPL LICENSE SUMMARY
++ *
++ * Copyright(c) 2013 Intel Corporation. All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of version 2 of the GNU General Public License as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110,
++ * USA
++ *
++ * The full GNU General Public License is included in this distribution
++ * in the file called COPYING.
++ *
++ * Contact Information:
++ *  Intel Linux Wireless <ilw@linux.intel.com>
++ * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++ *
++ * BSD LICENSE
++ *
++ * Copyright(c) 2013 Intel Corporation. All rights reserved.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ *
++ *  * Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ *  * Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in
++ *    the documentation and/or other materials provided with the
++ *    distribution.
++ *  * Neither the name Intel Corporation nor the names of its
++ *    contributors may be used to endorse or promote products derived
++ *    from this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ *****************************************************************************/
++
++#ifndef __IWL_MVM_TESTMODE_H__
++#define __IWL_MVM_TESTMODE_H__
++
++/**
++ * enum iwl_mvm_testmode_attrs - testmode attributes inside NL80211_ATTR_TESTDATA
++ * @IWL_MVM_TM_ATTR_UNSPEC: (invalid attribute)
++ * @IWL_MVM_TM_ATTR_CMD: sub command, see &enum iwl_mvm_testmode_commands (u32)
++ * @IWL_MVM_TM_ATTR_NOA_DURATION: requested NoA duration (u32)
++ */
++enum iwl_mvm_testmode_attrs {
++	IWL_MVM_TM_ATTR_UNSPEC,
++	IWL_MVM_TM_ATTR_CMD,
++	IWL_MVM_TM_ATTR_NOA_DURATION,
++
++	/* keep last */
++	NUM_IWL_MVM_TM_ATTRS,
++	IWL_MVM_TM_ATTR_MAX = NUM_IWL_MVM_TM_ATTRS - 1,
++};
++
++/**
++ * enum iwl_mvm_testmode_commands - MVM testmode commands
++ * @IWL_MVM_TM_CMD_SET_NOA: set NoA on GO vif for testing
++ */
++enum iwl_mvm_testmode_commands {
++	IWL_MVM_TM_CMD_SET_NOA,
++};
++
++#endif /* __IWL_MVM_TESTMODE_H__ */
