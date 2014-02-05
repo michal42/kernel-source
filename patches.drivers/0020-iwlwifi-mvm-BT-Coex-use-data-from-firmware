@@ -1,0 +1,221 @@
+From 4515f30fb6c890faba21dd2d74ff2e84ad94c01c Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Sun, 30 Jun 2013 07:51:54 +0300
+Subject: [PATCH 20/36] iwlwifi: mvm: BT Coex - use data from firmware
+Git-commit: 4515f30fb6c890faba21dd2d74ff2e84ad94c01c
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+The data in MailBox comes direclty from the BT core.
+We should use the data processed by the WiFi fw that is
+appended to the MailBox in the BT Coex notification.
+Also decide on whether the Coex type based on the input
+from the the firmware and not hard coded.
+
+Also fix the SMPS SISO threshold to 2 (it was 3).
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c |   58 +++++++++++++++++++++--------
+ drivers/net/wireless/iwlwifi/mvm/rs.c      |   22 +++++------
+ 2 files changed, 53 insertions(+), 27 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -98,18 +98,10 @@ static const u8 iwl_bt_prio_tbl[BT_COEX_
+ 
+ #undef EVENT_PRIO_ANT
+ 
+-#define IWL_BT_LOAD_FORCE_SISO_THRESHOLD	(3)
+-
+ #define BT_ENABLE_REDUCED_TXPOWER_THRESHOLD	(-62)
+ #define BT_DISABLE_REDUCED_TXPOWER_THRESHOLD	(-65)
+ #define BT_ANTENNA_COUPLING_THRESHOLD		(30)
+ 
+-static inline bool is_loose_coex(void)
+-{
+-	return iwlwifi_mod_params.ant_coupling >
+-		BT_ANTENNA_COUPLING_THRESHOLD;
+-}
+-
+ int iwl_send_bt_prio_tbl(struct iwl_mvm *mvm)
+ {
+ 	if (!(mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_NEWBT_COEX))
+@@ -275,6 +267,40 @@ static const __le32 iwl_bt_mprio_lut[BT_
+ 	cpu_to_le32(0x33113311),
+ };
+ 
++static enum iwl_bt_coex_lut_type
++iwl_get_coex_type(struct iwl_mvm *mvm, const struct ieee80211_vif *vif)
++{
++	struct ieee80211_chanctx_conf *chanctx_conf;
++	enum iwl_bt_coex_lut_type ret;
++	u16 phy_ctx_id;
++
++	lockdep_assert_held(&mvm->mutex);
++
++	rcu_read_lock();
++
++	chanctx_conf = rcu_dereference(vif->chanctx_conf);
++
++	if (!chanctx_conf ||
++	     chanctx_conf->def.chan->band != IEEE80211_BAND_2GHZ) {
++		rcu_read_unlock();
++		return BT_COEX_LOOSE_LUT;
++	}
++
++	ret = BT_COEX_TX_DIS_LUT;
++
++	phy_ctx_id = *((u16 *)chanctx_conf->drv_priv);
++
++	if (mvm->last_bt_ci_cmd.primary_ch_phy_id == phy_ctx_id)
++		ret = le32_to_cpu(mvm->last_bt_notif.primary_ch_lut);
++	else if (mvm->last_bt_ci_cmd.secondary_ch_phy_id == phy_ctx_id)
++		ret = le32_to_cpu(mvm->last_bt_notif.secondary_ch_lut);
++	/* else - default = TX TX disallowed */
++
++	rcu_read_unlock();
++
++	return ret;
++}
++
+ int iwl_send_bt_init_conf(struct iwl_mvm *mvm)
+ {
+ 	struct iwl_bt_coex_cmd *bt_cmd;
+@@ -528,8 +554,7 @@ static void iwl_mvm_bt_notif_iterator(vo
+ 	if (data->notif->bt_status)
+ 		smps_mode = IEEE80211_SMPS_DYNAMIC;
+ 
+-	if (le32_to_cpu(data->notif->bt_activity_grading) >=
+-	    IWL_BT_LOAD_FORCE_SISO_THRESHOLD)
++	if (le32_to_cpu(data->notif->bt_activity_grading) >= BT_LOW_TRAFFIC)
+ 		smps_mode = IEEE80211_SMPS_STATIC;
+ 
+ 	IWL_DEBUG_COEX(data->mvm,
+@@ -540,13 +565,13 @@ static void iwl_mvm_bt_notif_iterator(vo
+ 	iwl_mvm_update_smps(mvm, vif, IWL_MVM_SMPS_REQ_BT_COEX, smps_mode);
+ 
+ 	/* don't reduce the Tx power if in loose scheme */
+-	if (is_loose_coex())
++	if (iwl_get_coex_type(mvm, vif) == BT_COEX_LOOSE_LUT)
+ 		return;
+ 
+ 	data->num_bss_ifaces++;
+ 
+-	/* reduced Txpower only if there are open BT connections, so ...*/
+-	if (!BT_MBOX_MSG(data->notif, 3, OPEN_CON_2)) {
++	/* reduced Txpower only if BT is on, so ...*/
++	if (le32_to_cpu(data->notif->bt_activity_grading) == BT_OFF) {
+ 		/* ... cancel reduced Tx power ... */
+ 		if (iwl_mvm_bt_coex_reduced_txp(mvm, mvmvif->ap_sta_id, false))
+ 			IWL_ERR(mvm, "Couldn't send BT_CONFIG cmd\n");
+@@ -761,8 +786,8 @@ void iwl_mvm_bt_rssi_event(struct iwl_mv
+ 	if (WARN_ON_ONCE(mvmvif->ap_sta_id == IWL_MVM_STATION_COUNT))
+ 		return;
+ 
+-	/* No open connection - reports should be disabled */
+-	if (!BT_MBOX_MSG(&mvm->last_bt_notif, 3, OPEN_CON_2))
++	/* No BT - reports should be disabled */
++	if (le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) == BT_OFF)
+ 		return;
+ 
+ 	IWL_DEBUG_COEX(mvm, "RSSI for %pM is now %s\n", vif->bss_conf.bssid,
+@@ -772,7 +797,8 @@ void iwl_mvm_bt_rssi_event(struct iwl_mv
+ 	 * Check if rssi is good enough for reduced Tx power, but not in loose
+ 	 * scheme.
+ 	 */
+-	if (rssi_event == RSSI_EVENT_LOW || is_loose_coex())
++	if (rssi_event == RSSI_EVENT_LOW ||
++	    iwl_get_coex_type(mvm, vif) == BT_COEX_LOOSE_LUT)
+ 		ret = iwl_mvm_bt_coex_reduced_txp(mvm, mvmvif->ap_sta_id,
+ 						  false);
+ 	else
+--- a/drivers/net/wireless/iwlwifi/mvm/rs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/rs.c
+@@ -282,7 +282,7 @@ static int rs_tl_turn_on_agg_for_tid(str
+ 	 * Don't create TX aggregation sessions when in high
+ 	 * BT traffic, as they would just be disrupted by BT.
+ 	 */
+-	if (BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD) >= 2) {
++	if (le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) >= 2) {
+ 		IWL_DEBUG_COEX(mvm, "BT traffic (%d), no aggregation allowed\n",
+ 			       BT_MBOX_MSG(&mvm->last_bt_notif,
+ 					   3, TRAFFIC_LOAD));
+@@ -1322,7 +1322,7 @@ static int rs_move_siso_to_other(struct
+ 	u8 update_search_tbl_counter = 0;
+ 	int ret;
+ 
+-	switch (BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD)) {
++	switch (le32_to_cpu(mvm->last_bt_notif.bt_activity_grading)) {
+ 	case IWL_BT_COEX_TRAFFIC_LOAD_NONE:
+ 		/* nothing */
+ 		break;
+@@ -1342,7 +1342,7 @@ static int rs_move_siso_to_other(struct
+ 		break;
+ 	default:
+ 		IWL_ERR(mvm, "Invalid BT load %d",
+-			BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD));
++			le32_to_cpu(mvm->last_bt_notif.bt_activity_grading));
+ 		break;
+ 	}
+ 
+@@ -1453,7 +1453,7 @@ static int rs_move_mimo2_to_other(struct
+ 	u8 update_search_tbl_counter = 0;
+ 	int ret;
+ 
+-	switch (BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD)) {
++	switch (le32_to_cpu(mvm->last_bt_notif.bt_activity_grading)) {
+ 	case IWL_BT_COEX_TRAFFIC_LOAD_NONE:
+ 		/* nothing */
+ 		break;
+@@ -1470,7 +1470,7 @@ static int rs_move_mimo2_to_other(struct
+ 		break;
+ 	default:
+ 		IWL_ERR(mvm, "Invalid BT load %d",
+-			BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD));
++			le32_to_cpu(mvm->last_bt_notif.bt_activity_grading));
+ 		break;
+ 	}
+ 
+@@ -1955,24 +1955,24 @@ static void rs_rate_scale_perform(struct
+ 	     (current_tpt > (100 * tbl->expected_tpt[low]))))
+ 		scale_action = 0;
+ 
+-	if ((BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD) >=
++	if ((le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) >=
+ 	     IWL_BT_COEX_TRAFFIC_LOAD_HIGH) && (is_mimo(tbl->lq_type))) {
+ 		if (lq_sta->last_bt_traffic >
+-		    BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD)) {
++		    le32_to_cpu(mvm->last_bt_notif.bt_activity_grading)) {
+ 			/*
+ 			 * don't set scale_action, don't want to scale up if
+ 			 * the rate scale doesn't otherwise think that is a
+ 			 * good idea.
+ 			 */
+ 		} else if (lq_sta->last_bt_traffic <=
+-			   BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD)) {
++			   le32_to_cpu(mvm->last_bt_notif.bt_activity_grading)) {
+ 			scale_action = -1;
+ 		}
+ 	}
+ 	lq_sta->last_bt_traffic =
+-		BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD);
++		le32_to_cpu(mvm->last_bt_notif.bt_activity_grading);
+ 
+-	if ((BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD) >=
++	if ((le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) >=
+ 	     IWL_BT_COEX_TRAFFIC_LOAD_HIGH) && is_mimo(tbl->lq_type)) {
+ 		/* search for a new modulation */
+ 		rs_stay_in_table(lq_sta, true);
+@@ -2455,7 +2455,7 @@ static void rs_fill_link_cmd(struct iwl_
+ 	 * overwrite if needed, pass aggregation time limit
+ 	 * to uCode in uSec - This is racy - but heh, at least it helps...
+ 	 */
+-	if (mvm && BT_MBOX_MSG(&mvm->last_bt_notif, 3, TRAFFIC_LOAD) >= 2)
++	if (mvm && le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) >= 2)
+ 		lq_cmd->agg_time_limit = cpu_to_le16(1200);
+ }
+ 
