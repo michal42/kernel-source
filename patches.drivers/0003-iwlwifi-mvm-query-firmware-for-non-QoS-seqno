@@ -1,0 +1,170 @@
+From 4ac6cb59faefc3143d8d4589549a6c2a7ccaefe9 Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Thu, 8 Aug 2013 09:30:13 +0200
+Subject: [PATCH 03/36] iwlwifi: mvm: query firmware for non-QoS seqno
+Git-commit: 4ac6cb59faefc3143d8d4589549a6c2a7ccaefe9
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Instead of keeping track of the non-QoS seqno for each station,
+query the firmware when suspending, that's more efficient. As
+this can fail, move the station ID mangling later in the code.
+
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/d3.c     |   59 ++++++++++++++++++++----------
+ drivers/net/wireless/iwlwifi/mvm/fw-api.h |    1 
+ drivers/net/wireless/iwlwifi/mvm/ops.c    |    1 
+ drivers/net/wireless/iwlwifi/mvm/sta.h    |    4 --
+ drivers/net/wireless/iwlwifi/mvm/tx.c     |    4 --
+ 5 files changed, 43 insertions(+), 26 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/d3.c
++++ b/drivers/net/wireless/iwlwifi/mvm/d3.c
+@@ -793,6 +793,31 @@ static int iwl_mvm_d3_reprogram(struct i
+ 	return 0;
+ }
+ 
++static int iwl_mvm_get_last_nonqos_seq(struct iwl_mvm *mvm,
++				       struct ieee80211_vif *vif)
++{
++	struct iwl_host_cmd cmd = {
++		.id = NON_QOS_TX_COUNTER_CMD,
++		.flags = CMD_SYNC | CMD_WANT_SKB,
++	};
++	int err;
++	u32 size;
++
++	err = iwl_mvm_send_cmd(mvm, &cmd);
++	if (err)
++		return err;
++
++	size = le32_to_cpu(cmd.resp_pkt->len_n_flags) & FH_RSCSR_FRAME_SIZE_MSK;
++	size -= sizeof(cmd.resp_pkt->hdr);
++	if (size != sizeof(__le32))
++		err = -EINVAL;
++	else
++		err = le32_to_cpup((__le32 *)cmd.resp_pkt->data);
++
++	iwl_free_resp(&cmd);
++	return err;
++}
++
+ static int __iwl_mvm_suspend(struct ieee80211_hw *hw,
+ 			     struct cfg80211_wowlan *wowlan,
+ 			     bool test)
+@@ -829,7 +854,6 @@ static int __iwl_mvm_suspend(struct ieee
+ 	};
+ 	int ret, i;
+ 	int len __maybe_unused;
+-	u16 seq;
+ 	u8 old_aux_sta_id, old_ap_sta_id = IWL_MVM_STATION_COUNT;
+ 
+ 	if (!wowlan) {
+@@ -872,26 +896,15 @@ static int __iwl_mvm_suspend(struct ieee
+ 
+ 	mvm_ap_sta = (struct iwl_mvm_sta *)ap_sta->drv_priv;
+ 
+-	/*
+-	 * The D3 firmware still hardcodes the AP station ID for the
+-	 * BSS we're associated with as 0. Store the real STA ID here
+-	 * and assign 0. When we leave this function, we'll restore
+-	 * the original value for the resume code.
+-	 */
+-	old_ap_sta_id = mvm_ap_sta->sta_id;
+-	mvm_ap_sta->sta_id = 0;
+-	mvmvif->ap_sta_id = 0;
+-
+ 	/* TODO: wowlan_config_cmd.wowlan_ba_teardown_tids */
+ 
+ 	wowlan_config_cmd.is_11n_connection = ap_sta->ht_cap.ht_supported;
+ 
+-	/*
+-	 * We know the last used seqno, and the uCode expects to know that
+-	 * one, it will increment before TX.
+-	 */
+-	seq = mvm_ap_sta->last_seq_ctl & IEEE80211_SCTL_SEQ;
+-	wowlan_config_cmd.non_qos_seq = cpu_to_le16(seq);
++	/* Query the last used seqno and set it */
++	ret = iwl_mvm_get_last_nonqos_seq(mvm, vif);
++	if (ret < 0)
++		goto out_noreset;
++	wowlan_config_cmd.non_qos_seq = cpu_to_le16(ret);
+ 
+ 	/*
+ 	 * For QoS counters, we store the one to use next, so subtract 0x10
+@@ -899,7 +912,7 @@ static int __iwl_mvm_suspend(struct ieee
+ 	 * increment after using the value (i.e. store the next value to use).
+ 	 */
+ 	for (i = 0; i < IWL_MAX_TID_COUNT; i++) {
+-		seq = mvm_ap_sta->tid_data[i].seq_number;
++		u16 seq = mvm_ap_sta->tid_data[i].seq_number;
+ 		seq -= 0x10;
+ 		wowlan_config_cmd.qos_seq[i] = cpu_to_le16(seq);
+ 	}
+@@ -945,6 +958,16 @@ static int __iwl_mvm_suspend(struct ieee
+ 	iwl_trans_stop_device(mvm->trans);
+ 
+ 	/*
++	 * The D3 firmware still hardcodes the AP station ID for the
++	 * BSS we're associated with as 0. Store the real STA ID here
++	 * and assign 0. When we leave this function, we'll restore
++	 * the original value for the resume code.
++	 */
++	old_ap_sta_id = mvm_ap_sta->sta_id;
++	mvm_ap_sta->sta_id = 0;
++	mvmvif->ap_sta_id = 0;
++
++	/*
+ 	 * Set the HW restart bit -- this is mostly true as we're
+ 	 * going to load new firmware and reprogram that, though
+ 	 * the reprogramming is going to be manual to avoid adding
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api.h
+@@ -114,6 +114,7 @@ enum {
+ 	TIME_EVENT_NOTIFICATION = 0x2a,
+ 	BINDING_CONTEXT_CMD = 0x2b,
+ 	TIME_QUOTA_CMD = 0x2c,
++	NON_QOS_TX_COUNTER_CMD = 0x2d,
+ 
+ 	LQ_CMD = 0x4e,
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/ops.c
++++ b/drivers/net/wireless/iwlwifi/mvm/ops.c
+@@ -249,6 +249,7 @@ static const char *iwl_mvm_cmd_strings[R
+ 	CMD(TIME_EVENT_NOTIFICATION),
+ 	CMD(BINDING_CONTEXT_CMD),
+ 	CMD(TIME_QUOTA_CMD),
++	CMD(NON_QOS_TX_COUNTER_CMD),
+ 	CMD(RADIO_VERSION_NOTIFICATION),
+ 	CMD(SCAN_REQUEST_CMD),
+ 	CMD(SCAN_ABORT_CMD),
+--- a/drivers/net/wireless/iwlwifi/mvm/sta.h
++++ b/drivers/net/wireless/iwlwifi/mvm/sta.h
+@@ -293,10 +293,6 @@ struct iwl_mvm_sta {
+ 	struct iwl_lq_sta lq_sta;
+ 	struct ieee80211_vif *vif;
+ 
+-#ifdef CONFIG_PM_SLEEP
+-	u16 last_seq_ctl;
+-#endif
+-
+ 	/* Temporary, until the new TLC will control the Tx protection */
+ 	s8 tx_protection;
+ 	bool tt_tx_protection;
+--- a/drivers/net/wireless/iwlwifi/mvm/tx.c
++++ b/drivers/net/wireless/iwlwifi/mvm/tx.c
+@@ -668,10 +668,6 @@ static void iwl_mvm_rx_tx_cmd_single(str
+ 			iwl_mvm_check_ratid_empty(mvm, sta, tid);
+ 			spin_unlock_bh(&mvmsta->lock);
+ 		}
+-
+-#ifdef CONFIG_PM_SLEEP
+-		mvmsta->last_seq_ctl = seq_ctl;
+-#endif
+ 	} else {
+ 		sta = NULL;
+ 		mvmsta = NULL;
