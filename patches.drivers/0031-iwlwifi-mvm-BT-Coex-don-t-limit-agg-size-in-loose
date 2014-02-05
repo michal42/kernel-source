@@ -1,0 +1,175 @@
+From 9145d15128bd3ca68cd7fdf04535a710ac88bdba Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Thu, 18 Jul 2013 08:45:41 +0300
+Subject: [PATCH 31/36] iwlwifi: mvm: BT Coex - don't limit agg size in loose scheme
+Git-commit: 9145d15128bd3ca68cd7fdf04535a710ac88bdba
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+In loose BT Coex scheme, the aggregation size doesn't need to
+be limited.
+
+To avoid triggering it, remove a lockdep assertion - we need
+to compute the AMPDU size limit from rate control code which
+can't take mvm->mutex. This means that there is a race but in
+the worst case, we will have a wrong AMPDU size limit which
+is not a big issue.
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c |   30 ++++++++++++++++++++++++++++-
+ drivers/net/wireless/iwlwifi/mvm/mvm.h     |    2 +
+ drivers/net/wireless/iwlwifi/mvm/rs.c      |   19 ++++++++++++------
+ 3 files changed, 44 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -267,7 +267,13 @@ iwl_get_coex_type(struct iwl_mvm *mvm, c
+ 	enum iwl_bt_coex_lut_type ret;
+ 	u16 phy_ctx_id;
+ 
+-	lockdep_assert_held(&mvm->mutex);
++	/*
++	 * Checking that we hold mvm->mutex is a good idea, but the rate
++	 * control can't acquire the mutex since it runs in Tx path.
++	 * So this is racy in that case, but in the worst case, the AMPDU
++	 * size limit will be wrong for a short time which is not a big
++	 * issue.
++	 */
+ 
+ 	rcu_read_lock();
+ 
+@@ -843,6 +849,28 @@ void iwl_mvm_bt_rssi_event(struct iwl_mv
+ 		IWL_ERR(mvm, "Failed to update the ctrl_kill_msk\n");
+ }
+ 
++#define LINK_QUAL_AGG_TIME_LIMIT_DEF	(4000)
++#define LINK_QUAL_AGG_TIME_LIMIT_BT_ACT	(1200)
++
++u16 iwl_mvm_bt_coex_agg_time_limit(struct iwl_mvm *mvm,
++				   struct ieee80211_sta *sta)
++{
++	struct iwl_mvm_sta *mvmsta = (void *)sta->drv_priv;
++	enum iwl_bt_coex_lut_type lut_type;
++
++	if (le32_to_cpu(mvm->last_bt_notif.bt_activity_grading) <
++	    BT_LOW_TRAFFIC)
++		return LINK_QUAL_AGG_TIME_LIMIT_DEF;
++
++	lut_type = iwl_get_coex_type(mvm, mvmsta->vif);
++
++	if (lut_type == BT_COEX_LOOSE_LUT)
++		return LINK_QUAL_AGG_TIME_LIMIT_DEF;
++
++	/* tight coex, high bt traffic, reduce AGG time limit */
++	return LINK_QUAL_AGG_TIME_LIMIT_BT_ACT;
++}
++
+ void iwl_mvm_bt_coex_vif_change(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
+ {
+ 	if (!(mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_NEWBT_COEX))
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -791,6 +791,8 @@ int iwl_mvm_rx_bt_coex_notif(struct iwl_
+ void iwl_mvm_bt_rssi_event(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
+ 			   enum ieee80211_rssi_event rssi_event);
+ void iwl_mvm_bt_coex_vif_change(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
++u16 iwl_mvm_bt_coex_agg_time_limit(struct iwl_mvm *mvm,
++				   struct ieee80211_sta *sta);
+ enum iwl_bt_kill_msk {
+ 	BT_KILL_MSK_DEFAULT,
+ 	BT_KILL_MSK_SCO_HID_A2DP,
+--- a/drivers/net/wireless/iwlwifi/mvm/rs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/rs.c
+@@ -171,6 +171,7 @@ static void rs_rate_scale_perform(struct
+ 				   struct ieee80211_sta *sta,
+ 				   struct iwl_lq_sta *lq_sta);
+ static void rs_fill_link_cmd(struct iwl_mvm *mvm,
++			     struct ieee80211_sta *sta,
+ 			     struct iwl_lq_sta *lq_sta, u32 rate_n_flags);
+ static void rs_stay_in_table(struct iwl_lq_sta *lq_sta, bool force_search);
+ 
+@@ -296,7 +297,7 @@ static void rs_program_fix_rate(struct i
+ 		       lq_sta->lq.sta_id, lq_sta->dbg_fixed_rate);
+ 
+ 	if (lq_sta->dbg_fixed_rate) {
+-		rs_fill_link_cmd(NULL, lq_sta, lq_sta->dbg_fixed_rate);
++		rs_fill_link_cmd(NULL, NULL, lq_sta, lq_sta->dbg_fixed_rate);
+ 		iwl_mvm_send_lq_cmd(lq_sta->drv, &lq_sta->lq, CMD_ASYNC, false);
+ 	}
+ }
+@@ -1708,6 +1709,7 @@ static void rs_stay_in_table(struct iwl_
+  * setup rate table in uCode
+  */
+ static void rs_update_rate_tbl(struct iwl_mvm *mvm,
++			       struct ieee80211_sta *sta,
+ 			       struct iwl_lq_sta *lq_sta,
+ 			       struct iwl_scale_tbl_info *tbl,
+ 			       int index)
+@@ -1716,7 +1718,7 @@ static void rs_update_rate_tbl(struct iw
+ 
+ 	/* Update uCode's rate table. */
+ 	rate = rate_n_flags_from_tbl(mvm, tbl, index);
+-	rs_fill_link_cmd(mvm, lq_sta, rate);
++	rs_fill_link_cmd(mvm, sta, lq_sta, rate);
+ 	iwl_mvm_send_lq_cmd(mvm, &lq_sta->lq, CMD_ASYNC, false);
+ }
+ 
+@@ -1839,7 +1841,7 @@ static void rs_rate_scale_perform(struct
+ 			tbl = &(lq_sta->lq_info[lq_sta->active_tbl]);
+ 			/* get "active" rate info */
+ 			index = iwl_hwrate_to_plcp_idx(tbl->current_rate);
+-			rs_update_rate_tbl(mvm, lq_sta, tbl, index);
++			rs_update_rate_tbl(mvm, sta, lq_sta, tbl, index);
+ 		}
+ 		return;
+ 	}
+@@ -2074,7 +2076,7 @@ static void rs_rate_scale_perform(struct
+ lq_update:
+ 	/* Replace uCode's rate table for the destination station. */
+ 	if (update_lq)
+-		rs_update_rate_tbl(mvm, lq_sta, tbl, index);
++		rs_update_rate_tbl(mvm, sta, lq_sta, tbl, index);
+ 
+ 	rs_stay_in_table(lq_sta, false);
+ 
+@@ -2113,7 +2115,7 @@ lq_update:
+ 			IWL_DEBUG_RATE(mvm,
+ 				       "Switch current  mcs: %X index: %d\n",
+ 				       tbl->current_rate, index);
+-			rs_fill_link_cmd(mvm, lq_sta, tbl->current_rate);
++			rs_fill_link_cmd(mvm, sta, lq_sta, tbl->current_rate);
+ 			iwl_mvm_send_lq_cmd(mvm, &lq_sta->lq, CMD_ASYNC, false);
+ 		} else {
+ 			done_search = 1;
+@@ -2216,7 +2218,7 @@ static void rs_initialize_lq(struct iwl_
+ 	rate = rate_n_flags_from_tbl(mvm, tbl, rate_idx);
+ 	tbl->current_rate = rate;
+ 	rs_set_expected_tpt_table(lq_sta, tbl);
+-	rs_fill_link_cmd(NULL, lq_sta, rate);
++	rs_fill_link_cmd(NULL, NULL, lq_sta, rate);
+ 	/* TODO restore station should remember the lq cmd */
+ 	iwl_mvm_send_lq_cmd(mvm, &lq_sta->lq, CMD_SYNC, true);
+ }
+@@ -2418,6 +2420,7 @@ void iwl_mvm_rs_rate_init(struct iwl_mvm
+ }
+ 
+ static void rs_fill_link_cmd(struct iwl_mvm *mvm,
++			     struct ieee80211_sta *sta,
+ 			     struct iwl_lq_sta *lq_sta, u32 new_rate)
+ {
+ 	struct iwl_scale_tbl_info tbl_type;
+@@ -2535,6 +2538,10 @@ static void rs_fill_link_cmd(struct iwl_
+ 	lq_cmd->agg_time_limit =
+ 		cpu_to_le16(LINK_QUAL_AGG_TIME_LIMIT_DEF);
+ 
++	if (sta)
++		lq_cmd->agg_time_limit =
++			cpu_to_le16(iwl_mvm_bt_coex_agg_time_limit(mvm, sta));
++
+ 	/*
+ 	 * overwrite if needed, pass aggregation time limit
+ 	 * to uCode in uSec - This is racy - but heh, at least it helps...
