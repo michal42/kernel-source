@@ -1,0 +1,61 @@
+From fb8b8ee10e1bff6531d588525d6b6c3440e71e11 Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Mon, 21 Oct 2013 12:37:53 +0200
+Subject: [PATCH 59/63] iwlwifi: mvm: capture the FCS in monitor mode
+Git-commit: fb8b8ee10e1bff6531d588525d6b6c3440e71e11
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+This can be useful when using the device as a sniffer.
+
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/mac-ctxt.c |    8 +++++++-
+ drivers/net/wireless/iwlwifi/mvm/rx.c       |    6 +++++-
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/mac-ctxt.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac-ctxt.c
+@@ -711,7 +711,9 @@ static int iwl_mvm_mac_ctxt_cmd_listener
+ 	cmd.filter_flags = cpu_to_le32(MAC_FILTER_IN_PROMISC |
+ 				       MAC_FILTER_IN_CONTROL_AND_MGMT |
+ 				       MAC_FILTER_IN_BEACON |
+-				       MAC_FILTER_IN_PROBE_REQUEST);
++				       MAC_FILTER_IN_PROBE_REQUEST |
++				       MAC_FILTER_IN_CRC32);
++	mvm->hw->flags |= IEEE80211_HW_RX_INCLUDES_FCS;
+ 
+ 	return iwl_mvm_mac_ctxt_send_cmd(mvm, &cmd);
+ }
+@@ -1084,6 +1086,10 @@ int iwl_mvm_mac_ctxt_remove(struct iwl_m
+ 	}
+ 
+ 	mvmvif->uploaded = false;
++
++	if (vif->type == NL80211_IFTYPE_MONITOR)
++		mvm->hw->flags &= ~IEEE80211_HW_RX_INCLUDES_FCS;
++
+ 	return 0;
+ }
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/rx.c
++++ b/drivers/net/wireless/iwlwifi/mvm/rx.c
+@@ -300,10 +300,14 @@ int iwl_mvm_rx_rx_mpdu(struct iwl_mvm *m
+ 		return 0;
+ 	}
+ 
++	/*
++	 * Keep packets with CRC errors (and with overrun) for monitor mode
++	 * (otherwise the firmware discards them) but mark them as bad.
++	 */
+ 	if (!(rx_pkt_status & RX_MPDU_RES_STATUS_CRC_OK) ||
+ 	    !(rx_pkt_status & RX_MPDU_RES_STATUS_OVERRUN_OK)) {
+ 		IWL_DEBUG_RX(mvm, "Bad CRC or FIFO: 0x%08X.\n", rx_pkt_status);
+-		return 0;
++		rx_status.flag |= RX_FLAG_FAILED_FCS_CRC;
+ 	}
+ 
+ 	/* This will be used in several places later */
