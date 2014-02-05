@@ -1,0 +1,111 @@
+From 016d27e13b08416988fa06013f66e94fa195244a Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Fri, 3 May 2013 11:16:15 +0200
+Subject: [PATCH 07/36] iwlwifi: mvm: give client MACs time to synchronise during restart
+Git-commit: 016d27e13b08416988fa06013f66e94fa195244a
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+When firmware restart happens, the timers are obviously reset and
+the new firmware has no synchronisation with the AP as we program
+timings to the pre-restart values. The firmware should attempt to
+synchronise by itself, but in multi-channel scenarios this isn't
+easy, particularly since it has to try to keep service quality up
+for other MACs.
+
+To make it more reliable, give each client MAC some time to catch
+beacons when restarting or resuming. Service quality was impacted
+anyway (or in resume doesn't really matter much.)
+
+Reviewed-by: Moshe Island <moshe.island@intel.com>
+Reviewed-by: Ilan Peer <ilan.peer@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/mac80211.c   |   23 ++++++++++++++++++++++-
+ drivers/net/wireless/iwlwifi/mvm/time-event.c |    5 +++--
+ drivers/net/wireless/iwlwifi/mvm/time-event.h |    4 +++-
+ 3 files changed, 28 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/mac80211.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac80211.c
+@@ -803,6 +803,27 @@ static void iwl_mvm_bss_info_changed_sta
+ 				return;
+ 			}
+ 			iwl_mvm_configure_mcast_filter(mvm, vif);
++
++			if (test_bit(IWL_MVM_STATUS_IN_HW_RESTART,
++				     &mvm->status)) {
++				/*
++				 * If we're restarting then the firmware will
++				 * obviously have lost synchronisation with
++				 * the AP. It will attempt to synchronise by
++				 * itself, but we can make it more reliable by
++				 * scheduling a session protection time event.
++				 *
++				 * The firmware needs to receive a beacon to
++				 * catch up with synchronisation, use 110% of
++				 * the beacon interval.
++				 *
++				 * Set a large maximum delay to allow for more
++				 * than a single interface.
++				 */
++				u32 dur = (11 * vif->bss_conf.beacon_int) / 10;
++				iwl_mvm_protect_session(mvm, vif, dur, dur,
++							5 * dur);
++			}
+ 		} else if (mvmvif->ap_sta_id != IWL_MVM_STATION_COUNT) {
+ 			/* remove AP station now that the MAC is unassoc */
+ 			ret = iwl_mvm_rm_sta_id(mvm, vif, mvmvif->ap_sta_id);
+@@ -1170,7 +1191,7 @@ static void iwl_mvm_mac_mgd_prepare_tx(s
+ 
+ 	mutex_lock(&mvm->mutex);
+ 	/* Try really hard to protect the session and hear a beacon */
+-	iwl_mvm_protect_session(mvm, vif, duration, min_duration);
++	iwl_mvm_protect_session(mvm, vif, duration, min_duration, 500);
+ 	mutex_unlock(&mvm->mutex);
+ }
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/time-event.c
++++ b/drivers/net/wireless/iwlwifi/mvm/time-event.c
+@@ -387,7 +387,8 @@ static int iwl_mvm_time_event_send_add(s
+ 
+ void iwl_mvm_protect_session(struct iwl_mvm *mvm,
+ 			     struct ieee80211_vif *vif,
+-			     u32 duration, u32 min_duration)
++			     u32 duration, u32 min_duration,
++			     u32 max_delay)
+ {
+ 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+ 	struct iwl_mvm_time_event_data *te_data = &mvmvif->time_event_data;
+@@ -426,7 +427,7 @@ void iwl_mvm_protect_session(struct iwl_
+ 		cpu_to_le32(iwl_read_prph(mvm->trans, DEVICE_SYSTEM_TIME_REG));
+ 
+ 	time_cmd.max_frags = TE_V2_FRAG_NONE;
+-	time_cmd.max_delay = cpu_to_le32(500);
++	time_cmd.max_delay = cpu_to_le32(max_delay);
+ 	/* TODO: why do we need to interval = bi if it is not periodic? */
+ 	time_cmd.interval = cpu_to_le32(1);
+ 	time_cmd.duration = cpu_to_le32(duration);
+--- a/drivers/net/wireless/iwlwifi/mvm/time-event.h
++++ b/drivers/net/wireless/iwlwifi/mvm/time-event.h
+@@ -123,6 +123,7 @@
+  * @duration: the duration of the session in TU.
+  * @min_duration: will start a new session if the current session will end
+  *	in less than min_duration.
++ * @max_delay: maximum delay before starting the time event (in TU)
+  *
+  * This function can be used to start a session protection which means that the
+  * fw will stay on the channel for %duration_ms milliseconds. This function
+@@ -133,7 +134,8 @@
+  */
+ void iwl_mvm_protect_session(struct iwl_mvm *mvm,
+ 			     struct ieee80211_vif *vif,
+-			     u32 duration, u32 min_duration);
++			     u32 duration, u32 min_duration,
++			     u32 max_delay);
+ 
+ /**
+  * iwl_mvm_stop_session_protection - cancel the session protection.
