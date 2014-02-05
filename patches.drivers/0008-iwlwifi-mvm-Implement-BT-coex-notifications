@@ -1,0 +1,137 @@
+From 911222b57b8248aef81c14bf5a08b7e041850f8f Mon Sep 17 00:00:00 2001
+From: Andrei Otcheretianski <andrei.otcheretianski@intel.com>
+Date: Sun, 21 Jul 2013 17:37:19 +0300
+Subject: [PATCH 08/36] iwlwifi: mvm: Implement BT coex notifications
+Git-commit: 911222b57b8248aef81c14bf5a08b7e041850f8f
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Use beacon statistics notification handler
+to notify bt coex about rssi changes.
+Mac80211's mechanism is not used anymore.
+
+Signed-off-by: Andrei Otcheretianski <andrei.otcheretianski@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c  |   16 ++++++++++++----
+ drivers/net/wireless/iwlwifi/mvm/mac80211.c |   11 -----------
+ drivers/net/wireless/iwlwifi/mvm/mvm.h      |    6 ++++++
+ drivers/net/wireless/iwlwifi/mvm/rx.c       |   21 +++++++++++++++++++++
+ 4 files changed, 39 insertions(+), 15 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -467,11 +467,14 @@ static void iwl_mvm_bt_notif_iterator(vo
+ 		data->reduced_tx_power = false;
+ 
+ 		/* ... and there is no need to get reports on RSSI any more. */
+-		ieee80211_disable_rssi_reports(vif);
++		mvmvif->bf_data.last_bt_coex_event = 0;
++		mvmvif->bf_data.bt_coex_max_thold = 0;
++		mvmvif->bf_data.bt_coex_min_thold = 0;
+ 		return;
+ 	}
+ 
+-	ave_rssi = ieee80211_ave_rssi(vif);
++	/* try to get the avg rssi from fw */
++	ave_rssi = mvmvif->bf_data.ave_beacon_signal;
+ 
+ 	/* if the RSSI isn't valid, fake it is very low */
+ 	if (!ave_rssi)
+@@ -499,8 +502,13 @@ static void iwl_mvm_bt_notif_iterator(vo
+ 	}
+ 
+ 	/* Begin to monitor the RSSI: it may influence the reduced Tx power */
+-	ieee80211_enable_rssi_reports(vif, BT_DISABLE_REDUCED_TXPOWER_THRESHOLD,
+-				      BT_ENABLE_REDUCED_TXPOWER_THRESHOLD);
++
++	/* reset previous bt coex event tracking */
++	mvmvif->bf_data.last_bt_coex_event = 0;
++	mvmvif->bf_data.bt_coex_max_thold =
++		BT_ENABLE_REDUCED_TXPOWER_THRESHOLD;
++	mvmvif->bf_data.bt_coex_min_thold =
++		BT_DISABLE_REDUCED_TXPOWER_THRESHOLD;
+ }
+ 
+ static void iwl_mvm_bt_coex_notif_handle(struct iwl_mvm *mvm)
+--- a/drivers/net/wireless/iwlwifi/mvm/mac80211.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac80211.c
+@@ -1578,15 +1578,6 @@ static int iwl_mvm_set_tim(struct ieee80
+ 	return iwl_mvm_mac_ctxt_beacon_changed(mvm, mvm_sta->vif);
+ }
+ 
+-static void iwl_mvm_mac_rssi_callback(struct ieee80211_hw *hw,
+-				      struct ieee80211_vif *vif,
+-				      enum ieee80211_rssi_event rssi_event)
+-{
+-	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
+-
+-	iwl_mvm_bt_rssi_event(mvm, vif, rssi_event);
+-}
+-
+ #ifdef CONFIG_NL80211_TESTMODE
+ static const struct nla_policy iwl_mvm_tm_policy[IWL_MVM_TM_ATTR_MAX + 1] = {
+ 	[IWL_MVM_TM_ATTR_CMD] = { .type = NLA_U32 },
+@@ -1677,8 +1668,6 @@ struct ieee80211_ops iwl_mvm_hw_ops = {
+ 	.update_tkip_key = iwl_mvm_mac_update_tkip_key,
+ 	.remain_on_channel = iwl_mvm_roc,
+ 	.cancel_remain_on_channel = iwl_mvm_cancel_roc,
+-	.rssi_callback = iwl_mvm_mac_rssi_callback,
+-
+ 	.add_chanctx = iwl_mvm_add_chanctx,
+ 	.remove_chanctx = iwl_mvm_remove_chanctx,
+ 	.change_chanctx = iwl_mvm_change_chanctx,
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -241,12 +241,18 @@ enum iwl_mvm_smps_type_request {
+ * @last_beacon_signal: last beacon rssi signal in dbm
+ * @ave_beacon_signal: average beacon signal
+ * @last_cqm_event: rssi of the last cqm event
++* @bt_coex_min_thold: minimum threshold for BT coex
++* @bt_coex_max_thold: maximum threshold for BT coex
++* @last_bt_coex_event: rssi of the last BT coex event
+ */
+ struct iwl_mvm_vif_bf_data {
+ 	bool bf_enabled;
+ 	bool ba_enabled;
+ 	s8 ave_beacon_signal;
+ 	s8 last_cqm_event;
++	s8 bt_coex_min_thold;
++	s8 bt_coex_max_thold;
++	s8 last_bt_coex_event;
+ };
+ 
+ /**
+--- a/drivers/net/wireless/iwlwifi/mvm/rx.c
++++ b/drivers/net/wireless/iwlwifi/mvm/rx.c
+@@ -422,6 +422,27 @@ static void iwl_mvm_stat_iterator(void *
+ 
+ 	mvmvif->bf_data.ave_beacon_signal = sig;
+ 
++	/* BT Coex */
++	if (mvmvif->bf_data.bt_coex_min_thold !=
++	    mvmvif->bf_data.bt_coex_max_thold) {
++		last_event = mvmvif->bf_data.last_bt_coex_event;
++		if (sig > mvmvif->bf_data.bt_coex_max_thold &&
++		    (last_event <= mvmvif->bf_data.bt_coex_min_thold ||
++		     last_event == 0)) {
++			mvmvif->bf_data.last_bt_coex_event = sig;
++			IWL_DEBUG_RX(mvm, "cqm_iterator bt coex high %d\n",
++				     sig);
++			iwl_mvm_bt_rssi_event(mvm, vif, RSSI_EVENT_HIGH);
++		} else if (sig < mvmvif->bf_data.bt_coex_min_thold &&
++			   (last_event >= mvmvif->bf_data.bt_coex_max_thold ||
++			    last_event == 0)) {
++			mvmvif->bf_data.last_bt_coex_event = sig;
++			IWL_DEBUG_RX(mvm, "cqm_iterator bt coex low %d\n",
++				     sig);
++			iwl_mvm_bt_rssi_event(mvm, vif, RSSI_EVENT_LOW);
++		}
++	}
++
+ 	if (!(vif->driver_flags & IEEE80211_VIF_SUPPORTS_CQM_RSSI))
+ 		return;
+ 
