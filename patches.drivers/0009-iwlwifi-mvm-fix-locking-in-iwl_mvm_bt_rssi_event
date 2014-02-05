@@ -1,0 +1,75 @@
+From 3dd1cd2d33d94fd56228b9a7f7b467ceccae8f4d Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Wed, 2 Oct 2013 12:05:24 +0200
+Subject: [PATCH 09/36] iwlwifi: mvm: fix locking in iwl_mvm_bt_rssi_event()
+Git-commit: 3dd1cd2d33d94fd56228b9a7f7b467ceccae8f4d
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+This will deadlock due to commit 9f34783863bea806
+("iwlwifi: mvm: Implement BT coex notifications"):
+
+  =============================================
+  [ INFO: possible recursive locking detected ]
+  3.5.0 #10 Tainted: G        W  O
+  ---------------------------------------------
+  kworker/2:1/5214 is trying to acquire lock:
+   (&mvm->mutex){+.+.+.}, at: [<ffffffffa03be23e>] iwl_mvm_bt_rssi_event+0x5e/0x210 [iwlmvm]
+
+  but task is already holding lock:
+   (&mvm->mutex){+.+.+.}, at: [<ffffffffa03ab2d9>] iwl_mvm_async_handlers_wk+0x49/0x120 [iwlmvm]
+
+  other info that might help us debug this:
+   Possible unsafe locking scenario:
+
+         CPU0
+         ----
+    lock(&mvm->mutex);
+    lock(&mvm->mutex);
+
+   *** DEADLOCK ***
+
+Change-id: I9104f252b34676e2f7ffcd51166f95367e08a4d9
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Reviewed-on: https://gerrit.rds.intel.com/21887
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Tested-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+
+Conflicts: drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c |    9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -602,15 +602,15 @@ void iwl_mvm_bt_rssi_event(struct iwl_mv
+ 	};
+ 	int ret;
+ 
+-	mutex_lock(&mvm->mutex);
++	lockdep_assert_held(&mvm->mutex);
+ 
+ 	/* Rssi update while not associated ?! */
+ 	if (WARN_ON_ONCE(mvmvif->ap_sta_id == IWL_MVM_STATION_COUNT))
+-		goto out_unlock;
++		return;
+ 
+ 	/* No open connection - reports should be disabled */
+ 	if (!BT_MBOX_MSG(&mvm->last_bt_notif, 3, OPEN_CON_2))
+-		goto out_unlock;
++		return;
+ 
+ 	IWL_DEBUG_COEX(mvm, "RSSI for %pM is now %s\n", vif->bss_conf.bssid,
+ 		       rssi_event == RSSI_EVENT_HIGH ? "HIGH" : "LOW");
+@@ -641,9 +641,6 @@ void iwl_mvm_bt_rssi_event(struct iwl_mv
+ 
+ 	if (iwl_mvm_bt_udpate_ctrl_kill_msk(mvm, data.reduced_tx_power))
+ 		IWL_ERR(mvm, "Failed to update the ctrl_kill_msk\n");
+-
+- out_unlock:
+-	mutex_unlock(&mvm->mutex);
+ }
+ 
+ void iwl_mvm_bt_coex_vif_assoc(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
