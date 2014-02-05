@@ -1,0 +1,37 @@
+From 2a3115434a773fdc34ea125890f75fbc0b34dcaf Mon Sep 17 00:00:00 2001
+From: Alexander Bondar <alexander.bondar@intel.com>
+Date: Sun, 15 Sep 2013 16:17:48 +0200
+Subject: [PATCH 53/54] iwlwifi: mvm: fix scan request's suspend time parameter
+Git-commit: 2a3115434a773fdc34ea125890f75fbc0b34dcaf
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+This fix is related to a scan request when associated (bgscan).
+FW expects suspend time parameter in micro seconds while the driver
+provides a value in time units. This bug leads to a high traffic
+latency when scan is requested while traffic is in progress.
+
+Signed-off-by: Alexander Bondar <alexander.bondar@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/scan.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/scan.c
++++ b/drivers/net/wireless/iwlwifi/mvm/scan.c
+@@ -97,10 +97,10 @@ static inline __le32 iwl_mvm_scan_max_ou
+ 
+ static inline __le32 iwl_mvm_scan_suspend_time(struct ieee80211_vif *vif)
+ {
+-	if (vif->bss_conf.assoc)
+-		return cpu_to_le32(vif->bss_conf.beacon_int);
+-	else
++	if (!vif->bss_conf.assoc)
+ 		return 0;
++
++	return cpu_to_le32(ieee80211_tu_to_usec(vif->bss_conf.beacon_int));
+ }
+ 
+ static inline __le32
