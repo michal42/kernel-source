@@ -1,0 +1,68 @@
+From 39149911ba28d17b4657a9a65b3dc8ba54145ca0 Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Sun, 14 Jul 2013 13:40:21 +0300
+Subject: [PATCH 24/36] iwlwifi: mvm: don't use reduced Tx power when not applicable
+Git-commit: 39149911ba28d17b4657a9a65b3dc8ba54145ca0
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+When we have only one antenna for BT and WiFi, reduced Tx
+power is irrelevant.
+Also, in loose scheme, we should not use reduced Tx power
+nor set the control mask to Tx power.
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/bt-coex.c |   16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
++++ b/drivers/net/wireless/iwlwifi/mvm/bt-coex.c
+@@ -288,6 +288,11 @@ iwl_get_coex_type(struct iwl_mvm *mvm, c
+ 
+ 	ret = BT_COEX_TX_DIS_LUT;
+ 
++	if (mvm->cfg->bt_shared_single_ant) {
++		rcu_read_unlock();
++		return ret;
++	}
++
+ 	phy_ctx_id = *((u16 *)chanctx_conf->drv_priv);
+ 
+ 	if (mvm->last_bt_ci_cmd.primary_ch_phy_id == phy_ctx_id)
+@@ -540,6 +545,8 @@ static void iwl_mvm_bt_notif_iterator(vo
+ 		return;
+ 	}
+ 
++	data->num_bss_ifaces++;
++
+ 	/* we are now a STA / P2P Client, and take associated ones only */
+ 	if (!vif->bss_conf.assoc)
+ 		return;
+@@ -565,10 +572,11 @@ static void iwl_mvm_bt_notif_iterator(vo
+ 	iwl_mvm_update_smps(mvm, vif, IWL_MVM_SMPS_REQ_BT_COEX, smps_mode);
+ 
+ 	/* don't reduce the Tx power if in loose scheme */
+-	if (iwl_get_coex_type(mvm, vif) == BT_COEX_LOOSE_LUT)
++	if (iwl_get_coex_type(mvm, vif) == BT_COEX_LOOSE_LUT ||
++	    mvm->cfg->bt_shared_single_ant) {
++		data->reduced_tx_power = false;
+ 		return;
+-
+-	data->num_bss_ifaces++;
++	}
+ 
+ 	/* reduced Txpower only if BT is on, so ...*/
+ 	if (le32_to_cpu(data->notif->bt_activity_grading) == BT_OFF) {
+@@ -797,7 +805,7 @@ void iwl_mvm_bt_rssi_event(struct iwl_mv
+ 	 * Check if rssi is good enough for reduced Tx power, but not in loose
+ 	 * scheme.
+ 	 */
+-	if (rssi_event == RSSI_EVENT_LOW ||
++	if (rssi_event == RSSI_EVENT_LOW || mvm->cfg->bt_shared_single_ant ||
+ 	    iwl_get_coex_type(mvm, vif) == BT_COEX_LOOSE_LUT)
+ 		ret = iwl_mvm_bt_coex_reduced_txp(mvm, mvmvif->ap_sta_id,
+ 						  false);
