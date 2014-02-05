@@ -1,0 +1,254 @@
+From 4837b448dfa90d76bc3a73e12425ce85f0186865 Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Sun, 28 Jul 2013 23:02:46 +0000
+Subject: [PATCH 06/36] iwlwifi: mvm: remove rs FSM actions relevant only for 3 antennas
+Git-commit: 4837b448dfa90d76bc3a73e12425ce85f0186865
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+The XXX_SWITCH_ANTENNA1/2 actions keep track of switching between
+3 single antennas or between 3 pairs in case of MIMO2 on a MIMO3 device.
+As current and future chips will have at most 2 antennas drop these.
+While at it also convert the actions into enums and cleanup
+the code a bit.
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/rs.c |   79 +++++++++++-----------------------
+ drivers/net/wireless/iwlwifi/mvm/rs.h |   36 +++++++++------
+ 2 files changed, 48 insertions(+), 67 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/rs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/rs.c
+@@ -1089,6 +1089,19 @@ static bool iwl_is_ht40_tx_allowed(struc
+ 	return sta->bandwidth >= IEEE80211_STA_RX_BW_40;
+ }
+ 
++/* Move to the next action and wrap around to the first action in case
++ * we're at the last action. Assumes actions start at 0.
++ */
++static inline void rs_move_next_action(struct iwl_scale_tbl_info *tbl,
++				       u8 last_action)
++{
++	BUILD_BUG_ON(IWL_LEGACY_FIRST_ACTION != 0);
++	BUILD_BUG_ON(IWL_SISO_FIRST_ACTION != 0);
++	BUILD_BUG_ON(IWL_MIMO2_FIRST_ACTION != 0);
++
++	tbl->action = (tbl->action + 1) % (last_action + 1);
++}
++
+ /*
+  * Set up search table for MIMO2
+  */
+@@ -1211,14 +1224,10 @@ static int rs_move_legacy_other(struct i
+ 	while (1) {
+ 		lq_sta->action_counter++;
+ 		switch (tbl->action) {
+-		case IWL_LEGACY_SWITCH_ANTENNA1:
+-		case IWL_LEGACY_SWITCH_ANTENNA2:
++		case IWL_LEGACY_SWITCH_ANTENNA:
+ 			IWL_DEBUG_RATE(mvm, "LQ: Legacy toggle Antenna\n");
+ 
+-			if ((tbl->action == IWL_LEGACY_SWITCH_ANTENNA1 &&
+-			     tx_chains_num <= 1) ||
+-			    (tbl->action == IWL_LEGACY_SWITCH_ANTENNA2 &&
+-			     tx_chains_num <= 2))
++			if (tx_chains_num <= 1)
+ 				break;
+ 
+ 			/* Don't change antenna if success has been great */
+@@ -1273,9 +1282,7 @@ static int rs_move_legacy_other(struct i
+ 		default:
+ 			WARN_ON_ONCE(1);
+ 		}
+-		tbl->action++;
+-		if (tbl->action > IWL_LEGACY_SWITCH_MIMO2)
+-			tbl->action = IWL_LEGACY_SWITCH_ANTENNA1;
++		rs_move_next_action(tbl, IWL_LEGACY_LAST_ACTION);
+ 
+ 		if (tbl->action == start_action)
+ 			break;
+@@ -1285,9 +1292,7 @@ static int rs_move_legacy_other(struct i
+ 
+ out:
+ 	lq_sta->search_better_tbl = 1;
+-	tbl->action++;
+-	if (tbl->action > IWL_LEGACY_SWITCH_MIMO2)
+-		tbl->action = IWL_LEGACY_SWITCH_ANTENNA1;
++	rs_move_next_action(tbl, IWL_LEGACY_LAST_ACTION);
+ 	if (update_search_tbl_counter)
+ 		search_tbl->action = tbl->action;
+ 	return 0;
+@@ -1320,7 +1325,7 @@ static int rs_move_siso_to_other(struct
+ 		break;
+ 	case IWL_BT_COEX_TRAFFIC_LOAD_LOW:
+ 		/* avoid antenna B unless MIMO */
+-		if (tbl->action == IWL_SISO_SWITCH_ANTENNA2)
++		if (tbl->action == IWL_SISO_SWITCH_ANTENNA)
+ 			tbl->action = IWL_SISO_SWITCH_MIMO2;
+ 		break;
+ 	case IWL_BT_COEX_TRAFFIC_LOAD_HIGH:
+@@ -1328,8 +1333,8 @@ static int rs_move_siso_to_other(struct
+ 		/* avoid antenna B and MIMO */
+ 		valid_tx_ant =
+ 			first_antenna(iwl_fw_valid_tx_ant(mvm->fw));
+-		if (tbl->action != IWL_SISO_SWITCH_ANTENNA1)
+-			tbl->action = IWL_SISO_SWITCH_ANTENNA1;
++		if (tbl->action != IWL_SISO_SWITCH_ANTENNA)
++			tbl->action = IWL_SISO_SWITCH_ANTENNA;
+ 		break;
+ 	default:
+ 		IWL_ERR(mvm, "Invalid BT load %d",
+@@ -1341,13 +1346,9 @@ static int rs_move_siso_to_other(struct
+ 	while (1) {
+ 		lq_sta->action_counter++;
+ 		switch (tbl->action) {
+-		case IWL_SISO_SWITCH_ANTENNA1:
+-		case IWL_SISO_SWITCH_ANTENNA2:
++		case IWL_SISO_SWITCH_ANTENNA:
+ 			IWL_DEBUG_RATE(mvm, "LQ: SISO toggle Antenna\n");
+-			if ((tbl->action == IWL_SISO_SWITCH_ANTENNA1 &&
+-			     tx_chains_num <= 1) ||
+-			    (tbl->action == IWL_SISO_SWITCH_ANTENNA2 &&
+-			     tx_chains_num <= 2))
++			if (tx_chains_num <= 1)
+ 				break;
+ 
+ 			if (window->success_ratio >= IWL_RS_GOOD_RATIO &&
+@@ -1412,9 +1413,7 @@ static int rs_move_siso_to_other(struct
+ 		default:
+ 			WARN_ON_ONCE(1);
+ 		}
+-		tbl->action++;
+-		if (tbl->action > IWL_SISO_SWITCH_GI)
+-			tbl->action = IWL_SISO_SWITCH_ANTENNA1;
++		rs_move_next_action(tbl, IWL_SISO_LAST_ACTION);
+ 
+ 		if (tbl->action == start_action)
+ 			break;
+@@ -1424,9 +1423,7 @@ static int rs_move_siso_to_other(struct
+ 
+  out:
+ 	lq_sta->search_better_tbl = 1;
+-	tbl->action++;
+-	if (tbl->action > IWL_SISO_SWITCH_GI)
+-		tbl->action = IWL_SISO_SWITCH_ANTENNA1;
++	rs_move_next_action(tbl, IWL_SISO_LAST_ACTION);
+ 	if (update_search_tbl_counter)
+ 		search_tbl->action = tbl->action;
+ 
+@@ -1444,13 +1441,11 @@ static int rs_move_mimo2_to_other(struct
+ 	struct iwl_scale_tbl_info *tbl = &(lq_sta->lq_info[lq_sta->active_tbl]);
+ 	struct iwl_scale_tbl_info *search_tbl =
+ 				&(lq_sta->lq_info[(1 - lq_sta->active_tbl)]);
+-	struct iwl_rate_scale_data *window = &(tbl->win[index]);
+ 	struct ieee80211_sta_ht_cap *ht_cap = &sta->ht_cap;
+ 	u32 sz = (sizeof(struct iwl_scale_tbl_info) -
+ 		  (sizeof(struct iwl_rate_scale_data) * IWL_RATE_COUNT));
+ 	u8 start_action;
+ 	u8 valid_tx_ant = iwl_fw_valid_tx_ant(mvm->fw);
+-	u8 tx_chains_num = num_of_ant(valid_tx_ant);
+ 	u8 update_search_tbl_counter = 0;
+ 	int ret;
+ 
+@@ -1479,24 +1474,6 @@ static int rs_move_mimo2_to_other(struct
+ 	while (1) {
+ 		lq_sta->action_counter++;
+ 		switch (tbl->action) {
+-		case IWL_MIMO2_SWITCH_ANTENNA1:
+-		case IWL_MIMO2_SWITCH_ANTENNA2:
+-			IWL_DEBUG_RATE(mvm, "LQ: MIMO2 toggle Antennas\n");
+-
+-			if (tx_chains_num <= 2)
+-				break;
+-
+-			if (window->success_ratio >= IWL_RS_GOOD_RATIO)
+-				break;
+-
+-			memcpy(search_tbl, tbl, sz);
+-			if (rs_toggle_antenna(valid_tx_ant,
+-					      &search_tbl->current_rate,
+-					      search_tbl)) {
+-				update_search_tbl_counter = 1;
+-				goto out;
+-			}
+-			break;
+ 		case IWL_MIMO2_SWITCH_SISO_A:
+ 		case IWL_MIMO2_SWITCH_SISO_B:
+ 			IWL_DEBUG_RATE(mvm, "LQ: MIMO2 switch to SISO\n");
+@@ -1553,9 +1530,7 @@ static int rs_move_mimo2_to_other(struct
+ 		default:
+ 			WARN_ON_ONCE(1);
+ 		}
+-		tbl->action++;
+-		if (tbl->action > IWL_MIMO2_SWITCH_GI)
+-			tbl->action = IWL_MIMO2_SWITCH_ANTENNA1;
++		rs_move_next_action(tbl, IWL_MIMO2_LAST_ACTION);
+ 
+ 		if (tbl->action == start_action)
+ 			break;
+@@ -1564,9 +1539,7 @@ static int rs_move_mimo2_to_other(struct
+ 	return 0;
+  out:
+ 	lq_sta->search_better_tbl = 1;
+-	tbl->action++;
+-	if (tbl->action > IWL_MIMO2_SWITCH_GI)
+-		tbl->action = IWL_MIMO2_SWITCH_ANTENNA1;
++	rs_move_next_action(tbl, IWL_MIMO2_LAST_ACTION);
+ 	if (update_search_tbl_counter)
+ 		search_tbl->action = tbl->action;
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/rs.h
++++ b/drivers/net/wireless/iwlwifi/mvm/rs.h
+@@ -139,25 +139,33 @@ enum {
+ #define IWL_RATE_DECREASE_TH		1920	/*  15% */
+ 
+ /* possible actions when in legacy mode */
+-#define IWL_LEGACY_SWITCH_ANTENNA1      0
+-#define IWL_LEGACY_SWITCH_ANTENNA2      1
+-#define IWL_LEGACY_SWITCH_SISO          2
+-#define IWL_LEGACY_SWITCH_MIMO2         3
++enum {
++	IWL_LEGACY_SWITCH_ANTENNA,
++	IWL_LEGACY_SWITCH_SISO,
++	IWL_LEGACY_SWITCH_MIMO2,
++	IWL_LEGACY_FIRST_ACTION = IWL_LEGACY_SWITCH_ANTENNA,
++	IWL_LEGACY_LAST_ACTION = IWL_LEGACY_SWITCH_MIMO2,
++};
+ 
+ /* possible actions when in siso mode */
+-#define IWL_SISO_SWITCH_ANTENNA1        0
+-#define IWL_SISO_SWITCH_ANTENNA2        1
+-#define IWL_SISO_SWITCH_MIMO2           2
+-#define IWL_SISO_SWITCH_GI              3
++enum {
++	IWL_SISO_SWITCH_ANTENNA,
++	IWL_SISO_SWITCH_MIMO2,
++	IWL_SISO_SWITCH_GI,
++	IWL_SISO_FIRST_ACTION = IWL_SISO_SWITCH_ANTENNA,
++	IWL_SISO_LAST_ACTION = IWL_SISO_SWITCH_GI,
++};
+ 
+ /* possible actions when in mimo mode */
+-#define IWL_MIMO2_SWITCH_ANTENNA1       0
+-#define IWL_MIMO2_SWITCH_ANTENNA2       1
+-#define IWL_MIMO2_SWITCH_SISO_A         2
+-#define IWL_MIMO2_SWITCH_SISO_B         3
+-#define IWL_MIMO2_SWITCH_GI             4
++enum {
++	IWL_MIMO2_SWITCH_SISO_A,
++	IWL_MIMO2_SWITCH_SISO_B,
++	IWL_MIMO2_SWITCH_GI,
++	IWL_MIMO2_FIRST_ACTION = IWL_MIMO2_SWITCH_SISO_A,
++	IWL_MIMO2_LAST_ACTION = IWL_MIMO2_SWITCH_GI,
++};
+ 
+-#define IWL_MAX_SEARCH IWL_MIMO2_SWITCH_GI
++#define IWL_MAX_SEARCH IWL_MIMO2_LAST_ACTION
+ 
+ #define IWL_ACTION_LIMIT		3	/* # possible actions */
+ 
