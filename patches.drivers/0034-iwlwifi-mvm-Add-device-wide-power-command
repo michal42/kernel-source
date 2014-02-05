@@ -1,0 +1,335 @@
+From 64b928c4e2898dea07d5850a0708dceeb118fa3b Mon Sep 17 00:00:00 2001
+From: Alexander Bondar <alexander.bondar@intel.com>
+Date: Tue, 3 Sep 2013 14:18:03 +0300
+Subject: [PATCH 34/36] iwlwifi: mvm: Add device wide power command
+Git-commit: 64b928c4e2898dea07d5850a0708dceeb118fa3b
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+FW starts using legacy power table command (0x77) for device wide power
+settings. Currently this command contains only option flags field.
+It can configure the following: CAM (Continuous Active Mode) and
+POWER_SAVE_ENABLE debug option. Send this command when firmware is
+loaded - D0 and D3.
+Note: Setting this command is important to avoid unwanted FW behavior.
+It particularly fixes a bug when a device does not drop to low power
+after disassociation from AP.
+
+Signed-off-by: Alexander Bondar <alexander.bondar@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/iwl-fw.h           |    3 
+ drivers/net/wireless/iwlwifi/mvm/d3.c           |    4 +
+ drivers/net/wireless/iwlwifi/mvm/debugfs.c      |   82 +++++++++++-------------
+ drivers/net/wireless/iwlwifi/mvm/fw-api-power.h |   27 +++++++
+ drivers/net/wireless/iwlwifi/mvm/fw.c           |    4 +
+ drivers/net/wireless/iwlwifi/mvm/mvm.h          |   11 ++-
+ drivers/net/wireless/iwlwifi/mvm/power.c        |   36 +++++++++-
+ 7 files changed, 120 insertions(+), 47 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/iwl-fw.h
++++ b/drivers/net/wireless/iwlwifi/iwl-fw.h
+@@ -88,6 +88,8 @@
+  * @IWL_UCODE_TLV_FLAGS_NEW_NSOFFL_LARGE: new NS offload (large version)
+  * @IWL_UCODE_TLV_FLAGS_SCHED_SCAN: this uCode image supports scheduled scan.
+  * @IWL_UCODE_TLV_FLAGS_STA_KEY_CMD: new ADD_STA and ADD_STA_KEY command API
++ * @IWL_UCODE_TLV_FLAGS_DEVICE_PS_CMD: support device wide power command
++ *	containing CAM (Continuous Active Mode) indication.
+  */
+ enum iwl_ucode_tlv_flag {
+ 	IWL_UCODE_TLV_FLAGS_PAN			= BIT(0),
+@@ -107,6 +109,7 @@ enum iwl_ucode_tlv_flag {
+ 	IWL_UCODE_TLV_FLAGS_NEW_NSOFFL_LARGE	= BIT(16),
+ 	IWL_UCODE_TLV_FLAGS_SCHED_SCAN		= BIT(17),
+ 	IWL_UCODE_TLV_FLAGS_STA_KEY_CMD		= BIT(19),
++	IWL_UCODE_TLV_FLAGS_DEVICE_PS_CMD	= BIT(20),
+ };
+ 
+ /* The default calibrate table size if not specified by firmware file */
+--- a/drivers/net/wireless/iwlwifi/mvm/d3.c
++++ b/drivers/net/wireless/iwlwifi/mvm/d3.c
+@@ -1149,6 +1149,10 @@ static int __iwl_mvm_suspend(struct ieee
+ 	if (ret)
+ 		goto out;
+ 
++	ret = iwl_mvm_power_update_device_mode(mvm);
++	if (ret)
++		goto out;
++
+ 	ret = iwl_mvm_power_update_mode(mvm, vif);
+ 	if (ret)
+ 		goto out;
+--- a/drivers/net/wireless/iwlwifi/mvm/debugfs.c
++++ b/drivers/net/wireless/iwlwifi/mvm/debugfs.c
+@@ -250,60 +250,56 @@ static ssize_t iwl_dbgfs_stations_read(s
+ 	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
+ }
+ 
+-static ssize_t iwl_dbgfs_power_down_allow_write(struct file *file,
+-						const char __user *user_buf,
++static ssize_t iwl_dbgfs_disable_power_off_read(struct file *file,
++						char __user *user_buf,
+ 						size_t count, loff_t *ppos)
+ {
+ 	struct iwl_mvm *mvm = file->private_data;
+-	char buf[8] = {};
+-	int allow;
+-
+-	if (!mvm->ucode_loaded)
+-		return -EIO;
+-
+-	count = min_t(size_t, count, sizeof(buf) - 1);
+-	if (copy_from_user(buf, user_buf, count))
+-		return -EFAULT;
+-
+-	if (sscanf(buf, "%d", &allow) != 1)
+-		return -EINVAL;
+-
+-	IWL_DEBUG_POWER(mvm, "%s device power down\n",
+-			allow ? "allow" : "prevent");
++	char buf[64];
++	int bufsz = sizeof(buf);
++	int pos = 0;
+ 
+-	/*
+-	 * TODO: Send REPLY_DEBUG_CMD (0xf0) when FW support it
+-	 */
++	pos += scnprintf(buf+pos, bufsz-pos, "disable_power_off_d0=%d\n",
++			 mvm->disable_power_off);
++	pos += scnprintf(buf+pos, bufsz-pos, "disable_power_off_d3=%d\n",
++			 mvm->disable_power_off_d3);
+ 
+-	return count;
++	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
+ }
+ 
+-static ssize_t iwl_dbgfs_power_down_d3_allow_write(struct file *file,
+-						   const char __user *user_buf,
+-						   size_t count, loff_t *ppos)
++static ssize_t iwl_dbgfs_disable_power_off_write(struct file *file,
++						 const char __user *user_buf,
++						 size_t count, loff_t *ppos)
+ {
+ 	struct iwl_mvm *mvm = file->private_data;
+-	char buf[8] = {};
+-	int allow;
++	char buf[64] = {};
++	int ret;
++	int val;
++
++	if (!mvm->ucode_loaded)
++		return -EIO;
+ 
+ 	count = min_t(size_t, count, sizeof(buf) - 1);
+ 	if (copy_from_user(buf, user_buf, count))
+ 		return -EFAULT;
+ 
+-	if (sscanf(buf, "%d", &allow) != 1)
++	if (!strncmp("disable_power_off_d0=", buf, 21)) {
++		if (sscanf(buf + 21, "%d", &val) != 1)
++			return -EINVAL;
++		mvm->disable_power_off = val;
++	} else if (!strncmp("disable_power_off_d3=", buf, 21)) {
++		if (sscanf(buf + 21, "%d", &val) != 1)
++			return -EINVAL;
++		mvm->disable_power_off_d3 = val;
++	} else {
+ 		return -EINVAL;
++	}
+ 
+-	IWL_DEBUG_POWER(mvm, "%s device power down in d3\n",
+-			allow ? "allow" : "prevent");
+-
+-	/*
+-	 * TODO: When WoWLAN FW alive notification happens, driver will send
+-	 * REPLY_DEBUG_CMD setting power_down_allow flag according to
+-	 * mvm->prevent_power_down_d3
+-	 */
+-	mvm->prevent_power_down_d3 = !allow;
++	mutex_lock(&mvm->mutex);
++	ret = iwl_mvm_power_update_device_mode(mvm);
++	mutex_unlock(&mvm->mutex);
+ 
+-	return count;
++	return ret ?: count;
+ }
+ 
+ static void iwl_dbgfs_update_pm(struct iwl_mvm *mvm,
+@@ -401,7 +397,9 @@ static ssize_t iwl_dbgfs_pm_params_write
+ 		if (sscanf(buf + 16, "%d", &val) != 1)
+ 			return -EINVAL;
+ 		param = MVM_DEBUGFS_PM_TX_DATA_TIMEOUT;
+-	} else if (!strncmp("disable_power_off=", buf, 18)) {
++	} else if (!strncmp("disable_power_off=", buf, 18) &&
++		   !(mvm->fw->ucode_capa.flags &
++		     IWL_UCODE_TLV_FLAGS_DEVICE_PS_CMD)) {
+ 		if (sscanf(buf + 18, "%d", &val) != 1)
+ 			return -EINVAL;
+ 		param = MVM_DEBUGFS_PM_DISABLE_POWER_OFF;
+@@ -1163,8 +1161,7 @@ MVM_DEBUGFS_READ_WRITE_FILE_OPS(sram);
+ MVM_DEBUGFS_READ_FILE_OPS(stations);
+ MVM_DEBUGFS_READ_FILE_OPS(bt_notif);
+ MVM_DEBUGFS_READ_FILE_OPS(bt_cmd);
+-MVM_DEBUGFS_WRITE_FILE_OPS(power_down_allow);
+-MVM_DEBUGFS_WRITE_FILE_OPS(power_down_d3_allow);
++MVM_DEBUGFS_READ_WRITE_FILE_OPS(disable_power_off);
+ MVM_DEBUGFS_READ_FILE_OPS(fw_rx_stats);
+ MVM_DEBUGFS_WRITE_FILE_OPS(fw_restart);
+ MVM_DEBUGFS_READ_WRITE_FILE_OPS(scan_ant_rxchain);
+@@ -1190,8 +1187,9 @@ int iwl_mvm_dbgfs_register(struct iwl_mv
+ 	MVM_DEBUGFS_ADD_FILE(stations, dbgfs_dir, S_IRUSR);
+ 	MVM_DEBUGFS_ADD_FILE(bt_notif, dbgfs_dir, S_IRUSR);
+ 	MVM_DEBUGFS_ADD_FILE(bt_cmd, dbgfs_dir, S_IRUSR);
+-	MVM_DEBUGFS_ADD_FILE(power_down_allow, mvm->debugfs_dir, S_IWUSR);
+-	MVM_DEBUGFS_ADD_FILE(power_down_d3_allow, mvm->debugfs_dir, S_IWUSR);
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_DEVICE_PS_CMD)
++		MVM_DEBUGFS_ADD_FILE(disable_power_off, mvm->debugfs_dir,
++				     S_IRUSR | S_IWUSR);
+ 	MVM_DEBUGFS_ADD_FILE(fw_rx_stats, mvm->debugfs_dir, S_IRUSR);
+ 	MVM_DEBUGFS_ADD_FILE(fw_restart, mvm->debugfs_dir, S_IWUSR);
+ 	MVM_DEBUGFS_ADD_FILE(scan_ant_rxchain, mvm->debugfs_dir,
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api-power.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api-power.h
+@@ -132,6 +132,33 @@ struct iwl_powertable_cmd {
+ } __packed;
+ 
+ /**
++ * enum iwl_device_power_flags - masks for device power command flags
++ * @DEVIC_POWER_FLAGS_POWER_SAVE_ENA_MSK: '1' Allow to save power by turning off
++ *	receiver and transmitter. '0' - does not allow. This flag should be
++ *	always set to '1' unless one need to disable actual power down for debug
++ *	purposes.
++ * @DEVICE_POWER_FLAGS_CAM_MSK: '1' CAM (Continuous Active Mode) is set, meaning
++ *	that power management is disabled. '0' Power management is enabled, one
++ *	of power schemes is applied.
++*/
++enum iwl_device_power_flags {
++	DEVICE_POWER_FLAGS_POWER_SAVE_ENA_MSK	= BIT(0),
++	DEVICE_POWER_FLAGS_CAM_MSK		= BIT(13),
++};
++
++/**
++ * struct iwl_device_power_cmd - device wide power command.
++ * DEVICE_POWER_CMD = 0x77 (command, has simple generic response)
++ *
++ * @flags:	Power table command flags from DEVICE_POWER_FLAGS_*
++ */
++struct iwl_device_power_cmd {
++	/* PM_POWER_TABLE_CMD_API_S_VER_6 */
++	__le16 flags;
++	__le16 reserved;
++} __packed;
++
++/**
+  * struct iwl_mac_power_cmd - New power command containing uAPSD support
+  * MAC_PM_POWER_TABLE = 0xA9 (command, has simple generic response)
+  * @id_and_color:	MAC contex identifier
+--- a/drivers/net/wireless/iwlwifi/mvm/fw.c
++++ b/drivers/net/wireless/iwlwifi/mvm/fw.c
+@@ -428,6 +428,10 @@ int iwl_mvm_up(struct iwl_mvm *mvm)
+ 			goto error;
+ 	}
+ 
++	ret = iwl_mvm_power_update_device_mode(mvm);
++	if (ret)
++		goto error;
++
+ 	IWL_DEBUG_INFO(mvm, "RT uCode started.\n");
+ 	return 0;
+  error:
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -162,6 +162,7 @@ enum iwl_power_scheme {
+ struct iwl_mvm_power_ops {
+ 	int (*power_update_mode)(struct iwl_mvm *mvm,
+ 				 struct ieee80211_vif *vif);
++	int (*power_update_device_mode)(struct iwl_mvm *mvm);
+ 	int (*power_disable)(struct iwl_mvm *mvm, struct ieee80211_vif *vif);
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+ 	int (*power_dbgfs_read)(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
+@@ -489,7 +490,8 @@ struct iwl_mvm {
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+ 	struct dentry *debugfs_dir;
+ 	u32 dbgfs_sram_offset, dbgfs_sram_len;
+-	bool prevent_power_down_d3;
++	bool disable_power_off;
++	bool disable_power_off_d3;
+ #endif
+ 
+ 	struct iwl_mvm_phy_ctxt phy_ctxts[NUM_PHY_CTX];
+@@ -756,6 +758,13 @@ static inline int iwl_mvm_power_disable(
+ 	return mvm->pm_ops->power_disable(mvm, vif);
+ }
+ 
++static inline int iwl_mvm_power_update_device_mode(struct iwl_mvm *mvm)
++{
++	if (mvm->pm_ops->power_update_device_mode)
++		return mvm->pm_ops->power_update_device_mode(mvm);
++	return 0;
++}
++
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+ static inline int iwl_mvm_power_dbgfs_read(struct iwl_mvm *mvm,
+ 					    struct ieee80211_vif *vif,
+--- a/drivers/net/wireless/iwlwifi/mvm/power.c
++++ b/drivers/net/wireless/iwlwifi/mvm/power.c
+@@ -446,6 +446,32 @@ static int iwl_mvm_power_mac_disable(str
+ 				    sizeof(cmd), &cmd);
+ }
+ 
++static int iwl_mvm_power_update_device(struct iwl_mvm *mvm)
++{
++	struct iwl_device_power_cmd cmd = {
++		.flags = cpu_to_le16(DEVICE_POWER_FLAGS_POWER_SAVE_ENA_MSK),
++	};
++
++	if (!(mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_DEVICE_PS_CMD))
++		return 0;
++
++	if (iwlmvm_mod_params.power_scheme == IWL_POWER_SCHEME_CAM)
++		cmd.flags |= cpu_to_le16(DEVICE_POWER_FLAGS_CAM_MSK);
++
++#ifdef CONFIG_IWLWIFI_DEBUGFS
++	if ((mvm->cur_ucode == IWL_UCODE_WOWLAN) ? mvm->disable_power_off_d3 :
++	    mvm->disable_power_off)
++		cmd.flags &=
++			cpu_to_le16(~DEVICE_POWER_FLAGS_POWER_SAVE_ENA_MSK);
++#endif
++	IWL_DEBUG_POWER(mvm,
++			"Sending device power command with flags = 0x%X\n",
++			cmd.flags);
++
++	return iwl_mvm_send_cmd_pdu(mvm, POWER_TABLE_CMD, CMD_SYNC, sizeof(cmd),
++				    &cmd);
++}
++
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+ static int iwl_mvm_power_mac_dbgfs_read(struct iwl_mvm *mvm,
+ 					struct ieee80211_vif *vif, char *buf,
+@@ -456,10 +482,11 @@ static int iwl_mvm_power_mac_dbgfs_read(
+ 
+ 	iwl_mvm_power_build_cmd(mvm, vif, &cmd);
+ 
+-	pos += scnprintf(buf+pos, bufsz-pos, "disable_power_off = %d\n",
+-			 (cmd.flags &
+-			 cpu_to_le16(POWER_FLAGS_POWER_SAVE_ENA_MSK)) ?
+-			 0 : 1);
++	if (!(mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_DEVICE_PS_CMD))
++		pos += scnprintf(buf+pos, bufsz-pos, "disable_power_off = %d\n",
++				 (cmd.flags &
++				 cpu_to_le16(POWER_FLAGS_POWER_SAVE_ENA_MSK)) ?
++				 0 : 1);
+ 	pos += scnprintf(buf+pos, bufsz-pos, "power_scheme = %d\n",
+ 			 iwlmvm_mod_params.power_scheme);
+ 	pos += scnprintf(buf+pos, bufsz-pos, "flags = 0x%x\n",
+@@ -625,6 +652,7 @@ int iwl_mvm_update_beacon_filter(struct
+ 
+ const struct iwl_mvm_power_ops pm_mac_ops = {
+ 	.power_update_mode = iwl_mvm_power_mac_update_mode,
++	.power_update_device_mode = iwl_mvm_power_update_device,
+ 	.power_disable = iwl_mvm_power_mac_disable,
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+ 	.power_dbgfs_read = iwl_mvm_power_mac_dbgfs_read,
