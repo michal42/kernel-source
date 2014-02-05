@@ -1,0 +1,78 @@
+From 9439eac79f1edae172f7c54dce61c4fe2c8308ad Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Wed, 9 Oct 2013 09:59:25 +0200
+Subject: [PATCH 51/54] iwlwifi: pcie: poke device when commands don't complete quickly
+Git-commit: 9439eac79f1edae172f7c54dce61c4fe2c8308ad
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+In certain corner cases in the firmware implementation, powersave
+transitions can cause the firmware to miss the fact that commands
+were added to the queue/FIFO and thus never processes them. Since
+the commands really are in the queue, try to poke the firmware in
+such cases (by grabbing NIC access, which wakes up the NIC) so it
+notices the new command and processes it.
+
+Reviewed-by: Alexander Bondar <alexander.bondar@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/pcie/tx.c |   31 ++++++++++++++++++++++++++-----
+ 1 file changed, 26 insertions(+), 5 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/pcie/tx.c
++++ b/drivers/net/wireless/iwlwifi/pcie/tx.c
+@@ -1465,7 +1465,8 @@ void iwl_pcie_hcmd_complete(struct iwl_t
+ 	spin_unlock_bh(&txq->lock);
+ }
+ 
+-#define HOST_COMPLETE_TIMEOUT (2 * HZ)
++#define HOST_COMPLETE_TIMEOUT	(2 * HZ)
++#define COMMAND_POKE_TIMEOUT	(HZ / 10)
+ 
+ static int iwl_pcie_send_hcmd_async(struct iwl_trans *trans,
+ 				    struct iwl_host_cmd *cmd)
+@@ -1493,6 +1494,7 @@ static int iwl_pcie_send_hcmd_sync(struc
+ 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
+ 	int cmd_idx;
+ 	int ret;
++	int timeout = HOST_COMPLETE_TIMEOUT;
+ 
+ 	IWL_DEBUG_INFO(trans, "Attempting to send sync command %s\n",
+ 		       get_cmd_string(trans_pcie, cmd->id));
+@@ -1517,10 +1519,29 @@ static int iwl_pcie_send_hcmd_sync(struc
+ 		return ret;
+ 	}
+ 
+-	ret = wait_event_timeout(trans_pcie->wait_command_queue,
+-				 !test_bit(STATUS_HCMD_ACTIVE,
+-					   &trans_pcie->status),
+-				 HOST_COMPLETE_TIMEOUT);
++	while (timeout > 0) {
++		unsigned long flags;
++
++		timeout -= COMMAND_POKE_TIMEOUT;
++		ret = wait_event_timeout(trans_pcie->wait_command_queue,
++					 !test_bit(STATUS_HCMD_ACTIVE,
++						   &trans_pcie->status),
++					 COMMAND_POKE_TIMEOUT);
++		if (ret)
++			break;
++		/* poke the device - it may have lost the command */
++		if (iwl_trans_grab_nic_access(trans, true, &flags)) {
++			iwl_trans_release_nic_access(trans, &flags);
++			IWL_DEBUG_INFO(trans,
++				       "Tried to wake NIC for command %s\n",
++				       get_cmd_string(trans_pcie, cmd->id));
++		} else {
++			IWL_ERR(trans, "Failed to poke NIC for command %s\n",
++				get_cmd_string(trans_pcie, cmd->id));
++			break;
++		}
++	}
++
+ 	if (!ret) {
+ 		if (test_bit(STATUS_HCMD_ACTIVE, &trans_pcie->status)) {
+ 			struct iwl_txq *txq =
