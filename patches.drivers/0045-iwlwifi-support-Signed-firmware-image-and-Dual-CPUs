@@ -1,0 +1,300 @@
+From e2d6f4e71dc76c815434234cb58c410871888e53 Mon Sep 17 00:00:00 2001
+From: Eran Harary <eran.harary@intel.com>
+Date: Wed, 2 Oct 2013 13:53:40 +0300
+Subject: [PATCH 45/50] iwlwifi: support Signed firmware image and Dual CPUs
+Git-commit: e2d6f4e71dc76c815434234cb58c410871888e53
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Support Signed firmware based on code signing system (CSS)
+protocol and dual CPUs download,
+the code recognize if there are more than one CPU and
+if we need to operate the signed protocol according to
+the ucode binary image
+
+Signed-off-by: Eran Harary <eran.harary@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/iwl-csr.h     |   32 +++++++
+ drivers/net/wireless/iwlwifi/iwl-drv.c     |   37 ++++++++
+ drivers/net/wireless/iwlwifi/iwl-fw-file.h |    4 
+ drivers/net/wireless/iwlwifi/iwl-fw.h      |    5 -
+ drivers/net/wireless/iwlwifi/pcie/trans.c  |  124 ++++++++++++++++++++++++++++-
+ 5 files changed, 197 insertions(+), 5 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/iwl-csr.h
++++ b/drivers/net/wireless/iwlwifi/iwl-csr.h
+@@ -394,6 +394,38 @@
+ #define CSR_DRAM_INT_TBL_ENABLE		(1 << 31)
+ #define CSR_DRAM_INIT_TBL_WRAP_CHECK	(1 << 27)
+ 
++/* SECURE boot registers */
++#define CSR_SECURE_BOOT_CONFIG_ADDR	(0x100)
++enum secure_boot_config_reg {
++	CSR_SECURE_BOOT_CONFIG_INSPECTOR_BURNED_IN_OTP	= 0x00000001,
++	CSR_SECURE_BOOT_CONFIG_INSPECTOR_NOT_REQ	= 0x00000002,
++};
++
++#define CSR_SECURE_BOOT_CPU1_STATUS_ADDR	(0x100)
++#define CSR_SECURE_BOOT_CPU2_STATUS_ADDR	(0x100)
++enum secure_boot_status_reg {
++	CSR_SECURE_BOOT_CPU_STATUS_VERF_STATUS		= 0x00000003,
++	CSR_SECURE_BOOT_CPU_STATUS_VERF_COMPLETED	= 0x00000002,
++	CSR_SECURE_BOOT_CPU_STATUS_VERF_SUCCESS		= 0x00000004,
++	CSR_SECURE_BOOT_CPU_STATUS_VERF_FAIL		= 0x00000008,
++	CSR_SECURE_BOOT_CPU_STATUS_SIGN_VERF_FAIL	= 0x00000010,
++};
++
++#define CSR_UCODE_LOAD_STATUS_ADDR	(0x100)
++enum secure_load_status_reg {
++	CSR_CPU_STATUS_LOADING_STARTED			= 0x00000001,
++	CSR_CPU_STATUS_LOADING_COMPLETED		= 0x00000002,
++	CSR_CPU_STATUS_NUM_OF_LAST_COMPLETED		= 0x000000F8,
++	CSR_CPU_STATUS_NUM_OF_LAST_LOADED_BLOCK		= 0x0000FF00,
++};
++
++#define CSR_SECURE_INSPECTOR_CODE_ADDR	(0x100)
++#define CSR_SECURE_INSPECTOR_DATA_ADDR	(0x100)
++
++#define CSR_SECURE_TIME_OUT	(100)
++
++#define FH_TCSR_0_REG0 (0x1D00)
++
+ /*
+  * HBUS (Host-side Bus)
+  *
+--- a/drivers/net/wireless/iwlwifi/iwl-drv.c
++++ b/drivers/net/wireless/iwlwifi/iwl-drv.c
+@@ -483,6 +483,7 @@ static int iwl_parse_tlv_firmware(struct
+ 	const u8 *tlv_data;
+ 	char buildstr[25];
+ 	u32 build;
++	int num_of_cpus;
+ 
+ 	if (len < sizeof(*ucode)) {
+ 		IWL_ERR(drv, "uCode has invalid length: %zd\n", len);
+@@ -692,6 +693,42 @@ static int iwl_parse_tlv_firmware(struct
+ 				goto invalid_tlv_len;
+ 			drv->fw.phy_config = le32_to_cpup((__le32 *)tlv_data);
+ 			break;
++		 case IWL_UCODE_TLV_SECURE_SEC_RT:
++			iwl_store_ucode_sec(pieces, tlv_data, IWL_UCODE_REGULAR,
++					    tlv_len);
++			drv->fw.mvm_fw = true;
++			drv->fw.img[IWL_UCODE_REGULAR].is_secure = true;
++			break;
++		case IWL_UCODE_TLV_SECURE_SEC_INIT:
++			iwl_store_ucode_sec(pieces, tlv_data, IWL_UCODE_INIT,
++					    tlv_len);
++			drv->fw.mvm_fw = true;
++			drv->fw.img[IWL_UCODE_INIT].is_secure = true;
++			break;
++		case IWL_UCODE_TLV_SECURE_SEC_WOWLAN:
++			iwl_store_ucode_sec(pieces, tlv_data, IWL_UCODE_WOWLAN,
++					    tlv_len);
++			drv->fw.mvm_fw = true;
++			drv->fw.img[IWL_UCODE_WOWLAN].is_secure = true;
++			break;
++		case IWL_UCODE_TLV_NUM_OF_CPU:
++			if (tlv_len != sizeof(u32))
++				goto invalid_tlv_len;
++			num_of_cpus =
++				le32_to_cpup((__le32 *)tlv_data);
++
++			if (num_of_cpus == 2) {
++				drv->fw.img[IWL_UCODE_REGULAR].is_dual_cpus =
++					true;
++				drv->fw.img[IWL_UCODE_INIT].is_dual_cpus =
++					true;
++				drv->fw.img[IWL_UCODE_WOWLAN].is_dual_cpus =
++					true;
++			} else if ((num_of_cpus > 2) || (num_of_cpus < 1)) {
++				IWL_ERR(drv, "Driver support upto 2 CPUs\n");
++				return -EINVAL;
++			}
++			break;
+ 		default:
+ 			IWL_DEBUG_INFO(drv, "unknown TLV: %d\n", tlv_type);
+ 			break;
+--- a/drivers/net/wireless/iwlwifi/iwl-fw-file.h
++++ b/drivers/net/wireless/iwlwifi/iwl-fw-file.h
+@@ -121,6 +121,10 @@ enum iwl_ucode_tlv_type {
+ 	IWL_UCODE_TLV_SEC_WOWLAN	= 21,
+ 	IWL_UCODE_TLV_DEF_CALIB		= 22,
+ 	IWL_UCODE_TLV_PHY_SKU		= 23,
++	IWL_UCODE_TLV_SECURE_SEC_RT	= 24,
++	IWL_UCODE_TLV_SECURE_SEC_INIT	= 25,
++	IWL_UCODE_TLV_SECURE_SEC_WOWLAN	= 26,
++	IWL_UCODE_TLV_NUM_OF_CPU	= 27,
+ };
+ 
+ struct iwl_ucode_tlv {
+--- a/drivers/net/wireless/iwlwifi/iwl-fw.h
++++ b/drivers/net/wireless/iwlwifi/iwl-fw.h
+@@ -154,7 +154,8 @@ enum iwl_ucode_sec {
+  * For 16.0 uCode and above, there is no differentiation between sections,
+  * just an offset to the HW address.
+  */
+-#define IWL_UCODE_SECTION_MAX 4
++#define IWL_UCODE_SECTION_MAX 6
++#define IWL_UCODE_FIRST_SECTION_OF_SECOND_CPU	(IWL_UCODE_SECTION_MAX/2)
+ 
+ struct iwl_ucode_capabilities {
+ 	u32 max_probe_length;
+@@ -171,6 +172,8 @@ struct fw_desc {
+ 
+ struct fw_img {
+ 	struct fw_desc sec[IWL_UCODE_SECTION_MAX];
++	bool is_secure;
++	bool is_dual_cpus;
+ };
+ 
+ /* uCode version contains 4 values: Major/Minor/API/Serial */
+--- a/drivers/net/wireless/iwlwifi/pcie/trans.c
++++ b/drivers/net/wireless/iwlwifi/pcie/trans.c
+@@ -443,22 +443,138 @@ static int iwl_pcie_load_section(struct
+ 	return ret;
+ }
+ 
++static int iwl_pcie_secure_set(struct iwl_trans *trans, int cpu)
++{
++	int shift_param;
++	u32 address;
++	int ret = 0;
++
++	if (cpu == 1) {
++		shift_param = 0;
++		address = CSR_SECURE_BOOT_CPU1_STATUS_ADDR;
++	} else {
++		shift_param = 16;
++		address = CSR_SECURE_BOOT_CPU2_STATUS_ADDR;
++	}
++
++	/* set CPU to started */
++	iwl_trans_set_bits_mask(trans,
++				CSR_UCODE_LOAD_STATUS_ADDR,
++				CSR_CPU_STATUS_LOADING_STARTED << shift_param,
++				1);
++
++	/* set last complete descriptor number */
++	iwl_trans_set_bits_mask(trans,
++				CSR_UCODE_LOAD_STATUS_ADDR,
++				CSR_CPU_STATUS_NUM_OF_LAST_COMPLETED
++				<< shift_param,
++				1);
++
++	/* set last loaded block */
++	iwl_trans_set_bits_mask(trans,
++				CSR_UCODE_LOAD_STATUS_ADDR,
++				CSR_CPU_STATUS_NUM_OF_LAST_LOADED_BLOCK
++				<< shift_param,
++				1);
++
++	/* image loading complete */
++	iwl_trans_set_bits_mask(trans,
++				CSR_UCODE_LOAD_STATUS_ADDR,
++				CSR_CPU_STATUS_LOADING_COMPLETED
++				<< shift_param,
++				1);
++
++	/* set FH_TCSR_0_REG  */
++	iwl_trans_set_bits_mask(trans, FH_TCSR_0_REG0, 0x00400000, 1);
++
++	/* verify image verification started  */
++	ret = iwl_poll_bit(trans, address,
++			   CSR_SECURE_BOOT_CPU_STATUS_VERF_STATUS,
++			   CSR_SECURE_BOOT_CPU_STATUS_VERF_STATUS,
++			   CSR_SECURE_TIME_OUT);
++	if (ret < 0) {
++		IWL_ERR(trans, "secure boot process didn't start\n");
++		return ret;
++	}
++
++	/* wait for image verification to complete  */
++	ret = iwl_poll_bit(trans, address,
++			   CSR_SECURE_BOOT_CPU_STATUS_VERF_COMPLETED,
++			   CSR_SECURE_BOOT_CPU_STATUS_VERF_COMPLETED,
++			   CSR_SECURE_TIME_OUT);
++
++	if (ret < 0) {
++		IWL_ERR(trans, "Time out on secure boot process\n");
++		return ret;
++	}
++
++	return 0;
++}
++
+ static int iwl_pcie_load_given_ucode(struct iwl_trans *trans,
+ 				const struct fw_img *image)
+ {
+ 	int i, ret = 0;
+ 
+-	for (i = 0; i < IWL_UCODE_SECTION_MAX; i++) {
++	IWL_DEBUG_FW(trans,
++		     "working with %s image\n",
++		     image->is_secure ? "Secured" : "Non Secured");
++	IWL_DEBUG_FW(trans,
++		     "working with %s CPU\n",
++		     image->is_dual_cpus ? "Dual" : "Single");
++
++	/* configure the ucode to be ready to get the secured image */
++	if (image->is_secure) {
++		/* set secure boot inspector addresses */
++		iwl_write32(trans, CSR_SECURE_INSPECTOR_CODE_ADDR, 0);
++		iwl_write32(trans, CSR_SECURE_INSPECTOR_DATA_ADDR, 0);
++
++		/* release CPU1 reset if secure inspector image burned in OTP */
++		iwl_write32(trans, CSR_RESET, 0);
++	}
++
++	/* load to FW the binary sections of CPU1 */
++	IWL_DEBUG_INFO(trans, "Loading CPU1\n");
++	for (i = 0;
++	     i < IWL_UCODE_FIRST_SECTION_OF_SECOND_CPU;
++	     i++) {
+ 		if (!image->sec[i].data)
+ 			break;
+-
+ 		ret = iwl_pcie_load_section(trans, i, &image->sec[i]);
+ 		if (ret)
+ 			return ret;
+ 	}
+ 
+-	/* Remove all resets to allow NIC to operate */
+-	iwl_write32(trans, CSR_RESET, 0);
++	/* configure the ucode to start secure process on CPU1 */
++	if (image->is_secure) {
++		/* config CPU1 to start secure protocol */
++		ret = iwl_pcie_secure_set(trans, 1);
++		if (ret)
++			return ret;
++	} else {
++		/* Remove all resets to allow NIC to operate */
++		iwl_write32(trans, CSR_RESET, 0);
++	}
++
++	if (image->is_dual_cpus) {
++		/* load to FW the binary sections of CPU2 */
++		IWL_DEBUG_INFO(trans, "working w/ DUAL CPUs - Loading CPU2\n");
++		for (i = IWL_UCODE_FIRST_SECTION_OF_SECOND_CPU;
++			i < IWL_UCODE_SECTION_MAX; i++) {
++			if (!image->sec[i].data)
++				break;
++			ret = iwl_pcie_load_section(trans, i, &image->sec[i]);
++			if (ret)
++				return ret;
++		}
++
++		if (image->is_secure) {
++			/* set CPU2 for secure protocol */
++			ret = iwl_pcie_secure_set(trans, 2);
++			if (ret)
++				return ret;
++		}
++	}
+ 
+ 	return 0;
+ }
