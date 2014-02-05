@@ -1,0 +1,36 @@
+From 2e0cc86535fe85910935f896f098f8d74389a355 Mon Sep 17 00:00:00 2001
+From: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Date: Tue, 20 Aug 2013 08:19:32 +0300
+Subject: [PATCH 05/36] iwlwifi: mvm: use CTS to Self if firmware allows it
+Git-commit: 2e0cc86535fe85910935f896f098f8d74389a355
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Newer firmware fixed a bug that prevented to use CTS to
+self. Firmwares with API greater than 8 have this bug
+fixed. Enable the feature for these firmwares only.
+
+Signed-off-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/mac-ctxt.c |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/mac-ctxt.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac-ctxt.c
+@@ -559,8 +559,12 @@ static void iwl_mvm_mac_ctxt_cmd_common(
+ 		cmd->qos_flags |= cpu_to_le32(MAC_QOS_FLG_UPDATE_EDCA);
+ 
+ 	/* Don't use cts to self as the fw doesn't support it currently. */
+-	if (vif->bss_conf.use_cts_prot)
++	if (vif->bss_conf.use_cts_prot) {
+ 		cmd->protection_flags |= cpu_to_le32(MAC_PROT_FLG_TGG_PROTECT);
++		if (IWL_UCODE_API(mvm->fw->ucode_ver) >= 8)
++			cmd->protection_flags |=
++				cpu_to_le32(MAC_PROT_FLG_SELF_CTS_EN);
++	}
+ 
+ 	/*
+ 	 * I think that we should enable these 2 flags regardless the HT PROT
