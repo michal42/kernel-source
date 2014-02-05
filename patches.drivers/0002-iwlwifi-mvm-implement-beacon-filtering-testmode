@@ -1,0 +1,74 @@
+From f6c6ad42b5e8b165ec1c62cfcd589c17a1682ca1 Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Thu, 1 Aug 2013 14:17:15 +0200
+Subject: [PATCH 02/36] iwlwifi: mvm: implement beacon filtering testmode command
+Git-commit: f6c6ad42b5e8b165ec1c62cfcd589c17a1682ca1
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Add a testmode command to (manually) disable (and re-enable)
+beacon filtering for testing purposes.
+
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/mvm/mac80211.c |   11 +++++++++++
+ drivers/net/wireless/iwlwifi/mvm/testmode.h |    4 ++++
+ 2 files changed, 15 insertions(+)
+
+--- a/drivers/net/wireless/iwlwifi/mvm/mac80211.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac80211.c
+@@ -1570,6 +1570,7 @@ static void iwl_mvm_mac_rssi_callback(st
+ static const struct nla_policy iwl_mvm_tm_policy[IWL_MVM_TM_ATTR_MAX + 1] = {
+ 	[IWL_MVM_TM_ATTR_CMD] = { .type = NLA_U32 },
+ 	[IWL_MVM_TM_ATTR_NOA_DURATION] = { .type = NLA_U32 },
++	[IWL_MVM_TM_ATTR_BEACON_FILTER_STATE] = { .type = NLA_U32 },
+ };
+ 
+ static int __iwl_mvm_mac_testmode_cmd(struct iwl_mvm *mvm,
+@@ -1602,6 +1603,16 @@ static int __iwl_mvm_mac_testmode_cmd(st
+ 		mvm->noa_vif = vif;
+ 
+ 		return iwl_mvm_update_quotas(mvm, NULL);
++	case IWL_MVM_TM_CMD_SET_BEACON_FILTER:
++		/* must be associated client vif - ignore authorized */
++		if (!vif || vif->type != NL80211_IFTYPE_STATION ||
++		    !vif->bss_conf.assoc || !vif->bss_conf.dtim_period ||
++		    !tb[IWL_MVM_TM_ATTR_BEACON_FILTER_STATE])
++			return -EINVAL;
++
++		if (nla_get_u32(tb[IWL_MVM_TM_ATTR_BEACON_FILTER_STATE]))
++			return iwl_mvm_enable_beacon_filter(mvm, vif);
++		return iwl_mvm_disable_beacon_filter(mvm, vif);
+ 	}
+ 
+ 	return -EOPNOTSUPP;
+--- a/drivers/net/wireless/iwlwifi/mvm/testmode.h
++++ b/drivers/net/wireless/iwlwifi/mvm/testmode.h
+@@ -69,11 +69,13 @@
+  * @IWL_MVM_TM_ATTR_UNSPEC: (invalid attribute)
+  * @IWL_MVM_TM_ATTR_CMD: sub command, see &enum iwl_mvm_testmode_commands (u32)
+  * @IWL_MVM_TM_ATTR_NOA_DURATION: requested NoA duration (u32)
++ * @IWL_MVM_TM_ATTR_BEACON_FILTER_STATE: beacon filter state (0 or 1, u32)
+  */
+ enum iwl_mvm_testmode_attrs {
+ 	IWL_MVM_TM_ATTR_UNSPEC,
+ 	IWL_MVM_TM_ATTR_CMD,
+ 	IWL_MVM_TM_ATTR_NOA_DURATION,
++	IWL_MVM_TM_ATTR_BEACON_FILTER_STATE,
+ 
+ 	/* keep last */
+ 	NUM_IWL_MVM_TM_ATTRS,
+@@ -83,9 +85,11 @@ enum iwl_mvm_testmode_attrs {
+ /**
+  * enum iwl_mvm_testmode_commands - MVM testmode commands
+  * @IWL_MVM_TM_CMD_SET_NOA: set NoA on GO vif for testing
++ * @IWL_MVM_TM_CMD_SET_BEACON_FILTER: turn beacon filtering off/on
+  */
+ enum iwl_mvm_testmode_commands {
+ 	IWL_MVM_TM_CMD_SET_NOA,
++	IWL_MVM_TM_CMD_SET_BEACON_FILTER,
+ };
+ 
+ #endif /* __IWL_MVM_TESTMODE_H__ */
