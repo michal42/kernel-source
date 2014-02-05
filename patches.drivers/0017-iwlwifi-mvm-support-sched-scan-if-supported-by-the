@@ -1,0 +1,737 @@
+From 35a000b7c1bbd81631097539567f24a272a2fa0f Mon Sep 17 00:00:00 2001
+From: David Spinadel <david.spinadel@intel.com>
+Date: Wed, 28 Aug 2013 09:29:43 +0300
+Subject: [PATCH 17/36] iwlwifi: mvm: support sched scan if supported by the fw
+Git-commit: 35a000b7c1bbd81631097539567f24a272a2fa0f
+Patch-mainline: 3.13-rc1
+References: FATE#316958
+
+Add support for scheduled scan according to firmware support.
+
+Signed-off-by: David Spinadel <david.spinadel@intel.com>
+Reviewed-by: Emmanuel Grumbach <emmanuel.grumbach@intel.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/net/wireless/iwlwifi/iwl-fw.h          |    5 
+ drivers/net/wireless/iwlwifi/mvm/fw-api-scan.h |   34 +-
+ drivers/net/wireless/iwlwifi/mvm/fw-api.h      |    1 
+ drivers/net/wireless/iwlwifi/mvm/mac80211.c    |   58 +++
+ drivers/net/wireless/iwlwifi/mvm/mvm.h         |   18 +
+ drivers/net/wireless/iwlwifi/mvm/ops.c         |    8 
+ drivers/net/wireless/iwlwifi/mvm/scan.c        |  418 +++++++++++++++++++++++++
+ 7 files changed, 538 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/wireless/iwlwifi/iwl-fw.h
++++ b/drivers/net/wireless/iwlwifi/iwl-fw.h
+@@ -75,6 +75,8 @@
+  * @IWL_UCODE_TLV_FLAGS_P2P: This uCode image supports P2P.
+  * @IWL_UCODE_TLV_FLAGS_DW_BC_TABLE: The SCD byte count table is in DWORDS
+  * @IWL_UCODE_TLV_FLAGS_UAPSD: This uCode image supports uAPSD
++ * @IWL_UCODE_TLV_FLAGS_SHORT_BL: 16 entries of black list instead of 64 in scan
++ *	offload profile config command.
+  * @IWL_UCODE_TLV_FLAGS_RX_ENERGY_API: supports rx signal strength api
+  * @IWL_UCODE_TLV_FLAGS_TIME_EVENT_API_V2: using the new time event API.
+  * @IWL_UCODE_TLV_FLAGS_D3_6_IPV6_ADDRS: D3 image supports up to six
+@@ -82,6 +84,7 @@
+  * @IWL_UCODE_TLV_FLAGS_BF_UPDATED: new beacon filtering API
+  * @IWL_UCODE_TLV_FLAGS_NO_BASIC_SSID: not sending a probe with the SSID element
+  *	from the probe request template.
++ * @IWL_UCODE_TLV_FLAGS_SCHED_SCAN: this uCode image supports scheduled scan.
+  * @IWL_UCODE_TLV_FLAGS_STA_KEY_CMD: new ADD_STA and ADD_STA_KEY command API
+  */
+ enum iwl_ucode_tlv_flag {
+@@ -91,11 +94,13 @@ enum iwl_ucode_tlv_flag {
+ 	IWL_UCODE_TLV_FLAGS_P2P			= BIT(3),
+ 	IWL_UCODE_TLV_FLAGS_DW_BC_TABLE		= BIT(4),
+ 	IWL_UCODE_TLV_FLAGS_UAPSD		= BIT(6),
++	IWL_UCODE_TLV_FLAGS_SHORT_BL		= BIT(7),
+ 	IWL_UCODE_TLV_FLAGS_RX_ENERGY_API	= BIT(8),
+ 	IWL_UCODE_TLV_FLAGS_TIME_EVENT_API_V2	= BIT(9),
+ 	IWL_UCODE_TLV_FLAGS_D3_6_IPV6_ADDRS	= BIT(10),
+ 	IWL_UCODE_TLV_FLAGS_BF_UPDATED		= BIT(11),
+ 	IWL_UCODE_TLV_FLAGS_NO_BASIC_SSID	= BIT(12),
++	IWL_UCODE_TLV_FLAGS_SCHED_SCAN		= BIT(17),
+ 	IWL_UCODE_TLV_FLAGS_STA_KEY_CMD		= BIT(19),
+ };
+ 
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api-scan.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api-scan.h
+@@ -356,6 +356,7 @@ struct iwl_scan_complete_notif {
+ /* scan offload */
+ #define IWL_MAX_SCAN_CHANNELS		40
+ #define IWL_SCAN_MAX_BLACKLIST_LEN	64
++#define IWL_SCAN_SHORT_BLACKLIST_LEN	16
+ #define IWL_SCAN_MAX_PROFILES		11
+ #define SCAN_OFFLOAD_PROBE_REQ_SIZE	512
+ 
+@@ -368,6 +369,12 @@ struct iwl_scan_complete_notif {
+ #define IWL_FULL_SCAN_MULTIPLIER 5
+ #define IWL_FAST_SCHED_SCAN_ITERATIONS 3
+ 
++enum scan_framework_client {
++	SCAN_CLIENT_SCHED_SCAN		= BIT(0),
++	SCAN_CLIENT_NETDETECT		= BIT(1),
++	SCAN_CLIENT_ASSET_TRACKING	= BIT(2),
++};
++
+ /**
+  * struct iwl_scan_offload_cmd - SCAN_REQUEST_FIXED_PART_API_S_VER_6
+  * @scan_flags:		see enum iwl_scan_flags
+@@ -449,11 +456,12 @@ struct iwl_scan_offload_cfg {
+  * iwl_scan_offload_blacklist - SCAN_OFFLOAD_BLACKLIST_S
+  * @ssid:		MAC address to filter out
+  * @reported_rssi:	AP rssi reported to the host
++ * @client_bitmap: clients ignore this entry  - enum scan_framework_client
+  */
+ struct iwl_scan_offload_blacklist {
+ 	u8 ssid[ETH_ALEN];
+ 	u8 reported_rssi;
+-	u8 reserved;
++	u8 client_bitmap;
+ } __packed;
+ 
+ enum iwl_scan_offload_network_type {
+@@ -475,6 +483,7 @@ enum iwl_scan_offload_band_selection {
+  * @aut_alg:		authentication olgorithm to match - bitmap
+  * @network_type:	enum iwl_scan_offload_network_type
+  * @band_selection:	enum iwl_scan_offload_band_selection
++ * @client_bitmap:	clients waiting for match - enum scan_framework_client
+  */
+ struct iwl_scan_offload_profile {
+ 	u8 ssid_index;
+@@ -482,7 +491,8 @@ struct iwl_scan_offload_profile {
+ 	u8 auth_alg;
+ 	u8 network_type;
+ 	u8 band_selection;
+-	u8 reserved[3];
++	u8 client_bitmap;
++	u8 reserved[2];
+ } __packed;
+ 
+ /**
+@@ -491,13 +501,18 @@ struct iwl_scan_offload_profile {
+  * @profiles:		profiles to search for match
+  * @blacklist_len:	length of blacklist
+  * @num_profiles:	num of profiles in the list
++ * @match_notify:	clients waiting for match found notification
++ * @pass_match:		clients waiting for the results
++ * @active_clients:	active clients bitmap - enum scan_framework_client
+  */
+ struct iwl_scan_offload_profile_cfg {
+-	struct iwl_scan_offload_blacklist blacklist[IWL_SCAN_MAX_BLACKLIST_LEN];
+ 	struct iwl_scan_offload_profile profiles[IWL_SCAN_MAX_PROFILES];
+ 	u8 blacklist_len;
+ 	u8 num_profiles;
+-	u8 reserved[2];
++	u8 match_notify;
++	u8 pass_match;
++	u8 active_clients;
++	u8 reserved[3];
+ } __packed;
+ 
+ /**
+@@ -560,4 +575,15 @@ struct iwl_scan_offload_complete {
+ 	u8 reserved;
+ } __packed;
+ 
++/**
++ * iwl_sched_scan_results - SCAN_OFFLOAD_MATCH_FOUND_NTF_API_S_VER_1
++ * @ssid_bitmap:	SSIDs indexes found in this iteration
++ * @client_bitmap:	clients that are active and wait for this notification
++ */
++struct iwl_sched_scan_results {
++	__le16 ssid_bitmap;
++	u8 client_bitmap;
++	u8 reserved;
++};
++
+ #endif
+--- a/drivers/net/wireless/iwlwifi/mvm/fw-api.h
++++ b/drivers/net/wireless/iwlwifi/mvm/fw-api.h
+@@ -132,6 +132,7 @@ enum {
+ 	SCAN_OFFLOAD_COMPLETE = 0x6D,
+ 	SCAN_OFFLOAD_UPDATE_PROFILES_CMD = 0x6E,
+ 	SCAN_OFFLOAD_CONFIG_CMD = 0x6f,
++	MATCH_FOUND_NOTIFICATION = 0xd9,
+ 
+ 	/* Phy */
+ 	PHY_CONFIGURATION_CMD = 0x6a,
+--- a/drivers/net/wireless/iwlwifi/mvm/mac80211.c
++++ b/drivers/net/wireless/iwlwifi/mvm/mac80211.c
+@@ -239,6 +239,15 @@ int iwl_mvm_mac_setup_register(struct iw
+ 	else
+ 		hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
+ 
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_SCHED_SCAN) {
++		hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_SCHED_SCAN;
++		hw->wiphy->max_sched_scan_ssids = PROBE_OPTION_MAX;
++		hw->wiphy->max_match_sets = IWL_SCAN_MAX_PROFILES;
++		/* we create the 802.11 header and zero length SSID IE. */
++		hw->wiphy->max_sched_scan_ie_len =
++					SCAN_OFFLOAD_PROBE_REQ_SIZE - 24 - 2;
++	}
++
+ 	hw->wiphy->features |= NL80211_FEATURE_P2P_GO_CTWIN |
+ 			       NL80211_FEATURE_P2P_GO_OPPPS;
+ 
+@@ -1202,6 +1211,53 @@ static void iwl_mvm_mac_mgd_prepare_tx(s
+ 	mutex_unlock(&mvm->mutex);
+ }
+ 
++static int iwl_mvm_mac_sched_scan_start(struct ieee80211_hw *hw,
++					struct ieee80211_vif *vif,
++					struct cfg80211_sched_scan_request *req,
++					struct ieee80211_sched_scan_ies *ies)
++{
++	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
++	int ret;
++
++	mutex_lock(&mvm->mutex);
++
++	if (mvm->scan_status != IWL_MVM_SCAN_NONE) {
++		IWL_DEBUG_SCAN(mvm,
++			       "SCHED SCAN request during internal scan - abort\n");
++		ret = -EBUSY;
++		goto out;
++	}
++
++	mvm->scan_status = IWL_MVM_SCAN_SCHED;
++
++	ret = iwl_mvm_config_sched_scan(mvm, vif, req, ies);
++	if (ret)
++		goto err;
++
++	ret = iwl_mvm_config_sched_scan_profiles(mvm, req);
++	if (ret)
++		goto err;
++
++	ret = iwl_mvm_sched_scan_start(mvm, req);
++	if (!ret)
++		goto out;
++err:
++	mvm->scan_status = IWL_MVM_SCAN_NONE;
++out:
++	mutex_unlock(&mvm->mutex);
++	return ret;
++}
++
++static void iwl_mvm_mac_sched_scan_stop(struct ieee80211_hw *hw,
++					struct ieee80211_vif *vif)
++{
++	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
++
++	mutex_lock(&mvm->mutex);
++	iwl_mvm_sched_scan_stop(mvm);
++	mutex_unlock(&mvm->mutex);
++}
++
+ static int iwl_mvm_mac_set_key(struct ieee80211_hw *hw,
+ 			       enum set_key_cmd cmd,
+ 			       struct ieee80211_vif *vif,
+@@ -1671,6 +1727,8 @@ struct ieee80211_ops iwl_mvm_hw_ops = {
+ 	.set_rts_threshold = iwl_mvm_mac_set_rts_threshold,
+ 	.conf_tx = iwl_mvm_mac_conf_tx,
+ 	.mgd_prepare_tx = iwl_mvm_mac_mgd_prepare_tx,
++	.sched_scan_start = iwl_mvm_mac_sched_scan_start,
++	.sched_scan_stop = iwl_mvm_mac_sched_scan_stop,
+ 	.set_key = iwl_mvm_mac_set_key,
+ 	.update_tkip_key = iwl_mvm_mac_update_tkip_key,
+ 	.remain_on_channel = iwl_mvm_roc,
+--- a/drivers/net/wireless/iwlwifi/mvm/mvm.h
++++ b/drivers/net/wireless/iwlwifi/mvm/mvm.h
+@@ -339,6 +339,7 @@ iwl_mvm_vif_from_mac80211(struct ieee802
+ enum iwl_scan_status {
+ 	IWL_MVM_SCAN_NONE,
+ 	IWL_MVM_SCAN_OS,
++	IWL_MVM_SCAN_SCHED,
+ };
+ 
+ /**
+@@ -696,6 +697,23 @@ int iwl_mvm_rx_scan_complete(struct iwl_
+ 			     struct iwl_device_cmd *cmd);
+ void iwl_mvm_cancel_scan(struct iwl_mvm *mvm);
+ 
++/* Scheduled scan */
++int iwl_mvm_rx_scan_offload_complete_notif(struct iwl_mvm *mvm,
++					   struct iwl_rx_cmd_buffer *rxb,
++					   struct iwl_device_cmd *cmd);
++int iwl_mvm_config_sched_scan(struct iwl_mvm *mvm,
++			      struct ieee80211_vif *vif,
++			      struct cfg80211_sched_scan_request *req,
++			      struct ieee80211_sched_scan_ies *ies);
++int iwl_mvm_config_sched_scan_profiles(struct iwl_mvm *mvm,
++				       struct cfg80211_sched_scan_request *req);
++int iwl_mvm_sched_scan_start(struct iwl_mvm *mvm,
++			     struct cfg80211_sched_scan_request *req);
++void iwl_mvm_sched_scan_stop(struct iwl_mvm *mvm);
++int iwl_mvm_rx_sched_scan_results(struct iwl_mvm *mvm,
++				  struct iwl_rx_cmd_buffer *rxb,
++				  struct iwl_device_cmd *cmd);
++
+ /* MVM debugfs */
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+ int iwl_mvm_dbgfs_register(struct iwl_mvm *mvm, struct dentry *dbgfs_dir);
+--- a/drivers/net/wireless/iwlwifi/mvm/ops.c
++++ b/drivers/net/wireless/iwlwifi/mvm/ops.c
+@@ -224,6 +224,10 @@ static const struct iwl_rx_handlers iwl_
+ 
+ 	RX_HANDLER(SCAN_REQUEST_CMD, iwl_mvm_rx_scan_response, false),
+ 	RX_HANDLER(SCAN_COMPLETE_NOTIFICATION, iwl_mvm_rx_scan_complete, false),
++	RX_HANDLER(SCAN_OFFLOAD_COMPLETE,
++		   iwl_mvm_rx_scan_offload_complete_notif, false),
++	RX_HANDLER(MATCH_FOUND_NOTIFICATION, iwl_mvm_rx_sched_scan_results,
++		   false),
+ 
+ 	RX_HANDLER(RADIO_VERSION_NOTIFICATION, iwl_mvm_rx_radio_ver, false),
+ 	RX_HANDLER(CARD_STATE_NOTIFICATION, iwl_mvm_rx_card_state_notif, false),
+@@ -266,6 +270,7 @@ static const char *iwl_mvm_cmd_strings[R
+ 	CMD(REMOVE_STA),
+ 	CMD(LQ_CMD),
+ 	CMD(SCAN_OFFLOAD_CONFIG_CMD),
++	CMD(MATCH_FOUND_NOTIFICATION),
+ 	CMD(SCAN_OFFLOAD_REQUEST_CMD),
+ 	CMD(SCAN_OFFLOAD_ABORT_CMD),
+ 	CMD(SCAN_OFFLOAD_COMPLETE),
+@@ -717,6 +722,9 @@ static void iwl_mvm_nic_restart(struct i
+ 		case IWL_MVM_SCAN_OS:
+ 			ieee80211_scan_completed(mvm->hw, true);
+ 			break;
++		case IWL_MVM_SCAN_SCHED:
++			ieee80211_sched_scan_stopped(mvm->hw);
++			break;
+ 		}
+ 
+ 		if (mvm->restart_fw > 0)
+--- a/drivers/net/wireless/iwlwifi/mvm/scan.c
++++ b/drivers/net/wireless/iwlwifi/mvm/scan.c
+@@ -391,6 +391,21 @@ int iwl_mvm_rx_scan_complete(struct iwl_
+ 	return 0;
+ }
+ 
++int iwl_mvm_rx_sched_scan_results(struct iwl_mvm *mvm,
++				  struct iwl_rx_cmd_buffer *rxb,
++				  struct iwl_device_cmd *cmd)
++{
++	struct iwl_rx_packet *pkt = rxb_addr(rxb);
++	struct iwl_sched_scan_results *notif = (void *)pkt->data;
++
++	if (notif->client_bitmap & SCAN_CLIENT_SCHED_SCAN) {
++		IWL_DEBUG_SCAN(mvm, "Scheduled scan results\n");
++		ieee80211_sched_scan_results(mvm->hw);
++	}
++
++	return 0;
++}
++
+ static bool iwl_mvm_scan_abort_notif(struct iwl_notif_wait_data *notif_wait,
+ 				     struct iwl_rx_packet *pkt, void *data)
+ {
+@@ -461,3 +476,406 @@ void iwl_mvm_cancel_scan(struct iwl_mvm
+ out_remove_notif:
+ 	iwl_remove_notification(&mvm->notif_wait, &wait_scan_abort);
+ }
++
++int iwl_mvm_rx_scan_offload_complete_notif(struct iwl_mvm *mvm,
++					   struct iwl_rx_cmd_buffer *rxb,
++					   struct iwl_device_cmd *cmd)
++{
++	struct iwl_rx_packet *pkt = rxb_addr(rxb);
++	struct iwl_scan_offload_complete *scan_notif = (void *)pkt->data;
++
++	IWL_DEBUG_SCAN(mvm, "Scheduled scan completed, status %s\n",
++		       scan_notif->status == IWL_SCAN_OFFLOAD_COMPLETED ?
++		       "completed" : "aborted");
++
++	mvm->scan_status = IWL_MVM_SCAN_NONE;
++	ieee80211_sched_scan_stopped(mvm->hw);
++
++	return 0;
++}
++
++static void iwl_scan_offload_build_tx_cmd(struct iwl_mvm *mvm,
++					  struct ieee80211_vif *vif,
++					  struct ieee80211_sched_scan_ies *ies,
++					  enum ieee80211_band band,
++					  struct iwl_tx_cmd *cmd,
++					  u8 *data)
++{
++	u16 cmd_len;
++
++	cmd->tx_flags = cpu_to_le32(TX_CMD_FLG_SEQ_CTL);
++	cmd->life_time = cpu_to_le32(TX_CMD_LIFE_TIME_INFINITE);
++	cmd->sta_id = mvm->aux_sta.sta_id;
++
++	cmd->rate_n_flags = iwl_mvm_scan_rate_n_flags(mvm, band, false);
++
++	cmd_len = iwl_mvm_fill_probe_req((struct ieee80211_mgmt *)data,
++					 vif->addr,
++					 1, NULL, 0,
++					 ies->ie[band], ies->len[band],
++					 SCAN_OFFLOAD_PROBE_REQ_SIZE);
++	cmd->len = cpu_to_le16(cmd_len);
++}
++
++static void iwl_build_scan_cmd(struct iwl_mvm *mvm,
++			       struct ieee80211_vif *vif,
++			       struct cfg80211_sched_scan_request *req,
++			       struct iwl_scan_offload_cmd *scan)
++{
++	scan->channel_count =
++		mvm->nvm_data->bands[IEEE80211_BAND_2GHZ].n_channels +
++		mvm->nvm_data->bands[IEEE80211_BAND_5GHZ].n_channels;
++	scan->quiet_time = cpu_to_le16(IWL_ACTIVE_QUIET_TIME);
++	scan->quiet_plcp_th = cpu_to_le16(IWL_PLCP_QUIET_THRESH);
++	scan->good_CRC_th = IWL_GOOD_CRC_TH_DEFAULT;
++	scan->rx_chain = iwl_mvm_scan_rx_chain(mvm);
++	scan->max_out_time = cpu_to_le32(200 * 1024);
++	scan->suspend_time = iwl_mvm_scan_suspend_time(vif);
++	scan->filter_flags |= cpu_to_le32(MAC_FILTER_ACCEPT_GRP |
++					  MAC_FILTER_IN_BEACON);
++	scan->scan_type = cpu_to_le32(SCAN_TYPE_BACKGROUND);
++	scan->rep_count = cpu_to_le32(1);
++}
++
++static int iwl_ssid_exist(u8 *ssid, u8 ssid_len, struct iwl_ssid_ie *ssid_list)
++{
++	int i;
++
++	for (i = 0; i < PROBE_OPTION_MAX; i++) {
++		if (!ssid_list[i].len)
++			break;
++		if (ssid_list[i].len == ssid_len &&
++		    !memcmp(ssid_list->ssid, ssid, ssid_len))
++			return i;
++	}
++	return -1;
++}
++
++static void iwl_scan_offload_build_ssid(struct cfg80211_sched_scan_request *req,
++					struct iwl_scan_offload_cmd *scan,
++					u32 *ssid_bitmap)
++{
++	int i, j;
++	int index;
++
++	/*
++	 * copy SSIDs from match list.
++	 * iwl_config_sched_scan_profiles() uses the order of these ssids to
++	 * config match list.
++	 */
++	for (i = 0; i < req->n_match_sets && i < PROBE_OPTION_MAX; i++) {
++		scan->direct_scan[i].id = WLAN_EID_SSID;
++		scan->direct_scan[i].len = req->match_sets[i].ssid.ssid_len;
++		memcpy(scan->direct_scan[i].ssid, req->match_sets[i].ssid.ssid,
++		       scan->direct_scan[i].len);
++	}
++
++	/* add SSIDs from scan SSID list */
++	*ssid_bitmap = 0;
++	for (j = 0; j < req->n_ssids && i < PROBE_OPTION_MAX; j++) {
++		index = iwl_ssid_exist(req->ssids[j].ssid,
++				       req->ssids[j].ssid_len,
++				       scan->direct_scan);
++		if (index < 0) {
++			if (!req->ssids[j].ssid_len)
++				continue;
++			scan->direct_scan[i].id = WLAN_EID_SSID;
++			scan->direct_scan[i].len = req->ssids[j].ssid_len;
++			memcpy(scan->direct_scan[i].ssid, req->ssids[j].ssid,
++			       scan->direct_scan[i].len);
++			*ssid_bitmap |= BIT(i + 1);
++			i++;
++		} else {
++			*ssid_bitmap |= BIT(index + 1);
++		}
++	}
++}
++
++static void iwl_build_channel_cfg(struct iwl_mvm *mvm,
++				  struct cfg80211_sched_scan_request *req,
++				  struct iwl_scan_channel_cfg *channels,
++				  enum ieee80211_band band,
++				  int *head, int *tail,
++				  u32 ssid_bitmap)
++{
++	struct ieee80211_supported_band *s_band;
++	int n_probes = req->n_ssids;
++	int n_channels = req->n_channels;
++	u8 active_dwell, passive_dwell;
++	int i, j, index = 0;
++	bool partial;
++
++	/*
++	 * We have to configure all supported channels, even if we don't want to
++	 * scan on them, but we have to send channels in the order that we want
++	 * to scan. So add requested channels to head of the list and others to
++	 * the end.
++	*/
++	active_dwell = iwl_mvm_get_active_dwell(band, n_probes);
++	passive_dwell = iwl_mvm_get_passive_dwell(band);
++	s_band = &mvm->nvm_data->bands[band];
++
++	for (i = 0; i < s_band->n_channels && *head <= *tail; i++) {
++		partial = false;
++		for (j = 0; j < n_channels; j++)
++			if (s_band->channels[i].center_freq ==
++						req->channels[j]->center_freq) {
++				index = *head;
++				(*head)++;
++				/*
++				 * Channels that came with the request will be
++				 * in partial scan .
++				 */
++				partial = true;
++				break;
++			}
++		if (!partial) {
++			index = *tail;
++			(*tail)--;
++		}
++		channels->channel_number[index] =
++			cpu_to_le16(ieee80211_frequency_to_channel(
++					s_band->channels[i].center_freq));
++		channels->dwell_time[index][0] = active_dwell;
++		channels->dwell_time[index][1] = passive_dwell;
++
++		channels->iter_count[index] = cpu_to_le16(1);
++		channels->iter_interval[index] = 0;
++
++		if (!(s_band->channels[i].flags & IEEE80211_CHAN_PASSIVE_SCAN))
++			channels->type[index] |=
++				cpu_to_le32(IWL_SCAN_OFFLOAD_CHANNEL_ACTIVE);
++
++		channels->type[index] |=
++				cpu_to_le32(IWL_SCAN_OFFLOAD_CHANNEL_FULL);
++		if (partial)
++			channels->type[index] |=
++				cpu_to_le32(IWL_SCAN_OFFLOAD_CHANNEL_PARTIAL);
++
++		if (s_band->channels[i].flags & IEEE80211_CHAN_NO_HT40)
++			channels->type[index] |=
++				cpu_to_le32(IWL_SCAN_OFFLOAD_CHANNEL_NARROW);
++
++		/* scan for all SSIDs from req->ssids */
++		channels->type[index] |= cpu_to_le32(ssid_bitmap);
++	}
++}
++
++int iwl_mvm_config_sched_scan(struct iwl_mvm *mvm,
++			      struct ieee80211_vif *vif,
++			      struct cfg80211_sched_scan_request *req,
++			      struct ieee80211_sched_scan_ies *ies)
++{
++	int supported_bands = 0;
++	int band_2ghz = mvm->nvm_data->bands[IEEE80211_BAND_2GHZ].n_channels;
++	int band_5ghz = mvm->nvm_data->bands[IEEE80211_BAND_5GHZ].n_channels;
++	int head = 0;
++	int tail = band_2ghz + band_5ghz;
++	u32 ssid_bitmap;
++	int cmd_len;
++	int ret;
++
++	struct iwl_scan_offload_cfg *scan_cfg;
++	struct iwl_host_cmd cmd = {
++		.id = SCAN_OFFLOAD_CONFIG_CMD,
++		.flags = CMD_SYNC,
++	};
++
++	lockdep_assert_held(&mvm->mutex);
++
++	if (band_2ghz)
++		supported_bands++;
++	if (band_5ghz)
++		supported_bands++;
++
++	cmd_len = sizeof(struct iwl_scan_offload_cfg) +
++				supported_bands * SCAN_OFFLOAD_PROBE_REQ_SIZE;
++
++	scan_cfg = kzalloc(cmd_len, GFP_KERNEL);
++	if (!scan_cfg)
++		return -ENOMEM;
++
++	iwl_build_scan_cmd(mvm, vif, req, &scan_cfg->scan_cmd);
++	scan_cfg->scan_cmd.len = cpu_to_le16(cmd_len);
++
++	iwl_scan_offload_build_ssid(req, &scan_cfg->scan_cmd, &ssid_bitmap);
++	/* build tx frames for supported bands */
++	if (band_2ghz) {
++		iwl_scan_offload_build_tx_cmd(mvm, vif, ies,
++					      IEEE80211_BAND_2GHZ,
++					      &scan_cfg->scan_cmd.tx_cmd[0],
++					      scan_cfg->data);
++		iwl_build_channel_cfg(mvm, req, &scan_cfg->channel_cfg,
++				      IEEE80211_BAND_2GHZ, &head, &tail,
++				      ssid_bitmap);
++	}
++	if (band_5ghz) {
++		iwl_scan_offload_build_tx_cmd(mvm, vif, ies,
++					      IEEE80211_BAND_5GHZ,
++					      &scan_cfg->scan_cmd.tx_cmd[1],
++					      scan_cfg->data +
++						SCAN_OFFLOAD_PROBE_REQ_SIZE);
++		iwl_build_channel_cfg(mvm, req, &scan_cfg->channel_cfg,
++				      IEEE80211_BAND_5GHZ, &head, &tail,
++				      ssid_bitmap);
++	}
++
++	cmd.data[0] = scan_cfg;
++	cmd.len[0] = cmd_len;
++	cmd.dataflags[0] = IWL_HCMD_DFL_NOCOPY;
++
++	IWL_DEBUG_SCAN(mvm, "Sending scheduled scan config\n");
++
++	ret = iwl_mvm_send_cmd(mvm, &cmd);
++	kfree(scan_cfg);
++	return ret;
++}
++
++int iwl_mvm_config_sched_scan_profiles(struct iwl_mvm *mvm,
++				       struct cfg80211_sched_scan_request *req)
++{
++	struct iwl_scan_offload_profile *profile;
++	struct iwl_scan_offload_profile_cfg *profile_cfg;
++	struct iwl_scan_offload_blacklist *blacklist;
++	struct iwl_host_cmd cmd = {
++		.id = SCAN_OFFLOAD_UPDATE_PROFILES_CMD,
++		.flags = CMD_SYNC,
++		.len[1] = sizeof(*profile_cfg),
++		.dataflags[0] = IWL_HCMD_DFL_NOCOPY,
++		.dataflags[1] = IWL_HCMD_DFL_NOCOPY,
++	};
++	int blacklist_len;
++	int i;
++	int ret;
++
++	if (WARN_ON(req->n_match_sets > IWL_SCAN_MAX_PROFILES))
++			return -EIO;
++
++	if (mvm->fw->ucode_capa.flags & IWL_UCODE_TLV_FLAGS_SHORT_BL)
++		blacklist_len = IWL_SCAN_SHORT_BLACKLIST_LEN;
++	else
++		blacklist_len = IWL_SCAN_MAX_BLACKLIST_LEN;
++
++	blacklist = kzalloc(sizeof(*blacklist) * blacklist_len, GFP_KERNEL);
++	if (!blacklist)
++		return -ENOMEM;
++
++	profile_cfg = kzalloc(sizeof(*profile_cfg), GFP_KERNEL);
++	if (!profile_cfg) {
++		ret = -ENOMEM;
++		goto free_blacklist;
++	}
++
++	cmd.data[0] = blacklist;
++	cmd.len[0] = sizeof(*blacklist) * blacklist_len;
++	cmd.data[1] = profile_cfg;
++
++	/* No blacklist configuration */
++
++	profile_cfg->num_profiles = req->n_match_sets;
++	profile_cfg->active_clients = SCAN_CLIENT_SCHED_SCAN;
++	profile_cfg->pass_match = SCAN_CLIENT_SCHED_SCAN;
++	profile_cfg->match_notify = SCAN_CLIENT_SCHED_SCAN;
++
++	for (i = 0; i < req->n_match_sets; i++) {
++		profile = &profile_cfg->profiles[i];
++		profile->ssid_index = i;
++		/* Support any cipher and auth algorithm */
++		profile->unicast_cipher = 0xff;
++		profile->auth_alg = 0xff;
++		profile->network_type = IWL_NETWORK_TYPE_ANY;
++		profile->band_selection = IWL_SCAN_OFFLOAD_SELECT_ANY;
++		profile->client_bitmap = SCAN_CLIENT_SCHED_SCAN;
++	}
++
++	IWL_DEBUG_SCAN(mvm, "Sending scheduled scan profile config\n");
++
++	ret = iwl_mvm_send_cmd(mvm, &cmd);
++	kfree(profile_cfg);
++free_blacklist:
++	kfree(blacklist);
++
++	return ret;
++}
++
++int iwl_mvm_sched_scan_start(struct iwl_mvm *mvm,
++			     struct cfg80211_sched_scan_request *req)
++{
++	struct iwl_scan_offload_req scan_req = {
++		.watchdog = IWL_SCHED_SCAN_WATCHDOG,
++
++		.schedule_line[0].iterations = IWL_FAST_SCHED_SCAN_ITERATIONS,
++		.schedule_line[0].delay = req->interval / 1000,
++		.schedule_line[0].full_scan_mul = 1,
++
++		.schedule_line[1].iterations = 0xff,
++		.schedule_line[1].delay = req->interval / 1000,
++		.schedule_line[1].full_scan_mul = IWL_FULL_SCAN_MULTIPLIER,
++	};
++
++	if (req->n_match_sets && req->match_sets[0].ssid.ssid_len) {
++		IWL_DEBUG_SCAN(mvm,
++			       "Sending scheduled scan with filtering, filter len %d\n",
++			       req->n_match_sets);
++		scan_req.flags |=
++				cpu_to_le16(IWL_SCAN_OFFLOAD_FLAG_FILTER_SSID);
++	} else {
++		IWL_DEBUG_SCAN(mvm,
++			       "Sending Scheduled scan without filtering\n");
++	}
++
++	return iwl_mvm_send_cmd_pdu(mvm, SCAN_OFFLOAD_REQUEST_CMD, CMD_SYNC,
++				    sizeof(scan_req), &scan_req);
++}
++
++static int iwl_mvm_send_sched_scan_abort(struct iwl_mvm *mvm)
++{
++	int ret;
++	struct iwl_host_cmd cmd = {
++		.id = SCAN_OFFLOAD_ABORT_CMD,
++		.flags = CMD_SYNC,
++	};
++	u32 status;
++
++	/* Exit instantly with error when device is not ready
++	 * to receive scan abort command or it does not perform
++	 * scheduled scan currently */
++	if (mvm->scan_status != IWL_MVM_SCAN_SCHED)
++		return -EIO;
++
++	ret = iwl_mvm_send_cmd_status(mvm, &cmd, &status);
++	if (ret)
++		return ret;
++
++	if (status != CAN_ABORT_STATUS) {
++		/*
++		 * The scan abort will return 1 for success or
++		 * 2 for "failure".  A failure condition can be
++		 * due to simply not being in an active scan which
++		 * can occur if we send the scan abort before the
++		 * microcode has notified us that a scan is completed.
++		 */
++		IWL_DEBUG_SCAN(mvm, "SCAN OFFLOAD ABORT ret %d.\n", status);
++		ret = -EIO;
++	}
++
++	return ret;
++}
++
++void iwl_mvm_sched_scan_stop(struct iwl_mvm *mvm)
++{
++	int ret;
++
++	lockdep_assert_held(&mvm->mutex);
++
++	if (mvm->scan_status != IWL_MVM_SCAN_SCHED) {
++		IWL_DEBUG_SCAN(mvm, "No offloaded scan to stop\n");
++		return;
++	}
++
++	ret = iwl_mvm_send_sched_scan_abort(mvm);
++	if (ret)
++		IWL_DEBUG_SCAN(mvm, "Send stop offload scan failed %d\n", ret);
++	else
++		IWL_DEBUG_SCAN(mvm, "Successfully sent stop offload scan\n");
++}
