@@ -1,10 +1,12 @@
+From 795d73e49775539384b292bae829d9ac5750403a Mon Sep 17 00:00:00 2001
 From: Takashi Iwai <tiwai@suse.de>
-Subject: [PATCH RFC v2 3/4] firmware: Add support for signature checks
-Date: Thu,  8 Nov 2012 18:35:08 +0100
+Date: Thu, 8 Nov 2012 18:35:08 +0100
+Subject: [PATCH 2/3] firmware: Add support for signature checks
+
 Git-commit: Not yet, reviewing
 Patch-mainline: Not yet, reviewing
 References: fate#314574
-Target: SLE-11 SP3
+Target: SLE-12
 
 Add a feature to check the firmware signature, specified via Kconfig
 CONFIG_FIRMWARE_SIG.
@@ -34,16 +36,18 @@ Signed-off-by: Takashi Iwai <tiwai@suse.de>
 Acked-by: Lee, Chun-Yi <jlee@suse.com>
 ---
  drivers/base/Kconfig          |    6 +++
- drivers/base/firmware_class.c |   78 ++++++++++++++++++++++++++++++++++++++----
- include/linux/firmware.h      |    7 +++
+ drivers/base/firmware_class.c |   77 +++++++++++++++++++++++++++++++++++++----
+ include/linux/firmware.h      |    7 ++++
  kernel/module_signing.c       |   63 +++++++++++++++++++++++++++++++++
- 4 files changed, 147 insertions(+), 7 deletions(-)
+ 4 files changed, 146 insertions(+), 7 deletions(-)
 
+diff --git a/drivers/base/Kconfig b/drivers/base/Kconfig
+index e373671..a4541e1 100644
 --- a/drivers/base/Kconfig
 +++ b/drivers/base/Kconfig
-@@ -141,6 +141,12 @@ config EXTRA_FIRMWARE_DIR
- 	  the /lib/firmware/ directory or another separate directory
- 	  containing firmware files.
+@@ -154,6 +154,12 @@ config FW_LOADER_USER_HELPER
+ 	  no longer required unless you have a special firmware file that
+ 	  resides in a non-standard path.
  
 +config FIRMWARE_SIG
 +	bool "Firmware signature verification"
@@ -54,9 +58,11 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
  config DEBUG_DRIVER
  	bool "Driver Core verbose debug messages"
  	depends on DEBUG_KERNEL
+diff --git a/drivers/base/firmware_class.c b/drivers/base/firmware_class.c
+index 10a4467..2b25df3 100644
 --- a/drivers/base/firmware_class.c
 +++ b/drivers/base/firmware_class.c
-@@ -38,6 +38,11 @@ MODULE_AUTHOR("Manuel Estrada Sainz");
+@@ -37,6 +37,11 @@ MODULE_AUTHOR("Manuel Estrada Sainz");
  MODULE_DESCRIPTION("Multi purpose firmware loading support");
  MODULE_LICENSE("GPL");
  
@@ -68,7 +74,7 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
  /* Builtin firmware support */
  
  #ifdef CONFIG_FW_LOADER
-@@ -291,7 +296,7 @@ static noinline long fw_file_size(struct
+@@ -282,7 +287,7 @@ static noinline_for_stack long fw_file_size(struct file *file)
  	return st.size;
  }
  
@@ -77,7 +83,7 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
  {
  	long size;
  	char *buf;
-@@ -306,14 +311,42 @@ static bool fw_read_file_contents(struct
+@@ -297,15 +302,43 @@ static bool fw_read_file_contents(struct file *file, struct firmware_buf *fw_buf
  		vfree(buf);
  		return false;
  	}
@@ -106,24 +112,25 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
 +	if (!ret)
 +		return -ENOKEY;
 +	if (sig_size <= markerlen ||
-+	    memcmp(sig_data, FIRMWARE_SIG_STRING, markerlen))
++		memcmp(sig_data, FIRMWARE_SIG_STRING, markerlen))
 +		return -EBADMSG;
 +	ret = fw_verify_sig(buf->data, buf->size,
-+			    sig_data + markerlen, sig_size - markerlen);
++			sig_data + markerlen, sig_size - markerlen);
 +	pr_debug("verified signature %s: %d\n", path, ret);
 +	vfree(sig_data);
 +	return ret;
 +}
 +#endif /* CONFIG_FIRMWARE_SIG */
 +
- static bool fw_get_filesystem_firmware(struct firmware_buf *buf)
+ static bool fw_get_filesystem_firmware(struct device *device,
+ 				       struct firmware_buf *buf)
  {
 -	int i;
 +	int i, ret;
  	bool success = false;
  	char *path = __getname();
  
-@@ -324,10 +357,30 @@ static bool fw_get_filesystem_firmware(s
+@@ -321,10 +354,30 @@ static bool fw_get_filesystem_firmware(struct device *device,
  		file = filp_open(path, O_RDONLY, 0);
  		if (IS_ERR(file))
  			continue;
@@ -150,16 +157,16 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
 +				success = false;
 +				continue;
 +			}
-+			add_taint(TAINT_USER);
++			add_taint(TAINT_USER, LOCKDEP_STILL_OK);
 +		}
 +#endif /* CONFIG_FIRMWARE_SIG */
 +		break;
  	}
  	__putname(path);
- 	return success;
-@@ -868,6 +921,17 @@ static int _request_firmware_load(struct
- 		goto handle_fw;
- 	}
+ 
+@@ -848,6 +901,16 @@ static int _request_firmware_load(struct firmware_priv *fw_priv, bool uevent,
+ 	struct device *f_dev = &fw_priv->dev;
+ 	struct firmware_buf *buf = fw_priv->buf;
  
 +#ifdef CONFIG_FIRMWARE_SIG
 +	/* FIXME: we don't handle signature check for fw loaded via udev */
@@ -167,18 +174,19 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
 +		pr_err("Cannot find firmware file %s; aborting fw loading\n",
 +		       buf->fw_id);
 +		fw_load_abort(fw_priv);
-+		direct_load = 1;
-+		goto handle_fw;
++		return retval;
 +	}
 +#endif
 +
  	/* fall back on userspace loading */
- 	buf->fmt = PAGE_BUF;
+ 	buf->is_paged_buf = true;
  
+diff --git a/include/linux/firmware.h b/include/linux/firmware.h
+index e154c10..179f979 100644
 --- a/include/linux/firmware.h
 +++ b/include/linux/firmware.h
-@@ -79,4 +79,11 @@ static inline int uncache_firmware(const
- }
+@@ -68,4 +68,11 @@ static inline void release_firmware(const struct firmware *fw)
+ 
  #endif
  
 +#ifdef CONFIG_FIRMWARE_SIG
@@ -189,6 +197,8 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
 +#endif
 +
  #endif
+diff --git a/kernel/module_signing.c b/kernel/module_signing.c
+index 0a29b40..0c7f128 100644
 --- a/kernel/module_signing.c
 +++ b/kernel/module_signing.c
 @@ -11,6 +11,7 @@
@@ -199,7 +209,7 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
  #include <crypto/public_key.h>
  #include <crypto/hash.h>
  #include <keys/asymmetric-type.h>
-@@ -247,3 +248,65 @@ error_put_key:
+@@ -260,3 +261,65 @@ error_put_key:
  	pr_devel("<==%s() = %d\n", __func__, ret);
  	return ret;	
  }
@@ -235,7 +245,7 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
 +		return -ENOPKG;
 +
 +	if (ms.hash >= PKEY_HASH__LAST ||
-+	    !pkey_hash_algo[ms.hash])
++	    !pkey_hash_algo_name[ms.hash])
 +		return -ENOPKG;
 +
 +	key = request_asymmetric_key(sig_data, ms.signer_len,
@@ -265,3 +275,6 @@ Acked-by: Lee, Chun-Yi <jlee@suse.com>
 +}
 +EXPORT_SYMBOL_GPL(fw_verify_sig);
 +#endif /* CONFIG_FIRMWARE_SIG */
+-- 
+1.6.4.2
+
