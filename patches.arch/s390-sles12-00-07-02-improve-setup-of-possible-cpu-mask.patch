@@ -1,0 +1,105 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/smp: improve setup of possible cpu mask
+Patch-mainline: v3.13-rc7
+Git-commit: d80512f87474f2dfd67ef931737659acce20fe69
+References: bnc#859260, LTC#102688
+
+s390/smp: improve setup of possible cpu mask
+
+Since under z/VM we cannot have more than 64 cpus, make sure the
+cpu_possible_mask does not contain more bits.
+This avoids wasting memory for dynamic per-cpu allocations if
+CONFIG_NR_CPUS is larger than 64.
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/Kconfig           |    1 -
+ arch/s390/include/asm/smp.h |    2 ++
+ arch/s390/kernel/setup.c    |    1 +
+ arch/s390/kernel/smp.c      |   25 ++++++++++++++++---------
+ 4 files changed, 19 insertions(+), 10 deletions(-)
+
+--- a/arch/s390/include/asm/smp.h
++++ b/arch/s390/include/asm/smp.h
+@@ -32,6 +32,7 @@ extern void smp_yield(void);
+ extern void smp_stop_cpu(void);
+ extern void smp_cpu_set_polarization(int cpu, int val);
+ extern int smp_cpu_get_polarization(int cpu);
++extern void smp_fill_possible_mask(void);
+ 
+ #else /* CONFIG_SMP */
+ 
+@@ -51,6 +52,7 @@ static inline int smp_vcpu_scheduled(int
+ static inline void smp_yield_cpu(int cpu) { }
+ static inline void smp_yield(void) { }
+ static inline void smp_stop_cpu(void) { }
++static inline void smp_fill_possible_mask(void) { }
+ 
+ #endif /* CONFIG_SMP */
+ 
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -134,7 +134,6 @@ config S390
+ 	select HAVE_SYSCALL_TRACEPOINTS
+ 	select HAVE_UID16 if 32BIT
+ 	select HAVE_VIRT_CPU_ACCOUNTING
+-	select INIT_ALL_POSSIBLE
+ 	select KTIME_SCALAR if 32BIT
+ 	select MODULES_USE_ELF_RELA
+ 	select OLD_SIGACTION
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -1061,6 +1061,7 @@ void __init setup_arch(char **cmdline_p)
+ 	setup_vmcoreinfo();
+ 	setup_lowcore();
+ 
++	smp_fill_possible_mask();
+         cpu_init();
+ 	s390_init_cpu_topology();
+ 
+--- a/arch/s390/kernel/smp.c
++++ b/arch/s390/kernel/smp.c
+@@ -730,18 +730,14 @@ int __cpu_up(unsigned int cpu, struct ta
+ 	return 0;
+ }
+ 
+-static int __init setup_possible_cpus(char *s)
+-{
+-	int max, cpu;
++static unsigned int setup_possible_cpus __initdata;
+ 
+-	if (kstrtoint(s, 0, &max) < 0)
+-		return 0;
+-	init_cpu_possible(cpumask_of(0));
+-	for (cpu = 1; cpu < max && cpu < nr_cpu_ids; cpu++)
+-		set_cpu_possible(cpu, true);
++static int __init _setup_possible_cpus(char *s)
++{
++	get_option(&s, &setup_possible_cpus);
+ 	return 0;
+ }
+-early_param("possible_cpus", setup_possible_cpus);
++early_param("possible_cpus", _setup_possible_cpus);
+ 
+ #ifdef CONFIG_HOTPLUG_CPU
+ 
+@@ -784,6 +780,17 @@ void __noreturn cpu_die(void)
+ 
+ #endif /* CONFIG_HOTPLUG_CPU */
+ 
++void __init smp_fill_possible_mask(void)
++{
++	unsigned int possible, cpu;
++
++	possible = setup_possible_cpus;
++	if (!possible)
++		possible = MACHINE_IS_VM ? 64 : nr_cpu_ids;
++	for (cpu = 0; cpu < possible && cpu < nr_cpu_ids; cpu++)
++		set_cpu_possible(cpu, true);
++}
++
+ void __init smp_prepare_cpus(unsigned int max_cpus)
+ {
+ 	/* request the 0x1201 emergency signal external interrupt */
