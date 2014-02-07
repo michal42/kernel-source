@@ -1,0 +1,44 @@
+From: Liu Bo <bo.li.liu@oracle.com>
+Date: Mon, 14 Oct 2013 12:59:43 +0800
+Patch-mainline: 3.14
+Git-commit: 9e5ac13acbb9e806a54f131432501bf462248c35
+Subject: [PATCH] Btrfs: skip merge part for delayed data refs
+
+When we have data deduplication on, we'll hang on the merge part
+because it needs to verify every queued delayed data refs related to
+this disk offset but we may have millions refs.
+
+And in the case of delayed data refs, we don't usually have too much
+data refs to merge.
+
+So it's safe to shut it down for data refs.
+
+Signed-off-by: Liu Bo <bo.li.liu@oracle.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/delayed-ref.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/fs/btrfs/delayed-ref.c b/fs/btrfs/delayed-ref.c
+index 9bbac6ddf415..fab60c1ba065 100644
+--- a/fs/btrfs/delayed-ref.c
++++ b/fs/btrfs/delayed-ref.c
+@@ -352,6 +352,13 @@ void btrfs_merge_delayed_refs(struct btrfs_trans_handle *trans,
+ 	struct rb_node *node;
+ 	u64 seq = 0;
+ 
++	/*
++	 * We don't have too much refs to merge in the case of delayed data
++	 * refs.
++	 */
++	if (head->is_data)
++		return;
++
+ 	spin_lock(&fs_info->tree_mod_seq_lock);
+ 	if (!list_empty(&fs_info->tree_mod_seq_list)) {
+ 		struct seq_list *elem;
+-- 
+1.8.5.2
+

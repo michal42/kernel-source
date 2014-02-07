@@ -1,23 +1,29 @@
 From: Jeff Mahoney <jeffm@suse.com>
-Subject: btrfs: publish allocation data in sysfs
-Patch-mainline: v3.14-rc1
+Date: Fri, 1 Nov 2013 13:07:04 -0400
+Patch-mainline: 3.14
 Git-commit: 6ab0a2029ceaedb78af807871820708b7353e3be
+Subject: [PATCH] btrfs: publish allocation data in sysfs
 
 While trying to debug ENOSPC issues, it's helpful to understand what the
 kernel's view of the available space is. We export this information
 via ioctl, but sysfs files are more easily used.
 
 Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
- fs/btrfs/ctree.h       |    5 +
- fs/btrfs/extent-tree.c |   82 +++++++++++++++++++++++++--
- fs/btrfs/sysfs.c       |  148 +++++++++++++++++++++++++++++++++++++++++++++++++
- fs/btrfs/sysfs.h       |    8 ++
+ fs/btrfs/ctree.h       |   5 ++
+ fs/btrfs/extent-tree.c |  82 +++++++++++++++++++++++++--
+ fs/btrfs/sysfs.c       | 148 +++++++++++++++++++++++++++++++++++++++++++++++++
+ fs/btrfs/sysfs.h       |   8 +++
  4 files changed, 238 insertions(+), 5 deletions(-)
 
+diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
+index c5c888fbf033..f608306b5d88 100644
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -1149,6 +1149,9 @@ struct btrfs_space_info {
+@@ -1151,6 +1151,9 @@ struct btrfs_space_info {
  	spinlock_t lock;
  	struct rw_semaphore groups_sem;
  	wait_queue_head_t wait;
@@ -27,7 +33,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  };
  
  #define	BTRFS_BLOCK_RSV_GLOBAL		1
-@@ -1524,6 +1527,7 @@ struct btrfs_fs_info {
+@@ -1526,6 +1529,7 @@ struct btrfs_fs_info {
  	int thread_pool_size;
  
  	struct kobject super_kobj;
@@ -35,7 +41,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	struct completion kobj_unregister;
  	int do_barriers;
  	int closing;
-@@ -3172,6 +3176,7 @@ struct btrfs_block_group_cache *btrfs_lo
+@@ -3178,6 +3182,7 @@ struct btrfs_block_group_cache *btrfs_lookup_block_group(
  						 struct btrfs_fs_info *info,
  						 u64 bytenr);
  void btrfs_put_block_group(struct btrfs_block_group_cache *cache);
@@ -43,6 +49,8 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  struct extent_buffer *btrfs_alloc_free_block(struct btrfs_trans_handle *trans,
  					struct btrfs_root *root, u32 blocksize,
  					u64 parent, u64 root_objectid,
+diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
+index d15b4fc07554..e094d02ea76a 100644
 --- a/fs/btrfs/extent-tree.c
 +++ b/fs/btrfs/extent-tree.c
 @@ -35,6 +35,7 @@
@@ -53,7 +61,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  
  #undef SCRAMBLE_DELAYED_REFS
  
-@@ -3402,6 +3403,23 @@ int btrfs_extent_readonly(struct btrfs_r
+@@ -3408,6 +3409,23 @@ int btrfs_extent_readonly(struct btrfs_root *root, u64 bytenr)
  	return readonly;
  }
  
@@ -77,7 +85,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  static int update_space_info(struct btrfs_fs_info *info, u64 flags,
  			     u64 total_bytes, u64 bytes_used,
  			     struct btrfs_space_info **space_info)
-@@ -3457,11 +3475,21 @@ static int update_space_info(struct btrf
+@@ -3463,11 +3481,21 @@ static int update_space_info(struct btrfs_fs_info *info, u64 flags,
  	found->chunk_alloc = 0;
  	found->flush = 0;
  	init_waitqueue_head(&found->wait);
@@ -100,7 +108,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  }
  
  static void set_avail_alloc_bits(struct btrfs_fs_info *fs_info, u64 flags)
-@@ -6145,11 +6173,29 @@ int __get_raid_index(u64 flags)
+@@ -6152,11 +6180,29 @@ int __get_raid_index(u64 flags)
  	return BTRFS_RAID_SINGLE; /* BTRFS_BLOCK_GROUP_SINGLE */
  }
  
@@ -131,7 +139,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  enum btrfs_loop_type {
  	LOOP_CACHING_NOWAIT = 0,
  	LOOP_CACHING_WAIT = 1,
-@@ -8333,6 +8379,8 @@ int btrfs_free_block_groups(struct btrfs
+@@ -8340,6 +8386,8 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
  	release_global_block_rsv(info);
  
  	while (!list_empty(&info->space_info)) {
@@ -140,7 +148,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  		space_info = list_entry(info->space_info.next,
  					struct btrfs_space_info,
  					list);
-@@ -8343,9 +8391,17 @@ int btrfs_free_block_groups(struct btrfs
+@@ -8350,9 +8398,17 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
  				dump_space_info(space_info, 0, 0);
  			}
  		}
@@ -160,7 +168,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	}
  	return 0;
  }
-@@ -8356,6 +8412,19 @@ static void __link_block_group(struct bt
+@@ -8363,6 +8419,19 @@ static void __link_block_group(struct btrfs_space_info *space_info,
  	int index = get_block_group_index(cache);
  
  	down_write(&space_info->groups_sem);
@@ -180,7 +188,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	list_add_tail(&cache->list, &space_info->block_groups[index]);
  	up_write(&space_info->groups_sem);
  }
-@@ -8796,8 +8865,11 @@ int btrfs_remove_block_group(struct btrf
+@@ -8803,8 +8872,11 @@ int btrfs_remove_block_group(struct btrfs_trans_handle *trans,
  	 * are still on the list after taking the semaphore
  	 */
  	list_del_init(&block_group->list);
@@ -193,9 +201,11 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	up_write(&block_group->space_info->groups_sem);
  
  	if (block_group->cached == BTRFS_CACHE_STARTED)
+diff --git a/fs/btrfs/sysfs.c b/fs/btrfs/sysfs.c
+index 562e346994d9..e060958a6382 100644
 --- a/fs/btrfs/sysfs.c
 +++ b/fs/btrfs/sysfs.c
-@@ -219,6 +219,140 @@ static const struct attribute_group btrf
+@@ -219,6 +219,140 @@ static const struct attribute_group btrfs_feature_attr_group = {
  	.attrs = btrfs_supported_feature_attrs,
  };
  
@@ -336,7 +346,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  static void btrfs_release_super_kobj(struct kobject *kobj)
  {
  	struct btrfs_fs_info *fs_info = to_fs_info(kobj);
-@@ -239,6 +373,9 @@ static inline struct btrfs_fs_info *to_f
+@@ -239,6 +373,9 @@ static inline struct btrfs_fs_info *to_fs_info(struct kobject *kobj)
  
  void btrfs_sysfs_remove_one(struct btrfs_fs_info *fs_info)
  {
@@ -346,7 +356,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	kobject_del(&fs_info->super_kobj);
  	kobject_put(&fs_info->super_kobj);
  	wait_for_completion(&fs_info->kobj_unregister);
-@@ -391,6 +528,17 @@ int btrfs_sysfs_add_one(struct btrfs_fs_
+@@ -391,6 +528,17 @@ int btrfs_sysfs_add_one(struct btrfs_fs_info *fs_info)
  	if (error)
  		goto failure;
  
@@ -364,9 +374,11 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	return 0;
  failure:
  	btrfs_sysfs_remove_one(fs_info);
+diff --git a/fs/btrfs/sysfs.h b/fs/btrfs/sysfs.h
+index c49fd25c911f..f3cea3710d44 100644
 --- a/fs/btrfs/sysfs.h
 +++ b/fs/btrfs/sysfs.h
-@@ -22,6 +22,12 @@ static struct kobj_attribute btrfs_attr_
+@@ -22,6 +22,12 @@ static struct kobj_attribute btrfs_attr_##_name =			\
  	BTRFS_ATTR_RW(_name, _mode, _show, NULL)
  #define BTRFS_ATTR_PTR(_name)    (&btrfs_attr_##_name.attr)
  
@@ -379,11 +391,13 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  struct btrfs_feature_attr {
  	struct kobj_attribute kobj_attr;
  	enum btrfs_feature_set feature_set;
-@@ -53,4 +59,6 @@ static struct btrfs_feature_attr btrfs_a
+@@ -53,4 +59,6 @@ static struct btrfs_feature_attr btrfs_attr_##_name = {			     \
  			to_btrfs_feature_attr(attr_to_btrfs_attr(a))
  char *btrfs_printable_features(enum btrfs_feature_set set, u64 flags);
  extern const char * const btrfs_feature_set_names[3];
 +extern struct kobj_type space_info_ktype;
 +extern struct kobj_type btrfs_raid_ktype;
  #endif /* _BTRFS_SYSFS_H_ */
+-- 
+1.8.5.2
 

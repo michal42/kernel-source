@@ -1,7 +1,8 @@
 From: Jeff Mahoney <jeffm@suse.com>
-Subject: btrfs: add ioctls to query/change feature bits online
-Patch-mainline: v3.14-rc1
+Date: Fri, 15 Nov 2013 15:33:55 -0500
+Patch-mainline: 3.14
 Git-commit: 2eaa055fab4e3127c9f572fda1b710cbb2acdf1c
+Subject: [PATCH] btrfs: add ioctls to query/change feature bits online
 
 There are some feature bits that require no offline setup and can
 be enabled online. I've only reviewed extended irefs, but there will
@@ -21,16 +22,21 @@ The failure modes for BTRFS_IOC_SET_FEATURES are as follows:
 - Enabling a feature that can only be done offline: warns and returns -EPERM
 
 Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
- fs/btrfs/ctree.h           |    9 ++
- fs/btrfs/ioctl.c           |  142 +++++++++++++++++++++++++++++++++++++++++++++
- include/uapi/linux/btrfs.h |   12 +++
+ fs/btrfs/ctree.h           |   9 +++
+ fs/btrfs/ioctl.c           | 142 +++++++++++++++++++++++++++++++++++++++++++++
+ include/uapi/linux/btrfs.h |  12 ++++
  3 files changed, 163 insertions(+)
 
+diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
+index 1aafccda05d1..498452ebfd37 100644
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -523,7 +523,12 @@ struct btrfs_super_block {
- #define BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA	(1ULL << 8)
+@@ -524,7 +524,12 @@ struct btrfs_super_block {
+ #define BTRFS_FEATURE_INCOMPAT_NO_HOLES		(1ULL << 9)
  
  #define BTRFS_FEATURE_COMPAT_SUPP		0ULL
 +#define BTRFS_FEATURE_COMPAT_SAFE_SET		0ULL
@@ -42,9 +48,9 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  #define BTRFS_FEATURE_INCOMPAT_SUPP			\
  	(BTRFS_FEATURE_INCOMPAT_MIXED_BACKREF |		\
  	 BTRFS_FEATURE_INCOMPAT_DEFAULT_SUBVOL |	\
-@@ -534,6 +539,10 @@ struct btrfs_super_block {
- 	 BTRFS_FEATURE_INCOMPAT_EXTENDED_IREF |		\
- 	 BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA)
+@@ -536,6 +541,10 @@ struct btrfs_super_block {
+ 	 BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA |	\
+ 	 BTRFS_FEATURE_INCOMPAT_NO_HOLES)
  
 +#define BTRFS_FEATURE_INCOMPAT_SAFE_SET			\
 +	(BTRFS_FEATURE_INCOMPAT_EXTENDED_IREF)
@@ -53,6 +59,8 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  /*
   * A leaf is full of items. offset and size tell us where to find
   * the item in the leaf (relative to the start of the data area)
+diff --git a/fs/btrfs/ioctl.c b/fs/btrfs/ioctl.c
+index 21da5762b0b1..d4e105b54091 100644
 --- a/fs/btrfs/ioctl.c
 +++ b/fs/btrfs/ioctl.c
 @@ -4480,6 +4480,142 @@ out_unlock:
@@ -198,7 +206,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  long btrfs_ioctl(struct file *file, unsigned int
  		cmd, unsigned long arg)
  {
-@@ -4598,6 +4734,12 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4598,6 +4734,12 @@ long btrfs_ioctl(struct file *file, unsigned int
  		return btrfs_ioctl_set_fslabel(file, argp);
  	case BTRFS_IOC_FILE_EXTENT_SAME:
  		return btrfs_ioctl_file_extent_same(file, argp);
@@ -211,6 +219,8 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  	}
  
  	return -ENOTTY;
+diff --git a/include/uapi/linux/btrfs.h b/include/uapi/linux/btrfs.h
+index 45e618921c61..b4d69092fbdb 100644
 --- a/include/uapi/linux/btrfs.h
 +++ b/include/uapi/linux/btrfs.h
 @@ -184,6 +184,12 @@ struct btrfs_ioctl_fs_info_args {
@@ -226,7 +236,7 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
  /* balance control ioctl modes */
  #define BTRFS_BALANCE_CTL_PAUSE		1
  #define BTRFS_BALANCE_CTL_CANCEL	2
-@@ -606,5 +612,11 @@ static inline char *btrfs_err_str(enum b
+@@ -606,5 +612,11 @@ static inline char *btrfs_err_str(enum btrfs_err_code err_code)
  				    struct btrfs_ioctl_dev_replace_args)
  #define BTRFS_IOC_FILE_EXTENT_SAME _IOWR(BTRFS_IOCTL_MAGIC, 54, \
  					 struct btrfs_ioctl_same_args)
@@ -238,4 +248,6 @@ Signed-off-by: Jeff Mahoney <jeffm@suse.com>
 +				   struct btrfs_ioctl_feature_flags[3])
  
  #endif /* _UAPI_LINUX_BTRFS_H */
+-- 
+1.8.5.2
 
