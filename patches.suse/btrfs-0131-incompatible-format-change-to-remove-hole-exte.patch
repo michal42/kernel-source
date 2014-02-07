@@ -19,19 +19,17 @@ Signed-off-by: Josef Bacik <jbacik@fusionio.com>
 Signed-off-by: Chris Mason <clm@fb.com>
 Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
- fs/btrfs/ctree.c    |   3 +-
- fs/btrfs/ctree.h    |   5 +-
- fs/btrfs/file.c     |  13 ++--
- fs/btrfs/inode.c    |  78 +++++++++++++++---------
- fs/btrfs/send.c     | 158 ++++++++++++++++++++++++++++++++++++++++++++---
- fs/btrfs/tree-log.c | 172 +++++++++++++++++++++++++++++++++++++++++++++++++---
+ fs/btrfs/ctree.c    |    3 
+ fs/btrfs/ctree.h    |    5 +
+ fs/btrfs/file.c     |   13 ++-
+ fs/btrfs/inode.c    |   78 ++++++++++++++---------
+ fs/btrfs/send.c     |  158 +++++++++++++++++++++++++++++++++++++++++++++--
+ fs/btrfs/tree-log.c |  172 ++++++++++++++++++++++++++++++++++++++++++++++++----
  6 files changed, 373 insertions(+), 56 deletions(-)
 
-diff --git a/fs/btrfs/ctree.c b/fs/btrfs/ctree.c
-index 316136bd6dd7..bcd0bd85e3ed 100644
 --- a/fs/btrfs/ctree.c
 +++ b/fs/btrfs/ctree.c
-@@ -41,7 +41,6 @@ static void del_ptr(struct btrfs_root *root, struct btrfs_path *path,
+@@ -41,7 +41,6 @@ static void del_ptr(struct btrfs_root *r
  		    int level, int slot);
  static void tree_mod_log_free_eb(struct btrfs_fs_info *fs_info,
  				 struct extent_buffer *eb);
@@ -39,7 +37,7 @@ index 316136bd6dd7..bcd0bd85e3ed 100644
  
  struct btrfs_path *btrfs_alloc_path(void)
  {
-@@ -4817,7 +4816,7 @@ int btrfs_del_items(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+@@ -4817,7 +4816,7 @@ int btrfs_del_items(struct btrfs_trans_h
   * This may release the path, and so you may lose any locks held at the
   * time you call it.
   */
@@ -48,8 +46,6 @@ index 316136bd6dd7..bcd0bd85e3ed 100644
  {
  	struct btrfs_key key;
  	struct btrfs_disk_key found_key;
-diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
-index 54ab86127f7a..8be78f7d57e1 100644
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
 @@ -521,6 +521,7 @@ struct btrfs_super_block {
@@ -70,7 +66,7 @@ index 54ab86127f7a..8be78f7d57e1 100644
  
  /*
   * A leaf is full of items. offset and size tell us where to find
-@@ -3399,6 +3401,7 @@ static inline int btrfs_insert_empty_item(struct btrfs_trans_handle *trans,
+@@ -3399,6 +3401,7 @@ static inline int btrfs_insert_empty_ite
  }
  
  int btrfs_next_leaf(struct btrfs_root *root, struct btrfs_path *path);
@@ -78,11 +74,9 @@ index 54ab86127f7a..8be78f7d57e1 100644
  int btrfs_next_old_leaf(struct btrfs_root *root, struct btrfs_path *path,
  			u64 time_seq);
  static inline int btrfs_next_old_item(struct btrfs_root *root,
-diff --git a/fs/btrfs/file.c b/fs/btrfs/file.c
-index 82d0342763c5..c77da440146a 100644
 --- a/fs/btrfs/file.c
 +++ b/fs/btrfs/file.c
-@@ -1963,11 +1963,13 @@ static int fill_holes(struct btrfs_trans_handle *trans, struct inode *inode,
+@@ -1963,11 +1963,13 @@ static int fill_holes(struct btrfs_trans
  	struct btrfs_key key;
  	int ret;
  
@@ -97,7 +91,7 @@ index 82d0342763c5..c77da440146a 100644
  	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
  	if (ret < 0)
  		return ret;
-@@ -2064,8 +2066,10 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
+@@ -2064,8 +2066,10 @@ static int btrfs_punch_hole(struct inode
  	u64 drop_end;
  	int ret = 0;
  	int err = 0;
@@ -108,7 +102,7 @@ index 82d0342763c5..c77da440146a 100644
  
  	ret = btrfs_wait_ordered_range(inode, offset, len);
  	if (ret)
-@@ -2163,9 +2167,10 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
+@@ -2163,9 +2167,10 @@ static int btrfs_punch_hole(struct inode
  	/*
  	 * 1 - update the inode
  	 * 1 - removing the extents in the range
@@ -121,7 +115,7 @@ index 82d0342763c5..c77da440146a 100644
  	if (IS_ERR(trans)) {
  		err = PTR_ERR(trans);
  		goto out_free;
-@@ -2202,7 +2207,7 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
+@@ -2202,7 +2207,7 @@ static int btrfs_punch_hole(struct inode
  		btrfs_end_transaction(trans, root);
  		btrfs_btree_balance_dirty(root);
  
@@ -130,8 +124,6 @@ index 82d0342763c5..c77da440146a 100644
  		if (IS_ERR(trans)) {
  			ret = PTR_ERR(trans);
  			trans = NULL;
-diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
-index f1a77449d032..c0c0dc8f07fa 100644
 --- a/fs/btrfs/inode.c
 +++ b/fs/btrfs/inode.c
 @@ -4203,6 +4203,49 @@ out:
@@ -192,14 +184,17 @@ index f1a77449d032..c0c0dc8f07fa 100644
  	struct btrfs_root *root = BTRFS_I(inode)->root;
  	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
  	struct extent_map *em = NULL;
-@@ -4266,31 +4308,10 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
+@@ -4266,31 +4308,10 @@ int btrfs_cont_expand(struct inode *inod
  			struct extent_map *hole_em;
  			hole_size = last_byte - cur_offset;
  
 -			trans = btrfs_start_transaction(root, 3);
 -			if (IS_ERR(trans)) {
 -				err = PTR_ERR(trans);
--				break;
++			err = maybe_insert_hole(root, inode, cur_offset,
++						hole_size);
++			if (err)
+ 				break;
 -			}
 -
 -			err = btrfs_drop_extents(trans, root, inode,
@@ -218,16 +213,13 @@ index f1a77449d032..c0c0dc8f07fa 100644
 -			if (err) {
 -				btrfs_abort_transaction(trans, root, err);
 -				btrfs_end_transaction(trans, root);
-+			err = maybe_insert_hole(root, inode, cur_offset,
-+						hole_size);
-+			if (err)
- 				break;
+-				break;
 -			}
 -
  			btrfs_drop_extent_cache(inode, cur_offset,
  						cur_offset + hole_size - 1, 0);
  			hole_em = alloc_extent_map();
-@@ -4309,7 +4330,7 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
+@@ -4309,7 +4330,7 @@ int btrfs_cont_expand(struct inode *inod
  			hole_em->ram_bytes = hole_size;
  			hole_em->bdev = root->fs_info->fs_devices->latest_bdev;
  			hole_em->compress_type = BTRFS_COMPRESS_NONE;
@@ -236,7 +228,7 @@ index f1a77449d032..c0c0dc8f07fa 100644
  
  			while (1) {
  				write_lock(&em_tree->lock);
-@@ -4322,17 +4343,14 @@ int btrfs_cont_expand(struct inode *inode, loff_t oldsize, loff_t size)
+@@ -4322,17 +4343,14 @@ int btrfs_cont_expand(struct inode *inod
  							hole_size - 1, 0);
  			}
  			free_extent_map(hole_em);
@@ -255,8 +247,6 @@ index f1a77449d032..c0c0dc8f07fa 100644
  	free_extent_map(em);
  	unlock_extent_cached(io_tree, hole_start, block_end - 1, &cached_state,
  			     GFP_NOFS);
-diff --git a/fs/btrfs/send.c b/fs/btrfs/send.c
-index 945d1db98f26..29803b4129fc 100644
 --- a/fs/btrfs/send.c
 +++ b/fs/btrfs/send.c
 @@ -111,6 +111,7 @@ struct send_ctx {
@@ -406,7 +396,7 @@ index 945d1db98f26..29803b4129fc 100644
  static int process_extent(struct send_ctx *sctx,
  			  struct btrfs_path *path,
  			  struct btrfs_key *key)
-@@ -3995,7 +4114,7 @@ static int process_extent(struct send_ctx *sctx,
+@@ -3995,7 +4114,7 @@ static int process_extent(struct send_ct
  			goto out;
  		if (ret) {
  			ret = 0;
@@ -415,7 +405,7 @@ index 945d1db98f26..29803b4129fc 100644
  		}
  	} else {
  		struct btrfs_file_extent_item *ei;
-@@ -4031,7 +4150,10 @@ static int process_extent(struct send_ctx *sctx,
+@@ -4031,7 +4150,10 @@ static int process_extent(struct send_ct
  		goto out;
  
  	ret = send_write_or_clone(sctx, path, key, found_clone);
@@ -427,7 +417,7 @@ index 945d1db98f26..29803b4129fc 100644
  out:
  	return ret;
  }
-@@ -4157,6 +4279,19 @@ static int finish_inode_if_needed(struct send_ctx *sctx, int at_end)
+@@ -4157,6 +4279,19 @@ static int finish_inode_if_needed(struct
  	}
  
  	if (S_ISREG(sctx->cur_inode_mode)) {
@@ -447,7 +437,7 @@ index 945d1db98f26..29803b4129fc 100644
  		ret = send_truncate(sctx, sctx->cur_ino, sctx->cur_inode_gen,
  				sctx->cur_inode_size);
  		if (ret < 0)
-@@ -4200,6 +4335,7 @@ static int changed_inode(struct send_ctx *sctx,
+@@ -4200,6 +4335,7 @@ static int changed_inode(struct send_ctx
  
  	sctx->cur_ino = key->objectid;
  	sctx->cur_inode_new_gen = 0;
@@ -455,7 +445,7 @@ index 945d1db98f26..29803b4129fc 100644
  
  	/*
  	 * Set send_progress to current inode. This will tell all get_cur_xxx
-@@ -4480,14 +4616,18 @@ static int changed_cb(struct btrfs_root *left_root,
+@@ -4480,14 +4616,18 @@ static int changed_cb(struct btrfs_root
  	struct send_ctx *sctx = ctx;
  
  	if (result == BTRFS_COMPARE_TREE_SAME) {
@@ -481,11 +471,9 @@ index 945d1db98f26..29803b4129fc 100644
  		result = BTRFS_COMPARE_TREE_CHANGED;
  		ret = 0;
  	}
-diff --git a/fs/btrfs/tree-log.c b/fs/btrfs/tree-log.c
-index 9f7fc51ca334..e7d7a837512a 100644
 --- a/fs/btrfs/tree-log.c
 +++ b/fs/btrfs/tree-log.c
-@@ -3194,7 +3194,7 @@ static int log_inode_item(struct btrfs_trans_handle *trans,
+@@ -3194,7 +3194,7 @@ static int log_inode_item(struct btrfs_t
  static noinline int copy_items(struct btrfs_trans_handle *trans,
  			       struct inode *inode,
  			       struct btrfs_path *dst_path,
@@ -494,7 +482,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  			       int start_slot, int nr, int inode_only)
  {
  	unsigned long src_offset;
-@@ -3202,6 +3202,8 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
+@@ -3202,6 +3202,8 @@ static noinline int copy_items(struct bt
  	struct btrfs_root *log = BTRFS_I(inode)->root->log_root;
  	struct btrfs_file_extent_item *extent;
  	struct btrfs_inode_item *inode_item;
@@ -503,7 +491,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  	int ret;
  	struct btrfs_key *ins_keys;
  	u32 *ins_sizes;
-@@ -3209,6 +3211,9 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
+@@ -3209,6 +3211,9 @@ static noinline int copy_items(struct bt
  	int i;
  	struct list_head ordered_sums;
  	int skip_csum = BTRFS_I(inode)->flags & BTRFS_INODE_NODATASUM;
@@ -513,7 +501,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  
  	INIT_LIST_HEAD(&ordered_sums);
  
-@@ -3217,6 +3222,8 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
+@@ -3217,6 +3222,8 @@ static noinline int copy_items(struct bt
  	if (!ins_data)
  		return -ENOMEM;
  
@@ -522,7 +510,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  	ins_sizes = (u32 *)ins_data;
  	ins_keys = (struct btrfs_key *)(ins_data + nr * sizeof(u32));
  
-@@ -3237,6 +3244,9 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
+@@ -3237,6 +3244,9 @@ static noinline int copy_items(struct bt
  
  		src_offset = btrfs_item_ptr_offset(src, start_slot + i);
  
@@ -532,7 +520,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  		if (ins_keys[i].type == BTRFS_INODE_ITEM_KEY) {
  			inode_item = btrfs_item_ptr(dst_path->nodes[0],
  						    dst_path->slots[0],
-@@ -3248,6 +3258,21 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
+@@ -3248,6 +3258,21 @@ static noinline int copy_items(struct bt
  					   src_offset, ins_sizes[i]);
  		}
  
@@ -554,7 +542,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  		/* take a reference on file data extents so that truncates
  		 * or deletes of this inode don't have to relog the inode
  		 * again
-@@ -3312,6 +3337,126 @@ static noinline int copy_items(struct btrfs_trans_handle *trans,
+@@ -3312,6 +3337,126 @@ static noinline int copy_items(struct bt
  		list_del(&sums->list);
  		kfree(sums);
  	}
@@ -681,7 +669,7 @@ index 9f7fc51ca334..e7d7a837512a 100644
  	return ret;
  }
  
-@@ -3630,6 +3775,7 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
+@@ -3630,6 +3775,7 @@ static int btrfs_log_inode(struct btrfs_
  	struct btrfs_key max_key;
  	struct btrfs_root *log = root->log_root;
  	struct extent_buffer *src = NULL;
@@ -743,6 +731,3 @@ index 9f7fc51ca334..e7d7a837512a 100644
  		ins_nr = 0;
  	}
  
--- 
-1.8.5.2
-

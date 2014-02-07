@@ -1,0 +1,32 @@
+From: Wang Shilong <wangsl.fnst@cn.fujitsu.com>
+Date: Fri, 3 Jan 2014 18:22:57 +0800
+Patch-mainline: 3.14
+Git-commit: e8117c26b24098496b6011aabe84e43e0189a506
+Subject: [PATCH] Btrfs: only fua the first superblock when writting
+ supers
+
+We only intent to fua the first superblock in every device from
+comments, fix it.
+
+Signed-off-by: Wang Shilong <wangsl.fnst@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3144,7 +3144,10 @@ static int write_dev_supers(struct btrfs
+ 		 * we fua the first super.  The others we allow
+ 		 * to go down lazy.
+ 		 */
+-		ret = btrfsic_submit_bh(WRITE_FUA, bh);
++		if (i == 0)
++			ret = btrfsic_submit_bh(WRITE_FUA, bh);
++		else
++			ret = btrfsic_submit_bh(WRITE_SYNC, bh);
+ 		if (ret)
+ 			errors++;
+ 	}

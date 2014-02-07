@@ -1,0 +1,51 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Tue, 14 Jan 2014 20:31:52 +0800
+Patch-mainline: 3.14
+Git-commit: 23c671a58831a5aaca3b56b915c8394a274a96df
+Subject: [PATCH] Btrfs: flush the dirty pages of the ordered extent
+ aggressively during logging csum
+
+The performance of fsync dropped down suddenly sometimes, the main reason
+of this problem was that we might only flush part dirty pages in a ordered
+extent, then got that ordered extent, wait for the csum calcucation. But if
+no task flushed the left part, we would wait until the flusher flushed them,
+sometimes we need wait for several seconds, it made the performance drop
+down suddenly. (On my box, it drop down from 56MB/s to 4-10MB/s)
+
+This patch improves the above problem by flushing left dirty pages aggressively.
+
+Test Environment:
+CPU:		2CPU * 2Cores
+Memory:		4GB
+Partition:	20GB(HDD)
+
+Test Command:
+ # sysbench --num-threads=8 --test=fileio --file-num=1 \
+ > --file-total-size=8G --file-block-size=32768 \
+ > --file-io-mode=sync --file-fsync-freq=100 \
+ > --file-fsync-end=no --max-requests=10000 \
+ > --file-test-mode=rndwr run
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/tree-log.c |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -3637,7 +3637,11 @@ again:
+ 		 * start over after this.
+ 		 */
+ 
+-		wait_event(ordered->wait, ordered->csum_bytes_left == 0);
++		if (ordered->csum_bytes_left) {
++			btrfs_start_ordered_extent(inode, ordered, 0);
++			wait_event(ordered->wait,
++				   ordered->csum_bytes_left == 0);
++		}
+ 
+ 		list_for_each_entry(sum, &ordered->list, list) {
+ 			ret = btrfs_csum_file_blocks(trans, log, sum);

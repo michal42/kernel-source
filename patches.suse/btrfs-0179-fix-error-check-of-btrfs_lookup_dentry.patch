@@ -1,0 +1,92 @@
+From: Tsutomu Itoh <t-itoh@jp.fujitsu.com>
+Date: Fri, 13 Dec 2013 09:51:42 +0900
+Patch-mainline: 3.14
+Git-commit: 5662344b3c0d9ddd9afd48716d795166f982d5e2
+Subject: [PATCH] Btrfs: fix error check of btrfs_lookup_dentry()
+
+Clean up btrfs_lookup_dentry() to never return NULL, but PTR_ERR(-ENOENT)
+instead. This keeps the return value convention consistent.
+
+Callers who use btrfs_lookup_dentry() require a trivial update.
+
+create_snapshot() in particular looks like it can also lose a BUG_ON(!inode)
+which is not really needed - there seems less harm in returning ENOENT to
+userspace at that point in the stack than there is to crash the machine.
+
+Signed-off-by: Tsutomu Itoh <t-itoh@jp.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/inode.c |   15 +++++++++++----
+ fs/btrfs/ioctl.c |   13 ++++++++++---
+ 2 files changed, 21 insertions(+), 7 deletions(-)
+
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -4992,7 +4992,7 @@ struct inode *btrfs_lookup_dentry(struct
+ 		return ERR_PTR(ret);
+ 
+ 	if (location.objectid == 0)
+-		return NULL;
++		return ERR_PTR(-ENOENT);
+ 
+ 	if (location.type == BTRFS_INODE_ITEM_KEY) {
+ 		inode = btrfs_iget(dir->i_sb, &location, root, NULL);
+@@ -5056,10 +5056,17 @@ static void btrfs_dentry_release(struct
+ static struct dentry *btrfs_lookup(struct inode *dir, struct dentry *dentry,
+ 				   unsigned int flags)
+ {
+-	struct dentry *ret;
++	struct inode *inode;
+ 
+-	ret = d_splice_alias(btrfs_lookup_dentry(dir, dentry), dentry);
+-	return ret;
++	inode = btrfs_lookup_dentry(dir, dentry);
++	if (IS_ERR(inode)) {
++		if (PTR_ERR(inode) == -ENOENT)
++			inode = NULL;
++		else
++			return ERR_CAST(inode);
++	}
++
++	return d_splice_alias(inode, dentry);
+ }
+ 
+ unsigned char btrfs_filetype_table[] = {
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -393,6 +393,7 @@ static noinline int create_subvol(struct
+ 	struct btrfs_root *new_root;
+ 	struct btrfs_block_rsv block_rsv;
+ 	struct timespec cur_time = CURRENT_TIME;
++	struct inode *inode;
+ 	int ret;
+ 	int err;
+ 	u64 objectid;
+@@ -554,8 +555,14 @@ fail:
+ 	if (err && !ret)
+ 		ret = err;
+ 
+-	if (!ret)
+-		d_instantiate(dentry, btrfs_lookup_dentry(dir, dentry));
++	if (!ret) {
++		inode = btrfs_lookup_dentry(dir, dentry);
++		if (IS_ERR(inode)) {
++			ret = PTR_ERR(inode);
++			goto out;
++		}
++		d_instantiate(dentry, inode);
++	}
+ out:
+ 	btrfs_subvolume_release_metadata(root, &block_rsv, qgroup_reserved);
+ 	return ret;
+@@ -643,7 +650,7 @@ static int create_snapshot(struct btrfs_
+ 		ret = PTR_ERR(inode);
+ 		goto fail;
+ 	}
+-	BUG_ON(!inode);
++
+ 	d_instantiate(dentry, inode);
+ 	ret = 0;
+ fail:

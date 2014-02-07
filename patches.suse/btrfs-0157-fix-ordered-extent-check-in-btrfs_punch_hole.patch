@@ -1,0 +1,30 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Tue, 19 Nov 2013 16:19:24 +0000
+Patch-mainline: 3.14
+Git-commit: 6126e3caf7468a07cc1a8239d9e95090acedd3ca
+Subject: [PATCH] Btrfs: fix ordered extent check in btrfs_punch_hole
+
+If the ordered extent's last byte was 1 less than our region's
+start byte, we would unnecessarily wait for the completion of
+that ordered extent, because it doesn't intersect our target
+range.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/file.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/fs/btrfs/file.c
++++ b/fs/btrfs/file.c
+@@ -2164,7 +2164,7 @@ static int btrfs_punch_hole(struct inode
+ 		 * we need to try again.
+ 		 */
+ 		if ((!ordered ||
+-		    (ordered->file_offset + ordered->len < lockstart ||
++		    (ordered->file_offset + ordered->len <= lockstart ||
+ 		     ordered->file_offset > lockend)) &&
+ 		     !test_range_bit(&BTRFS_I(inode)->io_tree, lockstart,
+ 				     lockend, EXTENT_UPTODATE, 0,

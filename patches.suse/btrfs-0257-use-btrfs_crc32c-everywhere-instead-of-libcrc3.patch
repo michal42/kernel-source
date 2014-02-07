@@ -1,0 +1,98 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Wed, 29 Jan 2014 21:06:04 +0000
+Patch-mainline: 3.14
+Git-commit: 0b947aff1599afbbd2ec07ada87b05af0f94cf10
+Subject: [PATCH] Btrfs: use btrfs_crc32c everywhere instead of
+ libcrc32c
+
+After the commit titled "Btrfs: fix btrfs boot when compiled as built-in",
+LIBCRC32C requirement was removed from btrfs' Kconfig. This made it not
+possible to build a kernel with btrfs enabled (either as module or built-in)
+if libcrc32c is not enabled as well. So just replace all uses of libcrc32c
+with the equivalent function in btrfs hash.h - btrfs_crc32c.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/check-integrity.c |    4 ++--
+ fs/btrfs/disk-io.c         |    4 ++--
+ fs/btrfs/send.c            |    4 ++--
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+--- a/fs/btrfs/check-integrity.c
++++ b/fs/btrfs/check-integrity.c
+@@ -92,11 +92,11 @@
+ #include <linux/slab.h>
+ #include <linux/buffer_head.h>
+ #include <linux/mutex.h>
+-#include <linux/crc32c.h>
+ #include <linux/genhd.h>
+ #include <linux/blkdev.h>
+ #include "ctree.h"
+ #include "disk-io.h"
++#include "hash.h"
+ #include "transaction.h"
+ #include "extent_io.h"
+ #include "volumes.h"
+@@ -1837,7 +1837,7 @@ static int btrfsic_test_for_metadata(str
+ 		size_t sublen = i ? PAGE_CACHE_SIZE :
+ 				    (PAGE_CACHE_SIZE - BTRFS_CSUM_SIZE);
+ 
+-		crc = crc32c(crc, data, sublen);
++		crc = btrfs_crc32c(crc, data, sublen);
+ 	}
+ 	btrfs_csum_final(crc, csum);
+ 	if (memcmp(csum, h->csum, state->csum_size))
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -26,7 +26,6 @@
+ #include <linux/workqueue.h>
+ #include <linux/kthread.h>
+ #include <linux/freezer.h>
+-#include <linux/crc32c.h>
+ #include <linux/slab.h>
+ #include <linux/migrate.h>
+ #include <linux/ratelimit.h>
+@@ -35,6 +34,7 @@
+ #include <asm/unaligned.h>
+ #include "ctree.h"
+ #include "disk-io.h"
++#include "hash.h"
+ #include "transaction.h"
+ #include "btrfs_inode.h"
+ #include "volumes.h"
+@@ -244,7 +244,7 @@ out:
+ 
+ u32 btrfs_csum_data(char *data, u32 seed, size_t len)
+ {
+-	return crc32c(seed, data, len);
++	return btrfs_crc32c(seed, data, len);
+ }
+ 
+ void btrfs_csum_final(u32 crc, char *result)
+--- a/fs/btrfs/send.c
++++ b/fs/btrfs/send.c
+@@ -24,12 +24,12 @@
+ #include <linux/xattr.h>
+ #include <linux/posix_acl_xattr.h>
+ #include <linux/radix-tree.h>
+-#include <linux/crc32c.h>
+ #include <linux/vmalloc.h>
+ #include <linux/string.h>
+ 
+ #include "send.h"
+ #include "backref.h"
++#include "hash.h"
+ #include "locking.h"
+ #include "disk-io.h"
+ #include "btrfs_inode.h"
+@@ -594,7 +594,7 @@ static int send_cmd(struct send_ctx *sct
+ 	hdr->len = cpu_to_le32(sctx->send_size - sizeof(*hdr));
+ 	hdr->crc = 0;
+ 
+-	crc = crc32c(0, (unsigned char *)sctx->send_buf, sctx->send_size);
++	crc = btrfs_crc32c(0, (unsigned char *)sctx->send_buf, sctx->send_size);
+ 	hdr->crc = cpu_to_le32(crc);
+ 
+ 	ret = write_buf(sctx->send_filp, sctx->send_buf, sctx->send_size,

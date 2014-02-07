@@ -1,0 +1,66 @@
+From: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Date: Mon, 6 Jan 2014 09:58:32 +0800
+Patch-mainline: 3.14
+Git-commit: d399167d88ea53590d6c0850b2d5534cbd21da02
+Subject: [PATCH] btrfs: Add datasum mount option.
+
+Add datasum mount option to enable checksum with
+remount option.
+
+Signed-off-by: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Reviewed-by: David Sterba <dsterba@suse.cz>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ Documentation/filesystems/btrfs.txt |    4 +++-
+ fs/btrfs/super.c                    |   10 ++++++++++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+--- a/Documentation/filesystems/btrfs.txt
++++ b/Documentation/filesystems/btrfs.txt
+@@ -153,8 +153,10 @@ Options with (*) are default options and
+ 	Enable/disable data copy-on-write for newly created files.
+ 	Nodatacow implies nodatasum, and disables all compression.
+ 
++  datasum(*)
+   nodatasum
+-	Disable data checksumming for newly created files.
++	Enable/disable data checksumming for newly created files.
++	Datasum implies datacow.
+ 
+   notreelog
+ 	Disable the tree logging used for fsync and O_SYNC writes.
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -325,6 +325,7 @@ enum {
+ 	Opt_check_integrity_print_mask, Opt_fatal_errors, Opt_rescan_uuid_tree,
+ 	Opt_commit_interval, Opt_barrier, Opt_nodefrag, Opt_nodiscard,
+ 	Opt_noenospc_debug, Opt_noflushoncommit, Opt_acl, Opt_datacow,
++	Opt_datasum,
+ 	Opt_err,
+ };
+ 
+@@ -334,6 +335,7 @@ static match_table_t tokens = {
+ 	{Opt_subvolid, "subvolid=%s"},
+ 	{Opt_device, "device=%s"},
+ 	{Opt_nodatasum, "nodatasum"},
++	{Opt_datasum, "datasum"},
+ 	{Opt_nodatacow, "nodatacow"},
+ 	{Opt_datacow, "datacow"},
+ 	{Opt_nobarrier, "nobarrier"},
+@@ -434,6 +436,14 @@ int btrfs_parse_options(struct btrfs_roo
+ 			btrfs_info(root->fs_info, "setting nodatasum");
+ 			btrfs_set_opt(info->mount_opt, NODATASUM);
+ 			break;
++		case Opt_datasum:
++			if (btrfs_test_opt(root, NODATACOW))
++				btrfs_info(root->fs_info, "setting datasum, datacow enabled");
++			else
++				btrfs_info(root->fs_info, "setting datasum");
++			btrfs_clear_opt(info->mount_opt, NODATACOW);
++			btrfs_clear_opt(info->mount_opt, NODATASUM);
++			break;
+ 		case Opt_nodatacow:
+ 			if (!btrfs_test_opt(root, COMPRESS) ||
+ 				!btrfs_test_opt(root, FORCE_COMPRESS)) {

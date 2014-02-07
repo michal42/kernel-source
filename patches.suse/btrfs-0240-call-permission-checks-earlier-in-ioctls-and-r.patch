@@ -1,0 +1,85 @@
+From: David Sterba <dsterba@suse.cz>
+Date: Thu, 16 Jan 2014 15:50:22 +0100
+Patch-mainline: 3.14
+Git-commit: bd60ea0fe947029df4b7b7aa9d6557baf2a5a138
+Subject: [PATCH] btrfs: call permission checks earlier in ioctls and
+ return EPERM
+
+The owner and capability checks in IOC_SUBVOL_SETFLAGS and
+SET_RECEIVED_SUBVOL should be called before any other checks are done.
+
+Also unify the error code to EPERM.
+
+Signed-off-by: David Sterba <dsterba@suse.cz>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+---
+ fs/btrfs/ioctl.c |   22 +++++++++-------------
+ 1 file changed, 9 insertions(+), 13 deletions(-)
+
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -192,6 +192,9 @@ static int btrfs_ioctl_setflags(struct f
+ 	unsigned int i_oldflags;
+ 	umode_t mode;
+ 
++	if (!inode_owner_or_capable(inode))
++		return -EPERM;
++
+ 	if (btrfs_root_readonly(root))
+ 		return -EROFS;
+ 
+@@ -202,9 +205,6 @@ static int btrfs_ioctl_setflags(struct f
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!inode_owner_or_capable(inode))
+-		return -EACCES;
+-
+ 	ret = mnt_want_write_file(file);
+ 	if (ret)
+ 		return ret;
+@@ -1697,6 +1697,9 @@ static noinline int btrfs_ioctl_subvol_s
+ 	u64 flags;
+ 	int ret = 0;
+ 
++	if (!inode_owner_or_capable(inode))
++		return -EPERM;
++
+ 	ret = mnt_want_write_file(file);
+ 	if (ret)
+ 		goto out;
+@@ -1721,11 +1724,6 @@ static noinline int btrfs_ioctl_subvol_s
+ 		goto out_drop_write;
+ 	}
+ 
+-	if (!inode_owner_or_capable(inode)) {
+-		ret = -EACCES;
+-		goto out_drop_write;
+-	}
+-
+ 	down_write(&root->fs_info->subvol_sem);
+ 
+ 	/* nothing to do */
+@@ -4365,6 +4363,9 @@ static long btrfs_ioctl_set_received_sub
+ 	int ret = 0;
+ 	int received_uuid_changed;
+ 
++	if (!inode_owner_or_capable(inode))
++		return -EPERM;
++
+ 	ret = mnt_want_write_file(file);
+ 	if (ret < 0)
+ 		return ret;
+@@ -4381,11 +4382,6 @@ static long btrfs_ioctl_set_received_sub
+ 		goto out;
+ 	}
+ 
+-	if (!inode_owner_or_capable(inode)) {
+-		ret = -EACCES;
+-		goto out;
+-	}
+-
+ 	sa = memdup_user(arg, sizeof(*sa));
+ 	if (IS_ERR(sa)) {
+ 		ret = PTR_ERR(sa);

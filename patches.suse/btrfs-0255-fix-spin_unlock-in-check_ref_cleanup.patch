@@ -1,0 +1,34 @@
+From: Chris Mason <clm@fb.com>
+Date: Wed, 29 Jan 2014 07:02:40 -0800
+Patch-mainline: 3.14
+Git-commit: cf93da7bcf450cb4595055d491a0519cb39e68ed
+Subject: [PATCH] Btrfs: fix spin_unlock in check_ref_cleanup
+
+Our goto out should have gone a little farther.
+
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -5893,7 +5893,7 @@ static noinline int check_ref_cleanup(st
+ 	spin_lock(&delayed_refs->lock);
+ 	head = btrfs_find_delayed_ref_head(trans, bytenr);
+ 	if (!head)
+-		goto out;
++		goto out_delayed_unlock;
+ 
+ 	spin_lock(&head->lock);
+ 	if (rb_first(&head->ref_root))
+@@ -5942,6 +5942,8 @@ static noinline int check_ref_cleanup(st
+ 	return ret;
+ out:
+ 	spin_unlock(&head->lock);
++
++out_delayed_unlock:
+ 	spin_unlock(&delayed_refs->lock);
+ 	return 0;
+ }

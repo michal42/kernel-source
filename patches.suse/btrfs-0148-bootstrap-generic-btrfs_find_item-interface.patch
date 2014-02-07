@@ -1,0 +1,152 @@
+From: Kelley Nielsen <kelleynnn@gmail.com>
+Date: Mon, 4 Nov 2013 19:33:33 -0800
+Patch-mainline: 3.14
+Git-commit: e33d5c3d6d61518c7f115af6d11d3dffa230d31f
+Subject: [PATCH] btrfs: bootstrap generic btrfs_find_item interface
+
+There are many btrfs functions that manually search the tree for an
+item. They all reimplement the same mechanism and differ in the
+conditions that they use to find the item. __inode_info() is one such
+example. Zach Brown proposed creating a new interface to take the place
+of these functions.
+
+This patch is the first step to creating the interface. A new function,
+btrfs_find_item, has been added to ctree.c and prototyped in ctree.h.
+It is identical to __inode_info, except that the order of the parameters
+has been rearranged to more closely those of similar functions elsewhere
+in the code (now, root and path come first, then the objectid, offset
+and type, and the key to be filled in last). __inode_info's callers have
+been set to call this new function instead, and __inode_info itself has
+been removed.
+
+Signed-off-by: Kelley Nielsen <kelleynnn@gmail.com>
+Suggested-by: Zach Brown <zab@redhat.com>
+Reviewed-by: Josh Triplett <josh@joshtriplett.org>
+Signed-off-by: Josef Bacik <jbacik@fusionio.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/backref.c |   40 ++++------------------------------------
+ fs/btrfs/ctree.c   |   37 +++++++++++++++++++++++++++++++++++++
+ fs/btrfs/ctree.h   |    2 ++
+ 3 files changed, 43 insertions(+), 36 deletions(-)
+
+--- a/fs/btrfs/backref.c
++++ b/fs/btrfs/backref.c
+@@ -1107,38 +1107,6 @@ int btrfs_find_all_roots(struct btrfs_tr
+ 	return 0;
+ }
+ 
+-
+-static int __inode_info(u64 inum, u64 ioff, u8 key_type,
+-			struct btrfs_root *fs_root, struct btrfs_path *path,
+-			struct btrfs_key *found_key)
+-{
+-	int ret;
+-	struct btrfs_key key;
+-	struct extent_buffer *eb;
+-
+-	key.type = key_type;
+-	key.objectid = inum;
+-	key.offset = ioff;
+-
+-	ret = btrfs_search_slot(NULL, fs_root, &key, path, 0, 0);
+-	if (ret < 0)
+-		return ret;
+-
+-	eb = path->nodes[0];
+-	if (ret && path->slots[0] >= btrfs_header_nritems(eb)) {
+-		ret = btrfs_next_leaf(fs_root, path);
+-		if (ret)
+-			return ret;
+-		eb = path->nodes[0];
+-	}
+-
+-	btrfs_item_key_to_cpu(eb, found_key, path->slots[0]);
+-	if (found_key->type != key.type || found_key->objectid != key.objectid)
+-		return 1;
+-
+-	return 0;
+-}
+-
+ /*
+  * this makes the path point to (inum INODE_ITEM ioff)
+  */
+@@ -1146,16 +1114,16 @@ int inode_item_info(u64 inum, u64 ioff,
+ 			struct btrfs_path *path)
+ {
+ 	struct btrfs_key key;
+-	return __inode_info(inum, ioff, BTRFS_INODE_ITEM_KEY, fs_root, path,
+-				&key);
++	return btrfs_find_item(fs_root, path, inum, ioff,
++			BTRFS_INODE_ITEM_KEY, &key);
+ }
+ 
+ static int inode_ref_info(u64 inum, u64 ioff, struct btrfs_root *fs_root,
+ 				struct btrfs_path *path,
+ 				struct btrfs_key *found_key)
+ {
+-	return __inode_info(inum, ioff, BTRFS_INODE_REF_KEY, fs_root, path,
+-				found_key);
++	return btrfs_find_item(fs_root, path, inum, ioff,
++			BTRFS_INODE_REF_KEY, found_key);
+ }
+ 
+ int btrfs_find_one_extref(struct btrfs_root *root, u64 inode_objectid,
+--- a/fs/btrfs/ctree.c
++++ b/fs/btrfs/ctree.c
+@@ -2461,6 +2461,43 @@ static int key_search(struct extent_buff
+ 	return 0;
+ }
+ 
++/* Proposed generic search function, meant to take the place of the
++* various small search helper functions throughout the code and standardize
++* the search interface. Right now, it only replaces the former __inode_info
++* in backref.c.
++*/
++int btrfs_find_item(struct btrfs_root *fs_root, struct btrfs_path *path,
++		u64 iobjectid, u64 ioff, u8 key_type,
++		struct btrfs_key *found_key)
++{
++	int ret;
++	struct btrfs_key key;
++	struct extent_buffer *eb;
++
++	key.type = key_type;
++	key.objectid = iobjectid;
++	key.offset = ioff;
++
++	ret = btrfs_search_slot(NULL, fs_root, &key, path, 0, 0);
++	if (ret < 0)
++		return ret;
++
++	eb = path->nodes[0];
++	if (ret && path->slots[0] >= btrfs_header_nritems(eb)) {
++		ret = btrfs_next_leaf(fs_root, path);
++		if (ret)
++			return ret;
++		eb = path->nodes[0];
++	}
++
++	btrfs_item_key_to_cpu(eb, found_key, path->slots[0]);
++	if (found_key->type != key.type ||
++			found_key->objectid != key.objectid)
++		return 1;
++
++	return 0;
++}
++
+ /*
+  * look for key in the tree.  path is filled in with nodes along the way
+  * if key is found, we return zero and you can find the item in the leaf
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -3371,6 +3371,8 @@ int btrfs_duplicate_item(struct btrfs_tr
+ 			 struct btrfs_root *root,
+ 			 struct btrfs_path *path,
+ 			 struct btrfs_key *new_key);
++int btrfs_find_item(struct btrfs_root *fs_root, struct btrfs_path *path,
++		u64 inum, u64 ioff, u8 key_type, struct btrfs_key *found_key);
+ int btrfs_search_slot(struct btrfs_trans_handle *trans, struct btrfs_root
+ 		      *root, struct btrfs_key *key, struct btrfs_path *p, int
+ 		      ins_len, int cow);

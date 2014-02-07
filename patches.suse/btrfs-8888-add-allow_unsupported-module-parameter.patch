@@ -33,7 +33,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -4041,4 +4041,9 @@ static inline int btrfs_defrag_cancelled
+@@ -4082,4 +4082,9 @@ static inline int btrfs_defrag_cancelled
  void btrfs_test_destroy_inode(struct inode *inode);
  #endif
  
@@ -45,7 +45,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  #endif
 --- a/fs/btrfs/disk-io.c
 +++ b/fs/btrfs/disk-io.c
-@@ -2370,6 +2370,14 @@ int open_ctree(struct super_block *sb,
+@@ -2373,6 +2373,14 @@ int open_ctree(struct super_block *sb,
  	if (btrfs_super_flags(disk_super) & BTRFS_SUPER_FLAG_ERROR)
  		set_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state);
  
@@ -62,7 +62,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	 * our ring pointer to the oldest one
 --- a/fs/btrfs/file.c
 +++ b/fs/btrfs/file.c
-@@ -2273,8 +2273,14 @@ static long btrfs_fallocate(struct file
+@@ -2365,8 +2365,14 @@ static long btrfs_fallocate(struct file
  	if (mode & ~(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
  		return -EOPNOTSUPP;
  
@@ -80,7 +80,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	 * Make sure we have enough space before we do the
 --- a/fs/btrfs/ioctl.c
 +++ b/fs/btrfs/ioctl.c
-@@ -4660,6 +4660,7 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4681,6 +4681,7 @@ long btrfs_ioctl(struct file *file, unsi
  {
  	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
  	void __user *argp = (void __user *)arg;
@@ -88,7 +88,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  	switch (cmd) {
  	case FS_IOC_GETFLAGS:
-@@ -4748,6 +4749,11 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4769,6 +4770,11 @@ long btrfs_ioctl(struct file *file, unsi
  	case BTRFS_IOC_BALANCE_PROGRESS:
  		return btrfs_ioctl_balance_progress(root, argp);
  	case BTRFS_IOC_SET_RECEIVED_SUBVOL:
@@ -100,7 +100,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		return btrfs_ioctl_set_received_subvol(file, argp);
  	case BTRFS_IOC_SEND:
  		return btrfs_ioctl_send(file, argp);
-@@ -4768,6 +4774,11 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4789,6 +4795,11 @@ long btrfs_ioctl(struct file *file, unsi
  	case BTRFS_IOC_QUOTA_RESCAN_WAIT:
  		return btrfs_ioctl_quota_rescan_wait(file, argp);
  	case BTRFS_IOC_DEV_REPLACE:
@@ -112,7 +112,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		return btrfs_ioctl_dev_replace(root, argp);
  	case BTRFS_IOC_GET_FSLABEL:
  		return btrfs_ioctl_get_fslabel(file, argp);
-@@ -4783,5 +4794,5 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -4804,5 +4815,5 @@ long btrfs_ioctl(struct file *file, unsi
  		return btrfs_ioctl_set_features(file, argp);
  	}
  
@@ -121,7 +121,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  }
 --- a/fs/btrfs/send.c
 +++ b/fs/btrfs/send.c
-@@ -4733,6 +4733,11 @@ long btrfs_ioctl_send(struct file *mnt_f
+@@ -4876,6 +4876,11 @@ long btrfs_ioctl_send(struct file *mnt_f
  		ret = -EINVAL;
  		goto out;
  	}
@@ -143,7 +143,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  #include <linux/buffer_head.h>
  #include <linux/fs.h>
  #include <linux/pagemap.h>
-@@ -443,6 +444,11 @@ int btrfs_parse_options(struct btrfs_roo
+@@ -490,6 +491,11 @@ int btrfs_parse_options(struct btrfs_roo
  			/* Fallthrough */
  		case Opt_compress:
  		case Opt_compress_type:
@@ -152,11 +152,11 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 +				ret = -EOPNOTSUPP;
 +				break;
 +			}
+ 			compress = true;
  			if (token == Opt_compress ||
  			    token == Opt_compress_force ||
- 			    strcmp(args[0].from, "zlib") == 0) {
-@@ -580,6 +586,11 @@ int btrfs_parse_options(struct btrfs_roo
- 			btrfs_clear_opt(info->mount_opt, SPACE_CACHE);
+@@ -646,6 +652,11 @@ int btrfs_parse_options(struct btrfs_roo
+ 					     "disabling disk space caching");
  			break;
  		case Opt_inode_cache:
 +			if (!allow_unsupported) {
@@ -164,11 +164,11 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 +				ret = -EOPNOTSUPP;
 +				break;
 +			}
- 			printk(KERN_INFO "btrfs: enabling inode map caching\n");
- 			btrfs_set_opt(info->mount_opt, INODE_MAP_CACHE);
+ 			btrfs_set_and_info(root, CHANGE_INODE_CACHE,
+ 					   "enabling inode map caching");
  			break;
-@@ -594,6 +605,11 @@ int btrfs_parse_options(struct btrfs_roo
- 			btrfs_set_opt(info->mount_opt, ENOSPC_DEBUG);
+@@ -667,6 +678,11 @@ int btrfs_parse_options(struct btrfs_roo
+ 			btrfs_clear_opt(info->mount_opt, ENOSPC_DEBUG);
  			break;
  		case Opt_defrag:
 +			if (!allow_unsupported) {
@@ -176,10 +176,10 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 +				ret = -EOPNOTSUPP;
 +				break;
 +			}
- 			printk(KERN_INFO "btrfs: enabling auto defrag\n");
- 			btrfs_set_opt(info->mount_opt, AUTO_DEFRAG);
+ 			btrfs_set_and_info(root, AUTO_DEFRAG,
+ 					   "enabling auto defrag");
  			break;
-@@ -1864,6 +1880,13 @@ static int __init init_btrfs_fs(void)
+@@ -1942,6 +1958,13 @@ static int __init init_btrfs_fs(void)
  
  	btrfs_print_info();
  
@@ -193,8 +193,8 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	err = btrfs_run_sanity_tests();
  	if (err)
  		goto unregister_ioctl;
-@@ -1915,6 +1938,44 @@ static void __exit exit_btrfs_fs(void)
- 	btrfs_exit_compress();
+@@ -1996,6 +2019,44 @@ static void __exit exit_btrfs_fs(void)
+ 	btrfs_hash_exit();
  }
  
 +#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
@@ -235,6 +235,6 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 +		&allow_unsupported, 0644);
 +MODULE_PARM_DESC(allow_unsupported, "Allow using features that are out of supported scope");
 +
- module_init(init_btrfs_fs)
+ late_initcall(init_btrfs_fs);
  module_exit(exit_btrfs_fs)
  
