@@ -1,0 +1,36 @@
+From 3e79af5353417f2ccf059abd5fd4b943a159b082 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan.j.williams@intel.com>
+Date: Mon, 6 Jan 2014 12:11:27 -0800
+Git-Commit: 68d6e5f4554536a2b90d4cc14d7b2ea4c1fb0975
+Patch-Mainline: v3.15
+References: FATE#315518
+Subject: [PATCH 06/12] usb: usb3 ports do not support FEAT_C_ENABLE
+
+The port pm_runtime implementation unconditionally clears FEAT_C_ENABLE
+after clearing PORT_POWER, but the bit is reserved on usb3 hub ports.
+We expect khubd to be suspended at this time so we need to clear any
+errors for usb2 ports.
+
+Signed-off-by: Dan Williams <dan.j.williams@intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/core/port.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/core/port.c b/drivers/usb/core/port.c
+index f01c560..e2410e0 100644
+--- a/drivers/usb/core/port.c
++++ b/drivers/usb/core/port.c
+@@ -154,7 +154,8 @@ static int usb_port_runtime_suspend(struct device *dev)
+ 	set_bit(port1, hub->busy_bits);
+ 	retval = usb_hub_set_port_power(hdev, hub, port1, false);
+ 	usb_clear_port_feature(hdev, port1, USB_PORT_FEAT_C_CONNECTION);
+-	usb_clear_port_feature(hdev, port1,	USB_PORT_FEAT_C_ENABLE);
++	if (!hub_is_superspeed(hdev))
++		usb_clear_port_feature(hdev, port1, USB_PORT_FEAT_C_ENABLE);
+ 	clear_bit(port1, hub->busy_bits);
+ 	usb_autopm_put_interface(intf);
+ 
+-- 
+1.8.4
+
