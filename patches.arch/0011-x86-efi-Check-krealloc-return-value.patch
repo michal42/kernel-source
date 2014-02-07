@@ -1,0 +1,46 @@
+From ee41143027706d9f342dfe05487a00b20887fde7 Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <bp@suse.de>
+Date: Thu, 31 Oct 2013 17:25:09 +0100
+Subject: x86/efi: Check krealloc return value
+Git-commit: ee41143027706d9f342dfe05487a00b20887fde7
+Patch-mainline: v3.14-rc1
+References: fate#315019
+
+Check it just in case. We might just as well panic there because runtime
+won't be functioning anyway.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+---
+ arch/x86/platform/efi/efi.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/x86/platform/efi/efi.c b/arch/x86/platform/efi/efi.c
+index 991bd9c38ef5..6b82fdde459e 100644
+--- a/arch/x86/platform/efi/efi.c
++++ b/arch/x86/platform/efi/efi.c
+@@ -857,6 +857,9 @@ void __init efi_enter_virtual_mode(void)
+ 		new_memmap = krealloc(new_memmap,
+ 				      (count + 1) * memmap.desc_size,
+ 				      GFP_KERNEL);
++		if (!new_memmap)
++			goto err_out;
++
+ 		memcpy(new_memmap + (count * memmap.desc_size), md,
+ 		       memmap.desc_size);
+ 		count++;
+@@ -911,6 +914,11 @@ void __init efi_enter_virtual_mode(void)
+ 			 EFI_VARIABLE_BOOTSERVICE_ACCESS |
+ 			 EFI_VARIABLE_RUNTIME_ACCESS,
+ 			 0, NULL);
++
++	return;
++
++ err_out:
++	pr_err("Error reallocating memory, EFI runtime non-functional!\n");
+ }
+ 
+ /*
+-- 
+1.8.5.2.192.g7794a68
+
