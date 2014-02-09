@@ -28,16 +28,14 @@ Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- fs/proc/task_mmu.c        | 14 ++++++-------
- include/linux/mempolicy.h |  5 ++---
- mm/mempolicy.c            | 52 +++++++++++++++--------------------------------
- 3 files changed, 24 insertions(+), 47 deletions(-)
+ fs/proc/task_mmu.c        |   14 +++++------
+ include/linux/mempolicy.h |    5 +---
+ mm/mempolicy.c            |   54 ++++++++++++++--------------------------------
+ 3 files changed, 25 insertions(+), 48 deletions(-)
 
-diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
-index e73e154..fcd5993 100644
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
-@@ -1402,8 +1402,8 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
+@@ -1389,8 +1389,8 @@ static int show_numa_map(struct seq_file
  	struct mm_struct *mm = vma->vm_mm;
  	struct mm_walk walk = {};
  	struct mempolicy *pol;
@@ -48,7 +46,7 @@ index e73e154..fcd5993 100644
  
  	if (!mm)
  		return 0;
-@@ -1419,10 +1419,8 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
+@@ -1406,10 +1406,8 @@ static int show_numa_map(struct seq_file
  	walk.mm = mm;
  
  	pol = get_vma_policy(task, vma, vma->vm_start);
@@ -60,7 +58,7 @@ index e73e154..fcd5993 100644
  
  	seq_printf(m, "%08lx %s", vma->vm_start, buffer);
  
-@@ -1475,9 +1473,9 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
+@@ -1462,9 +1460,9 @@ static int show_numa_map(struct seq_file
  	if (md->writeback)
  		seq_printf(m, " writeback=%lu", md->writeback);
  
@@ -73,11 +71,9 @@ index e73e154..fcd5993 100644
  out:
  	seq_putc(m, '\n');
  
-diff --git a/include/linux/mempolicy.h b/include/linux/mempolicy.h
-index ea4d249..9fe426b 100644
 --- a/include/linux/mempolicy.h
 +++ b/include/linux/mempolicy.h
-@@ -169,7 +169,7 @@ int do_migrate_pages(struct mm_struct *mm, const nodemask_t *from,
+@@ -169,7 +169,7 @@ int do_migrate_pages(struct mm_struct *m
  extern int mpol_parse_str(char *str, struct mempolicy **mpol);
  #endif
  
@@ -86,7 +82,7 @@ index ea4d249..9fe426b 100644
  
  /* Check if a vma is migratable */
  static inline int vma_migratable(struct vm_area_struct *vma)
-@@ -307,9 +307,8 @@ static inline int mpol_parse_str(char *str, struct mempolicy **mpol)
+@@ -307,9 +307,8 @@ static inline int mpol_parse_str(char *s
  }
  #endif
  
@@ -97,8 +93,6 @@ index ea4d249..9fe426b 100644
  }
  
  static inline int mpol_misplaced(struct page *page, struct vm_area_struct *vma,
-diff --git a/mm/mempolicy.c b/mm/mempolicy.c
-index 302bfb1..24f8648 100644
 --- a/mm/mempolicy.c
 +++ b/mm/mempolicy.c
 @@ -2919,62 +2919,45 @@ out:
@@ -125,14 +119,15 @@ index 302bfb1..24f8648 100644
 -	 * Sanity check:  room for longest mode, flag and some nodes
 -	 */
 -	VM_BUG_ON(maxlen < strlen("interleave") + strlen("relative") + 16);
+-
+-	if (!pol || pol == &default_policy || (pol->flags & MPOL_F_MORON))
+-		mode = MPOL_DEFAULT;
+-	else
 +	nodemask_t nodes = NODE_MASK_NONE;
 +	unsigned short mode = MPOL_DEFAULT;
 +	unsigned short flags = 0;
- 
--	if (!pol || pol == &default_policy)
--		mode = MPOL_DEFAULT;
--	else
-+	if (pol && pol != &default_policy) {
++
++	if (pol && pol != &default_policy && !(pol->flags & MPOL_F_MORON)) {
  		mode = pol->mode;
 +		flags = pol->flags;
 +	}
@@ -179,7 +174,7 @@ index 302bfb1..24f8648 100644
  
  		/*
  		 * Currently, the only defined flags are mutually exclusive
-@@ -2986,10 +2969,7 @@ int mpol_to_str(char *buffer, int maxlen, struct mempolicy *pol)
+@@ -2986,10 +2969,7 @@ int mpol_to_str(char *buffer, int maxlen
  	}
  
  	if (!nodes_empty(nodes)) {
