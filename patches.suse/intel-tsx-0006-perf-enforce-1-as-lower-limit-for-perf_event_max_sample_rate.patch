@@ -1,0 +1,51 @@
+From: Knut Petersen <Knut_Petersen@t-online.de>
+Date: Wed, 25 Sep 2013 14:29:37 +0200
+Subject: perf: Enforce 1 as lower limit for perf_event_max_sample_rate
+Git-commit: 723478c8a471403c53cf144999701f6e0c4bbd11
+Patch-mainline: v3.13-rc1
+References: FATE# 315534
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+/proc/sys/kernel/perf_event_max_sample_rate will accept
+negative values as well as 0.
+
+Negative values are unreasonable, and 0 causes a
+divide by zero exception in perf_proc_update_handler.
+
+This patch enforces a lower limit of 1.
+
+Signed-off-by: Knut Petersen <Knut_Petersen@t-online.de>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/5242DB0C.4070005@t-online.de
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ kernel/events/core.c | 2 +-
+ kernel/sysctl.c      | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index d49a9d2..b25d65c 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -193,7 +193,7 @@ int perf_proc_update_handler(struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp,
+ 		loff_t *ppos)
+ {
+-	int ret = proc_dointvec(table, write, buffer, lenp, ppos);
++	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+ 
+ 	if (ret || !write)
+ 		return ret;
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index b2f06f3..2a9db91 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -1049,6 +1049,7 @@ static struct ctl_table kern_table[] = {
+ 		.maxlen		= sizeof(sysctl_perf_event_sample_rate),
+ 		.mode		= 0644,
+ 		.proc_handler	= perf_proc_update_handler,
++		.extra1		= &one,
+ 	},
+ 	{
+ 		.procname	= "perf_cpu_time_max_percent",
+
