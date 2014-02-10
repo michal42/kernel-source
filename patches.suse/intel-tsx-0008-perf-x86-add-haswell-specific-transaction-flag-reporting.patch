@@ -1,0 +1,71 @@
+From: Andi Kleen <ak@linux.intel.com>
+Date: Fri, 20 Sep 2013 07:40:40 -0700
+Subject: perf/x86: Add Haswell specific transaction flag reporting
+Git-commit: a405bad5ad2086766ce320b16a56952e013327f8
+Patch-mainline: v3.13-rc1
+References: FATE# 315534
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+In the PEBS handler report the transaction flags using the new
+generic transaction flags facility. Most of them come from
+the "tsx_tuning" field in PEBSv2, but the abort code is derived
+from the RAX register reported in the PEBS record.
+
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1379688044-14173-3-git-send-email-andi@firstfloor.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ arch/x86/kernel/cpu/perf_event_intel_ds.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event_intel_ds.c b/arch/x86/kernel/cpu/perf_event_intel_ds.c
+index 07d9a05..32e9ed8 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel_ds.c
++++ b/arch/x86/kernel/cpu/perf_event_intel_ds.c
+@@ -206,6 +206,8 @@ union hsw_tsx_tuning {
+ 	u64	    value;
+ };
+ 
++#define PEBS_HSW_TSX_FLAGS	0xff00000000ULL
++
+ void init_debug_store_on_cpu(int cpu)
+ {
+ 	struct debug_store *ds = per_cpu(cpu_hw_events, cpu).ds;
+@@ -807,6 +809,16 @@ static inline u64 intel_hsw_weight(struct pebs_record_hsw *pebs)
+ 	return 0;
+ }
+ 
++static inline u64 intel_hsw_transaction(struct pebs_record_hsw *pebs)
++{
++	u64 txn = (pebs->tsx_tuning & PEBS_HSW_TSX_FLAGS) >> 32;
++
++	/* For RTM XABORTs also log the abort code from AX */
++	if ((txn & PERF_TXN_TRANSACTION) && (pebs->ax & 1))
++		txn |= ((pebs->ax >> 24) & 0xff) << PERF_TXN_ABORT_SHIFT;
++	return txn;
++}
++
+ static void __intel_pmu_pebs_event(struct perf_event *event,
+ 				   struct pt_regs *iregs, void *__pebs)
+ {
+@@ -885,10 +897,14 @@ static void __intel_pmu_pebs_event(struct perf_event *event,
+ 	    x86_pmu.intel_cap.pebs_format >= 1)
+ 		data.addr = pebs->dla;
+ 
+-	/* Only set the TSX weight when no memory weight was requested. */
+-	if ((event->attr.sample_type & PERF_SAMPLE_WEIGHT) && !fll &&
+-	    (x86_pmu.intel_cap.pebs_format >= 2))
+-		data.weight = intel_hsw_weight(pebs);
++	if (x86_pmu.intel_cap.pebs_format >= 2) {
++		/* Only set the TSX weight when no memory weight. */
++		if ((event->attr.sample_type & PERF_SAMPLE_WEIGHT) && !fll)
++			data.weight = intel_hsw_weight(pebs);
++
++		if (event->attr.sample_type & PERF_SAMPLE_TRANSACTION)
++			data.txn = intel_hsw_transaction(pebs);
++	}
+ 
+ 	if (has_branch_stack(event))
+ 		data.br_stack = &cpuc->lbr_stack;
+
