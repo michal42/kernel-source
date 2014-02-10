@@ -1,0 +1,65 @@
+From: Maria Dimakopoulou <maria.n.dimakopoulou@gmail.com>
+Date: Thu, 5 Dec 2013 01:24:37 +0200
+Subject: perf/x86: Fix constraint table end marker bug
+Git-commit: cf30d52e2d11523c42048ab89ed4215b5021526a
+Patch-mainline: v3.13-rc5
+References: FATE# 315534
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+The EVENT_CONSTRAINT_END() macro defines the end marker as
+a constraint with a weight of zero. This was all fine
+until we blacklisted the corrupting memory events on
+Intel IvyBridge. These events are blacklisted by using
+a counter bitmask of zero. Thus, they also get a constraint
+weight of zero.
+
+The iteration macro: for_each_constraint tests the weight==0.
+Therefore, it was stopping at the first blacklisted event, i.e.,
+0xd0. The corrupting events were therefore considered as
+unconstrained and were scheduled on any of the generic counters.
+
+This patch fixes the end marker to have a weight of -1. With
+this, the blacklisted events get an empty constraint and cannot
+be scheduled which is what we want for now.
+
+Signed-off-by: Maria Dimakopoulou <maria.n.dimakopoulou@gmail.com>
+Reviewed-by: Stephane Eranian <eranian@google.com>
+Cc: peterz@infradead.org
+Cc: ak@linux.intel.com
+Cc: jolsa@redhat.com
+Cc: zheng.z.yan@intel.com
+Link: http://lkml.kernel.org/r/20131204232437.GA10689@starlight
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ arch/x86/kernel/cpu/perf_event.h | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event.h b/arch/x86/kernel/cpu/perf_event.h
+index fd00bb2..c1a8618 100644
+--- a/arch/x86/kernel/cpu/perf_event.h
++++ b/arch/x86/kernel/cpu/perf_event.h
+@@ -262,11 +262,20 @@ struct cpu_hw_events {
+ 	__EVENT_CONSTRAINT(c, n, INTEL_ARCH_EVENT_MASK, \
+ 			  HWEIGHT(n), 0, PERF_X86_EVENT_PEBS_ST_HSW)
+ 
+-#define EVENT_CONSTRAINT_END		\
+-	EVENT_CONSTRAINT(0, 0, 0)
++/*
++ * We define the end marker as having a weight of -1
++ * to enable blacklisting of events using a counter bitmask
++ * of zero and thus a weight of zero.
++ * The end marker has a weight that cannot possibly be
++ * obtained from counting the bits in the bitmask.
++ */
++#define EVENT_CONSTRAINT_END { .weight = -1 }
+ 
++/*
++ * Check for end marker with weight == -1
++ */
+ #define for_each_event_constraint(e, c)	\
+-	for ((e) = (c); (e)->weight; (e)++)
++	for ((e) = (c); (e)->weight != -1; (e)++)
+ 
+ /*
+  * Extra registers for specific events.
+
