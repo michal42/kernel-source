@@ -1,0 +1,61 @@
+From 7b279da6edbe98e68d2bac77562eadf04535948b Mon Sep 17 00:00:00 2001
+From: David Rientjes <rientjes@google.com>
+Date: Mon, 10 Feb 2014 14:29:56 +0000
+Subject: [PATCH] mm, compaction: avoid isolating pinned pages
+
+References: VM functionality
+Patch-mainline: No (Expected v3.14)
+
+Page migration will fail for memory that is pinned in memory with, for
+example, get_user_pages().  In this case, it is unnecessary to take
+zone->lru_lock or isolating the page and passing it to page migration
+which will ultimately fail.
+
+This is a racy check, the page can still change from under us, but in that
+case we'll just fail later when attempting to move the page.
+
+This avoids very expensive memory compaction when faulting transparent
+hugepages after pinning a lot of memory with a Mellanox driver.
+
+On a 128GB machine and pinning ~120GB of memory, before this patch we
+see the enormous disparity in the number of page migration failures
+because of the pinning (from /proc/vmstat):
+
+compact_blocks_moved 7609
+compact_pages_moved 3431
+compact_pagemigrate_failed 133219
+compact_stall 13
+
+After the patch, it is much more efficient:
+
+compact_blocks_moved 7998
+compact_pages_moved 6403
+compact_pagemigrate_failed 3
+compact_stall 15
+
+Signed-off-by: David Rientjes <rientjes@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/compaction.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/mm/compaction.c b/mm/compaction.c
+index 6ded12f..e2018bf 100644
+--- a/mm/compaction.c
++++ b/mm/compaction.c
+@@ -576,6 +576,14 @@ isolate_migratepages_range(struct zone *zone, struct compact_control *cc,
+ 			continue;
+ 		}
+ 
++		/*
++		 * Migration will fail if an anonymous page is pinned in memory,
++		 * so avoid taking zone->lru_lock and isolating it unnecessarily
++		 * in an admittedly racy check.
++		 */
++		if (!page_mapping(page) && page_count(page))
++			continue;
++
+ 		/* Check if it is ok to still hold the lock */
+ 		locked = compact_checklock_irqsave(&zone->lru_lock, &flags,
+ 								locked, cc);
