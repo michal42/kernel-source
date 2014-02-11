@@ -1,7 +1,7 @@
 From: "K. Y. Srinivasan" <kys@microsoft.com>
 Date: Tue, 21 Jan 2014 17:43:53 -0800
 Subject: Drivers: hv: Implement the file copy service
-Patch-mainline: submitted (lkml 2014-01-21)
+Patch-mainline: submitted (lkml 2014-02-09)
 
 Implement the file copy service for Linux guests on Hyper-V. This permits the
 host to copy a file (over VMBUS) into the guest. This facility is part of
@@ -17,15 +17,19 @@ In V2 version of this patch I did some minor cleanup (making some globals
 static). In V4 version of the patch I have addressed all of Olaf's
 most recent set of comments/concerns.
 
+In this version of the patch I have addressed Greg's most recent comments.
+I would like to thank Greg for suggesting that I use misc device; it has
+significantly simplified the code.
+
 Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
 Acked-by: <ohering@suse.de>
 ---
- drivers/hv/Makefile        |   2 +-
- drivers/hv/hv_fcopy.c      | 428 +++++++++++++++++++++++++++++++++++++++++++++
- drivers/hv/hv_util.c       |  10 ++
- include/linux/hyperv.h     |  61 +++++++
- tools/hv/hv_fcopy_daemon.c | 200 +++++++++++++++++++++
- 5 files changed, 700 insertions(+), 1 deletion(-)
+ drivers/hv/Makefile        |    2 +-
+ drivers/hv/hv_fcopy.c      |  388 ++++++++++++++++++++++++++++++++++++++++++++
+ drivers/hv/hv_util.c       |   10 ++
+ include/linux/hyperv.h     |   61 +++++++
+ tools/hv/hv_fcopy_daemon.c |  195 ++++++++++++++++++++++
+ 5 files changed, 655 insertions(+), 1 deletions(-)
  create mode 100644 drivers/hv/hv_fcopy.c
  create mode 100644 tools/hv/hv_fcopy_daemon.c
 
@@ -41,10 +45,10 @@ index 0a74b56..5e4dfa4 100644
 +hv_utils-y := hv_util.o hv_kvp.o hv_snapshot.o hv_fcopy.o
 diff --git a/drivers/hv/hv_fcopy.c b/drivers/hv/hv_fcopy.c
 new file mode 100644
-index 0000000..b6a74ed
+index 0000000..15cf35c
 --- /dev/null
 +++ b/drivers/hv/hv_fcopy.c
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,388 @@
 +/*
 + * An implementation of file copy service.
 + *
@@ -74,6 +78,7 @@ index 0000000..b6a74ed
 +#include <linux/hyperv.h>
 +#include <linux/sched.h>
 +#include <linux/uaccess.h>
++#include <linux/miscdevice.h>
 +
 +#define WIN8_SRV_MAJOR		1
 +#define WIN8_SRV_MINOR		1
@@ -109,9 +114,7 @@ index 0000000..b6a74ed
 +	struct semaphore read_sema;
 +} fcopy_transaction;
 +
-+static dev_t fcopy_dev;
 +static bool opened; /* currently device opened */
-+static struct task_struct *dtp; /* daemon task ptr */
 +
 +/*
 + * Before we can accept copy messages from the host, we need
@@ -302,9 +305,6 @@ index 0000000..b6a74ed
 + * Create a char device that can support read/write for passing
 + * the payload.
 + */
-+static struct cdev fcopy_cdev;
-+static struct class *cl;
-+static struct device *sysfs_dev;
 +
 +static ssize_t fcopy_read(struct file *file, char __user *buf,
 +		size_t count, loff_t *ppos)
@@ -318,6 +318,8 @@ index 0000000..b6a74ed
 +	 */
 +	if (down_interruptible(&fcopy_transaction.read_sema))
 +		return -EINTR;
++	if (!opened)
++		return -ENODEV;
 +
 +	operation = fcopy_transaction.fcopy_msg->operation;
 +
@@ -371,7 +373,6 @@ index 0000000..b6a74ed
 +	 * The daemon is alive; setup the state.
 +	 */
 +	opened = true;
-+	dtp = current;
 +	return 0;
 +}
 +
@@ -381,7 +382,6 @@ index 0000000..b6a74ed
 +	 * The daemon has exited; reset the state.
 +	 */
 +	in_hand_shake = true;
-+	dtp = NULL;
 +	opened = false;
 +	return 0;
 +}
@@ -394,62 +394,26 @@ index 0000000..b6a74ed
 +	.open		= fcopy_open,
 +};
 +
++static struct miscdevice fcopy_misc = {
++	.minor          = MISC_DYNAMIC_MINOR,
++	.name           = "vmbus/hv_fcopy",
++	.fops           = &fcopy_fops,
++};
++
 +static int fcopy_dev_init(void)
 +{
-+	int result;
-+
-+	result = alloc_chrdev_region(&fcopy_dev, 1, 1, "hv_fcopy");
-+	if (result < 0) {
-+		pr_err("Cannot get major number\n");
-+		return result;
-+	}
-+
-+	cl = class_create(THIS_MODULE, "chardev");
-+	if (IS_ERR(cl)) {
-+		pr_err("Error creating fcopy class.\n");
-+		result = PTR_ERR(cl);
-+		goto err_unregister;
-+	}
-+
-+	sysfs_dev = device_create(cl, NULL, fcopy_dev, "%s", "hv_fcopy");
-+	if (IS_ERR(sysfs_dev)) {
-+		pr_err("Device creation failed\n");
-+		result = PTR_ERR(cl);
-+		goto err_destroy_class;
-+	}
-+
-+	cdev_init(&fcopy_cdev, &fcopy_fops);
-+	fcopy_cdev.owner = THIS_MODULE;
-+	fcopy_cdev.ops = &fcopy_fops;
-+
-+	result = cdev_add(&fcopy_cdev, fcopy_dev, 1);
-+	if (result) {
-+		pr_err("Cannot cdev_add\n");
-+		goto err_destroy_device;
-+	}
-+	return result;
-+
-+err_destroy_device:
-+	device_destroy(cl, fcopy_dev);
-+err_destroy_class:
-+	class_destroy(cl);
-+err_unregister:
-+	unregister_chrdev_region(fcopy_dev, 1);
-+	return result;
++	return misc_register(&fcopy_misc);
 +}
 +
 +static void fcopy_dev_deinit(void)
 +{
-+	/*
-+	 * first kill the daemon.
-+	 */
-+	if (dtp != NULL)
-+		send_sig(SIGKILL, dtp, 0);
 +	opened = false;
-+	device_destroy(cl, fcopy_dev);
-+	class_destroy(cl);
-+	cdev_del(&fcopy_cdev);
-+	unregister_chrdev_region(fcopy_dev, 1);
++	/*
++	 * Signal the semaphore as the device is
++	 * going away.
++	 */
++	up(&fcopy_transaction.read_sema);
++	misc_deregister(&fcopy_misc);
 +}
 +
 +int hv_fcopy_init(struct hv_util_service *srv)
@@ -502,7 +466,7 @@ index 62dfd246..efc5e83 100644
  };
  
 diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
-index 344883d..b448e89 100644
+index 15da677..9d2e168 100644
 --- a/include/linux/hyperv.h
 +++ b/include/linux/hyperv.h
 @@ -26,6 +26,7 @@
@@ -596,10 +560,10 @@ index 344883d..b448e89 100644
   */
 diff --git a/tools/hv/hv_fcopy_daemon.c b/tools/hv/hv_fcopy_daemon.c
 new file mode 100644
-index 0000000..1d2986d
+index 0000000..c557998
 --- /dev/null
 +++ b/tools/hv/hv_fcopy_daemon.c
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,195 @@
 +/*
 + * An implementation of host to guest copy functionality for Linux.
 + *
@@ -728,7 +692,7 @@ index 0000000..1d2986d
 +int main(void)
 +{
 +	int fd, fcopy_fd, len;
-+	int error = 0;
++	int error;
 +	int version = FCOPY_CURRENT_VERSION;
 +	char *buffer[4096 * 2];
 +	struct hv_fcopy_hdr *in_msg;
@@ -741,7 +705,7 @@ index 0000000..1d2986d
 +	openlog("HV_FCOPY", 0, LOG_USER);
 +	syslog(LOG_INFO, "HV_FCOPY starting; pid is:%d", getpid());
 +
-+	fcopy_fd = open("/dev/hv_fcopy", O_RDWR);
++	fcopy_fd = open("/dev/vmbus/hv_fcopy", O_RDWR);
 +
 +	if (fcopy_fd < 0) {
 +		syslog(LOG_ERR, "open /dev/hv_fcopy failed; error: %d %s",
@@ -762,15 +726,10 @@ index 0000000..1d2986d
 +		 * In this loop we process fcopy messages after the
 +		 * handshake is complete.
 +		 */
-+
 +		len = pread(fcopy_fd, buffer, (4096 * 2), 0);
-+		if (len <= 0) {
-+			if (!error) {
-+				syslog(LOG_ERR, "Read error: %s",
-+					 strerror(errno));
-+				error = HV_E_FAIL;
-+			}
-+			continue;
++		if (len < 0) {
++			syslog(LOG_ERR, "pread failed: %s", strerror(errno));
++			exit(EXIT_FAILURE);
 +		}
 +		in_msg = (struct hv_fcopy_hdr *)buffer;
 +
