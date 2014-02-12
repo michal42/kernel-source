@@ -1,0 +1,106 @@
+From 46394fd017c0615982a3d29d45ced14bea9c526d Mon Sep 17 00:00:00 2001
+From: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Date: Fri, 22 Nov 2013 21:55:32 +0100
+Subject: [PATCH] ACPI / hotplug: Move container-specific code out of the core
+
+Git-commit: 46394fd017c0615982a3d29d45ced14bea9c526d
+Patch-mainline: v3.14-rc1
+Reference: fate#316836
+Target: sle12
+
+Move container-specific uevents from the core hotplug code to the
+container scan handler's .attach() and .detach() callbacks.
+
+This way the core will not have to special-case containers and
+the uevents will be guaranteed to happen every time a container
+is either scanned or trimmed as appropriate.
+
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Tested-by: Mika Westerberg <mika.westerberg@linux.intel.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/container.c |   11 ++++++++---
+ drivers/acpi/scan.c      |    8 +-------
+ include/acpi/acpi_bus.h  |    7 -------
+ 3 files changed, 9 insertions(+), 17 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/container.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/container.c
++++ linux-3.12-SLE12/drivers/acpi/container.c
+@@ -44,19 +44,24 @@ static const struct acpi_device_id conta
+ 	{"", 0},
+ };
+ 
+-static int container_device_attach(struct acpi_device *device,
++static int container_device_attach(struct acpi_device *adev,
+ 				   const struct acpi_device_id *not_used)
+ {
+-	/* This is necessary for container hotplug to work. */
++	kobject_uevent(&adev->dev.kobj, KOBJ_ONLINE);
+ 	return 1;
+ }
+ 
++static void container_device_detach(struct acpi_device *adev)
++{
++	kobject_uevent(&adev->dev.kobj, KOBJ_OFFLINE);
++}
++
+ static struct acpi_scan_handler container_handler = {
+ 	.ids = container_device_ids,
+ 	.attach = container_device_attach,
++	.detach = container_device_detach,
+ 	.hotplug = {
+ 		.enabled = true,
+-		.mode = AHM_CONTAINER,
+ 	},
+ };
+ 
+Index: linux-3.12-SLE12/drivers/acpi/scan.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/scan.c
++++ linux-3.12-SLE12/drivers/acpi/scan.c
+@@ -206,9 +206,6 @@ static int acpi_scan_hot_remove(struct a
+ 	acpi_status status;
+ 	unsigned long long sta;
+ 
+-	if (device->handler && device->handler->hotplug.mode == AHM_CONTAINER)
+-		kobject_uevent(&device->dev.kobj, KOBJ_OFFLINE);
+-
+ 	/*
+ 	 * Carry out two passes here and ignore errors in the first pass,
+ 	 * because if the devices in question are memory blocks and
+@@ -288,10 +285,7 @@ static int acpi_scan_device_check(struct
+ 		dev_warn(&adev->dev, "Namespace scan failure\n");
+ 		return error;
+ 	}
+-	if (adev->handler) {
+-		if (adev->handler->hotplug.mode == AHM_CONTAINER)
+-			kobject_uevent(&adev->dev.kobj, KOBJ_ONLINE);
+-	} else {
++	if (!adev->handler) {
+ 		dev_warn(&adev->dev, "Enumeration failure\n");
+ 		return -ENODEV;
+ 	}
+Index: linux-3.12-SLE12/include/acpi/acpi_bus.h
+===================================================================
+--- linux-3.12-SLE12.orig/include/acpi/acpi_bus.h
++++ linux-3.12-SLE12/include/acpi/acpi_bus.h
+@@ -91,16 +91,9 @@ struct acpi_device;
+  * -----------------
+  */
+ 
+-enum acpi_hotplug_mode {
+-	AHM_GENERIC = 0,
+-	AHM_CONTAINER,
+-	AHM_COUNT
+-};
+-
+ struct acpi_hotplug_profile {
+ 	struct kobject kobj;
+ 	bool enabled:1;
+-	enum acpi_hotplug_mode mode;
+ 	int (*scan_dependent)(struct acpi_device *adev);
+ };
+ 
