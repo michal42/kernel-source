@@ -1,0 +1,57 @@
+From 6931007cc90ba94b3c2b29179d0a7cde194dabe8 Mon Sep 17 00:00:00 2001
+From: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Date: Thu, 7 Nov 2013 01:41:01 +0100
+Subject: [PATCH] ACPI / scan: Start matching drivers after trying scan handlers
+
+Git-commit: 6931007cc90ba94b3c2b29179d0a7cde194dabe8
+Patch-mainline: v3.13-rc2
+Reference: fate#316836
+Target: sle12
+
+ACPI scan handlers should always be attached to struct acpi_device
+objects before any ACPI drivers, but there is a window during which
+a driver may be attached to a struct acpi_device before checking if
+there is a matching scan handler.  Namely, that will happen if an
+ACPI driver module is loaded during acpi_bus_scan() right after
+the first namespace walk is complete and before the given device
+is processed by the second namespace walk.
+
+To prevent that from happening, set the match_driver flags of
+struct acpi_device objects right before running device_attach()
+for them in acpi_bus_device_attach().
+
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Toshi Kani <toshi.kani@hp.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/scan.c |    9 ++++++---
+ 1 files changed, 6 insertions(+), 3 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/scan.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/scan.c
++++ linux-3.12-SLE12/drivers/acpi/scan.c
+@@ -1674,7 +1674,6 @@ void acpi_init_device_object(struct acpi
+ 
+ void acpi_device_add_finalize(struct acpi_device *device)
+ {
+-	device->flags.match_driver = true;
+ 	dev_set_uevent_suppress(&device->dev, false);
+ 	kobject_uevent(&device->dev.kobj, KOBJ_ADD);
+ }
+@@ -1913,8 +1912,12 @@ static acpi_status acpi_bus_device_attac
+ 		return AE_OK;
+ 
+ 	ret = acpi_scan_attach_handler(device);
+-	if (ret)
+-		return ret > 0 ? AE_OK : AE_CTRL_DEPTH;
++	if (ret < 0)
++		return AE_CTRL_DEPTH;
++
++	device->flags.match_driver = true;
++	if (ret > 0)
++		return AE_OK;
+ 
+ 	ret = device_attach(&device->dev);
+ 	return ret >= 0 ? AE_OK : AE_CTRL_DEPTH;
