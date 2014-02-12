@@ -1,0 +1,133 @@
+From 7dab9ef4f0823072a3c9afdb3b373c9f2f38848b Mon Sep 17 00:00:00 2001
+From: Bjorn Helgaas <bhelgaas@google.com>
+Date: Thu, 5 Sep 2013 15:07:39 -0600
+Subject: [PATCH] PCI/ACPI: Name _OSC #defines more consistently
+
+Git-commit: 7dab9ef4f0823072a3c9afdb3b373c9f2f38848b
+Patch-mainline: v3.13-rc1
+Reference: fate#316836
+Target: sle12
+
+Make PCI Host Bridge _OSC #defines more consistent.  No functional change.
+
+Signed-off-by: Bjorn Helgaas <bhelgaas@google.com>
+Acked-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/pci_root.c          |   19 +++++++++----------
+ drivers/pci/hotplug/acpi_pcihp.c |    2 +-
+ drivers/pci/hotplug/shpchp.h     |    2 +-
+ include/linux/acpi.h             |   12 ++++++------
+ 4 files changed, 17 insertions(+), 18 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/pci_root.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/pci_root.c
++++ linux-3.12-SLE12/drivers/acpi/pci_root.c
+@@ -49,10 +49,10 @@ static int acpi_pci_root_add(struct acpi
+ 			     const struct acpi_device_id *not_used);
+ static void acpi_pci_root_remove(struct acpi_device *device);
+ 
+-#define ACPI_PCIE_REQ_SUPPORT (OSC_EXT_PCI_CONFIG_SUPPORT \
+-				| OSC_ACTIVE_STATE_PWR_SUPPORT \
+-				| OSC_CLOCK_PWR_CAPABILITY_SUPPORT \
+-				| OSC_MSI_SUPPORT)
++#define ACPI_PCIE_REQ_SUPPORT (OSC_PCI_EXT_CONFIG_SUPPORT \
++				| OSC_PCI_ASPM_SUPPORT \
++				| OSC_PCI_CLOCK_PM_SUPPORT \
++				| OSC_PCI_MSI_SUPPORT)
+ 
+ static const struct acpi_device_id root_device_ids[] = {
+ 	{"PNP0A03", 0},
+@@ -464,13 +464,12 @@ static int acpi_pci_root_add(struct acpi
+ 	acpi_pci_osc_support(root, flags);
+ 
+ 	if (pci_ext_cfg_avail())
+-		flags |= OSC_EXT_PCI_CONFIG_SUPPORT;
++		flags |= OSC_PCI_EXT_CONFIG_SUPPORT;
+ 	if (pcie_aspm_support_enabled()) {
+-		flags |= OSC_ACTIVE_STATE_PWR_SUPPORT |
+-		OSC_CLOCK_PWR_CAPABILITY_SUPPORT;
++		flags |= OSC_PCI_ASPM_SUPPORT | OSC_PCI_CLOCK_PM_SUPPORT;
+ 	}
+ 	if (pci_msi_enabled())
+-		flags |= OSC_MSI_SUPPORT;
++		flags |= OSC_PCI_MSI_SUPPORT;
+ 	if (flags != base_flags) {
+ 		status = acpi_pci_osc_support(root, flags);
+ 		if (ACPI_FAILURE(status)) {
+@@ -483,7 +482,7 @@ static int acpi_pci_root_add(struct acpi
+ 
+ 	if (!pcie_ports_disabled
+ 	    && (flags & ACPI_PCIE_REQ_SUPPORT) == ACPI_PCIE_REQ_SUPPORT) {
+-		flags = OSC_PCI_EXPRESS_CAP_STRUCTURE_CONTROL
++		flags = OSC_PCI_EXPRESS_CAPABILITY_CONTROL
+ 			| OSC_PCI_EXPRESS_NATIVE_HP_CONTROL
+ 			| OSC_PCI_EXPRESS_PME_CONTROL;
+ 
+@@ -499,7 +498,7 @@ static int acpi_pci_root_add(struct acpi
+ 			"Requesting ACPI _OSC control (0x%02x)\n", flags);
+ 
+ 		status = acpi_pci_osc_control_set(handle, &flags,
+-				       OSC_PCI_EXPRESS_CAP_STRUCTURE_CONTROL);
++				       OSC_PCI_EXPRESS_CAPABILITY_CONTROL);
+ 		if (ACPI_SUCCESS(status)) {
+ 			dev_info(&device->dev,
+ 				"ACPI _OSC control (0x%02x) granted\n", flags);
+Index: linux-3.12-SLE12/drivers/pci/hotplug/acpi_pcihp.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/pci/hotplug/acpi_pcihp.c
++++ linux-3.12-SLE12/drivers/pci/hotplug/acpi_pcihp.c
+@@ -338,7 +338,7 @@ int acpi_get_hp_hw_control_from_firmware
+ 	acpi_handle chandle, handle;
+ 	struct acpi_buffer string = { ACPI_ALLOCATE_BUFFER, NULL };
+ 
+-	flags &= OSC_SHPC_NATIVE_HP_CONTROL;
++	flags &= OSC_PCI_SHPC_NATIVE_HP_CONTROL;
+ 	if (!flags) {
+ 		err("Invalid flags %u specified!\n", flags);
+ 		return -EINVAL;
+Index: linux-3.12-SLE12/drivers/pci/hotplug/shpchp.h
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/pci/hotplug/shpchp.h
++++ linux-3.12-SLE12/drivers/pci/hotplug/shpchp.h
+@@ -191,7 +191,7 @@ static inline const char *slot_name(stru
+ #include <linux/pci-acpi.h>
+ static inline int get_hp_hw_control_from_firmware(struct pci_dev *dev)
+ {
+-	u32 flags = OSC_SHPC_NATIVE_HP_CONTROL;
++	u32 flags = OSC_PCI_SHPC_NATIVE_HP_CONTROL;
+ 	return acpi_get_hp_hw_control_from_firmware(dev, flags);
+ }
+ #else
+Index: linux-3.12-SLE12/include/linux/acpi.h
+===================================================================
+--- linux-3.12-SLE12.orig/include/linux/acpi.h
++++ linux-3.12-SLE12/include/linux/acpi.h
+@@ -327,19 +327,19 @@ acpi_status acpi_run_osc(acpi_handle han
+ extern bool osc_sb_apei_support_acked;
+ 
+ /* PCI Host Bridge _OSC: Capabilities DWORD 2: Support Field */
+-#define OSC_EXT_PCI_CONFIG_SUPPORT             0x00000001
+-#define OSC_ACTIVE_STATE_PWR_SUPPORT           0x00000002
+-#define OSC_CLOCK_PWR_CAPABILITY_SUPPORT       0x00000004
++#define OSC_PCI_EXT_CONFIG_SUPPORT             0x00000001
++#define OSC_PCI_ASPM_SUPPORT                   0x00000002
++#define OSC_PCI_CLOCK_PM_SUPPORT               0x00000004
+ #define OSC_PCI_SEGMENT_GROUPS_SUPPORT         0x00000008
+-#define OSC_MSI_SUPPORT                                0x00000010
++#define OSC_PCI_MSI_SUPPORT                    0x00000010
+ #define OSC_PCI_SUPPORT_MASKS                  0x0000001f
+ 
+ /* PCI Host Bridge _OSC: Capabilities DWORD 3: Control Field */
+ #define OSC_PCI_EXPRESS_NATIVE_HP_CONTROL      0x00000001
+-#define OSC_SHPC_NATIVE_HP_CONTROL             0x00000002
++#define OSC_PCI_SHPC_NATIVE_HP_CONTROL         0x00000002
+ #define OSC_PCI_EXPRESS_PME_CONTROL            0x00000004
+ #define OSC_PCI_EXPRESS_AER_CONTROL            0x00000008
+-#define OSC_PCI_EXPRESS_CAP_STRUCTURE_CONTROL  0x00000010
++#define OSC_PCI_EXPRESS_CAPABILITY_CONTROL     0x00000010
+ 
+ #define OSC_PCI_CONTROL_MASKS 	(OSC_PCI_EXPRESS_NATIVE_HP_CONTROL | 	\
+ 				OSC_SHPC_NATIVE_HP_CONTROL | 		\
