@@ -1,0 +1,61 @@
+From c1beb0bdb5b3ef670af3ab946434f7fc55d4c7a3 Mon Sep 17 00:00:00 2001
+From: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Date: Thu, 14 Nov 2013 00:54:08 +0100
+Subject: [PATCH] ACPI / hotplug: Fix PCI host bridge hot removal
+
+Git-commit: c1beb0bdb5b3ef670af3ab946434f7fc55d4c7a3
+Patch-mainline: v3.13-rc2
+Reference: fate#316836
+Target: sle12
+
+Since the PCI host bridge scan handler does not set hotplug.enabled,
+the check of it in acpi_bus_device_eject() effectively prevents the
+root bridge hot removal from working after commit a3b1b1ef78cd
+(ACPI / hotplug: Merge device hot-removal routines).  However, that
+check is not necessary, because the other acpi_bus_device_eject()
+users, acpi_hotplug_notify_cb and acpi_eject_store(), do the same
+check by themselves before executing that function.
+
+For this reason, remove the scan handler check from
+acpi_bus_device_eject() to make PCI hot bridge hot removal work
+again.
+
+Fixes: a3b1b1ef78cd (ACPI / hotplug: Merge device hot-removal routines)
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Toshi Kani <toshi.kani@hp.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/scan.c |    9 +--------
+ 1 files changed, 1 insertions(+), 8 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/scan.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/scan.c
++++ linux-3.12-SLE12/drivers/acpi/scan.c
+@@ -289,24 +289,17 @@ void acpi_bus_device_eject(void *data, u
+ {
+ 	struct acpi_device *device = data;
+ 	acpi_handle handle = device->handle;
+-	struct acpi_scan_handler *handler;
+ 	u32 ost_code = ACPI_OST_SC_NON_SPECIFIC_FAILURE;
+ 	int error;
+ 
+ 	lock_device_hotplug();
+ 	mutex_lock(&acpi_scan_lock);
+ 
+-	handler = device->handler;
+-	if (!handler || !handler->hotplug.enabled) {
+-		put_device(&device->dev);
+-		goto err_support;
+-	}
+-
+ 	if (ost_src == ACPI_NOTIFY_EJECT_REQUEST)
+ 		acpi_evaluate_hotplug_ost(handle, ACPI_NOTIFY_EJECT_REQUEST,
+ 					  ACPI_OST_SC_EJECT_IN_PROGRESS, NULL);
+ 
+-	if (handler->hotplug.mode == AHM_CONTAINER)
++	if (device->handler && device->handler->hotplug.mode == AHM_CONTAINER)
+ 		kobject_uevent(&device->dev.kobj, KOBJ_OFFLINE);
+ 
+ 	error = acpi_scan_hot_remove(device);
