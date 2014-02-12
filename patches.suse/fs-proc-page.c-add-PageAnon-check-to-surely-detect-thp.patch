@@ -1,0 +1,50 @@
+From 4423970dba4e47c0ff3ead192347585afe31504e Mon Sep 17 00:00:00 2001
+From: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Date: Thu, 23 Jan 2014 15:52:53 -0800
+Subject: [PATCH] fs/proc/page.c: add PageAnon check to surely detect thp
+
+References: VM Functionality
+Patch-mainline: Yes (v3.14)
+Git-commit: e3bba3c3c90cd434c1ccb9e5dc704a96baf9541c
+
+stable_page_flags() checks !PageHuge && PageTransCompound && PageLRU to
+know that a specified page is thp or not.  But sometimes it's not enough
+and we fail to detect thp when the thp is on pagevec.  This happens only
+for a few seconds after LRU list operations, but it makes it difficult
+to control our applications depending on this flag.
+
+So this patch adds another check PageAnon to detect thps on pagevec.  It
+might not give the future extensibility for thp pagecache, but it's OK
+at least for now.
+
+Signed-off-by: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Cc: David Rientjes <rientjes@google.com>
+Cc: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+Cc: Wu Fengguang <fengguang.wu@intel.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ fs/proc/page.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/fs/proc/page.c b/fs/proc/page.c
+index b8730d9..cab84b6 100644
+--- a/fs/proc/page.c
++++ b/fs/proc/page.c
+@@ -118,10 +118,12 @@ u64 stable_page_flags(struct page *page)
+ 	/*
+ 	 * PageTransCompound can be true for non-huge compound pages (slab
+ 	 * pages or pages allocated by drivers with __GFP_COMP) because it
+-	 * just checks PG_head/PG_tail, so we need to check PageLRU to make
+-	 * sure a given page is a thp, not a non-huge compound page.
++	 * just checks PG_head/PG_tail, so we need to check PageLRU/PageAnon
++	 * to make sure a given page is a thp, not a non-huge compound page.
+ 	 */
+-	else if (PageTransCompound(page) && PageLRU(compound_trans_head(page)))
++	else if (PageTransCompound(page) &&
++		 (PageLRU(compound_trans_head(page)) ||
++		  PageAnon(compound_trans_head(page))))
+ 		u |= 1 << KPF_THP;
+ 
+ 	/*
