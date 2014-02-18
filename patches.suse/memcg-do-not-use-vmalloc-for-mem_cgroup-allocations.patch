@@ -1,0 +1,112 @@
+From 8ff69e2c85f84b6b371e3c1d01207e73c0500125 Mon Sep 17 00:00:00 2001
+From: Vladimir Davydov <vdavydov@parallels.com>
+Date: Thu, 23 Jan 2014 15:52:52 -0800
+Subject: [PATCH] memcg: do not use vmalloc for mem_cgroup allocations
+Git-commit: 8ff69e2c85f84b6b371e3c1d01207e73c0500125
+Patch-mainline: 3.14-rc1
+References: memcg changes
+
+The vmalloc was introduced by 33327948782b ("memcgroup: use vmalloc for
+mem_cgroup allocation"), because at that time MAX_NUMNODES was used for
+defining the per-node array in the mem_cgroup structure so that the
+structure could be huge even if the system had the only NUMA node.
+
+The situation was significantly improved by commit 45cf7ebd5a03 ("memcg:
+reduce the size of struct memcg 244-fold"), which made the size of the
+mem_cgroup structure calculated dynamically depending on the real number
+of NUMA nodes installed on the system (nr_node_ids), so now there is no
+point in using vmalloc here: the structure is allocated rarely and on
+most systems its size is about 1K.
+
+Signed-off-by: Vladimir Davydov <vdavydov@parallels.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Cc: Glauber Costa <glommer@openvz.org>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Balbir Singh <bsingharora@gmail.com>
+Cc: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |   28 ++++++----------------------
+ 1 files changed, 6 insertions(+), 22 deletions(-)
+
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 67dd2a8..7890ce9 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -49,7 +49,6 @@
+ #include <linux/sort.h>
+ #include <linux/fs.h>
+ #include <linux/seq_file.h>
+-#include <linux/vmalloc.h>
+ #include <linux/vmpressure.h>
+ #include <linux/mm_inline.h>
+ #include <linux/page_cgroup.h>
+@@ -381,12 +380,6 @@ struct mem_cgroup {
+ 	/* WARNING: nodeinfo must be the last member here */
+ };
+ 
+-static size_t memcg_size(void)
+-{
+-	return sizeof(struct mem_cgroup) +
+-		nr_node_ids * sizeof(struct mem_cgroup_per_node *);
+-}
+-
+ /* internal only representation about the status of kmem accounting. */
+ enum {
+ 	KMEM_ACCOUNTED_ACTIVE = 0, /* accounted by this cgroup itself */
+@@ -6405,14 +6398,12 @@ static void free_mem_cgroup_per_zone_info(struct mem_cgroup *memcg, int node)
+ static struct mem_cgroup *mem_cgroup_alloc(void)
+ {
+ 	struct mem_cgroup *memcg;
+-	size_t size = memcg_size();
++	size_t size;
+ 
+-	/* Can be very big if nr_node_ids is very big */
+-	if (size < PAGE_SIZE)
+-		memcg = kzalloc(size, GFP_KERNEL);
+-	else
+-		memcg = vzalloc(size);
++	size = sizeof(struct mem_cgroup);
++	size += nr_node_ids * sizeof(struct mem_cgroup_per_node *);
+ 
++	memcg = kzalloc(size, GFP_KERNEL);
+ 	if (!memcg)
+ 		return NULL;
+ 
+@@ -6423,10 +6414,7 @@ static struct mem_cgroup *mem_cgroup_alloc(void)
+ 	return memcg;
+ 
+ out_free:
+-	if (size < PAGE_SIZE)
+-		kfree(memcg);
+-	else
+-		vfree(memcg);
++	kfree(memcg);
+ 	return NULL;
+ }
+ 
+@@ -6444,7 +6432,6 @@ out_free:
+ static void __mem_cgroup_free(struct mem_cgroup *memcg)
+ {
+ 	int node;
+-	size_t size = memcg_size();
+ 
+ 	mem_cgroup_remove_from_trees(memcg);
+ 
+@@ -6465,10 +6452,7 @@ static void __mem_cgroup_free(struct mem_cgroup *memcg)
+ 	 * the cgroup_lock.
+ 	 */
+ 	disarm_static_keys(memcg);
+-	if (size < PAGE_SIZE)
+-		kfree(memcg);
+-	else
+-		vfree(memcg);
++	kfree(memcg);
+ }
+ 
+ /*
+-- 
+1.7.8.3
+
