@@ -1,0 +1,74 @@
+From 947b3dd1a84ba3fcb7163688fdc36671941786f4 Mon Sep 17 00:00:00 2001
+From: Michal Hocko <mhocko@suse.cz>
+Date: Tue, 21 Jan 2014 15:51:04 -0800
+Subject: [PATCH] memcg, oom: lock mem_cgroup_print_oom_info
+Git-commit: 947b3dd1a84ba3fcb7163688fdc36671941786f4
+Patch-mainline: 3.14-rc1
+References: memcg changes
+
+mem_cgroup_print_oom_info uses a static buffer (memcg_name) to store the
+name of the cgroup.  This is not safe as pointed out by David Rientjes
+because memcg oom is locked only for its hierarchy and nothing prevents
+another parallel hierarchy to trigger oom as well and overwrite the
+already in-use buffer.
+
+This patch introduces oom_info_lock hidden inside
+mem_cgroup_print_oom_info which is held throughout the function.  It
+makes access to memcg_name safe and as a bonus it also prevents parallel
+memcg ooms to interleave their statistics which would make the printed
+data hard to analyze otherwise.
+
+Signed-off-by: Michal Hocko <mhocko@suse.cz>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+Cc: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Acked-by: David Rientjes <rientjes@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |   12 +++++++-----
+ 1 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 08541f6..57b1608 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -1647,13 +1647,13 @@ static void move_unlock_mem_cgroup(struct mem_cgroup *memcg,
+  */
+ void mem_cgroup_print_oom_info(struct mem_cgroup *memcg, struct task_struct *p)
+ {
+-	struct cgroup *task_cgrp;
+-	struct cgroup *mem_cgrp;
+ 	/*
+-	 * Need a buffer in BSS, can't rely on allocations. The code relies
+-	 * on the assumption that OOM is serialized for memory controller.
+-	 * If this assumption is broken, revisit this code.
++	 * protects memcg_name and makes sure that parallel ooms do not
++	 * interleave
+ 	 */
++	static DEFINE_SPINLOCK(oom_info_lock);
++	struct cgroup *task_cgrp;
++	struct cgroup *mem_cgrp;
+ 	static char memcg_name[PATH_MAX];
+ 	int ret;
+ 	struct mem_cgroup *iter;
+@@ -1662,6 +1662,7 @@ void mem_cgroup_print_oom_info(struct mem_cgroup *memcg, struct task_struct *p)
+ 	if (!p)
+ 		return;
+ 
++	spin_lock(&oom_info_lock);
+ 	rcu_read_lock();
+ 
+ 	mem_cgrp = memcg->css.cgroup;
+@@ -1730,6 +1731,7 @@ done:
+ 
+ 		pr_cont("\n");
+ 	}
++	spin_unlock(&oom_info_lock);
+ }
+ 
+ /*
+-- 
+1.7.8.3
+
