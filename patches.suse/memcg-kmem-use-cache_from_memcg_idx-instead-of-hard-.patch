@@ -1,0 +1,64 @@
+From 7a67d7abcc8da30a16ed64c3909d3fea004bde93 Mon Sep 17 00:00:00 2001
+From: Qiang Huang <h.huangqiang@huawei.com>
+Date: Tue, 12 Nov 2013 15:08:24 -0800
+Subject: [PATCH] memcg, kmem: use cache_from_memcg_idx instead of hard code
+Git-commit: 7a67d7abcc8da30a16ed64c3909d3fea004bde93
+Patch-mainline: 13-rc1
+References: memcg changes
+
+Signed-off-by: Qiang Huang <h.huangqiang@huawei.com>
+Reviewed-by: Pekka Enberg <penberg@kernel.org>
+Acked-by: David Rientjes <rientjes@google.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Michal Hocko <mhocko@suse.cz>
+Cc: Glauber Costa <glommer@parallels.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+
+---
+ mm/memcontrol.c |   12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -2972,7 +2972,7 @@ static struct kmem_cache *memcg_params_t
+ 
+ 	VM_BUG_ON(p->is_root_cache);
+ 	cachep = p->root_cache;
+-	return cachep->memcg_params->memcg_caches[memcg_cache_id(p->memcg)];
++	return cache_from_memcg_idx(cachep, memcg_cache_id(p->memcg));
+ }
+ 
+ #ifdef CONFIG_SLABINFO
+@@ -3416,7 +3416,7 @@ static struct kmem_cache *memcg_create_k
+ 	idx = memcg_cache_id(memcg);
+ 
+ 	mutex_lock(&memcg_cache_mutex);
+-	new_cachep = cachep->memcg_params->memcg_caches[idx];
++	new_cachep = cache_from_memcg_idx(cachep, idx);
+ 	if (new_cachep) {
+ 		css_put(&memcg->css);
+ 		goto out;
+@@ -3462,8 +3462,8 @@ void kmem_cache_destroy_memcg_children(s
+ 	 * we'll take the set_limit_mutex to protect ourselves against this.
+ 	 */
+ 	mutex_lock(&set_limit_mutex);
+-	for (i = 0; i < memcg_limited_groups_array_size; i++) {
+-		c = s->memcg_params->memcg_caches[i];
++	for_each_memcg_cache_index(i) {
++		c = cache_from_memcg_idx(s, i);
+ 		if (!c)
+ 			continue;
+ 
+@@ -3596,8 +3596,8 @@ struct kmem_cache *__memcg_kmem_get_cach
+ 	 * code updating memcg_caches will issue a write barrier to match this.
+ 	 */
+ 	read_barrier_depends();
+-	if (likely(cachep->memcg_params->memcg_caches[idx])) {
+-		cachep = cachep->memcg_params->memcg_caches[idx];
++	if (likely(cache_from_memcg_idx(cachep, idx))) {
++		cachep = cache_from_memcg_idx(cachep, idx);
+ 		goto out;
+ 	}
+ 
