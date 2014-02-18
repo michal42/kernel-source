@@ -1,0 +1,110 @@
+From 071aee138410210e3764f3ae8d37ef46dc6d3b42 Mon Sep 17 00:00:00 2001
+From: Ying Han <yinghan@google.com>
+Date: Tue, 12 Nov 2013 15:07:41 -0800
+Subject: [PATCH] memcg: support hierarchical memory.numa_stats
+Git-commit: 071aee138410210e3764f3ae8d37ef46dc6d3b42
+Patch-mainline: 3.13-rc1
+References: memcg changes
+
+The memory.numa_stat file was not hierarchical.  Memory charged to the
+children was not shown in parent's numa_stat.
+
+This change adds the "hierarchical_" stats to the existing stats.  The
+new hierarchical stats include the sum of all children's values in
+addition to the value of the memcg.
+
+Tested: Create cgroup a, a/b and run workload under b.  The values of
+b are included in the "hierarchical_*" under a.
+
+$ cd /sys/fs/cgroup
+$ echo 1 > memory.use_hierarchy
+$ mkdir a a/b
+
+Run workload in a/b:
+$ (echo $BASHPID >> a/b/cgroup.procs && cat /some/file && bash) &
+
+The hierarchical_ fields in parent (a) show use of workload in a/b:
+$ cat a/memory.numa_stat
+total=0 N0=0 N1=0 N2=0 N3=0
+file=0 N0=0 N1=0 N2=0 N3=0
+anon=0 N0=0 N1=0 N2=0 N3=0
+unevictable=0 N0=0 N1=0 N2=0 N3=0
+hierarchical_total=908 N0=552 N1=317 N2=39 N3=0
+hierarchical_file=850 N0=549 N1=301 N2=0 N3=0
+hierarchical_anon=58 N0=3 N1=16 N2=39 N3=0
+hierarchical_unevictable=0 N0=0 N1=0 N2=0 N3=0
+
+$ cat a/b/memory.numa_stat
+total=908 N0=552 N1=317 N2=39 N3=0
+file=850 N0=549 N1=301 N2=0 N3=0
+anon=58 N0=3 N1=16 N2=39 N3=0
+unevictable=0 N0=0 N1=0 N2=0 N3=0
+hierarchical_total=908 N0=552 N1=317 N2=39 N3=0
+hierarchical_file=850 N0=549 N1=301 N2=0 N3=0
+hierarchical_anon=58 N0=3 N1=16 N2=39 N3=0
+hierarchical_unevictable=0 N0=0 N1=0 N2=0 N3=0
+
+Signed-off-by: Ying Han <yinghan@google.com>
+Signed-off-by: Greg Thelen <gthelen@google.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by:  Michal Hocko <mhocko@suse.cz>
+
+---
+ Documentation/cgroups/memory.txt |   10 +++++++---
+ mm/memcontrol.c                  |   17 +++++++++++++++++
+ 2 files changed, 24 insertions(+), 3 deletions(-)
+
+--- a/Documentation/cgroups/memory.txt
++++ b/Documentation/cgroups/memory.txt
+@@ -573,15 +573,19 @@ an memcg since the pages are allowed to
+ node.  One of the use cases is evaluating application performance by
+ combining this information with the application's CPU allocation.
+ 
+-We export "total", "file", "anon" and "unevictable" pages per-node for
+-each memcg.  The ouput format of memory.numa_stat is:
++Each memcg's numa_stat file includes "total", "file", "anon" and "unevictable"
++per-node page counts including "hierarchical_<counter>" which sums up all
++hierarchical children's values in addition to the memcg's own value.
++
++The ouput format of memory.numa_stat is:
+ 
+ total=<total pages> N0=<node 0 pages> N1=<node 1 pages> ...
+ file=<total file pages> N0=<node 0 pages> N1=<node 1 pages> ...
+ anon=<total anon pages> N0=<node 0 pages> N1=<node 1 pages> ...
+ unevictable=<total anon pages> N0=<node 0 pages> N1=<node 1 pages> ...
++hierarchical_<counter>=<counter pages> N0=<node 0 pages> N1=<node 1 pages> ...
+ 
+-And we have total = file + anon + unevictable.
++The "total" count is sum of file + anon + unevictable.
+ 
+ 6. Hierarchy support
+ 
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -5419,6 +5419,23 @@ static int memcg_numa_stat_show(struct c
+ 		seq_putc(m, '\n');
+ 	}
+ 
++	for (stat = stats; stat < stats + ARRAY_SIZE(stats); stat++) {
++		struct mem_cgroup *iter;
++
++		nr = 0;
++		for_each_mem_cgroup_tree(iter, memcg)
++			nr += mem_cgroup_nr_lru_pages(iter, stat->lru_mask);
++		seq_printf(m, "hierarchical_%s=%lu", stat->name, nr);
++		for_each_node_state(nid, N_MEMORY) {
++			nr = 0;
++			for_each_mem_cgroup_tree(iter, memcg)
++				nr += mem_cgroup_node_nr_lru_pages(
++					iter, nid, stat->lru_mask);
++			seq_printf(m, " N%d=%lu", nid, nr);
++		}
++		seq_putc(m, '\n');
++	}
++
+ 	return 0;
+ }
+ #endif /* CONFIG_NUMA */
