@@ -1,0 +1,50 @@
+From 4219b2da206b3787dea4950ec53ccbc203f50e5e Mon Sep 17 00:00:00 2001
+From: Li Zefan <lizefan@huawei.com>
+Date: Mon, 23 Sep 2013 16:56:29 +0800
+Subject: [PATCH] memcg: fail to create cgroup if the cgroup id is too big
+Git-commit: 4219b2da206b3787dea4950ec53ccbc203f50e5e
+Patch-mainline: 3.13-rc1
+References: memcg changes
+
+memcg requires the cgroup id to be smaller than 65536.
+
+This is a preparation to kill css id.
+
+Signed-off-by: Li Zefan <lizefan@huawei.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Tejun Heo <tj@kernel.org>
+
+---
+ mm/memcontrol.c |    9 +++++++++
+ 1 files changed, 9 insertions(+), 0 deletions(-)
+
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 404a13a..c140395 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -488,6 +488,12 @@ static inline bool mem_cgroup_is_root(struct mem_cgroup *memcg)
+ 	return (memcg == root_mem_cgroup);
+ }
+ 
++/*
++ * We restrict the id in the range of [1, 65535], so it can fit into
++ * an unsigned short.
++ */
++#define MEM_CGROUP_ID_MAX	USHRT_MAX
++
+ static inline unsigned short mem_cgroup_id(struct mem_cgroup *memcg)
+ {
+ 	/*
+@@ -6059,6 +6065,9 @@ mem_cgroup_css_online(struct cgroup_subsys_state *css)
+ 	struct mem_cgroup *parent = mem_cgroup_from_css(css_parent(css));
+ 	int error = 0;
+ 
++	if (css->cgroup->id > MEM_CGROUP_ID_MAX)
++		return -ENOSPC;
++
+ 	if (!parent)
+ 		return 0;
+ 
+-- 
+1.7.8.3
+
