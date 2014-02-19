@@ -1,0 +1,61 @@
+Git-commit: 0ea9de0ea6a4e4a1d343130b2a159b4f986e288e
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 27 Jan 2014 14:53:27 -0500
+Subject: [PATCH] sunrpc: turn warn_gssd() log message into a dprintk()
+Patch-mainline: v3.14
+References: bnc#864413
+
+The original printk() made sense when the GSSAPI codepaths were called
+only when sec=krb5* was explicitly requested. Now however, in many cases
+the nfs client will try to acquire GSSAPI credentials by default, even
+when it's not requested.
+
+Since we don't have a great mechanism to distinguish between the two
+cases, just turn the pr_warn into a dprintk instead. With this change we
+can also get rid of the ratelimiting.
+
+We do need to keep the EXPORT_SYMBOL(gssd_running) in place since
+auth_gss.ko needs it and sunrpc.ko provides it. We can however,
+eliminate the gssd_running call in the nfs code since that's a bit of a
+layering violation.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/nfs4client.c            |    5 +----
+ net/sunrpc/auth_gss/auth_gss.c |    8 +-------
+ 2 files changed, 2 insertions(+), 11 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/nfs4client.c
++++ linux-3.12-SLE12/fs/nfs/nfs4client.c
+@@ -370,10 +370,7 @@ struct nfs_client *nfs4_init_client(stru
+ 		__set_bit(NFS_CS_INFINITE_SLOTS, &clp->cl_flags);
+ 	__set_bit(NFS_CS_DISCRTRY, &clp->cl_flags);
+ 
+-	error = -EINVAL;
+-	if (gssd_running(clp->cl_net))
+-		error = nfs_create_rpc_client(clp, timeparms,
+-					      RPC_AUTH_GSS_KRB5I);
++	error = nfs_create_rpc_client(clp, timeparms, RPC_AUTH_GSS_KRB5I);
+ 	if (error == -EINVAL)
+ 		error = nfs_create_rpc_client(clp, timeparms, RPC_AUTH_UNIX);
+ 	if (error < 0)
+--- linux-3.12-SLE12.orig/net/sunrpc/auth_gss/auth_gss.c
++++ linux-3.12-SLE12/net/sunrpc/auth_gss/auth_gss.c
+@@ -514,13 +514,7 @@ gss_setup_upcall(struct gss_auth *gss_au
+ 
+ static void warn_gssd(void)
+ {
+-	static unsigned long ratelimit;
+-	unsigned long now = jiffies;
+-
+-	if (time_after(now, ratelimit)) {
+-		pr_warn("RPC: AUTH_GSS upcall failed. Please check user daemon is running.\n");
+-		ratelimit = now + 15*HZ;
+-	}
++	dprintk("AUTH_GSS upcall failed. Please check user daemon is running.\n");
+ }
+ 
+ static inline int
