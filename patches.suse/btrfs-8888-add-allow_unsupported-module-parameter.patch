@@ -17,19 +17,20 @@ Current:
 - ioctl: fallocate and hole punch - return, warning printed only once
 - ioctl: receive - completely disallow
 - ioctl: device replace - disallow
-- mount: big metadata blocks - remount RO
+- mount: raid56 - remount RO
 - mount: compression - deny mount
 - mount: seeding device - deny mount
+- balance: use of raid56 taints kernel
 
 Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
- fs/btrfs/ctree.h   |    5 ++++
- fs/btrfs/disk-io.c |    8 ++++++
- fs/btrfs/file.c    |    8 ++++++
- fs/btrfs/ioctl.c   |   13 ++++++++++-
- fs/btrfs/send.c    |    5 ++++
- fs/btrfs/super.c   |   61 +++++++++++++++++++++++++++++++++++++++++++++++++++++
- 6 files changed, 98 insertions(+), 2 deletions(-)
+ fs/btrfs/ctree.h   |    5 +++
+ fs/btrfs/disk-io.c |   14 ++++++++++
+ fs/btrfs/file.c    |    8 +++++-
+ fs/btrfs/ioctl.c   |   13 +++++++++-
+ fs/btrfs/send.c    |    5 +++
+ fs/btrfs/super.c   |   68 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 111 insertions(+), 2 deletions(-)
 
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
@@ -60,6 +61,19 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	/*
  	 * run through our array of backup supers and setup
  	 * our ring pointer to the oldest one
+@@ -2464,6 +2472,12 @@ int open_ctree(struct super_block *sb,
+ 				sb->s_id);
+ 		goto fail_alloc;
+ 	}
++	if (features & BTRFS_FEATURE_INCOMPAT_RAID56) {
++		if (!allow_unsupported) {
++			printk(KERN_WARNING "btrfs: RAID56 is supported read-only, load module with allow_unsupported=1\n");
++			sb->s_flags |= MS_RDONLY;
++		}
++	}
+ 
+ 	/*
+ 	 * Needn't use the lock because there is no other task which will
 --- a/fs/btrfs/file.c
 +++ b/fs/btrfs/file.c
 @@ -2365,8 +2365,14 @@ static long btrfs_fallocate(struct file
@@ -179,7 +193,21 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  			btrfs_set_and_info(root, AUTO_DEFRAG,
  					   "enabling auto defrag");
  			break;
-@@ -1945,6 +1961,13 @@ static int __init init_btrfs_fs(void)
+@@ -1436,6 +1452,13 @@ static int btrfs_remount(struct super_bl
+ 			ret = -EACCES;
+ 			goto restore;
+ 		}
++		if ((btrfs_super_incompat_flags(fs_info->super_copy)
++					& BTRFS_FEATURE_INCOMPAT_RAID56)
++				&& !allow_unsupported) {
++			printk(KERN_WARNING "btrfs: cannot remount RW, RAID56 is supported read-only, load module with allow_unsupported=1\n");
++			ret = -EINVAL;
++			goto restore;
++		}
+ 
+ 		if (btrfs_super_log_root(fs_info->super_copy) != 0) {
+ 			ret = -EINVAL;
+@@ -1945,6 +1968,13 @@ static int __init init_btrfs_fs(void)
  
  	btrfs_print_info();
  
@@ -193,7 +221,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	err = btrfs_run_sanity_tests();
  	if (err)
  		goto unregister_ioctl;
-@@ -1999,6 +2022,44 @@ static void __exit exit_btrfs_fs(void)
+@@ -1999,6 +2029,44 @@ static void __exit exit_btrfs_fs(void)
  	btrfs_hash_exit();
  }
  
