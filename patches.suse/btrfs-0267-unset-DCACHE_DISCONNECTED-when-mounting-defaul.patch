@@ -1,0 +1,68 @@
+From: Josef Bacik <jbacik@fb.com>
+Date: Fri, 14 Feb 2014 13:43:48 -0500
+Patch-mainline: 3.14
+Git-commit: 3a0dfa6a12e4bb64a434426ecb17d4842092db5e
+Subject: [PATCH] Btrfs: unset DCACHE_DISCONNECTED when mounting
+ default subvol
+
+A user was running into errors from an NFS export of a subvolume that had a
+default subvol set.  When we mount a default subvol we will use d_obtain_alias()
+to find an existing dentry for the subvolume in the case that the root subvol
+has already been mounted, or a dummy one is allocated in the case that the root
+subvol has not already been mounted.  This allows us to connect the dentry later
+on if we wander into the path.  However if we don't ever wander into the path we
+will keep DCACHE_DISCONNECTED set for a long time, which angers NFS.  It doesn't
+appear to cause any problems but it is annoying nonetheless, so simply unset
+DCACHE_DISCONNECTED in the get_default_root case and switch btrfs_lookup() to
+use d_materialise_unique() instead which will make everything play nicely
+together and reconnect stuff if we wander into the defaul subvol path from a
+different way.  With this patch I'm no longer getting the NFS errors when
+exporting a volume that has been mounted with a default subvol set.  Thanks,
+
+cc: bfields@fieldses.org
+cc: ebiederm@xmission.com
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Acked-by: "Eric W. Biederman" <ebiederm@xmission.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/inode.c |    2 +-
+ fs/btrfs/super.c |    9 ++++++++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -5156,7 +5156,7 @@ static struct dentry *btrfs_lookup(struc
+ 			return ERR_CAST(inode);
+ 	}
+ 
+-	return d_splice_alias(inode, dentry);
++	return d_materialise_unique(dentry, inode);
+ }
+ 
+ unsigned char btrfs_filetype_table[] = {
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -855,6 +855,7 @@ static struct dentry *get_default_root(s
+ 	struct btrfs_path *path;
+ 	struct btrfs_key location;
+ 	struct inode *inode;
++	struct dentry *dentry;
+ 	u64 dir_id;
+ 	int new = 0;
+ 
+@@ -925,7 +926,13 @@ setup_root:
+ 		return dget(sb->s_root);
+ 	}
+ 
+-	return d_obtain_alias(inode);
++	dentry = d_obtain_alias(inode);
++	if (!IS_ERR(dentry)) {
++		spin_lock(&dentry->d_lock);
++		dentry->d_flags &= ~DCACHE_DISCONNECTED;
++		spin_unlock(&dentry->d_lock);
++	}
++	return dentry;
+ }
+ 
+ static int btrfs_fill_super(struct super_block *sb,
