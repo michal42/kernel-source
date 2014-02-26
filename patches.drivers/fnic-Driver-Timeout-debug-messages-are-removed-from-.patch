@@ -1,0 +1,45 @@
+From: Hiral Shah <hishah@cisco.com>
+Date: Thu, 20 Feb 2014 16:08:30 -0800
+Subject: fnic: Remove Driver Timeout debug messages
+Patch-Mainline: Not yet
+References: bnc#863365,FATE#315811
+
+Driver Timeout debug messages are removed from abort path as
+driver statistics are updated on timeout.
+
+Signed-off-by: Hiral Shah <hishah@cisco.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/fnic/fnic_scsi.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/scsi/fnic/fnic_scsi.c b/drivers/scsi/fnic/fnic_scsi.c
+index 5bf1e04..b174ca8 100644
+--- a/drivers/scsi/fnic/fnic_scsi.c
++++ b/drivers/scsi/fnic/fnic_scsi.c
+@@ -1313,7 +1313,8 @@ static void fnic_cleanup_io(struct fnic *fnic, int exclude_id)
+ cleanup_scsi_cmd:
+ 		sc->result = DID_TRANSPORT_DISRUPTED << 16;
+ 		FNIC_SCSI_DBG(KERN_DEBUG, fnic->lport->host, "fnic_cleanup_io:"
+-			      " DID_TRANSPORT_DISRUPTED\n");
++			      " sc duration = %lu DID_TRANSPORT_DISRUPTED\n",
++				(jiffies - start_time));
+ 
+ 		if (atomic64_read(&fnic->io_cmpl_skip))
+ 			atomic64_dec(&fnic->io_cmpl_skip);
+@@ -1863,12 +1864,8 @@ int fnic_abort_cmd(struct scsi_cmnd *sc)
+ 	if (CMD_ABTS_STATUS(sc) == FCPIO_INVALID_CODE) {
+ 		spin_unlock_irqrestore(io_lock, flags);
+ 		if (task_req == FCPIO_ITMF_ABT_TASK) {
+-			FNIC_SCSI_DBG(KERN_INFO,
+-				fnic->lport->host, "Abort Driver Timeout\n");
+ 			atomic64_inc(&abts_stats->abort_drv_timeouts);
+ 		} else {
+-			FNIC_SCSI_DBG(KERN_INFO, fnic->lport->host,
+-				"Terminate Driver Timeout\n");
+ 			atomic64_inc(&term_stats->terminate_drv_timeouts);
+ 		}
+ 		CMD_FLAGS(sc) |= FNIC_IO_ABT_TERM_TIMED_OUT;
+-- 
+1.7.12.4
+

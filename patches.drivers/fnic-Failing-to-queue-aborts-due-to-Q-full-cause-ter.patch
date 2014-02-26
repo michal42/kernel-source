@@ -1,0 +1,52 @@
+From: Hiral Shah <hishah@cisco.com>
+Date: Thu, 20 Feb 2014 15:54:27 -0800
+Subject: fnic: Failing to queue aborts due to Q full cause terminate driver timeout
+Patch-Mainline: Not yet
+References: bnc#863365,FATE#315811
+
+fnic_abort_cmd is abort handler callback, registered with scsi stack for
+fnic interfaces. SCSI mid-layer calls abort handler when it is decided
+to abort a command.
+In abort handler, when queuing fails for abort due to hardware queue
+(Copy workqueue) full, is leaving the command state as abort queued.
+Commands with abort queued state will never be queued next time for
+abort or termination.
+
+Signed-off-by: Hiral Shah <hishah@cisco.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/fnic/fnic_scsi.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/scsi/fnic/fnic_scsi.c b/drivers/scsi/fnic/fnic_scsi.c
+index 0521436..5bf1e04 100644
+--- a/drivers/scsi/fnic/fnic_scsi.c
++++ b/drivers/scsi/fnic/fnic_scsi.c
+@@ -1733,6 +1733,7 @@ int fnic_abort_cmd(struct scsi_cmnd *sc)
+ 	struct fnic_stats *fnic_stats;
+ 	struct abort_stats *abts_stats;
+ 	struct terminate_stats *term_stats;
++	enum fnic_ioreq_state old_ioreq_state;
+ 	int tag;
+ 	DECLARE_COMPLETION_ONSTACK(tm_done);
+ 
+@@ -1793,6 +1794,7 @@ int fnic_abort_cmd(struct scsi_cmnd *sc)
+ 	 * the completion wont be done till mid-layer, since abort
+ 	 * has already started.
+ 	 */
++	old_ioreq_state = CMD_STATE(sc);
+ 	CMD_STATE(sc) = FNIC_IOREQ_ABTS_PENDING;
+ 	CMD_ABTS_STATUS(sc) = FCPIO_INVALID_CODE;
+ 
+@@ -1816,6 +1818,8 @@ int fnic_abort_cmd(struct scsi_cmnd *sc)
+ 	if (fnic_queue_abort_io_req(fnic, sc->request->tag, task_req,
+ 				    fc_lun.scsi_lun, io_req)) {
+ 		spin_lock_irqsave(io_lock, flags);
++		if (CMD_STATE(sc) == FNIC_IOREQ_ABTS_PENDING)
++			CMD_STATE(sc) = old_ioreq_state;
+ 		io_req = (struct fnic_io_req *)CMD_SP(sc);
+ 		if (io_req)
+ 			io_req->abts_done = NULL;
+-- 
+1.7.12.4
+
