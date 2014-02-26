@@ -1,0 +1,88 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Fri, 18 Oct 2013 13:13:27 -0700
+Subject: [PATCH v2 15/62] ipv4: gso: send_check() & segment() cleanups
+Patch-mainline: v3.13-rc1
+Git-commit: 47d27aad44169372f358cda88a223883f6760fa5
+References: bnc#853494 FATE#315918
+
+inet_gso_segment() and inet_gso_send_check() are called by
+skb_mac_gso_segment() under rcu lock, no need to use
+rcu_read_lock() / rcu_read_unlock()
+
+Avoid calling ip_hdr() twice per function.
+
+We can use ip_send_check() helper.
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ net/ipv4/af_inet.c |   24 +++++++++++-------------
+ 1 file changed, 11 insertions(+), 13 deletions(-)
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -1254,20 +1254,19 @@ static int inet_gso_send_check(struct sk
+ 	if (ihl < sizeof(*iph))
+ 		goto out;
+ 
++	proto = iph->protocol;
++
++	/* Warning: after this point, iph might be no longer valid */
+ 	if (unlikely(!pskb_may_pull(skb, ihl)))
+ 		goto out;
+-
+ 	__skb_pull(skb, ihl);
++
+ 	skb_reset_transport_header(skb);
+-	iph = ip_hdr(skb);
+-	proto = iph->protocol;
+ 	err = -EPROTONOSUPPORT;
+ 
+-	rcu_read_lock();
+ 	ops = rcu_dereference(inet_offloads[proto]);
+ 	if (likely(ops && ops->callbacks.gso_send_check))
+ 		err = ops->callbacks.gso_send_check(skb);
+-	rcu_read_unlock();
+ 
+ out:
+ 	return err;
+@@ -1305,23 +1304,23 @@ static struct sk_buff *inet_gso_segment(
+ 	if (ihl < sizeof(*iph))
+ 		goto out;
+ 
++	id = ntohs(iph->id);
++	proto = iph->protocol;
++
++	/* Warning: after this point, iph might be no longer valid */
+ 	if (unlikely(!pskb_may_pull(skb, ihl)))
+ 		goto out;
++	__skb_pull(skb, ihl);
+ 
+ 	tunnel = !!skb->encapsulation;
+ 
+-	__skb_pull(skb, ihl);
+ 	skb_reset_transport_header(skb);
+-	iph = ip_hdr(skb);
+-	id = ntohs(iph->id);
+-	proto = iph->protocol;
++
+ 	segs = ERR_PTR(-EPROTONOSUPPORT);
+ 
+-	rcu_read_lock();
+ 	ops = rcu_dereference(inet_offloads[proto]);
+ 	if (likely(ops && ops->callbacks.gso_segment))
+ 		segs = ops->callbacks.gso_segment(skb, features);
+-	rcu_read_unlock();
+ 
+ 	if (IS_ERR_OR_NULL(segs))
+ 		goto out;
+@@ -1339,8 +1338,7 @@ static struct sk_buff *inet_gso_segment(
+ 			iph->id = htons(id++);
+ 		}
+ 		iph->tot_len = htons(skb->len - skb->mac_len);
+-		iph->check = 0;
+-		iph->check = ip_fast_csum(skb_network_header(skb), iph->ihl);
++		ip_send_check(iph);
+ 	} while ((skb = skb->next));
+ 
+ out:
