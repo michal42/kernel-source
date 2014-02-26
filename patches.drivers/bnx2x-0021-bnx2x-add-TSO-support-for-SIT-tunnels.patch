@@ -1,0 +1,57 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Sun, 20 Oct 2013 20:47:31 -0700
+Subject: [PATCH v2 21/62] bnx2x: add TSO support for SIT tunnels
+Patch-mainline: v3.13-rc1
+Git-commit: 2e3bd6a40865a7da486eaa36bb52a781bd70f5a1
+References: bnc#853494 FATE#315918
+
+bnx2x driver already handles TSO for GRE and IPIP, current code
+is the same for SIT.
+
+Performance results : (Note we are now limited by receiver,
+as it does not support GRO for SIT yet)
+
+Before patch :
+
+lpq84:~# ./netperf -H 2002:af6:1153:: -Cc
+MIGRATED TCP STREAM TEST from ::0 (::) port 0 AF_INET6 to 2002:af6:1153:: () port 0 AF_INET6
+Recv   Send    Send                          Utilization       Service Demand
+Socket Socket  Message  Elapsed              Send     Recv     Send    Recv
+Size   Size    Size     Time     Throughput  local    remote   local   remote
+bytes  bytes   bytes    secs.    10^6bits/s  % S      % S      us/KB   us/KB
+
+ 87380  16384  16384    10.00      5525.00   7.76     5.17     2.763   1.840
+
+lpq84:~# ./netperf -H 2002:af6:1153:: -Cc
+MIGRATED TCP STREAM TEST from ::0 (::) port 0 AF_INET6 to 2002:af6:1153:: () port 0 AF_INET6
+Recv   Send    Send                          Utilization       Service Demand
+Socket Socket  Message  Elapsed              Send     Recv     Send    Recv
+Size   Size    Size     Time     Throughput  local    remote   local   remote
+bytes  bytes   bytes    secs.    10^6bits/s  % S      % S      us/KB   us/KB
+
+ 87380  16384  16384    10.00      6006.97   1.86     5.48     0.608   1.795
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Eilon Greenstein <eilong@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+@@ -12294,11 +12294,12 @@ static int bnx2x_init_dev(struct bnx2x *
+ 		NETIF_F_RXHASH | NETIF_F_HW_VLAN_CTAG_TX;
+ 	if (!CHIP_IS_E1x(bp)) {
+ 		dev->hw_features |= NETIF_F_GSO_GRE | NETIF_F_GSO_UDP_TUNNEL |
+-				    NETIF_F_GSO_IPIP;
++				    NETIF_F_GSO_IPIP | NETIF_F_GSO_SIT;
+ 		dev->hw_enc_features =
+ 			NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SG |
+ 			NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6 |
+ 			NETIF_F_GSO_IPIP |
++			NETIF_F_GSO_SIT |
+ 			NETIF_F_GSO_GRE | NETIF_F_GSO_UDP_TUNNEL;
+ 	}
+ 
