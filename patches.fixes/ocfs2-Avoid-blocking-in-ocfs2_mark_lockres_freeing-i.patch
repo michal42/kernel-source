@@ -21,11 +21,20 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  fs/ocfs2/inode.c   |  7 ++++---
  3 files changed, 45 insertions(+), 7 deletions(-)
 
-diff --git a/fs/ocfs2/dlmglue.c b/fs/ocfs2/dlmglue.c
-index 19986959d149..43d5e65b1e09 100644
---- a/fs/ocfs2/dlmglue.c
-+++ b/fs/ocfs2/dlmglue.c
-@@ -3150,16 +3150,51 @@ out:
+Index: linux-3.12-SLE12/fs/ocfs2/dlmglue.c
+===================================================================
+--- linux-3.12-SLE12.orig/fs/ocfs2/dlmglue.c
++++ linux-3.12-SLE12/fs/ocfs2/dlmglue.c
+@@ -3142,22 +3142,60 @@ out:
+ 	return 0;
+ }
+ 
++static void ocfs2_process_blocked_lock(struct ocfs2_super *osb,
++				       struct ocfs2_lock_res *lockres);
++
+ /* Mark the lockres as being dropped. It will no longer be
+  * queued if blocking, but we still may have to wait on it
+  * being dequeued from the downconvert thread before we can consider
   * it safe to drop.
   *
   * You can *not* attempt to call cluster_lock on this lockres anymore. */
@@ -79,15 +88,7 @@ index 19986959d149..43d5e65b1e09 100644
  	while (lockres->l_flags & OCFS2_LOCK_QUEUED) {
  		lockres_add_mask_waiter(lockres, &mw, OCFS2_LOCK_QUEUED, 0);
  		spin_unlock_irqrestore(&lockres->l_lock, flags);
-@@ -3172,6 +3207,7 @@ void ocfs2_mark_lockres_freeing(struct ocfs2_lock_res *lockres)
- 
- 		spin_lock_irqsave(&lockres->l_lock, flags);
- 	}
-+out_unlock:
- 	spin_unlock_irqrestore(&lockres->l_lock, flags);
- }
- 
-@@ -3180,7 +3216,7 @@ void ocfs2_simple_drop_lockres(struct ocfs2_super *osb,
+@@ -3178,7 +3216,7 @@ void ocfs2_simple_drop_lockres(struct oc
  {
  	int ret;
  
@@ -96,11 +97,11 @@ index 19986959d149..43d5e65b1e09 100644
  	ret = ocfs2_drop_lock(osb, lockres);
  	if (ret)
  		mlog_errno(ret);
-diff --git a/fs/ocfs2/dlmglue.h b/fs/ocfs2/dlmglue.h
-index 1d596d8c4a4a..d293a22c32c5 100644
---- a/fs/ocfs2/dlmglue.h
-+++ b/fs/ocfs2/dlmglue.h
-@@ -157,7 +157,8 @@ int ocfs2_refcount_lock(struct ocfs2_refcount_tree *ref_tree, int ex);
+Index: linux-3.12-SLE12/fs/ocfs2/dlmglue.h
+===================================================================
+--- linux-3.12-SLE12.orig/fs/ocfs2/dlmglue.h
++++ linux-3.12-SLE12/fs/ocfs2/dlmglue.h
+@@ -157,7 +157,8 @@ int ocfs2_refcount_lock(struct ocfs2_ref
  void ocfs2_refcount_unlock(struct ocfs2_refcount_tree *ref_tree, int ex);
  
  
@@ -110,11 +111,11 @@ index 1d596d8c4a4a..d293a22c32c5 100644
  void ocfs2_simple_drop_lockres(struct ocfs2_super *osb,
  			       struct ocfs2_lock_res *lockres);
  
-diff --git a/fs/ocfs2/inode.c b/fs/ocfs2/inode.c
-index 3b0d722de35e..9661f8db21dc 100644
---- a/fs/ocfs2/inode.c
-+++ b/fs/ocfs2/inode.c
-@@ -1053,6 +1053,7 @@ static void ocfs2_clear_inode(struct inode *inode)
+Index: linux-3.12-SLE12/fs/ocfs2/inode.c
+===================================================================
+--- linux-3.12-SLE12.orig/fs/ocfs2/inode.c
++++ linux-3.12-SLE12/fs/ocfs2/inode.c
+@@ -1063,6 +1063,7 @@ static void ocfs2_clear_inode(struct ino
  {
  	int status;
  	struct ocfs2_inode_info *oi = OCFS2_I(inode);
@@ -122,7 +123,7 @@ index 3b0d722de35e..9661f8db21dc 100644
  
  	clear_inode(inode);
  	trace_ocfs2_clear_inode((unsigned long long)oi->ip_blkno,
-@@ -1069,9 +1070,9 @@ static void ocfs2_clear_inode(struct inode *inode)
+@@ -1079,9 +1080,9 @@ static void ocfs2_clear_inode(struct ino
  
  	/* Do these before all the other work so that we don't bounce
  	 * the downconvert thread while waiting to destroy the locks. */
@@ -135,6 +136,3 @@ index 3b0d722de35e..9661f8db21dc 100644
  
  	ocfs2_resv_discard(&OCFS2_SB(inode->i_sb)->osb_la_resmap,
  			   &oi->ip_la_data_resv);
--- 
-1.8.1.4
-
