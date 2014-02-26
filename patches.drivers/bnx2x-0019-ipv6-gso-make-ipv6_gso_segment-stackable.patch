@@ -1,0 +1,70 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Sun, 20 Oct 2013 20:47:29 -0700
+Subject: [PATCH v2 19/62] ipv6: gso: make ipv6_gso_segment() stackable
+Patch-mainline: v3.13-rc1
+Git-commit: d3e5e0062de5f2c6444455b5708a62a50c93a50c
+References: bnc#853494 FATE#315918
+
+In order to support GSO on SIT tunnels, we need to make
+inet_gso_segment() stackable.
+
+It should not assume network header starts right after mac
+header.
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ net/ipv6/ip6_offload.c |   23 +++++++++++++++++------
+ 1 file changed, 17 insertions(+), 6 deletions(-)
+--- a/net/ipv6/ip6_offload.c
++++ b/net/ipv6/ip6_offload.c
+@@ -92,6 +92,7 @@ static struct sk_buff *ipv6_gso_segment(
+ 	u8 *prevhdr;
+ 	int offset = 0;
+ 	bool tunnel;
++	int nhoff;
+ 
+ 	if (unlikely(skb_shinfo(skb)->gso_type &
+ 		     ~(SKB_GSO_UDP |
+@@ -105,10 +106,16 @@ static struct sk_buff *ipv6_gso_segment(
+ 		       0)))
+ 		goto out;
+ 
++	skb_reset_network_header(skb);
++	nhoff = skb_network_header(skb) - skb_mac_header(skb);
+ 	if (unlikely(!pskb_may_pull(skb, sizeof(*ipv6h))))
+ 		goto out;
+ 
+-	tunnel = skb->encapsulation;
++	tunnel = SKB_GSO_CB(skb)->encap_level > 0;
++	if (tunnel)
++		features = skb->dev->hw_enc_features & netif_skb_features(skb);
++	SKB_GSO_CB(skb)->encap_level += sizeof(*ipv6h);
++
+ 	ipv6h = ipv6_hdr(skb);
+ 	__skb_pull(skb, sizeof(*ipv6h));
+ 	segs = ERR_PTR(-EPROTONOSUPPORT);
+@@ -126,13 +133,17 @@ static struct sk_buff *ipv6_gso_segment(
+ 		goto out;
+ 
+ 	for (skb = segs; skb; skb = skb->next) {
+-		ipv6h = ipv6_hdr(skb);
+-		ipv6h->payload_len = htons(skb->len - skb->mac_len -
+-					   sizeof(*ipv6h));
++		ipv6h = (struct ipv6hdr *)(skb_mac_header(skb) + nhoff);
++		ipv6h->payload_len = htons(skb->len - nhoff - sizeof(*ipv6h));
++		if (tunnel) {
++			skb_reset_inner_headers(skb);
++			skb->encapsulation = 1;
++		}
++		skb->network_header = (u8 *)ipv6h - skb->head;
++
+ 		if (!tunnel && proto == IPPROTO_UDP) {
+ 			unfrag_ip6hlen = ip6_find_1stfragopt(skb, &prevhdr);
+-			fptr = (struct frag_hdr *)(skb_network_header(skb) +
+-				unfrag_ip6hlen);
++			fptr = (struct frag_hdr *)((u8 *)ipv6h + unfrag_ip6hlen);
+ 			fptr->frag_off = htons(offset);
+ 			if (skb->next != NULL)
+ 				fptr->frag_off |= htons(IP6_MF);
