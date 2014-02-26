@@ -1,0 +1,84 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Sat, 19 Oct 2013 11:42:54 -0700
+Subject: [PATCH v2 13/62] net: generalize skb_segment()
+Patch-mainline: v3.13-rc1
+Git-commit: 030737bcc3c404e273e97dbe06fe9561699a411b
+References: bnc#853494 FATE#315918
+
+While implementing GSO/TSO support for IPIP, I found skb_segment()
+was assuming network header was immediately following mac header.
+
+Its not really true in the case inet_gso_segment() is stacked :
+By the time tcp_gso_segment() is called, network header points
+to the inner IP header.
+
+Let's instead assume nothing and pick the current offsets found in
+original skb, we have skb_headers_offset_update() helper for that.
+
+Also move the csum_start update inside skb_headers_offset_update()
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ net/core/skbuff.c |   22 +++++-----------------
+ 1 file changed, 5 insertions(+), 17 deletions(-)
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -900,6 +900,9 @@ EXPORT_SYMBOL(skb_clone);
+ 
+ static void skb_headers_offset_update(struct sk_buff *skb, int off)
+ {
++	/* Only adjust this if it actually is csum_start rather than csum */
++	if (skb->ip_summed == CHECKSUM_PARTIAL)
++		skb->csum_start += off;
+ 	/* {transport,network,mac}_header and tail are relative to skb->head */
+ 	skb->transport_header += off;
+ 	skb->network_header   += off;
+@@ -1106,9 +1109,6 @@ int pskb_expand_head(struct sk_buff *skb
+ #endif
+ 	skb->tail	      += off;
+ 	skb_headers_offset_update(skb, nhead);
+-	/* Only adjust this if it actually is csum_start rather than csum */
+-	if (skb->ip_summed == CHECKSUM_PARTIAL)
+-		skb->csum_start += nhead;
+ 	skb->cloned   = 0;
+ 	skb->hdr_len  = 0;
+ 	skb->nohdr    = 0;
+@@ -1173,7 +1173,6 @@ struct sk_buff *skb_copy_expand(const st
+ 					NUMA_NO_NODE);
+ 	int oldheadroom = skb_headroom(skb);
+ 	int head_copy_len, head_copy_off;
+-	int off;
+ 
+ 	if (!n)
+ 		return NULL;
+@@ -1197,11 +1196,7 @@ struct sk_buff *skb_copy_expand(const st
+ 
+ 	copy_skb_header(n, skb);
+ 
+-	off                  = newheadroom - oldheadroom;
+-	if (n->ip_summed == CHECKSUM_PARTIAL)
+-		n->csum_start += off;
+-
+-	skb_headers_offset_update(n, off);
++	skb_headers_offset_update(n, newheadroom - oldheadroom);
+ 
+ 	return n;
+ }
+@@ -2857,14 +2852,7 @@ struct sk_buff *skb_segment(struct sk_bu
+ 		__copy_skb_header(nskb, skb);
+ 		nskb->mac_len = skb->mac_len;
+ 
+-		/* nskb and skb might have different headroom */
+-		if (nskb->ip_summed == CHECKSUM_PARTIAL)
+-			nskb->csum_start += skb_headroom(nskb) - headroom;
+-
+-		skb_reset_mac_header(nskb);
+-		skb_set_network_header(nskb, skb->mac_len);
+-		nskb->transport_header = (nskb->network_header +
+-					  skb_network_header_len(skb));
++		skb_headers_offset_update(nskb, skb_headroom(nskb) - headroom);
+ 
+ 		skb_copy_from_linear_data_offset(skb, -tnl_hlen,
+ 						 nskb->data - tnl_hlen,
