@@ -1,0 +1,160 @@
+From 82f0712ca0f947170e785300b5c39d9c25e2f6ff Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <bp@suse.de>
+Date: Thu, 31 Oct 2013 17:25:07 +0100
+Subject: x86/mm/cpa: Map in an arbitrary pgd
+Patch-mainline: v3.14-rc1
+References: fate#315019
+
+Add the ability to map pages in an arbitrary pgd. This wires in the
+remaining stuff so that there's a new interface with which you can map a
+region into an arbitrary PGD.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Automatically created from "patches.arch/0009-x86-mm-cpa-Map-in-an-arbitrary-pgd.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/mm/pageattr-xen.c	2014-02-27 14:16:47.000000000 +0100
++++ sle12/arch/x86/mm/pageattr-xen.c	2014-02-27 14:19:45.000000000 +0100
+@@ -465,7 +465,7 @@ try_preserve_large_page(pte_t *kpte, uns
+ 	 * Check for races, another CPU might have split this page
+ 	 * up already:
+ 	 */
+-	tmp = lookup_address(address, &level);
++	tmp = _lookup_address_cpa(cpa, address, &level);
+ 	if (tmp != kpte)
+ 		goto out_unlock;
+ 
+@@ -572,7 +572,8 @@ out_unlock:
+ }
+ 
+ static int
+-__split_large_page(pte_t *kpte, unsigned long address, struct page *base)
++__split_large_page(struct cpa_data *cpa, pte_t *kpte, unsigned long address,
++		   struct page *base)
+ {
+ 	pte_t *pbase = (pte_t *)page_address(base);
+ 	unsigned long mfn, mfninc = 1;
+@@ -585,7 +586,7 @@ __split_large_page(pte_t *kpte, unsigned
+ 	 * Check for races, another CPU might have split this page
+ 	 * up for us already:
+ 	 */
+-	tmp = lookup_address(address, &level);
++	tmp = _lookup_address_cpa(cpa, address, &level);
+ 	if (tmp != kpte) {
+ 		spin_unlock(&pgd_lock);
+ 		return 1;
+@@ -665,7 +666,8 @@ __split_large_page(pte_t *kpte, unsigned
+ 	return 0;
+ }
+ 
+-static int split_large_page(pte_t *kpte, unsigned long address)
++static int split_large_page(struct cpa_data *cpa, pte_t *kpte,
++			    unsigned long address)
+ {
+ 	struct page *base;
+ 
+@@ -677,7 +679,7 @@ static int split_large_page(pte_t *kpte,
+ 	if (!base)
+ 		return -ENOMEM;
+ 
+-	if (__split_large_page(kpte, address, base))
++	if (__split_large_page(cpa, kpte, address, base))
+ 		__free_page(base);
+ 
+ 	return 0;
+@@ -1060,6 +1062,13 @@ static int populate_pgd(struct cpa_data 
+ static int __cpa_process_fault(struct cpa_data *cpa, unsigned long vaddr,
+ 			       int primary)
+ {
++#ifdef CONFIG_XEN
++	BUG_ON(cpa->pgd);
++#else
++	if (cpa->pgd)
++		return populate_pgd(cpa, vaddr);
++#endif
++
+ 	/*
+ 	 * Ignore all non primary paths.
+ 	 */
+@@ -1104,7 +1113,7 @@ static int __change_page_attr(struct cpa
+ 	else
+ 		address = *cpa->vaddr;
+ repeat:
+-	kpte = lookup_address(address, &level);
++	kpte = _lookup_address_cpa(cpa, address, &level);
+ 	if (!kpte)
+ 		return __cpa_process_fault(cpa, address, primary);
+ 
+@@ -1191,7 +1200,7 @@ repeat:
+ 	/*
+ 	 * We have to split the large page:
+ 	 */
+-	err = split_large_page(kpte, address);
++	err = split_large_page(cpa, kpte, address);
+ 	if (!err) {
+ 		/*
+ 	 	 * Do a global flush tlb after splitting the large page
+@@ -1340,6 +1349,8 @@ static int change_page_attr_set_clr(unsi
+ 	int ret, cache, checkalias;
+ 	unsigned long baddr = 0;
+ 
++	memset(&cpa, 0, sizeof(cpa));
++
+ 	/*
+ 	 * Check, if we are requested to change a not supported
+ 	 * feature:
+@@ -1831,6 +1842,7 @@ static int __set_pages_p(struct page *pa
+ {
+ 	unsigned long tempaddr = (unsigned long) page_address(page);
+ 	struct cpa_data cpa = { .vaddr = &tempaddr,
++				.pgd = NULL,
+ 				.numpages = numpages,
+ 				.mask_set = __pgprot(_PAGE_PRESENT | _PAGE_RW),
+ 				.mask_clr = __pgprot(0),
+@@ -1849,6 +1861,7 @@ static int __set_pages_np(struct page *p
+ {
+ 	unsigned long tempaddr = (unsigned long) page_address(page);
+ 	struct cpa_data cpa = { .vaddr = &tempaddr,
++				.pgd = NULL,
+ 				.numpages = numpages,
+ 				.mask_set = __pgprot(0),
+ 				.mask_clr = __pgprot(_PAGE_PRESENT | _PAGE_RW),
+@@ -1909,6 +1922,38 @@ bool kernel_page_present(struct page *pa
+ 
+ #endif /* CONFIG_DEBUG_PAGEALLOC */
+ 
++#ifndef CONFIG_XEN
++int kernel_map_pages_in_pgd(pgd_t *pgd, u64 pfn, unsigned long address,
++			    unsigned numpages, unsigned long page_flags)
++{
++	int retval = -EINVAL;
++
++	struct cpa_data cpa = {
++		.vaddr = &address,
++		.pfn = pfn,
++		.pgd = pgd,
++		.numpages = numpages,
++		.mask_set = __pgprot(0),
++		.mask_clr = __pgprot(0),
++		.flags = 0,
++	};
++
++	if (!(__supported_pte_mask & _PAGE_NX))
++		goto out;
++
++	if (!(page_flags & _PAGE_NX))
++		cpa.mask_clr = __pgprot(_PAGE_NX);
++
++	cpa.mask_set = __pgprot(_PAGE_PRESENT | page_flags);
++
++	retval = __change_page_attr_set_clr(&cpa, 0);
++	__flush_tlb_all();
++
++out:
++	return retval;
++}
++#endif
++
+ static inline int in_secondary_range(unsigned long va)
+ {
+ #ifdef CONFIG_X86_64

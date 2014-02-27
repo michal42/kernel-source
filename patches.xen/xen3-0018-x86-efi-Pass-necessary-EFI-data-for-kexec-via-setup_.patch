@@ -1,0 +1,47 @@
+From 1fec0533693cd74f2d1a46edd29449cfee429df0 Mon Sep 17 00:00:00 2001
+From: Dave Young <dyoung@redhat.com>
+Date: Fri, 20 Dec 2013 18:02:19 +0800
+Subject: x86/efi: Pass necessary EFI data for kexec via setup_data
+Patch-mainline: v3.14-rc1
+References: fate#315019
+
+Add a new setup_data type SETUP_EFI for kexec use.  Passing the saved
+fw_vendor, runtime, config tables and EFI runtime mappings.
+
+When entering virtual mode, directly mapping the EFI runtime regions
+which we passed in previously. And skip the step to call
+SetVirtualAddressMap().
+
+Specially for HP z420 workstation we need save the smbios physical
+address.  The kernel boot sequence proceeds in the following order.
+Step 2 requires efi.smbios to be the physical address.  However, I found
+that on HP z420 EFI system table has a virtual address of SMBIOS in step
+1.  Hence, we need set it back to the physical address with the smbios
+in efi_setup_data.  (When it is still the physical address, it simply
+sets the same value.)
+
+1. efi_init() - Set efi.smbios from EFI system table
+2. dmi_scan_machine() - Temporary map efi.smbios to access SMBIOS table
+3. efi_enter_virtual_mode() - Map EFI ranges
+
+Tested on ovmf+qemu, lenovo thinkpad, a dell laptop and an
+HP z420 workstation.
+
+Signed-off-by: Dave Young <dyoung@redhat.com>
+Tested-by: Toshi Kani <toshi.kani@hp.com>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+Automatically created from "patches.arch/0018-x86-efi-Pass-necessary-EFI-data-for-kexec-via-setup_.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 14:12:05.000000000 +0100
++++ sle12/arch/x86/kernel/setup-xen.c	2014-02-27 14:20:15.000000000 +0100
+@@ -509,6 +509,9 @@ static void __init parse_setup_data(void
+ 		case SETUP_DTB:
+ 			add_dtb(pa_data);
+ 			break;
++		case SETUP_EFI:
++			parse_efi_setup(pa_data, data_len);
++			break;
+ 		default:
+ 			break;
+ 		}

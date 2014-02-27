@@ -63,7 +63,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  		return -ENODEV;
 --- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 14:20:08.000000000 +0100
 +++ sle12/arch/x86/kernel/setup-xen.c	2014-01-23 14:21:31.000000000 +0100
-@@ -1085,6 +1085,8 @@ void __init setup_arch(char **cmdline_p)
+@@ -1088,6 +1088,8 @@ void __init setup_arch(char **cmdline_p)
  		                      xen_start_info->console.dom0.info_size);
  		xen_start_info->console.domU.mfn = 0;
  		xen_start_info->console.domU.evtchn = 0;
@@ -92,7 +92,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	return mach_set_rtc_mmss(now);
  }
  
---- sle12.orig/arch/x86/platform/efi/Makefile	2014-02-06 13:51:33.000000000 +0100
+--- sle12.orig/arch/x86/platform/efi/Makefile	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/arch/x86/platform/efi/Makefile	2014-01-09 12:16:04.000000000 +0100
 @@ -1,3 +1,5 @@
  obj-$(CONFIG_EFI) 		+= efi.o efi_$(BITS).o efi_stub_$(BITS).o
@@ -101,8 +101,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +ccflags-$(CONFIG_XEN)		+= -fshort-wchar
 +disabled-obj-$(CONFIG_XEN)	:= efi_%$(BITS).o
 --- /dev/null	1970-01-01 00:00:00.000000000 +0000
-+++ sle12/arch/x86/platform/efi/efi-xen.c	2014-02-06 15:04:42.000000000 +0100
-@@ -0,0 +1,625 @@
++++ sle12/arch/x86/platform/efi/efi-xen.c	2014-02-27 14:24:21.000000000 +0100
+@@ -0,0 +1,629 @@
 +/*
 + * Common EFI (Extensible Firmware Interface) support functions
 + * Based on Extensible Firmware Interface Specification version 1.0
@@ -117,6 +117,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 + *	Bibo Mao <bibo.mao@intel.com>
 + *	Chandramouli Narayanan <mouli@linux.intel.com>
 + *	Huang Ying <ying.huang@intel.com>
++ * Copyright (C) 2013 SuSE Labs
++ *	Borislav Petkov <bp@suse.de> - runtime services VA mapping
 + *
 + * Copied from efi_32.c to eliminate the duplicated code between EFI
 + * 32/64 support code. --ying 2007-10-26
@@ -153,7 +155,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +
 +#include <xen/interface/platform.h>
 +
-+#define EFI_DEBUG	1
++#define EFI_DEBUG
 +
 +#define EFI_MIN_RESERVE 5120
 +
@@ -357,6 +359,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +	if (efi.runtime_version < EFI_2_00_SYSTEM_TABLE_REVISION)
 +		return EFI_UNSUPPORTED;
 +
++	call.u.query_variable_info.attr = attr;
++
 +	err = HYPERVISOR_platform_op(&op);
 +	if (err)
 +		return EFI_UNSUPPORTED;
@@ -427,9 +431,9 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +int efi_set_rtc_mmss(const struct timespec *now)
 +{
 +	unsigned long nowtime = now->tv_sec;
-+	efi_status_t 	status;
-+	efi_time_t 	eft;
-+	efi_time_cap_t 	cap;
++	efi_status_t	status;
++	efi_time_t	eft;
++	efi_time_cap_t	cap;
 +	struct rtc_time	tm;
 +
 +	status = efi.get_time(&eft, &cap);
@@ -728,9 +732,9 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +	return EFI_SUCCESS;
 +}
 +EXPORT_SYMBOL_GPL(efi_query_variable_store);
---- sle12.orig/drivers/firmware/efi/efi.c	2014-02-06 13:35:04.000000000 +0100
+--- sle12.orig/drivers/firmware/efi/efi.c	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/drivers/firmware/efi/efi.c	2014-01-08 13:48:55.000000000 +0100
-@@ -157,6 +157,7 @@ subsys_initcall(efisubsys_init);
+@@ -200,6 +200,7 @@ subsys_initcall(efisubsys_init);
   */
  void __iomem *efi_lookup_mapped_addr(u64 phys_addr)
  {
@@ -738,7 +742,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	struct efi_memory_map *map;
  	void *p;
  	map = efi.memmap;
-@@ -179,6 +180,7 @@ void __iomem *efi_lookup_mapped_addr(u64
+@@ -222,6 +223,7 @@ void __iomem *efi_lookup_mapped_addr(u64
  			return (__force void __iomem *)(unsigned long)phys_addr;
  		}
  	}
@@ -746,7 +750,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	return NULL;
  }
  
-@@ -218,12 +220,24 @@ static __init int match_config_table(efi
+@@ -261,12 +263,24 @@ static __init int match_config_table(efi
  	return 0;
  }
  
@@ -773,7 +777,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  		sz = sizeof(efi_config_table_64_t);
  	else
  		sz = sizeof(efi_config_table_32_t);
-@@ -231,8 +245,7 @@ int __init efi_config_init(efi_config_ta
+@@ -274,8 +288,7 @@ int __init efi_config_init(efi_config_ta
  	/*
  	 * Let's see what config tables the firmware passed to us.
  	 */
@@ -783,7 +787,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	if (config_tables == NULL) {
  		pr_err("Could not map Configuration table!\n");
  		return -ENOMEM;
-@@ -240,11 +253,11 @@ int __init efi_config_init(efi_config_ta
+@@ -283,11 +296,11 @@ int __init efi_config_init(efi_config_ta
  
  	tablep = config_tables;
  	pr_info("");
@@ -797,7 +801,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  			u64 table64;
  			guid = ((efi_config_table_64_t *)tablep)->guid;
  			table64 = ((efi_config_table_64_t *)tablep)->table;
-@@ -253,8 +266,7 @@ int __init efi_config_init(efi_config_ta
+@@ -296,8 +309,7 @@ int __init efi_config_init(efi_config_ta
  			if (table64 >> 32) {
  				pr_cont("\n");
  				pr_err("Table located above 4GB, disabling EFI.\n");
@@ -807,7 +811,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  				return -EINVAL;
  			}
  #endif
-@@ -269,6 +281,7 @@ int __init efi_config_init(efi_config_ta
+@@ -312,6 +324,7 @@ int __init efi_config_init(efi_config_ta
  		tablep += sz;
  	}
  	pr_cont("\n");
@@ -816,7 +820,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	return 0;
 +#undef early_memremap
  }
---- sle12.orig/drivers/rtc/Kconfig	2014-02-06 13:51:33.000000000 +0100
+--- sle12.orig/drivers/rtc/Kconfig	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/drivers/rtc/Kconfig	2013-08-12 16:20:21.000000000 +0200
 @@ -698,7 +698,7 @@ config RTC_DRV_DA9055
  
@@ -827,9 +831,9 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	help
  	  If you say yes here you will get support for the EFI
  	  Real Time Clock.
---- sle12.orig/drivers/rtc/rtc-cmos.c	2014-02-06 13:51:33.000000000 +0100
-+++ sle12/drivers/rtc/rtc-cmos.c	2013-10-01 17:09:55.000000000 +0200
-@@ -37,6 +37,7 @@
+--- sle12.orig/drivers/rtc/rtc-cmos.c	2014-02-27 13:38:49.000000000 +0100
++++ sle12/drivers/rtc/rtc-cmos.c	2014-02-27 14:23:32.000000000 +0100
+@@ -36,6 +36,7 @@
  #include <linux/platform_device.h>
  #include <linux/log2.h>
  #include <linux/pm.h>
@@ -837,7 +841,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  #include <linux/of.h>
  #include <linux/of_platform.h>
  #include <linux/dmi.h>
-@@ -1145,6 +1146,11 @@ static int __init cmos_init(void)
+@@ -1193,6 +1194,11 @@ static int __init cmos_init(void)
  {
  	int retval = 0;
  
@@ -849,7 +853,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  #ifdef	CONFIG_PNP
  	retval = pnp_register_driver(&cmos_pnp_driver);
  	if (retval == 0)
---- sle12.orig/drivers/rtc/rtc-efi.c	2014-02-06 13:51:33.000000000 +0100
+--- sle12.orig/drivers/rtc/rtc-efi.c	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/drivers/rtc/rtc-efi.c	2013-08-12 17:57:27.000000000 +0200
 @@ -213,3 +213,6 @@ module_platform_driver_probe(efi_rtc_dri
  MODULE_AUTHOR("dann frazier <dannf@hp.com>");
@@ -879,9 +883,9 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  		if (size >= offsetof(struct dom0_vga_console_info,
  		                     u.vesa_lfb.gbl_caps)
  		            + sizeof(info->u.vesa_lfb.gbl_caps))
---- sle12.orig/include/linux/efi.h	2014-02-06 13:51:33.000000000 +0100
+--- sle12.orig/include/linux/efi.h	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/include/linux/efi.h	2014-02-06 15:10:43.000000000 +0100
-@@ -560,7 +560,9 @@ typedef struct {
+@@ -572,7 +572,9 @@ typedef struct {
   * All runtime access to EFI goes through this structure:
   */
  extern struct efi {
@@ -891,7 +895,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	unsigned int runtime_version;	/* Runtime services version */
  	unsigned long mps;		/* MPS table */
  	unsigned long acpi;		/* ACPI table  (IA64 ext 0.71) */
-@@ -582,9 +584,11 @@ extern struct efi {
+@@ -597,9 +599,11 @@ extern struct efi {
  	efi_update_capsule_t *update_capsule;
  	efi_query_capsule_caps_t *query_capsule_caps;
  	efi_get_next_high_mono_count_t *get_next_high_mono_count;
@@ -903,7 +907,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  } efi;
  
  static inline int
-@@ -620,7 +624,11 @@ static inline efi_status_t efi_query_var
+@@ -635,7 +639,11 @@ static inline efi_status_t efi_query_var
  }
  #endif
  extern void __iomem *efi_lookup_mapped_addr(u64 phys_addr);
