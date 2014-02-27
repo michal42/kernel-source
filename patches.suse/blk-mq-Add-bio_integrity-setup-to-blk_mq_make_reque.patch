@@ -1,0 +1,39 @@
+From a371dd1074f3f5d618e009be4756a5a441a92d65 Mon Sep 17 00:00:00 2001
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Fri, 7 Feb 2014 13:45:39 -0700
+Subject: [PATCH] blk-mq: Add bio_integrity setup to blk_mq_make_request
+Git-commit: 14ec77f352cb00ab8425ec2af03bd7e529eefe24
+Patch-mainline: v3.14-rc3
+References: fate#315209
+
+This patch adds the missing bio_integrity_enabled() +
+bio_integrity_prep() setup into blk_mq_make_request()
+in order to use DIF protection with scsi-mq.
+
+Cc: Martin K. Petersen <martin.petersen@oracle.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+
+---
+ block/blk-mq.c |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index f8f32cd..d86f903 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -922,6 +922,11 @@ static void blk_mq_make_request(struct request_queue *q, struct bio *bio)
+ 
+ 	blk_queue_bounce(q, &bio);
+ 
++	if (bio_integrity_enabled(bio) && bio_integrity_prep(bio)) {
++		bio_endio(bio, -EIO);
++		return;
++	}
++
+ 	if (use_plug && blk_attempt_plug_merge(q, bio, &request_count))
+ 		return;
+ 
+-- 
+1.6.0.2
+
