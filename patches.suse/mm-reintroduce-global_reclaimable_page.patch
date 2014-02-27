@@ -11,8 +11,8 @@ removed global_reclaimable_page function which we call from our
 "Patch-mainline: never" patch:
 patches.suse/pagecache-limit.patch
 
-So add it back and mark it as deprecated for later evaluation. It is
-too late to change the behavior now.
+So add it back, but mark it static to be used solely by the patch. It
+is too late to change the behaviour now.
 
 mhocko comments:
 Although using NR_{IN}ACTIVE_FILE should be OK here, let's stick with
@@ -21,22 +21,9 @@ the old behavior and change it later.
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Acked-by: Michal Hocko <mhocko@suse.cz>
 ---
- include/linux/vmstat.h |    3 +++
- mm/vmscan.c            |   21 +++++++++++++++++++++
- 2 files changed, 24 insertions(+)
+ mm/vmscan.c |   21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
 
---- a/include/linux/vmstat.h
-+++ b/include/linux/vmstat.h
-@@ -142,6 +142,9 @@ static inline unsigned long zone_page_st
- 	return x;
- }
- 
-+/* Do not call this, really! This is only for backward compatibility. */
-+extern __deprecated unsigned long global_reclaimable_pages(void);
-+
- #ifdef CONFIG_NUMA
- /*
-  * Determine the per node value of a stat item. This function
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -3297,6 +3297,27 @@ void wakeup_kswapd(struct zone *zone, in
@@ -50,7 +37,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
 + * - mapped pages, which may require several travels to be reclaimed
 + * - dirty pages, which is not "instantly" reclaimable
 + */
-+unsigned long global_reclaimable_pages(void)
++static unsigned long global_reclaimable_pages(void)
 +{
 +	int nr;
 +
