@@ -1,0 +1,191 @@
+From: Christoph Hellwig <hch@infradead.org>
+Date: Wed, 8 Jan 2014 09:33:37 -0800
+Subject: [PATCH] blk-mq: use __smp_call_function_single directly
+Git-commit: 3d6efbf62c797a2924785f482e4ce8aa8820ec72
+Patch-mainline: 3.14-rc1
+References: fate#315209
+
+__smp_call_function_single already avoids multiple IPIs by internally
+queing up the items, and now also is available for non-SMP builds as
+a trivially correct stub, so there is no need to wrap it.  If the
+additional lock roundtrip cause problems my patch to convert the
+generic IPI code to llists is waiting to get merged will fix it.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+---
+ block/blk-mq-cpu.c |   31 -----------------------
+ block/blk-mq.c     |   68 ++++++++-------------------------------------------
+ block/blk-mq.h     |    1 -
+ 3 files changed, 11 insertions(+), 89 deletions(-)
+
+diff --git a/block/blk-mq-cpu.c b/block/blk-mq-cpu.c
+index 0045ace..20576e3 100644
+--- a/block/blk-mq-cpu.c
++++ b/block/blk-mq-cpu.c
+@@ -28,32 +28,6 @@ static int blk_mq_main_cpu_notify(struct notifier_block *self,
+ 	return NOTIFY_OK;
+ }
+ 
+-static void blk_mq_cpu_notify(void *data, unsigned long action,
+-			      unsigned int cpu)
+-{
+-	if (action == CPU_DEAD || action == CPU_DEAD_FROZEN) {
+-		/*
+-		 * If the CPU goes away, ensure that we run any pending
+-		 * completions.
+-		 */
+-		struct llist_node *node;
+-		struct request *rq;
+-
+-		local_irq_disable();
+-
+-		node = llist_del_all(&per_cpu(ipi_lists, cpu));
+-		while (node) {
+-			struct llist_node *next = node->next;
+-
+-			rq = llist_entry(node, struct request, ll_list);
+-			__blk_mq_end_io(rq, rq->errors);
+-			node = next;
+-		}
+-
+-		local_irq_enable();
+-	}
+-}
+-
+ static struct notifier_block __cpuinitdata blk_mq_main_cpu_notifier = {
+ 	.notifier_call	= blk_mq_main_cpu_notify,
+ };
+@@ -82,12 +56,7 @@ void blk_mq_init_cpu_notifier(struct blk_mq_cpu_notifier *notifier,
+ 	notifier->data = data;
+ }
+ 
+-static struct blk_mq_cpu_notifier __cpuinitdata cpu_notifier = {
+-	.notify = blk_mq_cpu_notify,
+-};
+-
+ void __init blk_mq_cpu_init(void)
+ {
+ 	register_hotcpu_notifier(&blk_mq_main_cpu_notifier);
+-	blk_mq_register_cpu_notifier(&cpu_notifier);
+ }
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 403f1e0..6019311 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -27,8 +27,6 @@ static LIST_HEAD(all_q_list);
+ 
+ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx);
+ 
+-DEFINE_PER_CPU(struct llist_head, ipi_lists);
+-
+ static struct blk_mq_ctx *__blk_mq_get_ctx(struct request_queue *q,
+ 					   unsigned int cpu)
+ {
+@@ -339,55 +337,12 @@ void __blk_mq_end_io(struct request *rq, int error)
+ 		blk_mq_complete_request(rq, error);
+ }
+ 
+-#if defined(CONFIG_SMP) && defined(CONFIG_USE_GENERIC_SMP_HELPERS)
+-
+-/*
+- * Called with interrupts disabled.
+- */
+-static void ipi_end_io(void *data)
++static void blk_mq_end_io_remote(void *data)
+ {
+-	struct llist_head *list = &per_cpu(ipi_lists, smp_processor_id());
+-	struct llist_node *entry, *next;
+-	struct request *rq;
+-
+-	entry = llist_del_all(list);
+-
+-	while (entry) {
+-		next = entry->next;
+-		rq = llist_entry(entry, struct request, ll_list);
+-		__blk_mq_end_io(rq, rq->errors);
+-		entry = next;
+-	}
+-}
+-
+-static int ipi_remote_cpu(struct blk_mq_ctx *ctx, const int cpu,
+-			  struct request *rq, const int error)
+-{
+-	struct call_single_data *data = &rq->csd;
+-
+-	rq->errors = error;
+-	rq->ll_list.next = NULL;
+-
+-	/*
+-	 * If the list is non-empty, an existing IPI must already
+-	 * be "in flight". If that is the case, we need not schedule
+-	 * a new one.
+-	 */
+-	if (llist_add(&rq->ll_list, &per_cpu(ipi_lists, ctx->cpu))) {
+-		data->func = ipi_end_io;
+-		data->flags = 0;
+-		__smp_call_function_single(ctx->cpu, data, 0);
+-	}
++	struct request *rq = data;
+ 
+-	return true;
++	__blk_mq_end_io(rq, rq->errors);
+ }
+-#else /* CONFIG_SMP && CONFIG_USE_GENERIC_SMP_HELPERS */
+-static int ipi_remote_cpu(struct blk_mq_ctx *ctx, const int cpu,
+-			  struct request *rq, const int error)
+-{
+-	return false;
+-}
+-#endif
+ 
+ /*
+  * End IO on this request on a multiqueue enabled driver. We'll either do
+@@ -403,11 +358,15 @@ void blk_mq_end_io(struct request *rq, int error)
+ 		return __blk_mq_end_io(rq, error);
+ 
+ 	cpu = get_cpu();
+-
+-	if (cpu == ctx->cpu || !cpu_online(ctx->cpu) ||
+-	    !ipi_remote_cpu(ctx, cpu, rq, error))
++	if (cpu != ctx->cpu && cpu_online(ctx->cpu)) {
++		rq->errors = error;
++		rq->csd.func = blk_mq_end_io_remote;
++		rq->csd.info = rq;
++		rq->csd.flags = 0;
++		__smp_call_function_single(ctx->cpu, &rq->csd, 0);
++	} else {
+ 		__blk_mq_end_io(rq, error);
+-
++	}
+ 	put_cpu();
+ }
+ EXPORT_SYMBOL(blk_mq_end_io);
+@@ -1506,11 +1465,6 @@ static int blk_mq_queue_reinit_notify(struct notifier_block *nb,
+ 
+ static int __init blk_mq_init(void)
+ {
+-	unsigned int i;
+-
+-	for_each_possible_cpu(i)
+-		init_llist_head(&per_cpu(ipi_lists, i));
+-
+ 	blk_mq_cpu_init();
+ 
+ 	/* Must be called after percpu_counter_hotcpu_callback() */
+diff --git a/block/blk-mq.h b/block/blk-mq.h
+index e151a2f..5c39179 100644
+--- a/block/blk-mq.h
++++ b/block/blk-mq.h
+@@ -40,7 +40,6 @@ void blk_mq_init_cpu_notifier(struct blk_mq_cpu_notifier *notifier,
+ void blk_mq_register_cpu_notifier(struct blk_mq_cpu_notifier *notifier);
+ void blk_mq_unregister_cpu_notifier(struct blk_mq_cpu_notifier *notifier);
+ void blk_mq_cpu_init(void);
+-DECLARE_PER_CPU(struct llist_head, ipi_lists);
+ 
+ /*
+  * CPU -> queue mappings
+-- 
+1.6.0.2
+
