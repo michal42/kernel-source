@@ -1,0 +1,93 @@
+From b89241e8cdb8321c20546d47645a9b65b58113b5 Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Thu, 14 Nov 2013 14:32:11 -0800
+Subject: [PATCH] llists: move llist_reverse_order from raid5 to llist.c
+Git-commit: b89241e8cdb8321c20546d47645a9b65b58113b5
+Patch-mainline: v3.13-rc1
+References: fate#315209
+
+Make this useful helper available for other users.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Jan Kara <jack@suse.cz>
+Cc: Jens Axboe <axboe@kernel.dk>
+Cc: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ drivers/md/raid5.c    | 14 --------------
+ include/linux/llist.h |  2 ++
+ lib/llist.c           | 22 ++++++++++++++++++++++
+ 3 files changed, 24 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/md/raid5.c b/drivers/md/raid5.c
+index f8b906843926..7f0e17a27aeb 100644
+--- a/drivers/md/raid5.c
++++ b/drivers/md/raid5.c
+@@ -293,20 +293,6 @@ static void __release_stripe(struct r5conf *conf, struct stripe_head *sh)
+ 		do_release_stripe(conf, sh);
+ }
+ 
+-static struct llist_node *llist_reverse_order(struct llist_node *head)
+-{
+-	struct llist_node *new_head = NULL;
+-
+-	while (head) {
+-		struct llist_node *tmp = head;
+-		head = head->next;
+-		tmp->next = new_head;
+-		new_head = tmp;
+-	}
+-
+-	return new_head;
+-}
+-
+ /* should hold conf->device_lock already */
+ static int release_stripe_list(struct r5conf *conf)
+ {
+diff --git a/include/linux/llist.h b/include/linux/llist.h
+index 8828a78dec9a..fbf10a0bc095 100644
+--- a/include/linux/llist.h
++++ b/include/linux/llist.h
+@@ -195,4 +195,6 @@ static inline struct llist_node *llist_del_all(struct llist_head *head)
+ 
+ extern struct llist_node *llist_del_first(struct llist_head *head);
+ 
++struct llist_node *llist_reverse_order(struct llist_node *head);
++
+ #endif /* LLIST_H */
+diff --git a/lib/llist.c b/lib/llist.c
+index 4a70d120138c..ef48b87247ec 100644
+--- a/lib/llist.c
++++ b/lib/llist.c
+@@ -81,3 +81,25 @@ struct llist_node *llist_del_first(struct llist_head *head)
+ 	return entry;
+ }
+ EXPORT_SYMBOL_GPL(llist_del_first);
++
++/**
++ * llist_reverse_order - reverse order of a llist chain
++ * @head:	first item of the list to be reversed
++ *
++ * Reverse the oder of a chain of llist entries and return the
++ * new first entry.
++ */
++struct llist_node *llist_reverse_order(struct llist_node *head)
++{
++	struct llist_node *new_head = NULL;
++
++	while (head) {
++		struct llist_node *tmp = head;
++		head = head->next;
++		tmp->next = new_head;
++		new_head = tmp;
++	}
++
++	return new_head;
++}
++EXPORT_SYMBOL_GPL(llist_reverse_order);
+-- 
+1.8.1.4
+
