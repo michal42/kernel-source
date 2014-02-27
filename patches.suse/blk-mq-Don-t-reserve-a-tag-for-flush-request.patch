@@ -1,0 +1,177 @@
+From 49675a6347134f67b1a3d74256cc4632543ca202 Mon Sep 17 00:00:00 2001
+From: Shaohua Li <shli@kernel.org>
+Date: Tue, 31 Dec 2013 11:38:50 +0800
+Subject: [PATCH] blk-mq: Don't reserve a tag for flush request
+Git-commit: f0276924fa35a3607920a58cf5d878212824b951
+Patch-mainline: v3.14-rc3
+References: fate#315209
+
+Reserving a tag (request) for flush to avoid dead lock is a overkill. A
+tag is valuable resource. We can track the number of flush requests and
+disallow having too many pending flush requests allocated. With this
+patch, blk_mq_alloc_request_pinned() could do a busy nop (but not a dead
+loop) if too many pending requests are allocated and new flush request
+is allocated. But this should not be a problem, too many pending flush
+requests are very rare case.
+
+I verified this can fix the deadlock caused by too many pending flush
+requests.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+---
+ block/blk-flush.c      |    8 +++++---
+ block/blk-mq.c         |   46 ++++++++++++++++++++++++++++++----------------
+ include/linux/blk-mq.h |    3 +++
+ 3 files changed, 38 insertions(+), 19 deletions(-)
+
+diff --git a/block/blk-flush.c b/block/blk-flush.c
+index 331e627..9f90da5 100644
+--- a/block/blk-flush.c
++++ b/block/blk-flush.c
+@@ -284,9 +284,8 @@ static void mq_flush_work(struct work_struct *work)
+ 
+ 	q = container_of(work, struct request_queue, mq_flush_work);
+ 
+-	/* We don't need set REQ_FLUSH_SEQ, it's for consistency */
+ 	rq = blk_mq_alloc_request(q, WRITE_FLUSH|REQ_FLUSH_SEQ,
+-		__GFP_WAIT|GFP_ATOMIC, true);
++		__GFP_WAIT|GFP_ATOMIC, false);
+ 	rq->cmd_type = REQ_TYPE_FS;
+ 	rq->end_io = flush_end_io;
+ 
+@@ -408,8 +407,11 @@ void blk_insert_flush(struct request *rq)
+ 	/*
+ 	 * @policy now records what operations need to be done.  Adjust
+ 	 * REQ_FLUSH and FUA for the driver.
++	 * We keep REQ_FLUSH for mq to track flush requests. For !FUA,
++	 * we never dispatch the request directly.
+ 	 */
+-	rq->cmd_flags &= ~REQ_FLUSH;
++	if (rq->cmd_flags & REQ_FUA)
++		rq->cmd_flags &= ~REQ_FLUSH;
+ 	if (!(fflags & REQ_FUA))
+ 		rq->cmd_flags &= ~REQ_FUA;
+ 
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 6de98fb..a0dbb19 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -194,9 +194,27 @@ static void blk_mq_rq_ctx_init(struct request_queue *q, struct blk_mq_ctx *ctx,
+ }
+ 
+ static struct request *__blk_mq_alloc_request(struct blk_mq_hw_ctx *hctx,
+-					      gfp_t gfp, bool reserved)
++					      gfp_t gfp, bool reserved,
++					      int rw)
+ {
+-	return blk_mq_alloc_rq(hctx, gfp, reserved);
++	struct request *req;
++	bool is_flush = false;
++	/*
++	 * flush need allocate a request, leave at least one request for
++	 * non-flush IO to avoid deadlock
++	 */
++	if ((rw & REQ_FLUSH) && !(rw & REQ_FLUSH_SEQ)) {
++		if (atomic_inc_return(&hctx->pending_flush) >=
++		    hctx->queue_depth - hctx->reserved_tags - 1) {
++			atomic_dec(&hctx->pending_flush);
++			return NULL;
++		}
++		is_flush = true;
++	}
++	req = blk_mq_alloc_rq(hctx, gfp, reserved);
++	if (!req && is_flush)
++		atomic_dec(&hctx->pending_flush);
++	return req;
+ }
+ 
+ static struct request *blk_mq_alloc_request_pinned(struct request_queue *q,
+@@ -209,7 +227,7 @@ static struct request *blk_mq_alloc_request_pinned(struct request_queue *q,
+ 		struct blk_mq_ctx *ctx = blk_mq_get_ctx(q);
+ 		struct blk_mq_hw_ctx *hctx = q->mq_ops->map_queue(q, ctx->cpu);
+ 
+-		rq = __blk_mq_alloc_request(hctx, gfp & ~__GFP_WAIT, reserved);
++		rq = __blk_mq_alloc_request(hctx, gfp & ~__GFP_WAIT, reserved, rw);
+ 		if (rq) {
+ 			blk_mq_rq_ctx_init(q, ctx, rq, rw);
+ 			break;
+@@ -272,6 +290,9 @@ static void __blk_mq_free_request(struct blk_mq_hw_ctx *hctx,
+ 	const int tag = rq->tag;
+ 	struct request_queue *q = rq->q;
+ 
++	if ((rq->cmd_flags & REQ_FLUSH) && !(rq->cmd_flags & REQ_FLUSH_SEQ))
++		atomic_dec(&hctx->pending_flush);
++
+ 	blk_mq_rq_init(hctx, rq);
+ 	blk_mq_put_tag(hctx->tags, tag);
+ 
+@@ -900,14 +921,14 @@ static void blk_mq_make_request(struct request_queue *q, struct bio *bio)
+ 	hctx = q->mq_ops->map_queue(q, ctx->cpu);
+ 
+ 	trace_block_getrq(q, bio, rw);
+-	rq = __blk_mq_alloc_request(hctx, GFP_ATOMIC, false);
++	rq = __blk_mq_alloc_request(hctx, GFP_ATOMIC, false, bio->bi_rw);
+ 	if (likely(rq))
+-		blk_mq_rq_ctx_init(q, ctx, rq, rw);
++		blk_mq_rq_ctx_init(q, ctx, rq, bio->bi_rw);
+ 	else {
+ 		blk_mq_put_ctx(ctx);
+ 		trace_block_sleeprq(q, bio, rw);
+-		rq = blk_mq_alloc_request_pinned(q, rw, __GFP_WAIT|GFP_ATOMIC,
+-							false);
++		rq = blk_mq_alloc_request_pinned(q, bio->bi_rw,
++				__GFP_WAIT|GFP_ATOMIC, false);
+ 		ctx = rq->mq_ctx;
+ 		hctx = q->mq_ops->map_queue(q, ctx->cpu);
+ 	}
+@@ -1184,7 +1205,9 @@ static int blk_mq_init_hw_queues(struct request_queue *q,
+ 		hctx->queue_num = i;
+ 		hctx->flags = reg->flags;
+ 		hctx->queue_depth = reg->queue_depth;
++		hctx->reserved_tags = reg->reserved_tags;
+ 		hctx->cmd_size = reg->cmd_size;
++		atomic_set(&hctx->pending_flush, 0);
+ 
+ 		blk_mq_init_cpu_notifier(&hctx->cpu_notifier,
+ 						blk_mq_hctx_notify, hctx);
+@@ -1309,15 +1332,6 @@ struct request_queue *blk_mq_init_queue(struct blk_mq_reg *reg,
+ 		reg->queue_depth = BLK_MQ_MAX_DEPTH;
+ 	}
+ 
+-	/*
+-	 * Set aside a tag for flush requests.  It will only be used while
+-	 * another flush request is in progress but outside the driver.
+-	 *
+-	 * TODO: only allocate if flushes are supported
+-	 */
+-	reg->queue_depth++;
+-	reg->reserved_tags++;
+-
+ 	if (reg->queue_depth < (reg->reserved_tags + BLK_MQ_TAG_MIN))
+ 		return ERR_PTR(-EINVAL);
+ 
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index 851d34b..1a14f29 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -36,12 +36,15 @@ struct blk_mq_hw_ctx {
+ 	struct list_head	page_list;
+ 	struct blk_mq_tags	*tags;
+ 
++	atomic_t		pending_flush;
++
+ 	unsigned long		queued;
+ 	unsigned long		run;
+ #define BLK_MQ_MAX_DISPATCH_ORDER	10
+ 	unsigned long		dispatched[BLK_MQ_MAX_DISPATCH_ORDER];
+ 
+ 	unsigned int		queue_depth;
++	unsigned int		reserved_tags;
+ 	unsigned int		numa_node;
+ 	unsigned int		cmd_size;	/* per-request extra data */
+ 
+-- 
+1.6.0.2
+
