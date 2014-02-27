@@ -78,7 +78,7 @@ Acked-by: jbeulich@suse.com
  			 * tlb flush IPI delivery. We must reload CR3
  			 * to make sure to use no freed page tables.
  			 */
---- sle12.orig/arch/x86/include/mach-xen/asm/pci.h	2013-03-25 09:13:57.000000000 +0100
+--- sle12.orig/arch/x86/include/mach-xen/asm/pci.h	2014-02-13 12:47:14.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pci.h	2013-09-26 15:33:39.000000000 +0200
 @@ -106,29 +106,6 @@ static inline void early_quirks(void) { 
  extern void pci_iommu_alloc(void);
@@ -548,7 +548,7 @@ Acked-by: jbeulich@suse.com
  
  /*
   * When we write a new IO APIC routing entry, we need to write the high
-@@ -1621,6 +1619,11 @@ void intel_ir_io_apic_print_entries(unsi
+@@ -1617,6 +1615,11 @@ void intel_ir_io_apic_print_entries(unsi
  	}
  }
  
@@ -560,7 +560,7 @@ Acked-by: jbeulich@suse.com
  __apicdebuginit(void) print_IO_APIC(int ioapic_idx)
  {
  	union IO_APIC_reg_00 reg_00;
-@@ -3485,12 +3488,15 @@ int io_apic_setup_irq_pin_once(unsigned 
+@@ -3481,12 +3484,15 @@ int io_apic_setup_irq_pin_once(unsigned 
  {
  	unsigned int ioapic_idx = attr->ioapic, pin = attr->ioapic_pin;
  	int ret;
@@ -1078,8 +1078,8 @@ Acked-by: jbeulich@suse.com
 -obj-$(CONFIG_TCG_XEN) += tpm_xenu.o
 +obj-$(CONFIG_TCG_XEN_V1) += tpm_xenu.o
  tpm_xenu-y = tpm_xen.o tpm_vtpm.o
---- sle12.orig/drivers/char/tpm/xen-tpmfront.c	2014-02-06 13:51:34.000000000 +0100
-+++ sle12/drivers/char/tpm/xen-tpmfront.c	2013-10-29 10:21:21.000000000 +0100
+--- sle12.orig/drivers/char/tpm/xen-tpmfront.c	2014-02-27 13:38:49.000000000 +0100
++++ sle12/drivers/char/tpm/xen-tpmfront.c	2014-02-27 13:47:34.000000000 +0100
 @@ -11,19 +11,26 @@
  #include <linux/err.h>
  #include <linux/interrupt.h>
@@ -1091,6 +1091,8 @@ Acked-by: jbeulich@suse.com
  #include <xen/grant_table.h>
 -#include <xen/xenbus.h>
  #include <xen/page.h>
+-#include "tpm.h"
+ #include <xen/platform_pci.h>
 +#else
 +#include <xen/evtchn.h>
 +#define bind_evtchn_to_irqhandler bind_caller_port_to_irqhandler
@@ -1098,8 +1100,7 @@ Acked-by: jbeulich@suse.com
 +#define gnttab_end_foreign_access(g, r, p) gnttab_end_foreign_access(g, p)
 +#endif
 +#include <xen/xenbus.h>
- #include "tpm.h"
- #include <xen/platform_pci.h>
++#include "tpm.h"
  
  struct tpm_private {
  	struct tpm_chip *chip;
@@ -1110,7 +1111,7 @@ Acked-by: jbeulich@suse.com
  
  	unsigned int evtchn;
  	int ring_ref;
-@@ -40,12 +47,12 @@ static u8 vtpm_status(struct tpm_chip *c
+@@ -41,12 +48,12 @@ static u8 vtpm_status(struct tpm_chip *c
  {
  	struct tpm_private *priv = TPM_VPRIV(chip);
  	switch (priv->shr->state) {
@@ -1127,7 +1128,7 @@ Acked-by: jbeulich@suse.com
  		return VTPM_STATUS_RUNNING;
  	default:
  		return 0;
-@@ -60,12 +67,12 @@ static bool vtpm_req_canceled(struct tpm
+@@ -61,12 +68,12 @@ static bool vtpm_req_canceled(struct tpm
  static void vtpm_cancel(struct tpm_chip *chip)
  {
  	struct tpm_private *priv = TPM_VPRIV(chip);
@@ -1142,7 +1143,7 @@ Acked-by: jbeulich@suse.com
  {
  	return sizeof(*shr) + sizeof(u32) * shr->nr_extra_pages;
  }
-@@ -73,7 +80,7 @@ static unsigned int shr_data_offset(stru
+@@ -74,7 +81,7 @@ static unsigned int shr_data_offset(stru
  static int vtpm_send(struct tpm_chip *chip, u8 *buf, size_t count)
  {
  	struct tpm_private *priv = TPM_VPRIV(chip);
@@ -1151,7 +1152,7 @@ Acked-by: jbeulich@suse.com
  	unsigned int offset = shr_data_offset(shr);
  
  	u32 ordinal;
-@@ -95,7 +102,7 @@ static int vtpm_send(struct tpm_chip *ch
+@@ -96,7 +103,7 @@ static int vtpm_send(struct tpm_chip *ch
  	memcpy(offset + (u8 *)shr, buf, count);
  	shr->length = count;
  	barrier();
@@ -1160,7 +1161,7 @@ Acked-by: jbeulich@suse.com
  	wmb();
  	notify_remote_via_evtchn(priv->evtchn);
  
-@@ -115,11 +122,11 @@ static int vtpm_send(struct tpm_chip *ch
+@@ -116,11 +123,11 @@ static int vtpm_send(struct tpm_chip *ch
  static int vtpm_recv(struct tpm_chip *chip, u8 *buf, size_t count)
  {
  	struct tpm_private *priv = TPM_VPRIV(chip);
@@ -1174,7 +1175,7 @@ Acked-by: jbeulich@suse.com
  		return -ECANCELED;
  
  	/* In theory the wait at the end of _send makes this one unnecessary */
-@@ -201,12 +208,12 @@ static irqreturn_t tpmif_interrupt(int d
+@@ -202,12 +209,12 @@ static irqreturn_t tpmif_interrupt(int d
  	struct tpm_private *priv = dev_id;
  
  	switch (priv->shr->state) {

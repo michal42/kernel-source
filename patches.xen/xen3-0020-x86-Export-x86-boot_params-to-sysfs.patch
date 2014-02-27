@@ -1,0 +1,54 @@
+From 5039e316dde3fb71c79e95e97c5bca8e4724d8f2 Mon Sep 17 00:00:00 2001
+From: Dave Young <dyoung@redhat.com>
+Date: Fri, 20 Dec 2013 18:02:21 +0800
+Subject: x86: Export x86 boot_params to sysfs
+Patch-mainline: v3.14-rc1
+References: fate#315019
+
+kexec-tools use boot_params for getting the 1st kernel hardware_subarch,
+the kexec kernel EFI runtime support also needs to read the old efi_info
+from boot_params. Currently it exists in debugfs which is not a good
+place for such infomation. Per HPA, we should avoid "sploit debugfs".
+
+In this patch /sys/kernel/boot_params are exported, also the setup_data is
+exported as a subdirectory. kexec-tools is using debugfs for hardware_subarch
+for a long time now so we're not removing it yet.
+
+Structure is like below:
+
+/sys/kernel/boot_params
+|__ data                /* boot_params in binary*/
+|__ setup_data
+|   |__ 0               /* the first setup_data node */
+|   |   |__ data        /* setup_data node 0 in binary*/
+|   |   |__ type        /* setup_data type of setup_data node 0, hex string */
+[snip]
+|__ version             /* boot protocal version (in hex, "0x" prefixed)*/
+
+Signed-off-by: Dave Young <dyoung@redhat.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+Tested-by: Toshi Kani <toshi.kani@hp.com>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Automatically created from "patches.arch/0020-x86-Export-x86-boot_params-to-sysfs.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/Makefile	2013-09-26 13:27:04.000000000 +0200
++++ sle12/arch/x86/kernel/Makefile	2014-02-27 15:07:27.000000000 +0100
+@@ -30,9 +30,7 @@ obj-y			+= syscall_$(BITS).o
+ obj-$(CONFIG_X86_64)	+= vsyscall_64.o
+ obj-$(CONFIG_X86_64)	+= vsyscall_emu_64.o
+ 
+-ifndef CONFIG_XEN
+ obj-$(CONFIG_SYSFS)	+= ksysfs.o
+-endif
+ 
+ obj-y			+= bootflag.o e820.o
+ obj-y			+= pci-dma.o quirks.o topology.o kdebugfs.o
+@@ -130,6 +128,6 @@ ifeq ($(CONFIG_X86_64),y)
+ endif
+ 
+ disabled-obj-$(CONFIG_XEN) := crash.o early-quirks.o i8237.o i8253.o i8259.o \
+-	irqinit.o pci-swiotlb.o reboot.o smpboot.o tracepoint.o trampoline%.o \
+-	tsc%.o vsmp%.o
++	irqinit.o ksysfs.o pci-swiotlb.o reboot.o smpboot.o tracepoint.o \
++	trampoline%.o tsc%.o vsmp%.o
+ disabled-obj-$(CONFIG_XEN_UNPRIVILEGED_GUEST) += probe_roms.o

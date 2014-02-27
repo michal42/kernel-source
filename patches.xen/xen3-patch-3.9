@@ -35,9 +35,9 @@ Acked-by: jbeulich@suse.com
  
  	ALIGN
  GLOBAL(stub32_clone)
---- sle12.orig/arch/x86/include/asm/efi.h	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/efi.h	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/arch/x86/include/asm/efi.h	2014-01-09 11:35:29.000000000 +0100
-@@ -106,7 +106,11 @@ extern void efi_memory_uc(u64 addr, unsi
+@@ -149,7 +149,11 @@ extern void parse_efi_setup(u64 phys_add
  
  static inline bool efi_is_native(void)
  {
@@ -66,7 +66,7 @@ Acked-by: jbeulich@suse.com
  
  static inline unsigned long __phys_addr_nodebug(unsigned long x)
  {
---- sle12.orig/arch/x86/include/asm/processor.h	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/processor.h	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/arch/x86/include/asm/processor.h	2013-09-26 13:24:19.000000000 +0200
 @@ -961,7 +961,7 @@ extern unsigned long arch_align_stack(un
  extern void free_init_pages(char *what, unsigned long begin, unsigned long end);
@@ -78,7 +78,7 @@ Acked-by: jbeulich@suse.com
  #else
  #define xen_set_default_idle 0
 --- sle12.orig/arch/x86/include/mach-xen/asm/pci.h	2013-01-09 15:32:33.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pci.h	2013-03-25 09:13:57.000000000 +0100
++++ sle12/arch/x86/include/mach-xen/asm/pci.h	2014-02-13 12:47:14.000000000 +0100
 @@ -14,6 +14,9 @@
  struct pci_sysdata {
  	int		domain;		/* PCI domain */
@@ -86,7 +86,7 @@ Acked-by: jbeulich@suse.com
 +#ifdef CONFIG_ACPI
 +	void		*acpi;		/* ACPI-specific data */
 +#endif
- #ifdef CONFIG_X86_64
+ #if defined(CONFIG_X86_64) && !defined(CONFIG_XEN)
  	void		*iommu;		/* IOMMU private data */
  #endif
 @@ -127,9 +130,12 @@ static inline void x86_restore_msi_irqs(
@@ -424,7 +424,7 @@ Acked-by: jbeulich@suse.com
  		raw_spin_unlock_irqrestore(&ioapic_lock, flags);
  	}
  
-@@ -1363,11 +1339,8 @@ static void ioapic_register_intr(unsigne
+@@ -1359,11 +1335,8 @@ static void ioapic_register_intr(unsigne
  		fasteoi = false;
  	}
  
@@ -437,7 +437,7 @@ Acked-by: jbeulich@suse.com
  
  	hdl = fasteoi ? handle_fasteoi_irq : handle_edge_irq;
  	irq_set_chip_and_handler_name(irq, chip, hdl,
-@@ -1378,14 +1351,14 @@ static void ioapic_register_intr(unsigne
+@@ -1374,14 +1347,14 @@ static void ioapic_register_intr(unsigne
  #define ioapic_register_intr(irq, cfg, trigger) evtchn_register_pirq(irq)
  #endif
  
@@ -458,7 +458,7 @@ Acked-by: jbeulich@suse.com
  	memset(entry, 0, sizeof(*entry));
  
  	entry->delivery_mode = apic->irq_delivery_mode;
-@@ -1437,8 +1410,12 @@ static void setup_ioapic_irq(unsigned in
+@@ -1433,8 +1406,12 @@ static void setup_ioapic_irq(unsigned in
  		    attr->ioapic, mpc_ioapic_id(attr->ioapic), attr->ioapic_pin,
  		    cfg->vector, irq, attr->trigger, attr->polarity, dest);
  
@@ -472,7 +472,7 @@ Acked-by: jbeulich@suse.com
  			mpc_ioapic_id(attr->ioapic), attr->ioapic_pin);
  		__clear_irq_vector(irq, cfg);
  
-@@ -1558,9 +1535,6 @@ static void __init setup_timer_IRQ0_pin(
+@@ -1554,9 +1531,6 @@ static void __init setup_timer_IRQ0_pin(
  	struct IO_APIC_route_entry entry;
  	unsigned int dest;
  
@@ -482,7 +482,7 @@ Acked-by: jbeulich@suse.com
  	memset(&entry, 0, sizeof(entry));
  
  	/*
-@@ -1592,9 +1566,63 @@ static void __init setup_timer_IRQ0_pin(
+@@ -1588,9 +1562,63 @@ static void __init setup_timer_IRQ0_pin(
  	ioapic_write_entry(ioapic_idx, pin, entry);
  }
  
@@ -547,7 +547,7 @@ Acked-by: jbeulich@suse.com
  	union IO_APIC_reg_00 reg_00;
  	union IO_APIC_reg_01 reg_01;
  	union IO_APIC_reg_02 reg_02;
-@@ -1647,58 +1675,7 @@ __apicdebuginit(void) print_IO_APIC(int 
+@@ -1643,58 +1671,7 @@ __apicdebuginit(void) print_IO_APIC(int 
  
  	printk(KERN_DEBUG ".... IRQ redirection table:\n");
  
@@ -607,7 +607,7 @@ Acked-by: jbeulich@suse.com
  }
  
  __apicdebuginit(void) print_IO_APICs(void)
-@@ -2000,30 +1977,14 @@ void __init enable_IO_APIC(void)
+@@ -1996,30 +1973,14 @@ void __init enable_IO_APIC(void)
  	clear_IO_APIC();
  }
  
@@ -640,7 +640,7 @@ Acked-by: jbeulich@suse.com
  		struct IO_APIC_route_entry entry;
  
  		memset(&entry, 0, sizeof(entry));
-@@ -2043,12 +2004,25 @@ void disable_IO_APIC(void)
+@@ -2039,12 +2000,25 @@ void disable_IO_APIC(void)
  		ioapic_write_entry(ioapic_i8259.apic, ioapic_i8259.pin, entry);
  	}
  
@@ -670,7 +670,7 @@ Acked-by: jbeulich@suse.com
  }
  
  #ifdef CONFIG_X86_32
-@@ -2401,12 +2375,8 @@ static void __target_IO_APIC_irq(unsigne
+@@ -2397,12 +2371,8 @@ static void __target_IO_APIC_irq(unsigne
  
  		apic = entry->apic;
  		pin = entry->pin;
@@ -685,7 +685,7 @@ Acked-by: jbeulich@suse.com
  		reg = io_apic_read(apic, 0x10 + pin*2);
  		reg &= ~IO_APIC_REDIR_VECTOR_MASK;
  		reg |= vector;
-@@ -2448,9 +2418,10 @@ int __ioapic_set_affinity(struct irq_dat
+@@ -2444,9 +2414,10 @@ int __ioapic_set_affinity(struct irq_dat
  	return 0;
  }
  
@@ -699,7 +699,7 @@ Acked-by: jbeulich@suse.com
  {
  	unsigned int dest, irq = data->irq;
  	unsigned long flags;
-@@ -2629,33 +2600,6 @@ static void ack_apic_level(struct irq_da
+@@ -2625,33 +2596,6 @@ static void ack_apic_level(struct irq_da
  	ioapic_irqd_unmask(data, cfg, masked);
  }
  
@@ -733,7 +733,7 @@ Acked-by: jbeulich@suse.com
  static struct irq_chip ioapic_chip __read_mostly = {
  	.name			= "IO-APIC",
  	.irq_startup		= startup_ioapic_irq,
-@@ -2663,7 +2607,7 @@ static struct irq_chip ioapic_chip __rea
+@@ -2659,7 +2603,7 @@ static struct irq_chip ioapic_chip __rea
  	.irq_unmask		= unmask_ioapic_irq,
  	.irq_ack		= ack_apic_edge,
  	.irq_eoi		= ack_apic_level,
@@ -742,7 +742,7 @@ Acked-by: jbeulich@suse.com
  	.irq_retrigger		= ioapic_retrigger_irq,
  };
  #endif /* !CONFIG_XEN */
-@@ -2868,8 +2812,7 @@ static inline void __init check_timer(vo
+@@ -2864,8 +2808,7 @@ static inline void __init check_timer(vo
  	 * 8259A.
  	 */
  	if (pin1 == -1) {
@@ -752,7 +752,7 @@ Acked-by: jbeulich@suse.com
  		pin1 = pin2;
  		apic1 = apic2;
  		no_pin1 = 1;
-@@ -2901,8 +2844,7 @@ static inline void __init check_timer(vo
+@@ -2897,8 +2840,7 @@ static inline void __init check_timer(vo
  				clear_IO_APIC_pin(0, pin1);
  			goto out;
  		}
@@ -762,7 +762,7 @@ Acked-by: jbeulich@suse.com
  		local_irq_disable();
  		clear_IO_APIC_pin(apic1, pin1);
  		if (!no_pin1)
-@@ -3083,37 +3025,58 @@ device_initcall(ioapic_init_ops);
+@@ -3079,37 +3021,58 @@ device_initcall(ioapic_init_ops);
  /*
   * Dynamic irq allocate and deallocation
   */
@@ -839,7 +839,7 @@ Acked-by: jbeulich@suse.com
  }
  
  int create_irq(void)
-@@ -3138,49 +3101,35 @@ void destroy_irq(unsigned int irq)
+@@ -3134,49 +3097,35 @@ void destroy_irq(unsigned int irq)
  
  	irq_set_status_flags(irq, IRQ_NOREQUEST|IRQ_NOPROBE);
  
@@ -905,7 +905,7 @@ Acked-by: jbeulich@suse.com
  
  	msg->address_lo =
  		MSI_ADDR_BASE_LO |
-@@ -3199,8 +3148,32 @@ static int msi_compose_msg(struct pci_de
+@@ -3195,8 +3144,32 @@ static int msi_compose_msg(struct pci_de
  			MSI_DATA_DELIVERY_FIXED:
  			MSI_DATA_DELIVERY_LOWPRI) |
  		MSI_DATA_VECTOR(cfg->vector);
@@ -939,7 +939,7 @@ Acked-by: jbeulich@suse.com
  }
  
  static int
-@@ -3238,23 +3211,28 @@ static struct irq_chip msi_chip = {
+@@ -3234,23 +3207,28 @@ static struct irq_chip msi_chip = {
  	.irq_retrigger		= ioapic_retrigger_irq,
  };
  
@@ -975,7 +975,7 @@ Acked-by: jbeulich@suse.com
  
  	irq_set_chip_and_handler_name(irq, chip, handle_edge_irq, "edge");
  
-@@ -3265,46 +3243,26 @@ static int setup_msi_irq(struct pci_dev 
+@@ -3261,46 +3239,26 @@ static int setup_msi_irq(struct pci_dev 
  
  int native_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
  {
@@ -1027,7 +1027,7 @@ Acked-by: jbeulich@suse.com
  	}
  	return 0;
  
-@@ -3400,26 +3358,19 @@ static struct irq_chip hpet_msi_type = {
+@@ -3396,26 +3354,19 @@ static struct irq_chip hpet_msi_type = {
  	.irq_retrigger = ioapic_retrigger_irq,
  };
  
@@ -1056,7 +1056,7 @@ Acked-by: jbeulich@suse.com
  
  	irq_set_chip_and_handler_name(irq, chip, handle_edge_irq, "edge");
  	return 0;
-@@ -3427,6 +3378,7 @@ int arch_setup_hpet_msi(unsigned int irq
+@@ -3423,6 +3374,7 @@ int arch_setup_hpet_msi(unsigned int irq
  #endif
  
  #endif /* CONFIG_PCI_MSI */
@@ -1064,7 +1064,7 @@ Acked-by: jbeulich@suse.com
  /*
   * Hypertransport interrupt support
   */
-@@ -3799,10 +3751,7 @@ void __init setup_ioapic_dest(void)
+@@ -3795,10 +3747,7 @@ void __init setup_ioapic_dest(void)
  		else
  			mask = apic->target_cpus();
  
@@ -1078,7 +1078,7 @@ Acked-by: jbeulich@suse.com
  }
 --- sle12.orig/arch/x86/kernel/cpu/amd.c	2013-05-23 17:54:53.000000000 +0200
 +++ sle12/arch/x86/kernel/cpu/amd.c	2013-05-23 17:57:45.000000000 +0200
-@@ -568,7 +568,6 @@ static void init_amd(struct cpuinfo_x86 
+@@ -578,7 +578,6 @@ static void init_amd(struct cpuinfo_x86 
  #else
  			pr_warning("Long-mode LAHF feature wrongly enabled -"
  				   "hypervisor update needed\n");
@@ -1620,7 +1620,7 @@ Acked-by: jbeulich@suse.com
 -
  	start_kernel();
  }
---- sle12.orig/arch/x86/kernel/head_64.S	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/arch/x86/kernel/head_64.S	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/arch/x86/kernel/head_64.S	2013-06-04 13:59:45.000000000 +0200
 @@ -465,7 +465,7 @@ NEXT_PAGE(early_dynamic_pgts)
  
@@ -1670,7 +1670,7 @@ Acked-by: jbeulich@suse.com
  {
  	struct thread_struct *t = &current->thread;
  	unsigned int old = t->iopl >> 12;
---- sle12.orig/arch/x86/kernel/process.c	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/arch/x86/kernel/process.c	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/arch/x86/kernel/process.c	2013-07-02 09:49:24.000000000 +0200
 @@ -317,7 +317,7 @@ void default_idle(void)
  EXPORT_SYMBOL(default_idle);
@@ -4525,7 +4525,7 @@ Acked-by: jbeulich@suse.com
  void __meminit vmemmap_populate_print_last(void)
  {
  	if (p_start) {
---- sle12.orig/arch/x86/mm/mm_internal.h	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/arch/x86/mm/mm_internal.h	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/arch/x86/mm/mm_internal.h	2013-04-03 17:43:19.000000000 +0200
 @@ -14,6 +14,8 @@ unsigned long kernel_physical_mapping_in
  					     unsigned long page_size_mask);
@@ -4991,7 +4991,7 @@ Acked-by: jbeulich@suse.com
  	{ 0x36, ANY, 100000 },	/* Atom Cedar Trail/Cedarview (N2xxx, D2xxx) */
  };
  
---- sle12.orig/drivers/misc/vmw_vmci/Kconfig	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/drivers/misc/vmw_vmci/Kconfig	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/drivers/misc/vmw_vmci/Kconfig	2013-06-04 13:59:32.000000000 +0200
 @@ -4,7 +4,7 @@
  
@@ -5272,7 +5272,7 @@ Acked-by: jbeulich@suse.com
  }
  
  /**
---- sle12.orig/drivers/thermal/Kconfig	2014-02-06 13:51:34.000000000 +0100
+--- sle12.orig/drivers/thermal/Kconfig	2014-02-27 13:38:49.000000000 +0100
 +++ sle12/drivers/thermal/Kconfig	2013-09-26 13:24:10.000000000 +0200
 @@ -174,7 +174,7 @@ config DB8500_CPUFREQ_COOLING
  config INTEL_POWERCLAMP
