@@ -1,0 +1,73 @@
+From 375224e3dec68bbed3b268e389bba57104bb9530 Mon Sep 17 00:00:00 2001
+From: Ming Lei <tom.leiming@gmail.com>
+Date: Thu, 26 Dec 2013 21:31:38 +0800
+Subject: [PATCH] block: blk-mq: don't export blk_mq_free_queue()
+Git-commit: 3edcc0ce85c59d45d6dfc6a36a6b3f8b31ba9887
+Patch-mainline: v3.14-rc1
+References: fate#315209
+
+blk_mq_free_queue() is called from release handler of
+queue kobject, so it needn't be called from drivers.
+
+Cc: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+---
+ block/blk-mq.c         |    1 -
+ block/blk-mq.h         |    1 +
+ block/blk-sysfs.c      |    1 +
+ include/linux/blk-mq.h |    1 -
+ 4 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 941dae2..2fa96fe 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -1461,7 +1461,6 @@ void blk_mq_free_queue(struct request_queue *q)
+ 	list_del_init(&q->all_q_node);
+ 	mutex_unlock(&all_q_mutex);
+ }
+-EXPORT_SYMBOL(blk_mq_free_queue);
+ 
+ /* Basically redo blk_mq_init_queue with queue frozen */
+ static void blk_mq_queue_reinit(struct request_queue *q)
+diff --git a/block/blk-mq.h b/block/blk-mq.h
+index caa614f..e151a2f 100644
+--- a/block/blk-mq.h
++++ b/block/blk-mq.h
+@@ -28,6 +28,7 @@ void blk_mq_run_request(struct request *rq, bool run_queue, bool async);
+ void blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async);
+ void blk_mq_init_flush(struct request_queue *q);
+ void blk_mq_drain_queue(struct request_queue *q);
++void blk_mq_free_queue(struct request_queue *q);
+ 
+ /*
+  * CPU hotplug helpers
+diff --git a/block/blk-sysfs.c b/block/blk-sysfs.c
+index 4f8c4d9..584fb09 100644
+--- a/block/blk-sysfs.c
++++ b/block/blk-sysfs.c
+@@ -11,6 +11,7 @@
+ 
+ #include "blk.h"
+ #include "blk-cgroup.h"
++#include "blk-mq.h"
+ 
+ struct queue_sysfs_entry {
+ 	struct attribute attr;
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index ab0e9b2..851d34b 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -113,7 +113,6 @@ enum {
+ };
+ 
+ struct request_queue *blk_mq_init_queue(struct blk_mq_reg *, void *);
+-void blk_mq_free_queue(struct request_queue *);
+ int blk_mq_register_disk(struct gendisk *);
+ void blk_mq_unregister_disk(struct gendisk *);
+ void blk_mq_init_commands(struct request_queue *, void (*init)(void *data, struct blk_mq_hw_ctx *, struct request *, unsigned int), void *data);
+-- 
+1.6.0.2
+
