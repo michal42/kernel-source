@@ -1,0 +1,45 @@
+From 069081b1dcee7c4ec163236ba9b020872e59a94e Mon Sep 17 00:00:00 2001
+From: Raghavendra K T <raghavendra.kt@linux.vnet.ibm.com>
+Date: Tue, 21 Jan 2014 16:59:59 +0530
+Subject: [PATCH] null_blk: Null pointer deference problem in alloc_page_buffers
+Git-commit: 9967d8ac5c0f3e730a21abefe4c889c724f3b212
+Patch-mainline: v3.14-rc1
+References: fate#315209
+
+ If we load the null_blk module with bs=8k we get following oops:
+[ 3819.812190] BUG: unable to handle kernel NULL pointer dereference at 0000000000000008
+[ 3819.812387] IP: [<ffffffff81170aa5>] create_empty_buffers+0x28/0xaf
+[ 3819.812527] PGD 219244067 PUD 215a06067 PMD 0
+[ 3819.812640] Oops: 0000 [#1] SMP
+[ 3819.812772] Modules linked in: null_blk(+)
+
+ Fix that by resetting block size to PAGE_SIZE if it is greater than PAGE_SIZE
+
+Reported-by: Sumanth <sumantk2@linux.vnet.ibm.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+Reviewed-by: Matias Bjorling <m@bjorling.me>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+---
+ drivers/block/null_blk.c |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/block/null_blk.c b/drivers/block/null_blk.c
+index 989e718..d167bbb 100644
+--- a/drivers/block/null_blk.c
++++ b/drivers/block/null_blk.c
+@@ -613,6 +613,11 @@ static int __init null_init(void)
+ 		irqmode = NULL_IRQ_NONE;
+ 	}
+ #endif
++	if (bs > PAGE_SIZE) {
++		pr_warn("null_blk: invalid block size\n");
++		pr_warn("null_blk: defaults block size to %lu\n", PAGE_SIZE);
++		bs = PAGE_SIZE;
++	}
+ 
+ 	if (queue_mode == NULL_Q_MQ && use_per_node_hctx) {
+ 		if (submit_queues < nr_online_nodes) {
+-- 
+1.6.0.2
+
