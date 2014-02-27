@@ -1,0 +1,58 @@
+From 4391281de89dce36846fd0c05697539444ef4db7 Mon Sep 17 00:00:00 2001
+From: Ming Lei <tom.leiming@gmail.com>
+Date: Thu, 26 Dec 2013 21:31:36 +0800
+Subject: [PATCH] block: blk-mq: make blk_sync_queue support mq
+Git-commit: f04c1fe7619b2a60ee9e209cf3f9fcba2ce8f2a2
+Patch-mainline: v3.14-rc1
+References: fate#315209
+
+This patch moves synchronization on mq->delay_work
+from blk_mq_free_queue() to blk_sync_queue(), so that
+blk_sync_queue can work on mq.
+
+Cc: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+---
+ block/blk-core.c |   11 ++++++++++-
+ block/blk-mq.c   |    1 -
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/block/blk-core.c b/block/blk-core.c
+index 36420a1..9d19653 100644
+--- a/block/blk-core.c
++++ b/block/blk-core.c
+@@ -246,7 +246,16 @@ EXPORT_SYMBOL(blk_stop_queue);
+ void blk_sync_queue(struct request_queue *q)
+ {
+ 	del_timer_sync(&q->timeout);
+-	cancel_delayed_work_sync(&q->delay_work);
++
++	if (q->mq_ops) {
++		struct blk_mq_hw_ctx *hctx;
++		int i;
++
++		queue_for_each_hw_ctx(q, hctx, i)
++			cancel_delayed_work_sync(&hctx->delayed_work);
++	} else {
++		cancel_delayed_work_sync(&q->delay_work);
++	}
+ }
+ EXPORT_SYMBOL(blk_sync_queue);
+ 
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index d09b990..941dae2 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -1440,7 +1440,6 @@ void blk_mq_free_queue(struct request_queue *q)
+ 	int i;
+ 
+ 	queue_for_each_hw_ctx(q, hctx, i) {
+-		cancel_delayed_work_sync(&hctx->delayed_work);
+ 		kfree(hctx->ctx_map);
+ 		kfree(hctx->ctxs);
+ 		blk_mq_free_rq_map(hctx);
+-- 
+1.6.0.2
+
