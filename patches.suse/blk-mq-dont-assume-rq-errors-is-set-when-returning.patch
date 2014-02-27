@@ -1,0 +1,39 @@
+From 12cca7908f85b5acde12f2ee36671ca18b45e453 Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Tue, 11 Feb 2014 08:27:13 -0800
+Subject: [PATCH] blk-mq: dont assume rq->errors is set when returning an error from ->queue_rq
+Git-commit: 1e93b8c274268038c93763dca65a73b42a081e10
+Patch-mainline: v3.14-rc3
+References: fate#315209
+
+rq->errors never has been part of the communication protocol between drivers
+and the block stack and most drivers will not have initialized it.
+
+Return -EIO to upper layers when the driver returns BLK_MQ_RQ_QUEUE_ERROR
+unconditionally.  If a driver want to return a different error it can easily
+do so by returning success after calling blk_mq_end_io itself.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+
+---
+ block/blk-mq.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 8f66127..a9533ba 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -605,8 +605,8 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
+ 			break;
+ 		default:
+ 			pr_err("blk-mq: bad return on queue: %d\n", ret);
+-			rq->errors = -EIO;
+ 		case BLK_MQ_RQ_QUEUE_ERROR:
++			rq->errors = -EIO;
+ 			blk_mq_end_io(rq, rq->errors);
+ 			break;
+ 		}
+-- 
+1.6.0.2
+
