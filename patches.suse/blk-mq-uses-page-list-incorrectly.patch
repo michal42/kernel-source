@@ -1,0 +1,54 @@
+From e97ede8d336b1b6646cc2546f0725b0d157816dd Mon Sep 17 00:00:00 2001
+From: Dave Hansen <dave.hansen@linux.intel.com>
+Date: Wed, 8 Jan 2014 20:17:46 -0700
+Subject: [PATCH] blk-mq: uses page->list incorrectly
+Git-commit: 6753471c0cb4562aebb9c70beb74ccd392d49ee8
+Patch-mainline: v3.14-rc1
+References: fate#315209
+
+'struct page' has two list_head fields: 'lru' and 'list'.  Conveniently,
+they are unioned together.  This means that code can use them
+interchangably, which gets horribly confusing.
+
+The blk-mq made the logical decision to try to use page->list.  But, that
+field was actually introduced just for the slub code.  ->lru is the right
+field to use outside of slab/slub.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Acked-by: David Rientjes <rientjes@google.com>
+Acked-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Jens Axboe <axboe@kernel.dk>
+
+---
+ block/blk-mq.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 6019311..6de98fb 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -1063,8 +1063,8 @@ static void blk_mq_free_rq_map(struct blk_mq_hw_ctx *hctx)
+ 	struct page *page;
+ 
+ 	while (!list_empty(&hctx->page_list)) {
+-		page = list_first_entry(&hctx->page_list, struct page, list);
+-		list_del_init(&page->list);
++		page = list_first_entry(&hctx->page_list, struct page, lru);
++		list_del_init(&page->lru);
+ 		__free_pages(page, page->private);
+ 	}
+ 
+@@ -1128,7 +1128,7 @@ static int blk_mq_init_rq_map(struct blk_mq_hw_ctx *hctx,
+ 			break;
+ 
+ 		page->private = this_order;
+-		list_add_tail(&page->list, &hctx->page_list);
++		list_add_tail(&page->lru, &hctx->page_list);
+ 
+ 		p = page_address(page);
+ 		entries_per_page = order_to_size(this_order) / rq_size;
+-- 
+1.6.0.2
+
