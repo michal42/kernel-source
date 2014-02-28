@@ -1,0 +1,63 @@
+From: Torsten Duwe <duwe@suse.de>
+Subject: provide hardware randomness from HWRNG to /dev/random
+Patch-mainline: not yet submitted
+References: fate#316346
+
+This patch adds an interface to the random pool for feeding entropy in-kernel.
+This may be considered a kernel equivalent of the user-space entropy daemon which
+works automatically and without the risk of random bits being compromised
+in user space.
+
+Signed-off-by: Torsten Duwe <duwe@suse.de>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+---
+ include/linux/hw_random.h |    2 ++
+ drivers/char/random.c     |   22 ++++++++++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+--- a/include/linux/hw_random.h
++++ b/include/linux/hw_random.h
+@@ -47,5 +47,7 @@ struct hwrng {
+ extern int hwrng_register(struct hwrng *rng);
+ /** Unregister a Hardware Random Number Generator driver. */
+ extern void hwrng_unregister(struct hwrng *rng);
++/** Feed random bits into the pool. */
++extern void add_hwgenerator_randomness(const char *buffer, size_t count, size_t entropy);
+ 
+ #endif /* LINUX_HWRANDOM_H_ */
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -250,6 +250,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/mm.h>
+ #include <linux/spinlock.h>
++#include <linux/kthread.h>
+ #include <linux/percpu.h>
+ #include <linux/cryptohash.h>
+ #include <linux/fips.h>
+@@ -1347,3 +1347,24 @@ randomize_range(unsigned long start, uns
+ 		return 0;
+ 	return PAGE_ALIGN(get_random_int() % range + start);
+ }
++
++/* Interface for in-kernel drivers of true hardware RNGs.
++ * Those devices may produce endless random bits and will be throttled
++ * when our pool is full.
++ */
++void add_hwgenerator_randomness(const char *buffer, size_t count, size_t entropy)
++{
++	struct entropy_store *poolp = &input_pool;
++
++	/* Suspend writing if we're above the trickle threshold.
++	 * We'll be woken up again once below random_write_wakeup_thresh,
++	 * or when the calling thread is about to terminate.
++	 */
++	wait_event_interruptible(random_write_wait, kthread_should_stop() ||
++				 input_pool.entropy_count
++					 <= random_write_wakeup_thresh);
++	mix_pool_bytes(poolp, buffer, count, NULL);
++	credit_entropy_bits(poolp, entropy);
++}
++EXPORT_SYMBOL_GPL(add_hwgenerator_randomness);
++
