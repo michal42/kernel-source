@@ -1,0 +1,66 @@
+From e1b43e3f13f7157249fb962ccf88b84eb0421fb4 Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <bp@suse.de>
+Date: Wed, 4 Dec 2013 12:31:31 +0100
+Subject: x86, microcode: Share native MSR accessing variants
+Git-commit: e1b43e3f13f7
+Patch-mainline: v3.14-rc1
+References: fate#315602
+
+We want to use those in AMD's early loading path too. Also, add a
+native_wrmsrl variant.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Tested-by: Aravind Gopalakrishnan <Aravind.Gopalakrishnan@amd.com>
+---
+ arch/x86/include/asm/microcode.h        | 15 +++++++++++++++
+ arch/x86/kernel/microcode_intel_early.c | 10 ----------
+ 2 files changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/arch/x86/include/asm/microcode.h b/arch/x86/include/asm/microcode.h
+index f98bd6625318..b59827e76529 100644
+--- a/arch/x86/include/asm/microcode.h
++++ b/arch/x86/include/asm/microcode.h
+@@ -1,6 +1,21 @@
+ #ifndef _ASM_X86_MICROCODE_H
+ #define _ASM_X86_MICROCODE_H
+ 
++#define native_rdmsr(msr, val1, val2)			\
++do {							\
++	u64 __val = native_read_msr((msr));		\
++	(void)((val1) = (u32)__val);			\
++	(void)((val2) = (u32)(__val >> 32));		\
++} while (0)
++
++#define native_wrmsr(msr, low, high)			\
++	native_write_msr(msr, low, high)
++
++#define native_wrmsrl(msr, val)				\
++	native_write_msr((msr),				\
++			 (u32)((u64)(val)),		\
++			 (u32)((u64)(val) >> 32))
++
+ struct cpu_signature {
+ 	unsigned int sig;
+ 	unsigned int pf;
+diff --git a/arch/x86/kernel/microcode_intel_early.c b/arch/x86/kernel/microcode_intel_early.c
+index 1575deb2e636..18f739129e72 100644
+--- a/arch/x86/kernel/microcode_intel_early.c
++++ b/arch/x86/kernel/microcode_intel_early.c
+@@ -365,16 +365,6 @@ out:
+ 	return state;
+ }
+ 
+-#define native_rdmsr(msr, val1, val2)		\
+-do {						\
+-	u64 __val = native_read_msr((msr));	\
+-	(void)((val1) = (u32)__val);		\
+-	(void)((val2) = (u32)(__val >> 32));	\
+-} while (0)
+-
+-#define native_wrmsr(msr, low, high)		\
+-	native_write_msr(msr, low, high);
+-
+ static int collect_cpu_info_early(struct ucode_cpu_info *uci)
+ {
+ 	unsigned int val[2];
+
