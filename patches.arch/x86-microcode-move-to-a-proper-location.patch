@@ -1,0 +1,6088 @@
+From bad5fa631fca5466401cd4a48e30cc1f1cb6101e Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <bp@suse.de>
+Date: Sun, 1 Dec 2013 18:09:58 +0100
+Subject: x86, microcode: Move to a proper location
+Git-commit: bad5fa631fca
+Patch-mainline: v3.14-rc1
+References: fate#315602
+
+We've grown a bunch of microcode loader files all prefixed with
+"microcode_". They should be under cpu/ because this is strictly
+CPU-related functionality so do that and drop the prefix since they're
+in their own directory now which gives that prefix. :)
+
+While at it, drop MICROCODE_INTEL_LIB config item and stash the
+functionality under CONFIG_MICROCODE_INTEL as it was its only user.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Tested-by: Aravind Gopalakrishnan <Aravind.Gopalakrishnan@amd.com>
+---
+ arch/x86/Kconfig                            |   4 -
+ arch/x86/kernel/Makefile                    |   9 -
+ arch/x86/kernel/cpu/Makefile                |   1 +
+ arch/x86/kernel/cpu/microcode/Makefile      |   7 +
+ arch/x86/kernel/cpu/microcode/amd.c         | 492 +++++++++++++++++
+ arch/x86/kernel/cpu/microcode/amd_early.c   | 380 ++++++++++++++
+ arch/x86/kernel/cpu/microcode/core.c        | 645 +++++++++++++++++++++++
+ arch/x86/kernel/cpu/microcode/core_early.c  | 141 +++++
+ arch/x86/kernel/cpu/microcode/intel.c       | 333 ++++++++++++
+ arch/x86/kernel/cpu/microcode/intel_early.c | 787 ++++++++++++++++++++++++++++
+ arch/x86/kernel/cpu/microcode/intel_lib.c   | 174 ++++++
+ arch/x86/kernel/microcode_amd.c             | 492 -----------------
+ arch/x86/kernel/microcode_amd_early.c       | 380 --------------
+ arch/x86/kernel/microcode_core.c            | 645 -----------------------
+ arch/x86/kernel/microcode_core_early.c      | 141 -----
+ arch/x86/kernel/microcode_intel.c           | 333 ------------
+ arch/x86/kernel/microcode_intel_early.c     | 787 ----------------------------
+ arch/x86/kernel/microcode_intel_lib.c       | 174 ------
+ 18 files changed, 2960 insertions(+), 2965 deletions(-)
+
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index 0952ecd60eca..01bfb9e6ba55 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -1080,10 +1080,6 @@ config MICROCODE_OLD_INTERFACE
+ 	def_bool y
+ 	depends on MICROCODE
+ 
+-config MICROCODE_INTEL_LIB
+-	def_bool y
+-	depends on MICROCODE_INTEL
+-
+ config MICROCODE_INTEL_EARLY
+ 	def_bool n
+ 
+diff --git a/arch/x86/kernel/Makefile b/arch/x86/kernel/Makefile
+index 9b0a34e2cd79..4d0094dbb6c9 100644
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -91,15 +91,6 @@ obj-$(CONFIG_PARAVIRT_CLOCK)	+= pvclock.o
+ 
+ obj-$(CONFIG_PCSPKR_PLATFORM)	+= pcspeaker.o
+ 
+-obj-$(CONFIG_MICROCODE_EARLY)		+= microcode_core_early.o
+-obj-$(CONFIG_MICROCODE_INTEL_EARLY)	+= microcode_intel_early.o
+-obj-$(CONFIG_MICROCODE_INTEL_LIB)	+= microcode_intel_lib.o
+-microcode-y				:= microcode_core.o
+-microcode-$(CONFIG_MICROCODE_INTEL)	+= microcode_intel.o
+-microcode-$(CONFIG_MICROCODE_AMD)	+= microcode_amd.o
+-obj-$(CONFIG_MICROCODE_AMD_EARLY)	+= microcode_amd_early.o
+-obj-$(CONFIG_MICROCODE)			+= microcode.o
+-
+ obj-$(CONFIG_X86_CHECK_BIOS_CORRUPTION) += check.o
+ 
+ obj-$(CONFIG_SWIOTLB)			+= pci-swiotlb.o
+diff --git a/arch/x86/kernel/cpu/Makefile b/arch/x86/kernel/cpu/Makefile
+index 47b56a7e99cb..0710eeffcf51 100644
+--- a/arch/x86/kernel/cpu/Makefile
++++ b/arch/x86/kernel/cpu/Makefile
+@@ -42,6 +42,7 @@ endif
+ 
+ obj-$(CONFIG_X86_MCE)			+= mcheck/
+ obj-$(CONFIG_MTRR)			+= mtrr/
++obj-$(CONFIG_MICROCODE)			+= microcode/
+ 
+ obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr-watchdog.o perf_event_amd_ibs.o
+ 
+diff --git a/arch/x86/kernel/cpu/microcode/Makefile b/arch/x86/kernel/cpu/microcode/Makefile
+new file mode 100644
+index 000000000000..285c85427c32
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/Makefile
+@@ -0,0 +1,7 @@
++microcode-y				:= core.o
++obj-$(CONFIG_MICROCODE)			+= microcode.o
++microcode-$(CONFIG_MICROCODE_INTEL)	+= intel.o intel_lib.o
++microcode-$(CONFIG_MICROCODE_AMD)	+= amd.o
++obj-$(CONFIG_MICROCODE_EARLY)		+= core_early.o
++obj-$(CONFIG_MICROCODE_INTEL_EARLY)	+= intel_early.o
++obj-$(CONFIG_MICROCODE_AMD_EARLY)	+= amd_early.o
+diff --git a/arch/x86/kernel/cpu/microcode/amd.c b/arch/x86/kernel/cpu/microcode/amd.c
+new file mode 100644
+index 000000000000..4a6ff747aaad
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/amd.c
+@@ -0,0 +1,492 @@
++/*
++ *  AMD CPU Microcode Update Driver for Linux
++ *  Copyright (C) 2008-2011 Advanced Micro Devices Inc.
++ *
++ *  Author: Peter Oruba <peter.oruba@amd.com>
++ *
++ *  Based on work by:
++ *  Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
++ *
++ *  Maintainers:
++ *  Andreas Herrmann <herrmann.der.user@googlemail.com>
++ *  Borislav Petkov <bp@alien8.de>
++ *
++ *  This driver allows to upgrade microcode on F10h AMD
++ *  CPUs and later.
++ *
++ *  Licensed under the terms of the GNU General Public
++ *  License version 2. See file COPYING for details.
++ */
++
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
++#include <linux/firmware.h>
++#include <linux/pci_ids.h>
++#include <linux/uaccess.h>
++#include <linux/vmalloc.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/pci.h>
++
++#include <asm/microcode.h>
++#include <asm/processor.h>
++#include <asm/msr.h>
++#include <asm/microcode_amd.h>
++
++MODULE_DESCRIPTION("AMD Microcode Update Driver");
++MODULE_AUTHOR("Peter Oruba");
++MODULE_LICENSE("GPL v2");
++
++static struct equiv_cpu_entry *equiv_cpu_table;
++
++struct ucode_patch {
++	struct list_head plist;
++	void *data;
++	u32 patch_id;
++	u16 equiv_cpu;
++};
++
++static LIST_HEAD(pcache);
++
++static u16 __find_equiv_id(unsigned int cpu)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++	return find_equiv_id(equiv_cpu_table, uci->cpu_sig.sig);
++}
++
++static u32 find_cpu_family_by_equiv_cpu(u16 equiv_cpu)
++{
++	int i = 0;
++
++	BUG_ON(!equiv_cpu_table);
++
++	while (equiv_cpu_table[i].equiv_cpu != 0) {
++		if (equiv_cpu == equiv_cpu_table[i].equiv_cpu)
++			return equiv_cpu_table[i].installed_cpu;
++		i++;
++	}
++	return 0;
++}
++
++/*
++ * a small, trivial cache of per-family ucode patches
++ */
++static struct ucode_patch *cache_find_patch(u16 equiv_cpu)
++{
++	struct ucode_patch *p;
++
++	list_for_each_entry(p, &pcache, plist)
++		if (p->equiv_cpu == equiv_cpu)
++			return p;
++	return NULL;
++}
++
++static void update_cache(struct ucode_patch *new_patch)
++{
++	struct ucode_patch *p;
++
++	list_for_each_entry(p, &pcache, plist) {
++		if (p->equiv_cpu == new_patch->equiv_cpu) {
++			if (p->patch_id >= new_patch->patch_id)
++				/* we already have the latest patch */
++				return;
++
++			list_replace(&p->plist, &new_patch->plist);
++			kfree(p->data);
++			kfree(p);
++			return;
++		}
++	}
++	/* no patch found, add it */
++	list_add_tail(&new_patch->plist, &pcache);
++}
++
++static void free_cache(void)
++{
++	struct ucode_patch *p, *tmp;
++
++	list_for_each_entry_safe(p, tmp, &pcache, plist) {
++		__list_del(p->plist.prev, p->plist.next);
++		kfree(p->data);
++		kfree(p);
++	}
++}
++
++static struct ucode_patch *find_patch(unsigned int cpu)
++{
++	u16 equiv_id;
++
++	equiv_id = __find_equiv_id(cpu);
++	if (!equiv_id)
++		return NULL;
++
++	return cache_find_patch(equiv_id);
++}
++
++static int collect_cpu_info_amd(int cpu, struct cpu_signature *csig)
++{
++	struct cpuinfo_x86 *c = &cpu_data(cpu);
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++	struct ucode_patch *p;
++
++	csig->sig = cpuid_eax(0x00000001);
++	csig->rev = c->microcode;
++
++	/*
++	 * a patch could have been loaded early, set uci->mc so that
++	 * mc_bp_resume() can call apply_microcode()
++	 */
++	p = find_patch(cpu);
++	if (p && (p->patch_id == csig->rev))
++		uci->mc = p->data;
++
++	pr_info("CPU%d: patch_level=0x%08x\n", cpu, csig->rev);
++
++	return 0;
++}
++
++static unsigned int verify_patch_size(u8 family, u32 patch_size,
++				      unsigned int size)
++{
++	u32 max_size;
++
++#define F1XH_MPB_MAX_SIZE 2048
++#define F14H_MPB_MAX_SIZE 1824
++#define F15H_MPB_MAX_SIZE 4096
++#define F16H_MPB_MAX_SIZE 3458
++
++	switch (family) {
++	case 0x14:
++		max_size = F14H_MPB_MAX_SIZE;
++		break;
++	case 0x15:
++		max_size = F15H_MPB_MAX_SIZE;
++		break;
++	case 0x16:
++		max_size = F16H_MPB_MAX_SIZE;
++		break;
++	default:
++		max_size = F1XH_MPB_MAX_SIZE;
++		break;
++	}
++
++	if (patch_size > min_t(u32, size, max_size)) {
++		pr_err("patch size mismatch\n");
++		return 0;
++	}
++
++	return patch_size;
++}
++
++int __apply_microcode_amd(struct microcode_amd *mc_amd)
++{
++	u32 rev, dummy;
++
++	native_wrmsrl(MSR_AMD64_PATCH_LOADER, (u64)(long)&mc_amd->hdr.data_code);
++
++	/* verify patch application was successful */
++	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
++	if (rev != mc_amd->hdr.patch_id)
++		return -1;
++
++	return 0;
++}
++
++int apply_microcode_amd(int cpu)
++{
++	struct cpuinfo_x86 *c = &cpu_data(cpu);
++	struct microcode_amd *mc_amd;
++	struct ucode_cpu_info *uci;
++	struct ucode_patch *p;
++	u32 rev, dummy;
++
++	BUG_ON(raw_smp_processor_id() != cpu);
++
++	uci = ucode_cpu_info + cpu;
++
++	p = find_patch(cpu);
++	if (!p)
++		return 0;
++
++	mc_amd  = p->data;
++	uci->mc = p->data;
++
++	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
++
++	/* need to apply patch? */
++	if (rev >= mc_amd->hdr.patch_id) {
++		c->microcode = rev;
++		uci->cpu_sig.rev = rev;
++		return 0;
++	}
++
++	if (__apply_microcode_amd(mc_amd)) {
++		pr_err("CPU%d: update failed for patch_level=0x%08x\n",
++			cpu, mc_amd->hdr.patch_id);
++		return -1;
++	}
++	pr_info("CPU%d: new patch_level=0x%08x\n", cpu,
++		mc_amd->hdr.patch_id);
++
++	uci->cpu_sig.rev = mc_amd->hdr.patch_id;
++	c->microcode = mc_amd->hdr.patch_id;
++
++	return 0;
++}
++
++static int install_equiv_cpu_table(const u8 *buf)
++{
++	unsigned int *ibuf = (unsigned int *)buf;
++	unsigned int type = ibuf[1];
++	unsigned int size = ibuf[2];
++
++	if (type != UCODE_EQUIV_CPU_TABLE_TYPE || !size) {
++		pr_err("empty section/"
++		       "invalid type field in container file section header\n");
++		return -EINVAL;
++	}
++
++	equiv_cpu_table = vmalloc(size);
++	if (!equiv_cpu_table) {
++		pr_err("failed to allocate equivalent CPU table\n");
++		return -ENOMEM;
++	}
++
++	memcpy(equiv_cpu_table, buf + CONTAINER_HDR_SZ, size);
++
++	/* add header length */
++	return size + CONTAINER_HDR_SZ;
++}
++
++static void free_equiv_cpu_table(void)
++{
++	vfree(equiv_cpu_table);
++	equiv_cpu_table = NULL;
++}
++
++static void cleanup(void)
++{
++	free_equiv_cpu_table();
++	free_cache();
++}
++
++/*
++ * We return the current size even if some of the checks failed so that
++ * we can skip over the next patch. If we return a negative value, we
++ * signal a grave error like a memory allocation has failed and the
++ * driver cannot continue functioning normally. In such cases, we tear
++ * down everything we've used up so far and exit.
++ */
++static int verify_and_add_patch(u8 family, u8 *fw, unsigned int leftover)
++{
++	struct microcode_header_amd *mc_hdr;
++	struct ucode_patch *patch;
++	unsigned int patch_size, crnt_size, ret;
++	u32 proc_fam;
++	u16 proc_id;
++
++	patch_size  = *(u32 *)(fw + 4);
++	crnt_size   = patch_size + SECTION_HDR_SIZE;
++	mc_hdr	    = (struct microcode_header_amd *)(fw + SECTION_HDR_SIZE);
++	proc_id	    = mc_hdr->processor_rev_id;
++
++	proc_fam = find_cpu_family_by_equiv_cpu(proc_id);
++	if (!proc_fam) {
++		pr_err("No patch family for equiv ID: 0x%04x\n", proc_id);
++		return crnt_size;
++	}
++
++	/* check if patch is for the current family */
++	proc_fam = ((proc_fam >> 8) & 0xf) + ((proc_fam >> 20) & 0xff);
++	if (proc_fam != family)
++		return crnt_size;
++
++	if (mc_hdr->nb_dev_id || mc_hdr->sb_dev_id) {
++		pr_err("Patch-ID 0x%08x: chipset-specific code unsupported.\n",
++			mc_hdr->patch_id);
++		return crnt_size;
++	}
++
++	ret = verify_patch_size(family, patch_size, leftover);
++	if (!ret) {
++		pr_err("Patch-ID 0x%08x: size mismatch.\n", mc_hdr->patch_id);
++		return crnt_size;
++	}
++
++	patch = kzalloc(sizeof(*patch), GFP_KERNEL);
++	if (!patch) {
++		pr_err("Patch allocation failure.\n");
++		return -EINVAL;
++	}
++
++	patch->data = kzalloc(patch_size, GFP_KERNEL);
++	if (!patch->data) {
++		pr_err("Patch data allocation failure.\n");
++		kfree(patch);
++		return -EINVAL;
++	}
++
++	/* All looks ok, copy patch... */
++	memcpy(patch->data, fw + SECTION_HDR_SIZE, patch_size);
++	INIT_LIST_HEAD(&patch->plist);
++	patch->patch_id  = mc_hdr->patch_id;
++	patch->equiv_cpu = proc_id;
++
++	pr_debug("%s: Added patch_id: 0x%08x, proc_id: 0x%04x\n",
++		 __func__, patch->patch_id, proc_id);
++
++	/* ... and add to cache. */
++	update_cache(patch);
++
++	return crnt_size;
++}
++
++static enum ucode_state __load_microcode_amd(u8 family, const u8 *data,
++					     size_t size)
++{
++	enum ucode_state ret = UCODE_ERROR;
++	unsigned int leftover;
++	u8 *fw = (u8 *)data;
++	int crnt_size = 0;
++	int offset;
++
++	offset = install_equiv_cpu_table(data);
++	if (offset < 0) {
++		pr_err("failed to create equivalent cpu table\n");
++		return ret;
++	}
++	fw += offset;
++	leftover = size - offset;
++
++	if (*(u32 *)fw != UCODE_UCODE_TYPE) {
++		pr_err("invalid type field in container file section header\n");
++		free_equiv_cpu_table();
++		return ret;
++	}
++
++	while (leftover) {
++		crnt_size = verify_and_add_patch(family, fw, leftover);
++		if (crnt_size < 0)
++			return ret;
++
++		fw	 += crnt_size;
++		leftover -= crnt_size;
++	}
++
++	return UCODE_OK;
++}
++
++enum ucode_state load_microcode_amd(u8 family, const u8 *data, size_t size)
++{
++	enum ucode_state ret;
++
++	/* free old equiv table */
++	free_equiv_cpu_table();
++
++	ret = __load_microcode_amd(family, data, size);
++
++	if (ret != UCODE_OK)
++		cleanup();
++
++#if defined(CONFIG_MICROCODE_AMD_EARLY) && defined(CONFIG_X86_32)
++	/* save BSP's matching patch for early load */
++	if (cpu_data(smp_processor_id()).cpu_index == boot_cpu_data.cpu_index) {
++		struct ucode_patch *p = find_patch(smp_processor_id());
++		if (p) {
++			memset(amd_ucode_patch, 0, PATCH_MAX_SIZE);
++			memcpy(amd_ucode_patch, p->data, min_t(u32, ksize(p->data),
++							       PATCH_MAX_SIZE));
++		}
++	}
++#endif
++	return ret;
++}
++
++/*
++ * AMD microcode firmware naming convention, up to family 15h they are in
++ * the legacy file:
++ *
++ *    amd-ucode/microcode_amd.bin
++ *
++ * This legacy file is always smaller than 2K in size.
++ *
++ * Beginning with family 15h, they are in family-specific firmware files:
++ *
++ *    amd-ucode/microcode_amd_fam15h.bin
++ *    amd-ucode/microcode_amd_fam16h.bin
++ *    ...
++ *
++ * These might be larger than 2K.
++ */
++static enum ucode_state request_microcode_amd(int cpu, struct device *device,
++					      bool refresh_fw)
++{
++	char fw_name[36] = "amd-ucode/microcode_amd.bin";
++	struct cpuinfo_x86 *c = &cpu_data(cpu);
++	enum ucode_state ret = UCODE_NFOUND;
++	const struct firmware *fw;
++
++	/* reload ucode container only on the boot cpu */
++	if (!refresh_fw || c->cpu_index != boot_cpu_data.cpu_index)
++		return UCODE_OK;
++
++	if (c->x86 >= 0x15)
++		snprintf(fw_name, sizeof(fw_name), "amd-ucode/microcode_amd_fam%.2xh.bin", c->x86);
++
++	if (request_firmware(&fw, (const char *)fw_name, device)) {
++		pr_debug("failed to load file %s\n", fw_name);
++		goto out;
++	}
++
++	ret = UCODE_ERROR;
++	if (*(u32 *)fw->data != UCODE_MAGIC) {
++		pr_err("invalid magic value (0x%08x)\n", *(u32 *)fw->data);
++		goto fw_release;
++	}
++
++	ret = load_microcode_amd(c->x86, fw->data, fw->size);
++
++ fw_release:
++	release_firmware(fw);
++
++ out:
++	return ret;
++}
++
++static enum ucode_state
++request_microcode_user(int cpu, const void __user *buf, size_t size)
++{
++	return UCODE_ERROR;
++}
++
++static void microcode_fini_cpu_amd(int cpu)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++
++	uci->mc = NULL;
++}
++
++static struct microcode_ops microcode_amd_ops = {
++	.request_microcode_user           = request_microcode_user,
++	.request_microcode_fw             = request_microcode_amd,
++	.collect_cpu_info                 = collect_cpu_info_amd,
++	.apply_microcode                  = apply_microcode_amd,
++	.microcode_fini_cpu               = microcode_fini_cpu_amd,
++};
++
++struct microcode_ops * __init init_amd_microcode(void)
++{
++	struct cpuinfo_x86 *c = &cpu_data(0);
++
++	if (c->x86_vendor != X86_VENDOR_AMD || c->x86 < 0x10) {
++		pr_warning("AMD CPU family 0x%x not supported\n", c->x86);
++		return NULL;
++	}
++
++	return &microcode_amd_ops;
++}
++
++void __exit exit_amd_microcode(void)
++{
++	cleanup();
++}
+diff --git a/arch/x86/kernel/cpu/microcode/amd_early.c b/arch/x86/kernel/cpu/microcode/amd_early.c
+new file mode 100644
+index 000000000000..8384c0fa206f
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/amd_early.c
+@@ -0,0 +1,380 @@
++/*
++ * Copyright (C) 2013 Advanced Micro Devices, Inc.
++ *
++ * Author: Jacob Shin <jacob.shin@amd.com>
++ * Fixes: Borislav Petkov <bp@suse.de>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/earlycpio.h>
++#include <linux/initrd.h>
++
++#include <asm/cpu.h>
++#include <asm/setup.h>
++#include <asm/microcode_amd.h>
++
++/*
++ * This points to the current valid container of microcode patches which we will
++ * save from the initrd before jettisoning its contents.
++ */
++static u8 *container;
++static size_t container_size;
++
++static u32 ucode_new_rev;
++u8 amd_ucode_patch[PATCH_MAX_SIZE];
++static u16 this_equiv_id;
++
++struct cpio_data ucode_cpio;
++
++/*
++ * Microcode patch container file is prepended to the initrd in cpio format.
++ * See Documentation/x86/early-microcode.txt
++ */
++static __initdata char ucode_path[] = "kernel/x86/microcode/AuthenticAMD.bin";
++
++static struct cpio_data __init find_ucode_in_initrd(void)
++{
++	long offset = 0;
++	char *path;
++	void *start;
++	size_t size;
++
++#ifdef CONFIG_X86_32
++	struct boot_params *p;
++
++	/*
++	 * On 32-bit, early load occurs before paging is turned on so we need
++	 * to use physical addresses.
++	 */
++	p       = (struct boot_params *)__pa_nodebug(&boot_params);
++	path    = (char *)__pa_nodebug(ucode_path);
++	start   = (void *)p->hdr.ramdisk_image;
++	size    = p->hdr.ramdisk_size;
++#else
++	path    = ucode_path;
++	start   = (void *)(boot_params.hdr.ramdisk_image + PAGE_OFFSET);
++	size    = boot_params.hdr.ramdisk_size;
++#endif
++
++	return find_cpio_data(path, start, size, &offset);
++}
++
++static size_t compute_container_size(u8 *data, u32 total_size)
++{
++	size_t size = 0;
++	u32 *header = (u32 *)data;
++
++	if (header[0] != UCODE_MAGIC ||
++	    header[1] != UCODE_EQUIV_CPU_TABLE_TYPE || /* type */
++	    header[2] == 0)                            /* size */
++		return size;
++
++	size = header[2] + CONTAINER_HDR_SZ;
++	total_size -= size;
++	data += size;
++
++	while (total_size) {
++		u16 patch_size;
++
++		header = (u32 *)data;
++
++		if (header[0] != UCODE_UCODE_TYPE)
++			break;
++
++		/*
++		 * Sanity-check patch size.
++		 */
++		patch_size = header[1];
++		if (patch_size > PATCH_MAX_SIZE)
++			break;
++
++		size	   += patch_size + SECTION_HDR_SIZE;
++		data	   += patch_size + SECTION_HDR_SIZE;
++		total_size -= patch_size + SECTION_HDR_SIZE;
++	}
++
++	return size;
++}
++
++/*
++ * Early load occurs before we can vmalloc(). So we look for the microcode
++ * patch container file in initrd, traverse equivalent cpu table, look for a
++ * matching microcode patch, and update, all in initrd memory in place.
++ * When vmalloc() is available for use later -- on 64-bit during first AP load,
++ * and on 32-bit during save_microcode_in_initrd_amd() -- we can call
++ * load_microcode_amd() to save equivalent cpu table and microcode patches in
++ * kernel heap memory.
++ */
++static void apply_ucode_in_initrd(void *ucode, size_t size)
++{
++	struct equiv_cpu_entry *eq;
++	size_t *cont_sz;
++	u32 *header;
++	u8  *data, **cont;
++	u16 eq_id = 0;
++	int offset, left;
++	u32 rev, eax, ebx, ecx, edx;
++	u32 *new_rev;
++
++#ifdef CONFIG_X86_32
++	new_rev = (u32 *)__pa_nodebug(&ucode_new_rev);
++	cont_sz = (size_t *)__pa_nodebug(&container_size);
++	cont	= (u8 **)__pa_nodebug(&container);
++#else
++	new_rev = &ucode_new_rev;
++	cont_sz = &container_size;
++	cont	= &container;
++#endif
++
++	data   = ucode;
++	left   = size;
++	header = (u32 *)data;
++
++	/* find equiv cpu table */
++	if (header[0] != UCODE_MAGIC ||
++	    header[1] != UCODE_EQUIV_CPU_TABLE_TYPE || /* type */
++	    header[2] == 0)                            /* size */
++		return;
++
++	eax = 0x00000001;
++	ecx = 0;
++	native_cpuid(&eax, &ebx, &ecx, &edx);
++
++	while (left > 0) {
++		eq = (struct equiv_cpu_entry *)(data + CONTAINER_HDR_SZ);
++
++		*cont = data;
++
++		/* Advance past the container header */
++		offset = header[2] + CONTAINER_HDR_SZ;
++		data  += offset;
++		left  -= offset;
++
++		eq_id = find_equiv_id(eq, eax);
++		if (eq_id) {
++			this_equiv_id = eq_id;
++			*cont_sz = compute_container_size(*cont, left + offset);
++
++			/*
++			 * truncate how much we need to iterate over in the
++			 * ucode update loop below
++			 */
++			left = *cont_sz - offset;
++			break;
++		}
++
++		/*
++		 * support multiple container files appended together. if this
++		 * one does not have a matching equivalent cpu entry, we fast
++		 * forward to the next container file.
++		 */
++		while (left > 0) {
++			header = (u32 *)data;
++			if (header[0] == UCODE_MAGIC &&
++			    header[1] == UCODE_EQUIV_CPU_TABLE_TYPE)
++				break;
++
++			offset = header[1] + SECTION_HDR_SIZE;
++			data  += offset;
++			left  -= offset;
++		}
++
++		/* mark where the next microcode container file starts */
++		offset    = data - (u8 *)ucode;
++		ucode     = data;
++	}
++
++	if (!eq_id) {
++		*cont = NULL;
++		*cont_sz = 0;
++		return;
++	}
++
++	/* find ucode and update if needed */
++
++	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, eax);
++
++	while (left > 0) {
++		struct microcode_amd *mc;
++
++		header = (u32 *)data;
++		if (header[0] != UCODE_UCODE_TYPE || /* type */
++		    header[1] == 0)                  /* size */
++			break;
++
++		mc = (struct microcode_amd *)(data + SECTION_HDR_SIZE);
++
++		if (eq_id == mc->hdr.processor_rev_id && rev < mc->hdr.patch_id) {
++
++			if (!__apply_microcode_amd(mc)) {
++				rev = mc->hdr.patch_id;
++				*new_rev = rev;
++
++				/* save ucode patch */
++				memcpy(amd_ucode_patch, mc,
++				       min_t(u32, header[1], PATCH_MAX_SIZE));
++			}
++		}
++
++		offset  = header[1] + SECTION_HDR_SIZE;
++		data   += offset;
++		left   -= offset;
++	}
++}
++
++void __init load_ucode_amd_bsp(void)
++{
++	struct cpio_data cp;
++	void **data;
++	size_t *size;
++
++#ifdef CONFIG_X86_32
++	data =  (void **)__pa_nodebug(&ucode_cpio.data);
++	size = (size_t *)__pa_nodebug(&ucode_cpio.size);
++#else
++	data = &ucode_cpio.data;
++	size = &ucode_cpio.size;
++#endif
++
++	cp = find_ucode_in_initrd();
++	if (!cp.data)
++		return;
++
++	*data = cp.data;
++	*size = cp.size;
++
++	apply_ucode_in_initrd(cp.data, cp.size);
++}
++
++#ifdef CONFIG_X86_32
++/*
++ * On 32-bit, since AP's early load occurs before paging is turned on, we
++ * cannot traverse cpu_equiv_table and pcache in kernel heap memory. So during
++ * cold boot, AP will apply_ucode_in_initrd() just like the BSP. During
++ * save_microcode_in_initrd_amd() BSP's patch is copied to amd_ucode_patch,
++ * which is used upon resume from suspend.
++ */
++void load_ucode_amd_ap(void)
++{
++	struct microcode_amd *mc;
++	size_t *usize;
++	void **ucode;
++
++	mc = (struct microcode_amd *)__pa(amd_ucode_patch);
++	if (mc->hdr.patch_id && mc->hdr.processor_rev_id) {
++		__apply_microcode_amd(mc);
++		return;
++	}
++
++	ucode = (void *)__pa_nodebug(&container);
++	usize = (size_t *)__pa_nodebug(&container_size);
++
++	if (!*ucode || !*usize)
++		return;
++
++	apply_ucode_in_initrd(*ucode, *usize);
++}
++
++static void __init collect_cpu_sig_on_bsp(void *arg)
++{
++	unsigned int cpu = smp_processor_id();
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++
++	uci->cpu_sig.sig = cpuid_eax(0x00000001);
++}
++#else
++void load_ucode_amd_ap(void)
++{
++	unsigned int cpu = smp_processor_id();
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++	struct equiv_cpu_entry *eq;
++	struct microcode_amd *mc;
++	u32 rev, eax;
++	u16 eq_id;
++
++	/* Exit if called on the BSP. */
++	if (!cpu)
++		return;
++
++	if (!container)
++		return;
++
++	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, eax);
++
++	uci->cpu_sig.rev = rev;
++	uci->cpu_sig.sig = eax;
++
++	eax = cpuid_eax(0x00000001);
++	eq  = (struct equiv_cpu_entry *)(container + CONTAINER_HDR_SZ);
++
++	eq_id = find_equiv_id(eq, eax);
++	if (!eq_id)
++		return;
++
++	if (eq_id == this_equiv_id) {
++		mc = (struct microcode_amd *)amd_ucode_patch;
++
++		if (mc && rev < mc->hdr.patch_id) {
++			if (!__apply_microcode_amd(mc))
++				ucode_new_rev = mc->hdr.patch_id;
++		}
++
++	} else {
++		if (!ucode_cpio.data)
++			return;
++
++		/*
++		 * AP has a different equivalence ID than BSP, looks like
++		 * mixed-steppings silicon so go through the ucode blob anew.
++		 */
++		apply_ucode_in_initrd(ucode_cpio.data, ucode_cpio.size);
++	}
++}
++#endif
++
++int __init save_microcode_in_initrd_amd(void)
++{
++	enum ucode_state ret;
++	u32 eax;
++
++#ifdef CONFIG_X86_32
++	unsigned int bsp = boot_cpu_data.cpu_index;
++	struct ucode_cpu_info *uci = ucode_cpu_info + bsp;
++
++	if (!uci->cpu_sig.sig)
++		smp_call_function_single(bsp, collect_cpu_sig_on_bsp, NULL, 1);
++
++	/*
++	 * Take into account the fact that the ramdisk might get relocated
++	 * and therefore we need to recompute the container's position in
++	 * virtual memory space.
++	 */
++	container = (u8 *)(__va((u32)relocated_ramdisk) +
++			   ((u32)container - boot_params.hdr.ramdisk_image));
++#endif
++	if (ucode_new_rev)
++		pr_info("microcode: updated early to new patch_level=0x%08x\n",
++			ucode_new_rev);
++
++	if (!container)
++		return -EINVAL;
++
++	eax   = cpuid_eax(0x00000001);
++	eax   = ((eax >> 8) & 0xf) + ((eax >> 20) & 0xff);
++
++	ret = load_microcode_amd(eax, container, container_size);
++	if (ret != UCODE_OK)
++		return -EINVAL;
++
++	/*
++	 * This will be freed any msec now, stash patches for the current
++	 * family and switch to patch cache for cpu hotplug, etc later.
++	 */
++	container = NULL;
++	container_size = 0;
++
++	return 0;
++}
+diff --git a/arch/x86/kernel/cpu/microcode/core.c b/arch/x86/kernel/cpu/microcode/core.c
+new file mode 100644
+index 000000000000..15c987698b0f
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/core.c
+@@ -0,0 +1,645 @@
++/*
++ *	Intel CPU Microcode Update Driver for Linux
++ *
++ *	Copyright (C) 2000-2006 Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
++ *		      2006	Shaohua Li <shaohua.li@intel.com>
++ *
++ *	This driver allows to upgrade microcode on Intel processors
++ *	belonging to IA-32 family - PentiumPro, Pentium II,
++ *	Pentium III, Xeon, Pentium 4, etc.
++ *
++ *	Reference: Section 8.11 of Volume 3a, IA-32 Intel? Architecture
++ *	Software Developer's Manual
++ *	Order Number 253668 or free download from:
++ *
++ *	http://developer.intel.com/Assets/PDF/manual/253668.pdf	
++ *
++ *	For more information, go to http://www.urbanmyth.org/microcode
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; either version
++ *	2 of the License, or (at your option) any later version.
++ *
++ *	1.0	16 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Initial release.
++ *	1.01	18 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Added read() support + cleanups.
++ *	1.02	21 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Added 'device trimming' support. open(O_WRONLY) zeroes
++ *		and frees the saved copy of applied microcode.
++ *	1.03	29 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Made to use devfs (/dev/cpu/microcode) + cleanups.
++ *	1.04	06 Jun 2000, Simon Trimmer <simon@veritas.com>
++ *		Added misc device support (now uses both devfs and misc).
++ *		Added MICROCODE_IOCFREE ioctl to clear memory.
++ *	1.05	09 Jun 2000, Simon Trimmer <simon@veritas.com>
++ *		Messages for error cases (non Intel & no suitable microcode).
++ *	1.06	03 Aug 2000, Tigran Aivazian <tigran@veritas.com>
++ *		Removed ->release(). Removed exclusive open and status bitmap.
++ *		Added microcode_rwsem to serialize read()/write()/ioctl().
++ *		Removed global kernel lock usage.
++ *	1.07	07 Sep 2000, Tigran Aivazian <tigran@veritas.com>
++ *		Write 0 to 0x8B msr and then cpuid before reading revision,
++ *		so that it works even if there were no update done by the
++ *		BIOS. Otherwise, reading from 0x8B gives junk (which happened
++ *		to be 0 on my machine which is why it worked even when I
++ *		disabled update by the BIOS)
++ *		Thanks to Eric W. Biederman <ebiederman@lnxi.com> for the fix.
++ *	1.08	11 Dec 2000, Richard Schaal <richard.schaal@intel.com> and
++ *			     Tigran Aivazian <tigran@veritas.com>
++ *		Intel Pentium 4 processor support and bugfixes.
++ *	1.09	30 Oct 2001, Tigran Aivazian <tigran@veritas.com>
++ *		Bugfix for HT (Hyper-Threading) enabled processors
++ *		whereby processor resources are shared by all logical processors
++ *		in a single CPU package.
++ *	1.10	28 Feb 2002 Asit K Mallick <asit.k.mallick@intel.com> and
++ *		Tigran Aivazian <tigran@veritas.com>,
++ *		Serialize updates as required on HT processors due to
++ *		speculative nature of implementation.
++ *	1.11	22 Mar 2002 Tigran Aivazian <tigran@veritas.com>
++ *		Fix the panic when writing zero-length microcode chunk.
++ *	1.12	29 Sep 2003 Nitin Kamble <nitin.a.kamble@intel.com>,
++ *		Jun Nakajima <jun.nakajima@intel.com>
++ *		Support for the microcode updates in the new format.
++ *	1.13	10 Oct 2003 Tigran Aivazian <tigran@veritas.com>
++ *		Removed ->read() method and obsoleted MICROCODE_IOCFREE ioctl
++ *		because we no longer hold a copy of applied microcode
++ *		in kernel memory.
++ *	1.14	25 Jun 2004 Tigran Aivazian <tigran@veritas.com>
++ *		Fix sigmatch() macro to handle old CPUs with pf == 0.
++ *		Thanks to Stuart Swales for pointing out this bug.
++ */
++
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
++#include <linux/platform_device.h>
++#include <linux/miscdevice.h>
++#include <linux/capability.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/cpu.h>
++#include <linux/fs.h>
++#include <linux/mm.h>
++#include <linux/syscore_ops.h>
++
++#include <asm/microcode.h>
++#include <asm/processor.h>
++#include <asm/cpu_device_id.h>
++#include <asm/perf_event.h>
++
++MODULE_DESCRIPTION("Microcode Update Driver");
++MODULE_AUTHOR("Tigran Aivazian <tigran@aivazian.fsnet.co.uk>");
++MODULE_LICENSE("GPL");
++
++#define MICROCODE_VERSION	"2.00"
++
++static struct microcode_ops	*microcode_ops;
++
++/*
++ * Synchronization.
++ *
++ * All non cpu-hotplug-callback call sites use:
++ *
++ * - microcode_mutex to synchronize with each other;
++ * - get/put_online_cpus() to synchronize with
++ *   the cpu-hotplug-callback call sites.
++ *
++ * We guarantee that only a single cpu is being
++ * updated at any particular moment of time.
++ */
++static DEFINE_MUTEX(microcode_mutex);
++
++struct ucode_cpu_info		ucode_cpu_info[NR_CPUS];
++EXPORT_SYMBOL_GPL(ucode_cpu_info);
++
++/*
++ * Operations that are run on a target cpu:
++ */
++
++struct cpu_info_ctx {
++	struct cpu_signature	*cpu_sig;
++	int			err;
++};
++
++static void collect_cpu_info_local(void *arg)
++{
++	struct cpu_info_ctx *ctx = arg;
++
++	ctx->err = microcode_ops->collect_cpu_info(smp_processor_id(),
++						   ctx->cpu_sig);
++}
++
++static int collect_cpu_info_on_target(int cpu, struct cpu_signature *cpu_sig)
++{
++	struct cpu_info_ctx ctx = { .cpu_sig = cpu_sig, .err = 0 };
++	int ret;
++
++	ret = smp_call_function_single(cpu, collect_cpu_info_local, &ctx, 1);
++	if (!ret)
++		ret = ctx.err;
++
++	return ret;
++}
++
++static int collect_cpu_info(int cpu)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++	int ret;
++
++	memset(uci, 0, sizeof(*uci));
++
++	ret = collect_cpu_info_on_target(cpu, &uci->cpu_sig);
++	if (!ret)
++		uci->valid = 1;
++
++	return ret;
++}
++
++struct apply_microcode_ctx {
++	int err;
++};
++
++static void apply_microcode_local(void *arg)
++{
++	struct apply_microcode_ctx *ctx = arg;
++
++	ctx->err = microcode_ops->apply_microcode(smp_processor_id());
++}
++
++static int apply_microcode_on_target(int cpu)
++{
++	struct apply_microcode_ctx ctx = { .err = 0 };
++	int ret;
++
++	ret = smp_call_function_single(cpu, apply_microcode_local, &ctx, 1);
++	if (!ret)
++		ret = ctx.err;
++
++	return ret;
++}
++
++#ifdef CONFIG_MICROCODE_OLD_INTERFACE
++static int do_microcode_update(const void __user *buf, size_t size)
++{
++	int error = 0;
++	int cpu;
++
++	for_each_online_cpu(cpu) {
++		struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++		enum ucode_state ustate;
++
++		if (!uci->valid)
++			continue;
++
++		ustate = microcode_ops->request_microcode_user(cpu, buf, size);
++		if (ustate == UCODE_ERROR) {
++			error = -1;
++			break;
++		} else if (ustate == UCODE_OK)
++			apply_microcode_on_target(cpu);
++	}
++
++	return error;
++}
++
++static int microcode_open(struct inode *inode, struct file *file)
++{
++	return capable(CAP_SYS_RAWIO) ? nonseekable_open(inode, file) : -EPERM;
++}
++
++static ssize_t microcode_write(struct file *file, const char __user *buf,
++			       size_t len, loff_t *ppos)
++{
++	ssize_t ret = -EINVAL;
++
++	if ((len >> PAGE_SHIFT) > totalram_pages) {
++		pr_err("too much data (max %ld pages)\n", totalram_pages);
++		return ret;
++	}
++
++	get_online_cpus();
++	mutex_lock(&microcode_mutex);
++
++	if (do_microcode_update(buf, len) == 0)
++		ret = (ssize_t)len;
++
++	if (ret > 0)
++		perf_check_microcode();
++
++	mutex_unlock(&microcode_mutex);
++	put_online_cpus();
++
++	return ret;
++}
++
++static const struct file_operations microcode_fops = {
++	.owner			= THIS_MODULE,
++	.write			= microcode_write,
++	.open			= microcode_open,
++	.llseek		= no_llseek,
++};
++
++static struct miscdevice microcode_dev = {
++	.minor			= MICROCODE_MINOR,
++	.name			= "microcode",
++	.nodename		= "cpu/microcode",
++	.fops			= &microcode_fops,
++};
++
++static int __init microcode_dev_init(void)
++{
++	int error;
++
++	error = misc_register(&microcode_dev);
++	if (error) {
++		pr_err("can't misc_register on minor=%d\n", MICROCODE_MINOR);
++		return error;
++	}
++
++	return 0;
++}
++
++static void __exit microcode_dev_exit(void)
++{
++	misc_deregister(&microcode_dev);
++}
++
++MODULE_ALIAS_MISCDEV(MICROCODE_MINOR);
++MODULE_ALIAS("devname:cpu/microcode");
++#else
++#define microcode_dev_init()	0
++#define microcode_dev_exit()	do { } while (0)
++#endif
++
++/* fake device for request_firmware */
++static struct platform_device	*microcode_pdev;
++
++static int reload_for_cpu(int cpu)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++	enum ucode_state ustate;
++	int err = 0;
++
++	if (!uci->valid)
++		return err;
++
++	ustate = microcode_ops->request_microcode_fw(cpu, &microcode_pdev->dev, true);
++	if (ustate == UCODE_OK)
++		apply_microcode_on_target(cpu);
++	else
++		if (ustate == UCODE_ERROR)
++			err = -EINVAL;
++	return err;
++}
++
++static ssize_t reload_store(struct device *dev,
++			    struct device_attribute *attr,
++			    const char *buf, size_t size)
++{
++	unsigned long val;
++	int cpu;
++	ssize_t ret = 0, tmp_ret;
++
++	ret = kstrtoul(buf, 0, &val);
++	if (ret)
++		return ret;
++
++	if (val != 1)
++		return size;
++
++	get_online_cpus();
++	mutex_lock(&microcode_mutex);
++	for_each_online_cpu(cpu) {
++		tmp_ret = reload_for_cpu(cpu);
++		if (tmp_ret != 0)
++			pr_warn("Error reloading microcode on CPU %d\n", cpu);
++
++		/* save retval of the first encountered reload error */
++		if (!ret)
++			ret = tmp_ret;
++	}
++	if (!ret)
++		perf_check_microcode();
++	mutex_unlock(&microcode_mutex);
++	put_online_cpus();
++
++	if (!ret)
++		ret = size;
++
++	return ret;
++}
++
++static ssize_t version_show(struct device *dev,
++			struct device_attribute *attr, char *buf)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + dev->id;
++
++	return sprintf(buf, "0x%x\n", uci->cpu_sig.rev);
++}
++
++static ssize_t pf_show(struct device *dev,
++			struct device_attribute *attr, char *buf)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + dev->id;
++
++	return sprintf(buf, "0x%x\n", uci->cpu_sig.pf);
++}
++
++static DEVICE_ATTR(reload, 0200, NULL, reload_store);
++static DEVICE_ATTR(version, 0400, version_show, NULL);
++static DEVICE_ATTR(processor_flags, 0400, pf_show, NULL);
++
++static struct attribute *mc_default_attrs[] = {
++	&dev_attr_version.attr,
++	&dev_attr_processor_flags.attr,
++	NULL
++};
++
++static struct attribute_group mc_attr_group = {
++	.attrs			= mc_default_attrs,
++	.name			= "microcode",
++};
++
++static void microcode_fini_cpu(int cpu)
++{
++	microcode_ops->microcode_fini_cpu(cpu);
++}
++
++static enum ucode_state microcode_resume_cpu(int cpu)
++{
++	pr_debug("CPU%d updated upon resume\n", cpu);
++
++	if (apply_microcode_on_target(cpu))
++		return UCODE_ERROR;
++
++	return UCODE_OK;
++}
++
++static enum ucode_state microcode_init_cpu(int cpu, bool refresh_fw)
++{
++	enum ucode_state ustate;
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++
++	if (uci && uci->valid)
++		return UCODE_OK;
++
++	if (collect_cpu_info(cpu))
++		return UCODE_ERROR;
++
++	/* --dimm. Trigger a delayed update? */
++	if (system_state != SYSTEM_RUNNING)
++		return UCODE_NFOUND;
++
++	ustate = microcode_ops->request_microcode_fw(cpu, &microcode_pdev->dev,
++						     refresh_fw);
++
++	if (ustate == UCODE_OK) {
++		pr_debug("CPU%d updated upon init\n", cpu);
++		apply_microcode_on_target(cpu);
++	}
++
++	return ustate;
++}
++
++static enum ucode_state microcode_update_cpu(int cpu)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++
++	if (uci->valid)
++		return microcode_resume_cpu(cpu);
++
++	return microcode_init_cpu(cpu, false);
++}
++
++static int mc_device_add(struct device *dev, struct subsys_interface *sif)
++{
++	int err, cpu = dev->id;
++
++	if (!cpu_online(cpu))
++		return 0;
++
++	pr_debug("CPU%d added\n", cpu);
++
++	err = sysfs_create_group(&dev->kobj, &mc_attr_group);
++	if (err)
++		return err;
++
++	if (microcode_init_cpu(cpu, true) == UCODE_ERROR)
++		return -EINVAL;
++
++	return err;
++}
++
++static int mc_device_remove(struct device *dev, struct subsys_interface *sif)
++{
++	int cpu = dev->id;
++
++	if (!cpu_online(cpu))
++		return 0;
++
++	pr_debug("CPU%d removed\n", cpu);
++	microcode_fini_cpu(cpu);
++	sysfs_remove_group(&dev->kobj, &mc_attr_group);
++	return 0;
++}
++
++static struct subsys_interface mc_cpu_interface = {
++	.name			= "microcode",
++	.subsys			= &cpu_subsys,
++	.add_dev		= mc_device_add,
++	.remove_dev		= mc_device_remove,
++};
++
++/**
++ * mc_bp_resume - Update boot CPU microcode during resume.
++ */
++static void mc_bp_resume(void)
++{
++	int cpu = smp_processor_id();
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++
++	if (uci->valid && uci->mc)
++		microcode_ops->apply_microcode(cpu);
++}
++
++static struct syscore_ops mc_syscore_ops = {
++	.resume			= mc_bp_resume,
++};
++
++static int
++mc_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu)
++{
++	unsigned int cpu = (unsigned long)hcpu;
++	struct device *dev;
++
++	dev = get_cpu_device(cpu);
++
++	switch (action & ~CPU_TASKS_FROZEN) {
++	case CPU_ONLINE:
++		microcode_update_cpu(cpu);
++		pr_debug("CPU%d added\n", cpu);
++		/*
++		 * "break" is missing on purpose here because we want to fall
++		 * through in order to create the sysfs group.
++		 */
++
++	case CPU_DOWN_FAILED:
++		if (sysfs_create_group(&dev->kobj, &mc_attr_group))
++			pr_err("Failed to create group for CPU%d\n", cpu);
++		break;
++
++	case CPU_DOWN_PREPARE:
++		/* Suspend is in progress, only remove the interface */
++		sysfs_remove_group(&dev->kobj, &mc_attr_group);
++		pr_debug("CPU%d removed\n", cpu);
++		break;
++
++	/*
++	 * case CPU_DEAD:
++	 *
++	 * When a CPU goes offline, don't free up or invalidate the copy of
++	 * the microcode in kernel memory, so that we can reuse it when the
++	 * CPU comes back online without unnecessarily requesting the userspace
++	 * for it again.
++	 */
++	}
++
++	/* The CPU refused to come up during a system resume */
++	if (action == CPU_UP_CANCELED_FROZEN)
++		microcode_fini_cpu(cpu);
++
++	return NOTIFY_OK;
++}
++
++static struct notifier_block __refdata mc_cpu_notifier = {
++	.notifier_call	= mc_cpu_callback,
++};
++
++#ifdef MODULE
++/* Autoload on Intel and AMD systems */
++static const struct x86_cpu_id __initconst microcode_id[] = {
++#ifdef CONFIG_MICROCODE_INTEL
++	{ X86_VENDOR_INTEL, X86_FAMILY_ANY, X86_MODEL_ANY, },
++#endif
++#ifdef CONFIG_MICROCODE_AMD
++	{ X86_VENDOR_AMD, X86_FAMILY_ANY, X86_MODEL_ANY, },
++#endif
++	{}
++};
++MODULE_DEVICE_TABLE(x86cpu, microcode_id);
++#endif
++
++static struct attribute *cpu_root_microcode_attrs[] = {
++	&dev_attr_reload.attr,
++	NULL
++};
++
++static struct attribute_group cpu_root_microcode_group = {
++	.name  = "microcode",
++	.attrs = cpu_root_microcode_attrs,
++};
++
++static int __init microcode_init(void)
++{
++	struct cpuinfo_x86 *c = &cpu_data(0);
++	int error;
++
++	if (c->x86_vendor == X86_VENDOR_INTEL)
++		microcode_ops = init_intel_microcode();
++	else if (c->x86_vendor == X86_VENDOR_AMD)
++		microcode_ops = init_amd_microcode();
++	else
++		pr_err("no support for this CPU vendor\n");
++
++	if (!microcode_ops)
++		return -ENODEV;
++
++	microcode_pdev = platform_device_register_simple("microcode", -1,
++							 NULL, 0);
++	if (IS_ERR(microcode_pdev))
++		return PTR_ERR(microcode_pdev);
++
++	get_online_cpus();
++	mutex_lock(&microcode_mutex);
++
++	error = subsys_interface_register(&mc_cpu_interface);
++	if (!error)
++		perf_check_microcode();
++	mutex_unlock(&microcode_mutex);
++	put_online_cpus();
++
++	if (error)
++		goto out_pdev;
++
++	error = sysfs_create_group(&cpu_subsys.dev_root->kobj,
++				   &cpu_root_microcode_group);
++
++	if (error) {
++		pr_err("Error creating microcode group!\n");
++		goto out_driver;
++	}
++
++	error = microcode_dev_init();
++	if (error)
++		goto out_ucode_group;
++
++	register_syscore_ops(&mc_syscore_ops);
++	register_hotcpu_notifier(&mc_cpu_notifier);
++
++	pr_info("Microcode Update Driver: v" MICROCODE_VERSION
++		" <tigran@aivazian.fsnet.co.uk>, Peter Oruba\n");
++
++	return 0;
++
++ out_ucode_group:
++	sysfs_remove_group(&cpu_subsys.dev_root->kobj,
++			   &cpu_root_microcode_group);
++
++ out_driver:
++	get_online_cpus();
++	mutex_lock(&microcode_mutex);
++
++	subsys_interface_unregister(&mc_cpu_interface);
++
++	mutex_unlock(&microcode_mutex);
++	put_online_cpus();
++
++ out_pdev:
++	platform_device_unregister(microcode_pdev);
++	return error;
++
++}
++module_init(microcode_init);
++
++static void __exit microcode_exit(void)
++{
++	struct cpuinfo_x86 *c = &cpu_data(0);
++
++	microcode_dev_exit();
++
++	unregister_hotcpu_notifier(&mc_cpu_notifier);
++	unregister_syscore_ops(&mc_syscore_ops);
++
++	sysfs_remove_group(&cpu_subsys.dev_root->kobj,
++			   &cpu_root_microcode_group);
++
++	get_online_cpus();
++	mutex_lock(&microcode_mutex);
++
++	subsys_interface_unregister(&mc_cpu_interface);
++
++	mutex_unlock(&microcode_mutex);
++	put_online_cpus();
++
++	platform_device_unregister(microcode_pdev);
++
++	microcode_ops = NULL;
++
++	if (c->x86_vendor == X86_VENDOR_AMD)
++		exit_amd_microcode();
++
++	pr_info("Microcode Update Driver: v" MICROCODE_VERSION " removed.\n");
++}
++module_exit(microcode_exit);
+diff --git a/arch/x86/kernel/cpu/microcode/core_early.c b/arch/x86/kernel/cpu/microcode/core_early.c
+new file mode 100644
+index 000000000000..be7f8514f577
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/core_early.c
+@@ -0,0 +1,141 @@
++/*
++ *	X86 CPU microcode early update for Linux
++ *
++ *	Copyright (C) 2012 Fenghua Yu <fenghua.yu@intel.com>
++ *			   H Peter Anvin" <hpa@zytor.com>
++ *
++ *	This driver allows to early upgrade microcode on Intel processors
++ *	belonging to IA-32 family - PentiumPro, Pentium II,
++ *	Pentium III, Xeon, Pentium 4, etc.
++ *
++ *	Reference: Section 9.11 of Volume 3, IA-32 Intel Architecture
++ *	Software Developer's Manual.
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; either version
++ *	2 of the License, or (at your option) any later version.
++ */
++#include <linux/module.h>
++#include <asm/microcode_intel.h>
++#include <asm/microcode_amd.h>
++#include <asm/processor.h>
++
++#define QCHAR(a, b, c, d) ((a) + ((b) << 8) + ((c) << 16) + ((d) << 24))
++#define CPUID_INTEL1 QCHAR('G', 'e', 'n', 'u')
++#define CPUID_INTEL2 QCHAR('i', 'n', 'e', 'I')
++#define CPUID_INTEL3 QCHAR('n', 't', 'e', 'l')
++#define CPUID_AMD1 QCHAR('A', 'u', 't', 'h')
++#define CPUID_AMD2 QCHAR('e', 'n', 't', 'i')
++#define CPUID_AMD3 QCHAR('c', 'A', 'M', 'D')
++
++#define CPUID_IS(a, b, c, ebx, ecx, edx)	\
++		(!((ebx ^ (a))|(edx ^ (b))|(ecx ^ (c))))
++
++/*
++ * In early loading microcode phase on BSP, boot_cpu_data is not set up yet.
++ * x86_vendor() gets vendor id for BSP.
++ *
++ * In 32 bit AP case, accessing boot_cpu_data needs linear address. To simplify
++ * coding, we still use x86_vendor() to get vendor id for AP.
++ *
++ * x86_vendor() gets vendor information directly through cpuid.
++ */
++static int x86_vendor(void)
++{
++	u32 eax = 0x00000000;
++	u32 ebx, ecx = 0, edx;
++
++	native_cpuid(&eax, &ebx, &ecx, &edx);
++
++	if (CPUID_IS(CPUID_INTEL1, CPUID_INTEL2, CPUID_INTEL3, ebx, ecx, edx))
++		return X86_VENDOR_INTEL;
++
++	if (CPUID_IS(CPUID_AMD1, CPUID_AMD2, CPUID_AMD3, ebx, ecx, edx))
++		return X86_VENDOR_AMD;
++
++	return X86_VENDOR_UNKNOWN;
++}
++
++static int x86_family(void)
++{
++	u32 eax = 0x00000001;
++	u32 ebx, ecx = 0, edx;
++	int x86;
++
++	native_cpuid(&eax, &ebx, &ecx, &edx);
++
++	x86 = (eax >> 8) & 0xf;
++	if (x86 == 15)
++		x86 += (eax >> 20) & 0xff;
++
++	return x86;
++}
++
++void __init load_ucode_bsp(void)
++{
++	int vendor, x86;
++
++	if (!have_cpuid_p())
++		return;
++
++	vendor = x86_vendor();
++	x86 = x86_family();
++
++	switch (vendor) {
++	case X86_VENDOR_INTEL:
++		if (x86 >= 6)
++			load_ucode_intel_bsp();
++		break;
++	case X86_VENDOR_AMD:
++		if (x86 >= 0x10)
++			load_ucode_amd_bsp();
++		break;
++	default:
++		break;
++	}
++}
++
++void load_ucode_ap(void)
++{
++	int vendor, x86;
++
++	if (!have_cpuid_p())
++		return;
++
++	vendor = x86_vendor();
++	x86 = x86_family();
++
++	switch (vendor) {
++	case X86_VENDOR_INTEL:
++		if (x86 >= 6)
++			load_ucode_intel_ap();
++		break;
++	case X86_VENDOR_AMD:
++		if (x86 >= 0x10)
++			load_ucode_amd_ap();
++		break;
++	default:
++		break;
++	}
++}
++
++int __init save_microcode_in_initrd(void)
++{
++	struct cpuinfo_x86 *c = &boot_cpu_data;
++
++	switch (c->x86_vendor) {
++	case X86_VENDOR_INTEL:
++		if (c->x86 >= 6)
++			save_microcode_in_initrd_intel();
++		break;
++	case X86_VENDOR_AMD:
++		if (c->x86 >= 0x10)
++			save_microcode_in_initrd_amd();
++		break;
++	default:
++		break;
++	}
++
++	return 0;
++}
+diff --git a/arch/x86/kernel/cpu/microcode/intel.c b/arch/x86/kernel/cpu/microcode/intel.c
+new file mode 100644
+index 000000000000..5fb2cebf556b
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/intel.c
+@@ -0,0 +1,333 @@
++/*
++ *	Intel CPU Microcode Update Driver for Linux
++ *
++ *	Copyright (C) 2000-2006 Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
++ *		      2006	Shaohua Li <shaohua.li@intel.com>
++ *
++ *	This driver allows to upgrade microcode on Intel processors
++ *	belonging to IA-32 family - PentiumPro, Pentium II,
++ *	Pentium III, Xeon, Pentium 4, etc.
++ *
++ *	Reference: Section 8.11 of Volume 3a, IA-32 Intel? Architecture
++ *	Software Developer's Manual
++ *	Order Number 253668 or free download from:
++ *
++ *	http://developer.intel.com/Assets/PDF/manual/253668.pdf	
++ *
++ *	For more information, go to http://www.urbanmyth.org/microcode
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; either version
++ *	2 of the License, or (at your option) any later version.
++ *
++ *	1.0	16 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Initial release.
++ *	1.01	18 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Added read() support + cleanups.
++ *	1.02	21 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Added 'device trimming' support. open(O_WRONLY) zeroes
++ *		and frees the saved copy of applied microcode.
++ *	1.03	29 Feb 2000, Tigran Aivazian <tigran@sco.com>
++ *		Made to use devfs (/dev/cpu/microcode) + cleanups.
++ *	1.04	06 Jun 2000, Simon Trimmer <simon@veritas.com>
++ *		Added misc device support (now uses both devfs and misc).
++ *		Added MICROCODE_IOCFREE ioctl to clear memory.
++ *	1.05	09 Jun 2000, Simon Trimmer <simon@veritas.com>
++ *		Messages for error cases (non Intel & no suitable microcode).
++ *	1.06	03 Aug 2000, Tigran Aivazian <tigran@veritas.com>
++ *		Removed ->release(). Removed exclusive open and status bitmap.
++ *		Added microcode_rwsem to serialize read()/write()/ioctl().
++ *		Removed global kernel lock usage.
++ *	1.07	07 Sep 2000, Tigran Aivazian <tigran@veritas.com>
++ *		Write 0 to 0x8B msr and then cpuid before reading revision,
++ *		so that it works even if there were no update done by the
++ *		BIOS. Otherwise, reading from 0x8B gives junk (which happened
++ *		to be 0 on my machine which is why it worked even when I
++ *		disabled update by the BIOS)
++ *		Thanks to Eric W. Biederman <ebiederman@lnxi.com> for the fix.
++ *	1.08	11 Dec 2000, Richard Schaal <richard.schaal@intel.com> and
++ *			     Tigran Aivazian <tigran@veritas.com>
++ *		Intel Pentium 4 processor support and bugfixes.
++ *	1.09	30 Oct 2001, Tigran Aivazian <tigran@veritas.com>
++ *		Bugfix for HT (Hyper-Threading) enabled processors
++ *		whereby processor resources are shared by all logical processors
++ *		in a single CPU package.
++ *	1.10	28 Feb 2002 Asit K Mallick <asit.k.mallick@intel.com> and
++ *		Tigran Aivazian <tigran@veritas.com>,
++ *		Serialize updates as required on HT processors due to
++ *		speculative nature of implementation.
++ *	1.11	22 Mar 2002 Tigran Aivazian <tigran@veritas.com>
++ *		Fix the panic when writing zero-length microcode chunk.
++ *	1.12	29 Sep 2003 Nitin Kamble <nitin.a.kamble@intel.com>,
++ *		Jun Nakajima <jun.nakajima@intel.com>
++ *		Support for the microcode updates in the new format.
++ *	1.13	10 Oct 2003 Tigran Aivazian <tigran@veritas.com>
++ *		Removed ->read() method and obsoleted MICROCODE_IOCFREE ioctl
++ *		because we no longer hold a copy of applied microcode
++ *		in kernel memory.
++ *	1.14	25 Jun 2004 Tigran Aivazian <tigran@veritas.com>
++ *		Fix sigmatch() macro to handle old CPUs with pf == 0.
++ *		Thanks to Stuart Swales for pointing out this bug.
++ */
++
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
++#include <linux/firmware.h>
++#include <linux/uaccess.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/vmalloc.h>
++
++#include <asm/microcode_intel.h>
++#include <asm/processor.h>
++#include <asm/msr.h>
++
++MODULE_DESCRIPTION("Microcode Update Driver");
++MODULE_AUTHOR("Tigran Aivazian <tigran@aivazian.fsnet.co.uk>");
++MODULE_LICENSE("GPL");
++
++static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
++{
++	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
++	unsigned int val[2];
++
++	memset(csig, 0, sizeof(*csig));
++
++	csig->sig = cpuid_eax(0x00000001);
++
++	if ((c->x86_model >= 5) || (c->x86 > 6)) {
++		/* get processor flags from MSR 0x17 */
++		rdmsr(MSR_IA32_PLATFORM_ID, val[0], val[1]);
++		csig->pf = 1 << ((val[1] >> 18) & 7);
++	}
++
++	csig->rev = c->microcode;
++	pr_info("CPU%d sig=0x%x, pf=0x%x, revision=0x%x\n",
++		cpu_num, csig->sig, csig->pf, csig->rev);
++
++	return 0;
++}
++
++/*
++ * return 0 - no update found
++ * return 1 - found update
++ */
++static int get_matching_mc(struct microcode_intel *mc_intel, int cpu)
++{
++	struct cpu_signature cpu_sig;
++	unsigned int csig, cpf, crev;
++
++	collect_cpu_info(cpu, &cpu_sig);
++
++	csig = cpu_sig.sig;
++	cpf = cpu_sig.pf;
++	crev = cpu_sig.rev;
++
++	return get_matching_microcode(csig, cpf, mc_intel, crev);
++}
++
++int apply_microcode(int cpu)
++{
++	struct microcode_intel *mc_intel;
++	struct ucode_cpu_info *uci;
++	unsigned int val[2];
++	int cpu_num = raw_smp_processor_id();
++	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
++
++	uci = ucode_cpu_info + cpu;
++	mc_intel = uci->mc;
++
++	/* We should bind the task to the CPU */
++	BUG_ON(cpu_num != cpu);
++
++	if (mc_intel == NULL)
++		return 0;
++
++	/*
++	 * Microcode on this CPU could be updated earlier. Only apply the
++	 * microcode patch in mc_intel when it is newer than the one on this
++	 * CPU.
++	 */
++	if (get_matching_mc(mc_intel, cpu) == 0)
++		return 0;
++
++	/* write microcode via MSR 0x79 */
++	wrmsr(MSR_IA32_UCODE_WRITE,
++	      (unsigned long) mc_intel->bits,
++	      (unsigned long) mc_intel->bits >> 16 >> 16);
++	wrmsr(MSR_IA32_UCODE_REV, 0, 0);
++
++	/* As documented in the SDM: Do a CPUID 1 here */
++	sync_core();
++
++	/* get the current revision from MSR 0x8B */
++	rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
++
++	if (val[1] != mc_intel->hdr.rev) {
++		pr_err("CPU%d update to revision 0x%x failed\n",
++		       cpu_num, mc_intel->hdr.rev);
++		return -1;
++	}
++	pr_info("CPU%d updated to revision 0x%x, date = %04x-%02x-%02x\n",
++		cpu_num, val[1],
++		mc_intel->hdr.date & 0xffff,
++		mc_intel->hdr.date >> 24,
++		(mc_intel->hdr.date >> 16) & 0xff);
++
++	uci->cpu_sig.rev = val[1];
++	c->microcode = val[1];
++
++	return 0;
++}
++
++static enum ucode_state generic_load_microcode(int cpu, void *data, size_t size,
++				int (*get_ucode_data)(void *, const void *, size_t))
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++	u8 *ucode_ptr = data, *new_mc = NULL, *mc = NULL;
++	int new_rev = uci->cpu_sig.rev;
++	unsigned int leftover = size;
++	enum ucode_state state = UCODE_OK;
++	unsigned int curr_mc_size = 0;
++	unsigned int csig, cpf;
++
++	while (leftover) {
++		struct microcode_header_intel mc_header;
++		unsigned int mc_size;
++
++		if (get_ucode_data(&mc_header, ucode_ptr, sizeof(mc_header)))
++			break;
++
++		mc_size = get_totalsize(&mc_header);
++		if (!mc_size || mc_size > leftover) {
++			pr_err("error! Bad data in microcode data file\n");
++			break;
++		}
++
++		/* For performance reasons, reuse mc area when possible */
++		if (!mc || mc_size > curr_mc_size) {
++			vfree(mc);
++			mc = vmalloc(mc_size);
++			if (!mc)
++				break;
++			curr_mc_size = mc_size;
++		}
++
++		if (get_ucode_data(mc, ucode_ptr, mc_size) ||
++		    microcode_sanity_check(mc, 1) < 0) {
++			break;
++		}
++
++		csig = uci->cpu_sig.sig;
++		cpf = uci->cpu_sig.pf;
++		if (get_matching_microcode(csig, cpf, mc, new_rev)) {
++			vfree(new_mc);
++			new_rev = mc_header.rev;
++			new_mc  = mc;
++			mc = NULL;	/* trigger new vmalloc */
++		}
++
++		ucode_ptr += mc_size;
++		leftover  -= mc_size;
++	}
++
++	vfree(mc);
++
++	if (leftover) {
++		vfree(new_mc);
++		state = UCODE_ERROR;
++		goto out;
++	}
++
++	if (!new_mc) {
++		state = UCODE_NFOUND;
++		goto out;
++	}
++
++	vfree(uci->mc);
++	uci->mc = (struct microcode_intel *)new_mc;
++
++	/*
++	 * If early loading microcode is supported, save this mc into
++	 * permanent memory. So it will be loaded early when a CPU is hot added
++	 * or resumes.
++	 */
++	save_mc_for_early(new_mc);
++
++	pr_debug("CPU%d found a matching microcode update with version 0x%x (current=0x%x)\n",
++		 cpu, new_rev, uci->cpu_sig.rev);
++out:
++	return state;
++}
++
++static int get_ucode_fw(void *to, const void *from, size_t n)
++{
++	memcpy(to, from, n);
++	return 0;
++}
++
++static enum ucode_state request_microcode_fw(int cpu, struct device *device,
++					     bool refresh_fw)
++{
++	char name[30];
++	struct cpuinfo_x86 *c = &cpu_data(cpu);
++	const struct firmware *firmware;
++	enum ucode_state ret;
++
++	sprintf(name, "intel-ucode/%02x-%02x-%02x",
++		c->x86, c->x86_model, c->x86_mask);
++
++	if (request_firmware(&firmware, name, device)) {
++		pr_debug("data file %s load failed\n", name);
++		return UCODE_NFOUND;
++	}
++
++	ret = generic_load_microcode(cpu, (void *)firmware->data,
++				     firmware->size, &get_ucode_fw);
++
++	release_firmware(firmware);
++
++	return ret;
++}
++
++static int get_ucode_user(void *to, const void *from, size_t n)
++{
++	return copy_from_user(to, from, n);
++}
++
++static enum ucode_state
++request_microcode_user(int cpu, const void __user *buf, size_t size)
++{
++	return generic_load_microcode(cpu, (void *)buf, size, &get_ucode_user);
++}
++
++static void microcode_fini_cpu(int cpu)
++{
++	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
++
++	vfree(uci->mc);
++	uci->mc = NULL;
++}
++
++static struct microcode_ops microcode_intel_ops = {
++	.request_microcode_user		  = request_microcode_user,
++	.request_microcode_fw             = request_microcode_fw,
++	.collect_cpu_info                 = collect_cpu_info,
++	.apply_microcode                  = apply_microcode,
++	.microcode_fini_cpu               = microcode_fini_cpu,
++};
++
++struct microcode_ops * __init init_intel_microcode(void)
++{
++	struct cpuinfo_x86 *c = &cpu_data(0);
++
++	if (c->x86_vendor != X86_VENDOR_INTEL || c->x86 < 6 ||
++	    cpu_has(c, X86_FEATURE_IA64)) {
++		pr_err("Intel CPU family 0x%x not supported\n", c->x86);
++		return NULL;
++	}
++
++	return &microcode_intel_ops;
++}
++
+diff --git a/arch/x86/kernel/cpu/microcode/intel_early.c b/arch/x86/kernel/cpu/microcode/intel_early.c
+new file mode 100644
+index 000000000000..18f739129e72
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/intel_early.c
+@@ -0,0 +1,787 @@
++/*
++ *	Intel CPU microcode early update for Linux
++ *
++ *	Copyright (C) 2012 Fenghua Yu <fenghua.yu@intel.com>
++ *			   H Peter Anvin" <hpa@zytor.com>
++ *
++ *	This allows to early upgrade microcode on Intel processors
++ *	belonging to IA-32 family - PentiumPro, Pentium II,
++ *	Pentium III, Xeon, Pentium 4, etc.
++ *
++ *	Reference: Section 9.11 of Volume 3, IA-32 Intel Architecture
++ *	Software Developer's Manual.
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; either version
++ *	2 of the License, or (at your option) any later version.
++ */
++#include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/slab.h>
++#include <linux/earlycpio.h>
++#include <linux/initrd.h>
++#include <linux/cpu.h>
++#include <asm/msr.h>
++#include <asm/microcode_intel.h>
++#include <asm/processor.h>
++#include <asm/tlbflush.h>
++#include <asm/setup.h>
++
++unsigned long mc_saved_in_initrd[MAX_UCODE_COUNT];
++struct mc_saved_data {
++	unsigned int mc_saved_count;
++	struct microcode_intel **mc_saved;
++} mc_saved_data;
++
++static enum ucode_state
++generic_load_microcode_early(struct microcode_intel **mc_saved_p,
++			     unsigned int mc_saved_count,
++			     struct ucode_cpu_info *uci)
++{
++	struct microcode_intel *ucode_ptr, *new_mc = NULL;
++	int new_rev = uci->cpu_sig.rev;
++	enum ucode_state state = UCODE_OK;
++	unsigned int mc_size;
++	struct microcode_header_intel *mc_header;
++	unsigned int csig = uci->cpu_sig.sig;
++	unsigned int cpf = uci->cpu_sig.pf;
++	int i;
++
++	for (i = 0; i < mc_saved_count; i++) {
++		ucode_ptr = mc_saved_p[i];
++
++		mc_header = (struct microcode_header_intel *)ucode_ptr;
++		mc_size = get_totalsize(mc_header);
++		if (get_matching_microcode(csig, cpf, ucode_ptr, new_rev)) {
++			new_rev = mc_header->rev;
++			new_mc  = ucode_ptr;
++		}
++	}
++
++	if (!new_mc) {
++		state = UCODE_NFOUND;
++		goto out;
++	}
++
++	uci->mc = (struct microcode_intel *)new_mc;
++out:
++	return state;
++}
++
++static void
++microcode_pointer(struct microcode_intel **mc_saved,
++		  unsigned long *mc_saved_in_initrd,
++		  unsigned long initrd_start, int mc_saved_count)
++{
++	int i;
++
++	for (i = 0; i < mc_saved_count; i++)
++		mc_saved[i] = (struct microcode_intel *)
++			      (mc_saved_in_initrd[i] + initrd_start);
++}
++
++#ifdef CONFIG_X86_32
++static void
++microcode_phys(struct microcode_intel **mc_saved_tmp,
++	       struct mc_saved_data *mc_saved_data)
++{
++	int i;
++	struct microcode_intel ***mc_saved;
++
++	mc_saved = (struct microcode_intel ***)
++		   __pa_nodebug(&mc_saved_data->mc_saved);
++	for (i = 0; i < mc_saved_data->mc_saved_count; i++) {
++		struct microcode_intel *p;
++
++		p = *(struct microcode_intel **)
++			__pa_nodebug(mc_saved_data->mc_saved + i);
++		mc_saved_tmp[i] = (struct microcode_intel *)__pa_nodebug(p);
++	}
++}
++#endif
++
++static enum ucode_state
++load_microcode(struct mc_saved_data *mc_saved_data,
++	       unsigned long *mc_saved_in_initrd,
++	       unsigned long initrd_start,
++	       struct ucode_cpu_info *uci)
++{
++	struct microcode_intel *mc_saved_tmp[MAX_UCODE_COUNT];
++	unsigned int count = mc_saved_data->mc_saved_count;
++
++	if (!mc_saved_data->mc_saved) {
++		microcode_pointer(mc_saved_tmp, mc_saved_in_initrd,
++				  initrd_start, count);
++
++		return generic_load_microcode_early(mc_saved_tmp, count, uci);
++	} else {
++#ifdef CONFIG_X86_32
++		microcode_phys(mc_saved_tmp, mc_saved_data);
++		return generic_load_microcode_early(mc_saved_tmp, count, uci);
++#else
++		return generic_load_microcode_early(mc_saved_data->mc_saved,
++						    count, uci);
++#endif
++	}
++}
++
++static u8 get_x86_family(unsigned long sig)
++{
++	u8 x86;
++
++	x86 = (sig >> 8) & 0xf;
++
++	if (x86 == 0xf)
++		x86 += (sig >> 20) & 0xff;
++
++	return x86;
++}
++
++static u8 get_x86_model(unsigned long sig)
++{
++	u8 x86, x86_model;
++
++	x86 = get_x86_family(sig);
++	x86_model = (sig >> 4) & 0xf;
++
++	if (x86 == 0x6 || x86 == 0xf)
++		x86_model += ((sig >> 16) & 0xf) << 4;
++
++	return x86_model;
++}
++
++/*
++ * Given CPU signature and a microcode patch, this function finds if the
++ * microcode patch has matching family and model with the CPU.
++ */
++static enum ucode_state
++matching_model_microcode(struct microcode_header_intel *mc_header,
++			unsigned long sig)
++{
++	u8 x86, x86_model;
++	u8 x86_ucode, x86_model_ucode;
++	struct extended_sigtable *ext_header;
++	unsigned long total_size = get_totalsize(mc_header);
++	unsigned long data_size = get_datasize(mc_header);
++	int ext_sigcount, i;
++	struct extended_signature *ext_sig;
++
++	x86 = get_x86_family(sig);
++	x86_model = get_x86_model(sig);
++
++	x86_ucode = get_x86_family(mc_header->sig);
++	x86_model_ucode = get_x86_model(mc_header->sig);
++
++	if (x86 == x86_ucode && x86_model == x86_model_ucode)
++		return UCODE_OK;
++
++	/* Look for ext. headers: */
++	if (total_size <= data_size + MC_HEADER_SIZE)
++		return UCODE_NFOUND;
++
++	ext_header = (struct extended_sigtable *)
++		     mc_header + data_size + MC_HEADER_SIZE;
++	ext_sigcount = ext_header->count;
++	ext_sig = (void *)ext_header + EXT_HEADER_SIZE;
++
++	for (i = 0; i < ext_sigcount; i++) {
++		x86_ucode = get_x86_family(ext_sig->sig);
++		x86_model_ucode = get_x86_model(ext_sig->sig);
++
++		if (x86 == x86_ucode && x86_model == x86_model_ucode)
++			return UCODE_OK;
++
++		ext_sig++;
++	}
++
++	return UCODE_NFOUND;
++}
++
++static int
++save_microcode(struct mc_saved_data *mc_saved_data,
++	       struct microcode_intel **mc_saved_src,
++	       unsigned int mc_saved_count)
++{
++	int i, j;
++	struct microcode_intel **mc_saved_p;
++	int ret;
++
++	if (!mc_saved_count)
++		return -EINVAL;
++
++	/*
++	 * Copy new microcode data.
++	 */
++	mc_saved_p = kmalloc(mc_saved_count*sizeof(struct microcode_intel *),
++			     GFP_KERNEL);
++	if (!mc_saved_p)
++		return -ENOMEM;
++
++	for (i = 0; i < mc_saved_count; i++) {
++		struct microcode_intel *mc = mc_saved_src[i];
++		struct microcode_header_intel *mc_header = &mc->hdr;
++		unsigned long mc_size = get_totalsize(mc_header);
++		mc_saved_p[i] = kmalloc(mc_size, GFP_KERNEL);
++		if (!mc_saved_p[i]) {
++			ret = -ENOMEM;
++			goto err;
++		}
++		if (!mc_saved_src[i]) {
++			ret = -EINVAL;
++			goto err;
++		}
++		memcpy(mc_saved_p[i], mc, mc_size);
++	}
++
++	/*
++	 * Point to newly saved microcode.
++	 */
++	mc_saved_data->mc_saved = mc_saved_p;
++	mc_saved_data->mc_saved_count = mc_saved_count;
++
++	return 0;
++
++err:
++	for (j = 0; j <= i; j++)
++		kfree(mc_saved_p[j]);
++	kfree(mc_saved_p);
++
++	return ret;
++}
++
++/*
++ * A microcode patch in ucode_ptr is saved into mc_saved
++ * - if it has matching signature and newer revision compared to an existing
++ *   patch mc_saved.
++ * - or if it is a newly discovered microcode patch.
++ *
++ * The microcode patch should have matching model with CPU.
++ */
++static void _save_mc(struct microcode_intel **mc_saved, u8 *ucode_ptr,
++		     unsigned int *mc_saved_count_p)
++{
++	int i;
++	int found = 0;
++	unsigned int mc_saved_count = *mc_saved_count_p;
++	struct microcode_header_intel *mc_header;
++
++	mc_header = (struct microcode_header_intel *)ucode_ptr;
++	for (i = 0; i < mc_saved_count; i++) {
++		unsigned int sig, pf;
++		unsigned int new_rev;
++		struct microcode_header_intel *mc_saved_header =
++			     (struct microcode_header_intel *)mc_saved[i];
++		sig = mc_saved_header->sig;
++		pf = mc_saved_header->pf;
++		new_rev = mc_header->rev;
++
++		if (get_matching_sig(sig, pf, ucode_ptr, new_rev)) {
++			found = 1;
++			if (update_match_revision(mc_header, new_rev)) {
++				/*
++				 * Found an older ucode saved before.
++				 * Replace the older one with this newer
++				 * one.
++				 */
++				mc_saved[i] =
++					(struct microcode_intel *)ucode_ptr;
++				break;
++			}
++		}
++	}
++	if (i >= mc_saved_count && !found)
++		/*
++		 * This ucode is first time discovered in ucode file.
++		 * Save it to memory.
++		 */
++		mc_saved[mc_saved_count++] =
++				 (struct microcode_intel *)ucode_ptr;
++
++	*mc_saved_count_p = mc_saved_count;
++}
++
++/*
++ * Get microcode matching with BSP's model. Only CPUs with the same model as
++ * BSP can stay in the platform.
++ */
++static enum ucode_state __init
++get_matching_model_microcode(int cpu, unsigned long start,
++			     void *data, size_t size,
++			     struct mc_saved_data *mc_saved_data,
++			     unsigned long *mc_saved_in_initrd,
++			     struct ucode_cpu_info *uci)
++{
++	u8 *ucode_ptr = data;
++	unsigned int leftover = size;
++	enum ucode_state state = UCODE_OK;
++	unsigned int mc_size;
++	struct microcode_header_intel *mc_header;
++	struct microcode_intel *mc_saved_tmp[MAX_UCODE_COUNT];
++	unsigned int mc_saved_count = mc_saved_data->mc_saved_count;
++	int i;
++
++	while (leftover) {
++		mc_header = (struct microcode_header_intel *)ucode_ptr;
++
++		mc_size = get_totalsize(mc_header);
++		if (!mc_size || mc_size > leftover ||
++			microcode_sanity_check(ucode_ptr, 0) < 0)
++			break;
++
++		leftover -= mc_size;
++
++		/*
++		 * Since APs with same family and model as the BSP may boot in
++		 * the platform, we need to find and save microcode patches
++		 * with the same family and model as the BSP.
++		 */
++		if (matching_model_microcode(mc_header, uci->cpu_sig.sig) !=
++			 UCODE_OK) {
++			ucode_ptr += mc_size;
++			continue;
++		}
++
++		_save_mc(mc_saved_tmp, ucode_ptr, &mc_saved_count);
++
++		ucode_ptr += mc_size;
++	}
++
++	if (leftover) {
++		state = UCODE_ERROR;
++		goto out;
++	}
++
++	if (mc_saved_count == 0) {
++		state = UCODE_NFOUND;
++		goto out;
++	}
++
++	for (i = 0; i < mc_saved_count; i++)
++		mc_saved_in_initrd[i] = (unsigned long)mc_saved_tmp[i] - start;
++
++	mc_saved_data->mc_saved_count = mc_saved_count;
++out:
++	return state;
++}
++
++static int collect_cpu_info_early(struct ucode_cpu_info *uci)
++{
++	unsigned int val[2];
++	u8 x86, x86_model;
++	struct cpu_signature csig;
++	unsigned int eax, ebx, ecx, edx;
++
++	csig.sig = 0;
++	csig.pf = 0;
++	csig.rev = 0;
++
++	memset(uci, 0, sizeof(*uci));
++
++	eax = 0x00000001;
++	ecx = 0;
++	native_cpuid(&eax, &ebx, &ecx, &edx);
++	csig.sig = eax;
++
++	x86 = get_x86_family(csig.sig);
++	x86_model = get_x86_model(csig.sig);
++
++	if ((x86_model >= 5) || (x86 > 6)) {
++		/* get processor flags from MSR 0x17 */
++		native_rdmsr(MSR_IA32_PLATFORM_ID, val[0], val[1]);
++		csig.pf = 1 << ((val[1] >> 18) & 7);
++	}
++	native_wrmsr(MSR_IA32_UCODE_REV, 0, 0);
++
++	/* As documented in the SDM: Do a CPUID 1 here */
++	sync_core();
++
++	/* get the current revision from MSR 0x8B */
++	native_rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
++
++	csig.rev = val[1];
++
++	uci->cpu_sig = csig;
++	uci->valid = 1;
++
++	return 0;
++}
++
++#ifdef DEBUG
++static void __ref show_saved_mc(void)
++{
++	int i, j;
++	unsigned int sig, pf, rev, total_size, data_size, date;
++	struct ucode_cpu_info uci;
++
++	if (mc_saved_data.mc_saved_count == 0) {
++		pr_debug("no micorcode data saved.\n");
++		return;
++	}
++	pr_debug("Total microcode saved: %d\n", mc_saved_data.mc_saved_count);
++
++	collect_cpu_info_early(&uci);
++
++	sig = uci.cpu_sig.sig;
++	pf = uci.cpu_sig.pf;
++	rev = uci.cpu_sig.rev;
++	pr_debug("CPU%d: sig=0x%x, pf=0x%x, rev=0x%x\n",
++		 smp_processor_id(), sig, pf, rev);
++
++	for (i = 0; i < mc_saved_data.mc_saved_count; i++) {
++		struct microcode_header_intel *mc_saved_header;
++		struct extended_sigtable *ext_header;
++		int ext_sigcount;
++		struct extended_signature *ext_sig;
++
++		mc_saved_header = (struct microcode_header_intel *)
++				  mc_saved_data.mc_saved[i];
++		sig = mc_saved_header->sig;
++		pf = mc_saved_header->pf;
++		rev = mc_saved_header->rev;
++		total_size = get_totalsize(mc_saved_header);
++		data_size = get_datasize(mc_saved_header);
++		date = mc_saved_header->date;
++
++		pr_debug("mc_saved[%d]: sig=0x%x, pf=0x%x, rev=0x%x, toal size=0x%x, date = %04x-%02x-%02x\n",
++			 i, sig, pf, rev, total_size,
++			 date & 0xffff,
++			 date >> 24,
++			 (date >> 16) & 0xff);
++
++		/* Look for ext. headers: */
++		if (total_size <= data_size + MC_HEADER_SIZE)
++			continue;
++
++		ext_header = (struct extended_sigtable *)
++			     mc_saved_header + data_size + MC_HEADER_SIZE;
++		ext_sigcount = ext_header->count;
++		ext_sig = (void *)ext_header + EXT_HEADER_SIZE;
++
++		for (j = 0; j < ext_sigcount; j++) {
++			sig = ext_sig->sig;
++			pf = ext_sig->pf;
++
++			pr_debug("\tExtended[%d]: sig=0x%x, pf=0x%x\n",
++				 j, sig, pf);
++
++			ext_sig++;
++		}
++
++	}
++}
++#else
++static inline void show_saved_mc(void)
++{
++}
++#endif
++
++#if defined(CONFIG_MICROCODE_INTEL_EARLY) && defined(CONFIG_HOTPLUG_CPU)
++static DEFINE_MUTEX(x86_cpu_microcode_mutex);
++/*
++ * Save this mc into mc_saved_data. So it will be loaded early when a CPU is
++ * hot added or resumes.
++ *
++ * Please make sure this mc should be a valid microcode patch before calling
++ * this function.
++ */
++int save_mc_for_early(u8 *mc)
++{
++	struct microcode_intel *mc_saved_tmp[MAX_UCODE_COUNT];
++	unsigned int mc_saved_count_init;
++	unsigned int mc_saved_count;
++	struct microcode_intel **mc_saved;
++	int ret = 0;
++	int i;
++
++	/*
++	 * Hold hotplug lock so mc_saved_data is not accessed by a CPU in
++	 * hotplug.
++	 */
++	mutex_lock(&x86_cpu_microcode_mutex);
++
++	mc_saved_count_init = mc_saved_data.mc_saved_count;
++	mc_saved_count = mc_saved_data.mc_saved_count;
++	mc_saved = mc_saved_data.mc_saved;
++
++	if (mc_saved && mc_saved_count)
++		memcpy(mc_saved_tmp, mc_saved,
++		       mc_saved_count * sizeof(struct mirocode_intel *));
++	/*
++	 * Save the microcode patch mc in mc_save_tmp structure if it's a newer
++	 * version.
++	 */
++
++	_save_mc(mc_saved_tmp, mc, &mc_saved_count);
++
++	/*
++	 * Save the mc_save_tmp in global mc_saved_data.
++	 */
++	ret = save_microcode(&mc_saved_data, mc_saved_tmp, mc_saved_count);
++	if (ret) {
++		pr_err("Cannot save microcode patch.\n");
++		goto out;
++	}
++
++	show_saved_mc();
++
++	/*
++	 * Free old saved microcod data.
++	 */
++	if (mc_saved) {
++		for (i = 0; i < mc_saved_count_init; i++)
++			kfree(mc_saved[i]);
++		kfree(mc_saved);
++	}
++
++out:
++	mutex_unlock(&x86_cpu_microcode_mutex);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(save_mc_for_early);
++#endif
++
++static __initdata char ucode_name[] = "kernel/x86/microcode/GenuineIntel.bin";
++static __init enum ucode_state
++scan_microcode(unsigned long start, unsigned long end,
++		struct mc_saved_data *mc_saved_data,
++		unsigned long *mc_saved_in_initrd,
++		struct ucode_cpu_info *uci)
++{
++	unsigned int size = end - start + 1;
++	struct cpio_data cd;
++	long offset = 0;
++#ifdef CONFIG_X86_32
++	char *p = (char *)__pa_nodebug(ucode_name);
++#else
++	char *p = ucode_name;
++#endif
++
++	cd.data = NULL;
++	cd.size = 0;
++
++	cd = find_cpio_data(p, (void *)start, size, &offset);
++	if (!cd.data)
++		return UCODE_ERROR;
++
++
++	return get_matching_model_microcode(0, start, cd.data, cd.size,
++					    mc_saved_data, mc_saved_in_initrd,
++					    uci);
++}
++
++/*
++ * Print ucode update info.
++ */
++static void
++print_ucode_info(struct ucode_cpu_info *uci, unsigned int date)
++{
++	int cpu = smp_processor_id();
++
++	pr_info("CPU%d microcode updated early to revision 0x%x, date = %04x-%02x-%02x\n",
++		cpu,
++		uci->cpu_sig.rev,
++		date & 0xffff,
++		date >> 24,
++		(date >> 16) & 0xff);
++}
++
++#ifdef CONFIG_X86_32
++
++static int delay_ucode_info;
++static int current_mc_date;
++
++/*
++ * Print early updated ucode info after printk works. This is delayed info dump.
++ */
++void show_ucode_info_early(void)
++{
++	struct ucode_cpu_info uci;
++
++	if (delay_ucode_info) {
++		collect_cpu_info_early(&uci);
++		print_ucode_info(&uci, current_mc_date);
++		delay_ucode_info = 0;
++	}
++}
++
++/*
++ * At this point, we can not call printk() yet. Keep microcode patch number in
++ * mc_saved_data.mc_saved and delay printing microcode info in
++ * show_ucode_info_early() until printk() works.
++ */
++static void print_ucode(struct ucode_cpu_info *uci)
++{
++	struct microcode_intel *mc_intel;
++	int *delay_ucode_info_p;
++	int *current_mc_date_p;
++
++	mc_intel = uci->mc;
++	if (mc_intel == NULL)
++		return;
++
++	delay_ucode_info_p = (int *)__pa_nodebug(&delay_ucode_info);
++	current_mc_date_p = (int *)__pa_nodebug(&current_mc_date);
++
++	*delay_ucode_info_p = 1;
++	*current_mc_date_p = mc_intel->hdr.date;
++}
++#else
++
++/*
++ * Flush global tlb. We only do this in x86_64 where paging has been enabled
++ * already and PGE should be enabled as well.
++ */
++static inline void flush_tlb_early(void)
++{
++	__native_flush_tlb_global_irq_disabled();
++}
++
++static inline void print_ucode(struct ucode_cpu_info *uci)
++{
++	struct microcode_intel *mc_intel;
++
++	mc_intel = uci->mc;
++	if (mc_intel == NULL)
++		return;
++
++	print_ucode_info(uci, mc_intel->hdr.date);
++}
++#endif
++
++static int apply_microcode_early(struct mc_saved_data *mc_saved_data,
++				 struct ucode_cpu_info *uci)
++{
++	struct microcode_intel *mc_intel;
++	unsigned int val[2];
++
++	mc_intel = uci->mc;
++	if (mc_intel == NULL)
++		return 0;
++
++	/* write microcode via MSR 0x79 */
++	native_wrmsr(MSR_IA32_UCODE_WRITE,
++	      (unsigned long) mc_intel->bits,
++	      (unsigned long) mc_intel->bits >> 16 >> 16);
++	native_wrmsr(MSR_IA32_UCODE_REV, 0, 0);
++
++	/* As documented in the SDM: Do a CPUID 1 here */
++	sync_core();
++
++	/* get the current revision from MSR 0x8B */
++	native_rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
++	if (val[1] != mc_intel->hdr.rev)
++		return -1;
++
++#ifdef CONFIG_X86_64
++	/* Flush global tlb. This is precaution. */
++	flush_tlb_early();
++#endif
++	uci->cpu_sig.rev = val[1];
++
++	print_ucode(uci);
++
++	return 0;
++}
++
++/*
++ * This function converts microcode patch offsets previously stored in
++ * mc_saved_in_initrd to pointers and stores the pointers in mc_saved_data.
++ */
++int __init save_microcode_in_initrd_intel(void)
++{
++	unsigned int count = mc_saved_data.mc_saved_count;
++	struct microcode_intel *mc_saved[MAX_UCODE_COUNT];
++	int ret = 0;
++
++	if (count == 0)
++		return ret;
++
++	microcode_pointer(mc_saved, mc_saved_in_initrd, initrd_start, count);
++	ret = save_microcode(&mc_saved_data, mc_saved, count);
++	if (ret)
++		pr_err("Cannot save microcode patches from initrd.\n");
++
++	show_saved_mc();
++
++	return ret;
++}
++
++static void __init
++_load_ucode_intel_bsp(struct mc_saved_data *mc_saved_data,
++		      unsigned long *mc_saved_in_initrd,
++		      unsigned long initrd_start_early,
++		      unsigned long initrd_end_early,
++		      struct ucode_cpu_info *uci)
++{
++	collect_cpu_info_early(uci);
++	scan_microcode(initrd_start_early, initrd_end_early, mc_saved_data,
++		       mc_saved_in_initrd, uci);
++	load_microcode(mc_saved_data, mc_saved_in_initrd,
++		       initrd_start_early, uci);
++	apply_microcode_early(mc_saved_data, uci);
++}
++
++void __init
++load_ucode_intel_bsp(void)
++{
++	u64 ramdisk_image, ramdisk_size;
++	unsigned long initrd_start_early, initrd_end_early;
++	struct ucode_cpu_info uci;
++#ifdef CONFIG_X86_32
++	struct boot_params *boot_params_p;
++
++	boot_params_p = (struct boot_params *)__pa_nodebug(&boot_params);
++	ramdisk_image = boot_params_p->hdr.ramdisk_image;
++	ramdisk_size  = boot_params_p->hdr.ramdisk_size;
++	initrd_start_early = ramdisk_image;
++	initrd_end_early = initrd_start_early + ramdisk_size;
++
++	_load_ucode_intel_bsp(
++		(struct mc_saved_data *)__pa_nodebug(&mc_saved_data),
++		(unsigned long *)__pa_nodebug(&mc_saved_in_initrd),
++		initrd_start_early, initrd_end_early, &uci);
++#else
++	ramdisk_image = boot_params.hdr.ramdisk_image;
++	ramdisk_size  = boot_params.hdr.ramdisk_size;
++	initrd_start_early = ramdisk_image + PAGE_OFFSET;
++	initrd_end_early = initrd_start_early + ramdisk_size;
++
++	_load_ucode_intel_bsp(&mc_saved_data, mc_saved_in_initrd,
++			      initrd_start_early, initrd_end_early, &uci);
++#endif
++}
++
++void load_ucode_intel_ap(void)
++{
++	struct mc_saved_data *mc_saved_data_p;
++	struct ucode_cpu_info uci;
++	unsigned long *mc_saved_in_initrd_p;
++	unsigned long initrd_start_addr;
++#ifdef CONFIG_X86_32
++	unsigned long *initrd_start_p;
++
++	mc_saved_in_initrd_p =
++		(unsigned long *)__pa_nodebug(mc_saved_in_initrd);
++	mc_saved_data_p = (struct mc_saved_data *)__pa_nodebug(&mc_saved_data);
++	initrd_start_p = (unsigned long *)__pa_nodebug(&initrd_start);
++	initrd_start_addr = (unsigned long)__pa_nodebug(*initrd_start_p);
++#else
++	mc_saved_data_p = &mc_saved_data;
++	mc_saved_in_initrd_p = mc_saved_in_initrd;
++	initrd_start_addr = initrd_start;
++#endif
++
++	/*
++	 * If there is no valid ucode previously saved in memory, no need to
++	 * update ucode on this AP.
++	 */
++	if (mc_saved_data_p->mc_saved_count == 0)
++		return;
++
++	collect_cpu_info_early(&uci);
++	load_microcode(mc_saved_data_p, mc_saved_in_initrd_p,
++		       initrd_start_addr, &uci);
++	apply_microcode_early(mc_saved_data_p, &uci);
++}
+diff --git a/arch/x86/kernel/cpu/microcode/intel_lib.c b/arch/x86/kernel/cpu/microcode/intel_lib.c
+new file mode 100644
+index 000000000000..ce69320d0179
+--- /dev/null
++++ b/arch/x86/kernel/cpu/microcode/intel_lib.c
+@@ -0,0 +1,174 @@
++/*
++ *	Intel CPU Microcode Update Driver for Linux
++ *
++ *	Copyright (C) 2012 Fenghua Yu <fenghua.yu@intel.com>
++ *			   H Peter Anvin" <hpa@zytor.com>
++ *
++ *	This driver allows to upgrade microcode on Intel processors
++ *	belonging to IA-32 family - PentiumPro, Pentium II,
++ *	Pentium III, Xeon, Pentium 4, etc.
++ *
++ *	Reference: Section 8.11 of Volume 3a, IA-32 Intel? Architecture
++ *	Software Developer's Manual
++ *	Order Number 253668 or free download from:
++ *
++ *	http://developer.intel.com/Assets/PDF/manual/253668.pdf
++ *
++ *	For more information, go to http://www.urbanmyth.org/microcode
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; either version
++ *	2 of the License, or (at your option) any later version.
++ *
++ */
++#include <linux/firmware.h>
++#include <linux/uaccess.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++
++#include <asm/microcode_intel.h>
++#include <asm/processor.h>
++#include <asm/msr.h>
++
++static inline int
++update_match_cpu(unsigned int csig, unsigned int cpf,
++		 unsigned int sig, unsigned int pf)
++{
++	return (!sigmatch(sig, csig, pf, cpf)) ? 0 : 1;
++}
++
++int
++update_match_revision(struct microcode_header_intel *mc_header, int rev)
++{
++	return (mc_header->rev <= rev) ? 0 : 1;
++}
++
++int microcode_sanity_check(void *mc, int print_err)
++{
++	unsigned long total_size, data_size, ext_table_size;
++	struct microcode_header_intel *mc_header = mc;
++	struct extended_sigtable *ext_header = NULL;
++	int sum, orig_sum, ext_sigcount = 0, i;
++	struct extended_signature *ext_sig;
++
++	total_size = get_totalsize(mc_header);
++	data_size = get_datasize(mc_header);
++
++	if (data_size + MC_HEADER_SIZE > total_size) {
++		if (print_err)
++			pr_err("error! Bad data size in microcode data file\n");
++		return -EINVAL;
++	}
++
++	if (mc_header->ldrver != 1 || mc_header->hdrver != 1) {
++		if (print_err)
++			pr_err("error! Unknown microcode update format\n");
++		return -EINVAL;
++	}
++	ext_table_size = total_size - (MC_HEADER_SIZE + data_size);
++	if (ext_table_size) {
++		if ((ext_table_size < EXT_HEADER_SIZE)
++		 || ((ext_table_size - EXT_HEADER_SIZE) % EXT_SIGNATURE_SIZE)) {
++			if (print_err)
++				pr_err("error! Small exttable size in microcode data file\n");
++			return -EINVAL;
++		}
++		ext_header = mc + MC_HEADER_SIZE + data_size;
++		if (ext_table_size != exttable_size(ext_header)) {
++			if (print_err)
++				pr_err("error! Bad exttable size in microcode data file\n");
++			return -EFAULT;
++		}
++		ext_sigcount = ext_header->count;
++	}
++
++	/* check extended table checksum */
++	if (ext_table_size) {
++		int ext_table_sum = 0;
++		int *ext_tablep = (int *)ext_header;
++
++		i = ext_table_size / DWSIZE;
++		while (i--)
++			ext_table_sum += ext_tablep[i];
++		if (ext_table_sum) {
++			if (print_err)
++				pr_warn("aborting, bad extended signature table checksum\n");
++			return -EINVAL;
++		}
++	}
++
++	/* calculate the checksum */
++	orig_sum = 0;
++	i = (MC_HEADER_SIZE + data_size) / DWSIZE;
++	while (i--)
++		orig_sum += ((int *)mc)[i];
++	if (orig_sum) {
++		if (print_err)
++			pr_err("aborting, bad checksum\n");
++		return -EINVAL;
++	}
++	if (!ext_table_size)
++		return 0;
++	/* check extended signature checksum */
++	for (i = 0; i < ext_sigcount; i++) {
++		ext_sig = (void *)ext_header + EXT_HEADER_SIZE +
++			  EXT_SIGNATURE_SIZE * i;
++		sum = orig_sum
++			- (mc_header->sig + mc_header->pf + mc_header->cksum)
++			+ (ext_sig->sig + ext_sig->pf + ext_sig->cksum);
++		if (sum) {
++			if (print_err)
++				pr_err("aborting, bad checksum\n");
++			return -EINVAL;
++		}
++	}
++	return 0;
++}
++EXPORT_SYMBOL_GPL(microcode_sanity_check);
++
++/*
++ * return 0 - no update found
++ * return 1 - found update
++ */
++int get_matching_sig(unsigned int csig, int cpf, void *mc, int rev)
++{
++	struct microcode_header_intel *mc_header = mc;
++	struct extended_sigtable *ext_header;
++	unsigned long total_size = get_totalsize(mc_header);
++	int ext_sigcount, i;
++	struct extended_signature *ext_sig;
++
++	if (update_match_cpu(csig, cpf, mc_header->sig, mc_header->pf))
++		return 1;
++
++	/* Look for ext. headers: */
++	if (total_size <= get_datasize(mc_header) + MC_HEADER_SIZE)
++		return 0;
++
++	ext_header = mc + get_datasize(mc_header) + MC_HEADER_SIZE;
++	ext_sigcount = ext_header->count;
++	ext_sig = (void *)ext_header + EXT_HEADER_SIZE;
++
++	for (i = 0; i < ext_sigcount; i++) {
++		if (update_match_cpu(csig, cpf, ext_sig->sig, ext_sig->pf))
++			return 1;
++		ext_sig++;
++	}
++	return 0;
++}
++
++/*
++ * return 0 - no update found
++ * return 1 - found update
++ */
++int get_matching_microcode(unsigned int csig, int cpf, void *mc, int rev)
++{
++	struct microcode_header_intel *mc_header = mc;
++
++	if (!update_match_revision(mc_header, rev))
++		return 0;
++
++	return get_matching_sig(csig, cpf, mc, rev);
++}
++EXPORT_SYMBOL_GPL(get_matching_microcode);
+diff --git a/arch/x86/kernel/microcode_amd.c b/arch/x86/kernel/microcode_amd.c
+deleted file mode 100644
+index 4a6ff747aaad..000000000000
+--- a/arch/x86/kernel/microcode_amd.c
++++ /dev/null
+@@ -1,492 +0,0 @@
+-/*
+- *  AMD CPU Microcode Update Driver for Linux
+- *  Copyright (C) 2008-2011 Advanced Micro Devices Inc.
+- *
+- *  Author: Peter Oruba <peter.oruba@amd.com>
+- *
+- *  Based on work by:
+- *  Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
+- *
+- *  Maintainers:
+- *  Andreas Herrmann <herrmann.der.user@googlemail.com>
+- *  Borislav Petkov <bp@alien8.de>
+- *
+- *  This driver allows to upgrade microcode on F10h AMD
+- *  CPUs and later.
+- *
+- *  Licensed under the terms of the GNU General Public
+- *  License version 2. See file COPYING for details.
+- */
+-
+-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+-
+-#include <linux/firmware.h>
+-#include <linux/pci_ids.h>
+-#include <linux/uaccess.h>
+-#include <linux/vmalloc.h>
+-#include <linux/kernel.h>
+-#include <linux/module.h>
+-#include <linux/pci.h>
+-
+-#include <asm/microcode.h>
+-#include <asm/processor.h>
+-#include <asm/msr.h>
+-#include <asm/microcode_amd.h>
+-
+-MODULE_DESCRIPTION("AMD Microcode Update Driver");
+-MODULE_AUTHOR("Peter Oruba");
+-MODULE_LICENSE("GPL v2");
+-
+-static struct equiv_cpu_entry *equiv_cpu_table;
+-
+-struct ucode_patch {
+-	struct list_head plist;
+-	void *data;
+-	u32 patch_id;
+-	u16 equiv_cpu;
+-};
+-
+-static LIST_HEAD(pcache);
+-
+-static u16 __find_equiv_id(unsigned int cpu)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-	return find_equiv_id(equiv_cpu_table, uci->cpu_sig.sig);
+-}
+-
+-static u32 find_cpu_family_by_equiv_cpu(u16 equiv_cpu)
+-{
+-	int i = 0;
+-
+-	BUG_ON(!equiv_cpu_table);
+-
+-	while (equiv_cpu_table[i].equiv_cpu != 0) {
+-		if (equiv_cpu == equiv_cpu_table[i].equiv_cpu)
+-			return equiv_cpu_table[i].installed_cpu;
+-		i++;
+-	}
+-	return 0;
+-}
+-
+-/*
+- * a small, trivial cache of per-family ucode patches
+- */
+-static struct ucode_patch *cache_find_patch(u16 equiv_cpu)
+-{
+-	struct ucode_patch *p;
+-
+-	list_for_each_entry(p, &pcache, plist)
+-		if (p->equiv_cpu == equiv_cpu)
+-			return p;
+-	return NULL;
+-}
+-
+-static void update_cache(struct ucode_patch *new_patch)
+-{
+-	struct ucode_patch *p;
+-
+-	list_for_each_entry(p, &pcache, plist) {
+-		if (p->equiv_cpu == new_patch->equiv_cpu) {
+-			if (p->patch_id >= new_patch->patch_id)
+-				/* we already have the latest patch */
+-				return;
+-
+-			list_replace(&p->plist, &new_patch->plist);
+-			kfree(p->data);
+-			kfree(p);
+-			return;
+-		}
+-	}
+-	/* no patch found, add it */
+-	list_add_tail(&new_patch->plist, &pcache);
+-}
+-
+-static void free_cache(void)
+-{
+-	struct ucode_patch *p, *tmp;
+-
+-	list_for_each_entry_safe(p, tmp, &pcache, plist) {
+-		__list_del(p->plist.prev, p->plist.next);
+-		kfree(p->data);
+-		kfree(p);
+-	}
+-}
+-
+-static struct ucode_patch *find_patch(unsigned int cpu)
+-{
+-	u16 equiv_id;
+-
+-	equiv_id = __find_equiv_id(cpu);
+-	if (!equiv_id)
+-		return NULL;
+-
+-	return cache_find_patch(equiv_id);
+-}
+-
+-static int collect_cpu_info_amd(int cpu, struct cpu_signature *csig)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(cpu);
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-	struct ucode_patch *p;
+-
+-	csig->sig = cpuid_eax(0x00000001);
+-	csig->rev = c->microcode;
+-
+-	/*
+-	 * a patch could have been loaded early, set uci->mc so that
+-	 * mc_bp_resume() can call apply_microcode()
+-	 */
+-	p = find_patch(cpu);
+-	if (p && (p->patch_id == csig->rev))
+-		uci->mc = p->data;
+-
+-	pr_info("CPU%d: patch_level=0x%08x\n", cpu, csig->rev);
+-
+-	return 0;
+-}
+-
+-static unsigned int verify_patch_size(u8 family, u32 patch_size,
+-				      unsigned int size)
+-{
+-	u32 max_size;
+-
+-#define F1XH_MPB_MAX_SIZE 2048
+-#define F14H_MPB_MAX_SIZE 1824
+-#define F15H_MPB_MAX_SIZE 4096
+-#define F16H_MPB_MAX_SIZE 3458
+-
+-	switch (family) {
+-	case 0x14:
+-		max_size = F14H_MPB_MAX_SIZE;
+-		break;
+-	case 0x15:
+-		max_size = F15H_MPB_MAX_SIZE;
+-		break;
+-	case 0x16:
+-		max_size = F16H_MPB_MAX_SIZE;
+-		break;
+-	default:
+-		max_size = F1XH_MPB_MAX_SIZE;
+-		break;
+-	}
+-
+-	if (patch_size > min_t(u32, size, max_size)) {
+-		pr_err("patch size mismatch\n");
+-		return 0;
+-	}
+-
+-	return patch_size;
+-}
+-
+-int __apply_microcode_amd(struct microcode_amd *mc_amd)
+-{
+-	u32 rev, dummy;
+-
+-	native_wrmsrl(MSR_AMD64_PATCH_LOADER, (u64)(long)&mc_amd->hdr.data_code);
+-
+-	/* verify patch application was successful */
+-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+-	if (rev != mc_amd->hdr.patch_id)
+-		return -1;
+-
+-	return 0;
+-}
+-
+-int apply_microcode_amd(int cpu)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(cpu);
+-	struct microcode_amd *mc_amd;
+-	struct ucode_cpu_info *uci;
+-	struct ucode_patch *p;
+-	u32 rev, dummy;
+-
+-	BUG_ON(raw_smp_processor_id() != cpu);
+-
+-	uci = ucode_cpu_info + cpu;
+-
+-	p = find_patch(cpu);
+-	if (!p)
+-		return 0;
+-
+-	mc_amd  = p->data;
+-	uci->mc = p->data;
+-
+-	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+-
+-	/* need to apply patch? */
+-	if (rev >= mc_amd->hdr.patch_id) {
+-		c->microcode = rev;
+-		uci->cpu_sig.rev = rev;
+-		return 0;
+-	}
+-
+-	if (__apply_microcode_amd(mc_amd)) {
+-		pr_err("CPU%d: update failed for patch_level=0x%08x\n",
+-			cpu, mc_amd->hdr.patch_id);
+-		return -1;
+-	}
+-	pr_info("CPU%d: new patch_level=0x%08x\n", cpu,
+-		mc_amd->hdr.patch_id);
+-
+-	uci->cpu_sig.rev = mc_amd->hdr.patch_id;
+-	c->microcode = mc_amd->hdr.patch_id;
+-
+-	return 0;
+-}
+-
+-static int install_equiv_cpu_table(const u8 *buf)
+-{
+-	unsigned int *ibuf = (unsigned int *)buf;
+-	unsigned int type = ibuf[1];
+-	unsigned int size = ibuf[2];
+-
+-	if (type != UCODE_EQUIV_CPU_TABLE_TYPE || !size) {
+-		pr_err("empty section/"
+-		       "invalid type field in container file section header\n");
+-		return -EINVAL;
+-	}
+-
+-	equiv_cpu_table = vmalloc(size);
+-	if (!equiv_cpu_table) {
+-		pr_err("failed to allocate equivalent CPU table\n");
+-		return -ENOMEM;
+-	}
+-
+-	memcpy(equiv_cpu_table, buf + CONTAINER_HDR_SZ, size);
+-
+-	/* add header length */
+-	return size + CONTAINER_HDR_SZ;
+-}
+-
+-static void free_equiv_cpu_table(void)
+-{
+-	vfree(equiv_cpu_table);
+-	equiv_cpu_table = NULL;
+-}
+-
+-static void cleanup(void)
+-{
+-	free_equiv_cpu_table();
+-	free_cache();
+-}
+-
+-/*
+- * We return the current size even if some of the checks failed so that
+- * we can skip over the next patch. If we return a negative value, we
+- * signal a grave error like a memory allocation has failed and the
+- * driver cannot continue functioning normally. In such cases, we tear
+- * down everything we've used up so far and exit.
+- */
+-static int verify_and_add_patch(u8 family, u8 *fw, unsigned int leftover)
+-{
+-	struct microcode_header_amd *mc_hdr;
+-	struct ucode_patch *patch;
+-	unsigned int patch_size, crnt_size, ret;
+-	u32 proc_fam;
+-	u16 proc_id;
+-
+-	patch_size  = *(u32 *)(fw + 4);
+-	crnt_size   = patch_size + SECTION_HDR_SIZE;
+-	mc_hdr	    = (struct microcode_header_amd *)(fw + SECTION_HDR_SIZE);
+-	proc_id	    = mc_hdr->processor_rev_id;
+-
+-	proc_fam = find_cpu_family_by_equiv_cpu(proc_id);
+-	if (!proc_fam) {
+-		pr_err("No patch family for equiv ID: 0x%04x\n", proc_id);
+-		return crnt_size;
+-	}
+-
+-	/* check if patch is for the current family */
+-	proc_fam = ((proc_fam >> 8) & 0xf) + ((proc_fam >> 20) & 0xff);
+-	if (proc_fam != family)
+-		return crnt_size;
+-
+-	if (mc_hdr->nb_dev_id || mc_hdr->sb_dev_id) {
+-		pr_err("Patch-ID 0x%08x: chipset-specific code unsupported.\n",
+-			mc_hdr->patch_id);
+-		return crnt_size;
+-	}
+-
+-	ret = verify_patch_size(family, patch_size, leftover);
+-	if (!ret) {
+-		pr_err("Patch-ID 0x%08x: size mismatch.\n", mc_hdr->patch_id);
+-		return crnt_size;
+-	}
+-
+-	patch = kzalloc(sizeof(*patch), GFP_KERNEL);
+-	if (!patch) {
+-		pr_err("Patch allocation failure.\n");
+-		return -EINVAL;
+-	}
+-
+-	patch->data = kzalloc(patch_size, GFP_KERNEL);
+-	if (!patch->data) {
+-		pr_err("Patch data allocation failure.\n");
+-		kfree(patch);
+-		return -EINVAL;
+-	}
+-
+-	/* All looks ok, copy patch... */
+-	memcpy(patch->data, fw + SECTION_HDR_SIZE, patch_size);
+-	INIT_LIST_HEAD(&patch->plist);
+-	patch->patch_id  = mc_hdr->patch_id;
+-	patch->equiv_cpu = proc_id;
+-
+-	pr_debug("%s: Added patch_id: 0x%08x, proc_id: 0x%04x\n",
+-		 __func__, patch->patch_id, proc_id);
+-
+-	/* ... and add to cache. */
+-	update_cache(patch);
+-
+-	return crnt_size;
+-}
+-
+-static enum ucode_state __load_microcode_amd(u8 family, const u8 *data,
+-					     size_t size)
+-{
+-	enum ucode_state ret = UCODE_ERROR;
+-	unsigned int leftover;
+-	u8 *fw = (u8 *)data;
+-	int crnt_size = 0;
+-	int offset;
+-
+-	offset = install_equiv_cpu_table(data);
+-	if (offset < 0) {
+-		pr_err("failed to create equivalent cpu table\n");
+-		return ret;
+-	}
+-	fw += offset;
+-	leftover = size - offset;
+-
+-	if (*(u32 *)fw != UCODE_UCODE_TYPE) {
+-		pr_err("invalid type field in container file section header\n");
+-		free_equiv_cpu_table();
+-		return ret;
+-	}
+-
+-	while (leftover) {
+-		crnt_size = verify_and_add_patch(family, fw, leftover);
+-		if (crnt_size < 0)
+-			return ret;
+-
+-		fw	 += crnt_size;
+-		leftover -= crnt_size;
+-	}
+-
+-	return UCODE_OK;
+-}
+-
+-enum ucode_state load_microcode_amd(u8 family, const u8 *data, size_t size)
+-{
+-	enum ucode_state ret;
+-
+-	/* free old equiv table */
+-	free_equiv_cpu_table();
+-
+-	ret = __load_microcode_amd(family, data, size);
+-
+-	if (ret != UCODE_OK)
+-		cleanup();
+-
+-#if defined(CONFIG_MICROCODE_AMD_EARLY) && defined(CONFIG_X86_32)
+-	/* save BSP's matching patch for early load */
+-	if (cpu_data(smp_processor_id()).cpu_index == boot_cpu_data.cpu_index) {
+-		struct ucode_patch *p = find_patch(smp_processor_id());
+-		if (p) {
+-			memset(amd_ucode_patch, 0, PATCH_MAX_SIZE);
+-			memcpy(amd_ucode_patch, p->data, min_t(u32, ksize(p->data),
+-							       PATCH_MAX_SIZE));
+-		}
+-	}
+-#endif
+-	return ret;
+-}
+-
+-/*
+- * AMD microcode firmware naming convention, up to family 15h they are in
+- * the legacy file:
+- *
+- *    amd-ucode/microcode_amd.bin
+- *
+- * This legacy file is always smaller than 2K in size.
+- *
+- * Beginning with family 15h, they are in family-specific firmware files:
+- *
+- *    amd-ucode/microcode_amd_fam15h.bin
+- *    amd-ucode/microcode_amd_fam16h.bin
+- *    ...
+- *
+- * These might be larger than 2K.
+- */
+-static enum ucode_state request_microcode_amd(int cpu, struct device *device,
+-					      bool refresh_fw)
+-{
+-	char fw_name[36] = "amd-ucode/microcode_amd.bin";
+-	struct cpuinfo_x86 *c = &cpu_data(cpu);
+-	enum ucode_state ret = UCODE_NFOUND;
+-	const struct firmware *fw;
+-
+-	/* reload ucode container only on the boot cpu */
+-	if (!refresh_fw || c->cpu_index != boot_cpu_data.cpu_index)
+-		return UCODE_OK;
+-
+-	if (c->x86 >= 0x15)
+-		snprintf(fw_name, sizeof(fw_name), "amd-ucode/microcode_amd_fam%.2xh.bin", c->x86);
+-
+-	if (request_firmware(&fw, (const char *)fw_name, device)) {
+-		pr_debug("failed to load file %s\n", fw_name);
+-		goto out;
+-	}
+-
+-	ret = UCODE_ERROR;
+-	if (*(u32 *)fw->data != UCODE_MAGIC) {
+-		pr_err("invalid magic value (0x%08x)\n", *(u32 *)fw->data);
+-		goto fw_release;
+-	}
+-
+-	ret = load_microcode_amd(c->x86, fw->data, fw->size);
+-
+- fw_release:
+-	release_firmware(fw);
+-
+- out:
+-	return ret;
+-}
+-
+-static enum ucode_state
+-request_microcode_user(int cpu, const void __user *buf, size_t size)
+-{
+-	return UCODE_ERROR;
+-}
+-
+-static void microcode_fini_cpu_amd(int cpu)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-
+-	uci->mc = NULL;
+-}
+-
+-static struct microcode_ops microcode_amd_ops = {
+-	.request_microcode_user           = request_microcode_user,
+-	.request_microcode_fw             = request_microcode_amd,
+-	.collect_cpu_info                 = collect_cpu_info_amd,
+-	.apply_microcode                  = apply_microcode_amd,
+-	.microcode_fini_cpu               = microcode_fini_cpu_amd,
+-};
+-
+-struct microcode_ops * __init init_amd_microcode(void)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(0);
+-
+-	if (c->x86_vendor != X86_VENDOR_AMD || c->x86 < 0x10) {
+-		pr_warning("AMD CPU family 0x%x not supported\n", c->x86);
+-		return NULL;
+-	}
+-
+-	return &microcode_amd_ops;
+-}
+-
+-void __exit exit_amd_microcode(void)
+-{
+-	cleanup();
+-}
+diff --git a/arch/x86/kernel/microcode_amd_early.c b/arch/x86/kernel/microcode_amd_early.c
+deleted file mode 100644
+index 8384c0fa206f..000000000000
+--- a/arch/x86/kernel/microcode_amd_early.c
++++ /dev/null
+@@ -1,380 +0,0 @@
+-/*
+- * Copyright (C) 2013 Advanced Micro Devices, Inc.
+- *
+- * Author: Jacob Shin <jacob.shin@amd.com>
+- * Fixes: Borislav Petkov <bp@suse.de>
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License version 2 as
+- * published by the Free Software Foundation.
+- */
+-
+-#include <linux/earlycpio.h>
+-#include <linux/initrd.h>
+-
+-#include <asm/cpu.h>
+-#include <asm/setup.h>
+-#include <asm/microcode_amd.h>
+-
+-/*
+- * This points to the current valid container of microcode patches which we will
+- * save from the initrd before jettisoning its contents.
+- */
+-static u8 *container;
+-static size_t container_size;
+-
+-static u32 ucode_new_rev;
+-u8 amd_ucode_patch[PATCH_MAX_SIZE];
+-static u16 this_equiv_id;
+-
+-struct cpio_data ucode_cpio;
+-
+-/*
+- * Microcode patch container file is prepended to the initrd in cpio format.
+- * See Documentation/x86/early-microcode.txt
+- */
+-static __initdata char ucode_path[] = "kernel/x86/microcode/AuthenticAMD.bin";
+-
+-static struct cpio_data __init find_ucode_in_initrd(void)
+-{
+-	long offset = 0;
+-	char *path;
+-	void *start;
+-	size_t size;
+-
+-#ifdef CONFIG_X86_32
+-	struct boot_params *p;
+-
+-	/*
+-	 * On 32-bit, early load occurs before paging is turned on so we need
+-	 * to use physical addresses.
+-	 */
+-	p       = (struct boot_params *)__pa_nodebug(&boot_params);
+-	path    = (char *)__pa_nodebug(ucode_path);
+-	start   = (void *)p->hdr.ramdisk_image;
+-	size    = p->hdr.ramdisk_size;
+-#else
+-	path    = ucode_path;
+-	start   = (void *)(boot_params.hdr.ramdisk_image + PAGE_OFFSET);
+-	size    = boot_params.hdr.ramdisk_size;
+-#endif
+-
+-	return find_cpio_data(path, start, size, &offset);
+-}
+-
+-static size_t compute_container_size(u8 *data, u32 total_size)
+-{
+-	size_t size = 0;
+-	u32 *header = (u32 *)data;
+-
+-	if (header[0] != UCODE_MAGIC ||
+-	    header[1] != UCODE_EQUIV_CPU_TABLE_TYPE || /* type */
+-	    header[2] == 0)                            /* size */
+-		return size;
+-
+-	size = header[2] + CONTAINER_HDR_SZ;
+-	total_size -= size;
+-	data += size;
+-
+-	while (total_size) {
+-		u16 patch_size;
+-
+-		header = (u32 *)data;
+-
+-		if (header[0] != UCODE_UCODE_TYPE)
+-			break;
+-
+-		/*
+-		 * Sanity-check patch size.
+-		 */
+-		patch_size = header[1];
+-		if (patch_size > PATCH_MAX_SIZE)
+-			break;
+-
+-		size	   += patch_size + SECTION_HDR_SIZE;
+-		data	   += patch_size + SECTION_HDR_SIZE;
+-		total_size -= patch_size + SECTION_HDR_SIZE;
+-	}
+-
+-	return size;
+-}
+-
+-/*
+- * Early load occurs before we can vmalloc(). So we look for the microcode
+- * patch container file in initrd, traverse equivalent cpu table, look for a
+- * matching microcode patch, and update, all in initrd memory in place.
+- * When vmalloc() is available for use later -- on 64-bit during first AP load,
+- * and on 32-bit during save_microcode_in_initrd_amd() -- we can call
+- * load_microcode_amd() to save equivalent cpu table and microcode patches in
+- * kernel heap memory.
+- */
+-static void apply_ucode_in_initrd(void *ucode, size_t size)
+-{
+-	struct equiv_cpu_entry *eq;
+-	size_t *cont_sz;
+-	u32 *header;
+-	u8  *data, **cont;
+-	u16 eq_id = 0;
+-	int offset, left;
+-	u32 rev, eax, ebx, ecx, edx;
+-	u32 *new_rev;
+-
+-#ifdef CONFIG_X86_32
+-	new_rev = (u32 *)__pa_nodebug(&ucode_new_rev);
+-	cont_sz = (size_t *)__pa_nodebug(&container_size);
+-	cont	= (u8 **)__pa_nodebug(&container);
+-#else
+-	new_rev = &ucode_new_rev;
+-	cont_sz = &container_size;
+-	cont	= &container;
+-#endif
+-
+-	data   = ucode;
+-	left   = size;
+-	header = (u32 *)data;
+-
+-	/* find equiv cpu table */
+-	if (header[0] != UCODE_MAGIC ||
+-	    header[1] != UCODE_EQUIV_CPU_TABLE_TYPE || /* type */
+-	    header[2] == 0)                            /* size */
+-		return;
+-
+-	eax = 0x00000001;
+-	ecx = 0;
+-	native_cpuid(&eax, &ebx, &ecx, &edx);
+-
+-	while (left > 0) {
+-		eq = (struct equiv_cpu_entry *)(data + CONTAINER_HDR_SZ);
+-
+-		*cont = data;
+-
+-		/* Advance past the container header */
+-		offset = header[2] + CONTAINER_HDR_SZ;
+-		data  += offset;
+-		left  -= offset;
+-
+-		eq_id = find_equiv_id(eq, eax);
+-		if (eq_id) {
+-			this_equiv_id = eq_id;
+-			*cont_sz = compute_container_size(*cont, left + offset);
+-
+-			/*
+-			 * truncate how much we need to iterate over in the
+-			 * ucode update loop below
+-			 */
+-			left = *cont_sz - offset;
+-			break;
+-		}
+-
+-		/*
+-		 * support multiple container files appended together. if this
+-		 * one does not have a matching equivalent cpu entry, we fast
+-		 * forward to the next container file.
+-		 */
+-		while (left > 0) {
+-			header = (u32 *)data;
+-			if (header[0] == UCODE_MAGIC &&
+-			    header[1] == UCODE_EQUIV_CPU_TABLE_TYPE)
+-				break;
+-
+-			offset = header[1] + SECTION_HDR_SIZE;
+-			data  += offset;
+-			left  -= offset;
+-		}
+-
+-		/* mark where the next microcode container file starts */
+-		offset    = data - (u8 *)ucode;
+-		ucode     = data;
+-	}
+-
+-	if (!eq_id) {
+-		*cont = NULL;
+-		*cont_sz = 0;
+-		return;
+-	}
+-
+-	/* find ucode and update if needed */
+-
+-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, eax);
+-
+-	while (left > 0) {
+-		struct microcode_amd *mc;
+-
+-		header = (u32 *)data;
+-		if (header[0] != UCODE_UCODE_TYPE || /* type */
+-		    header[1] == 0)                  /* size */
+-			break;
+-
+-		mc = (struct microcode_amd *)(data + SECTION_HDR_SIZE);
+-
+-		if (eq_id == mc->hdr.processor_rev_id && rev < mc->hdr.patch_id) {
+-
+-			if (!__apply_microcode_amd(mc)) {
+-				rev = mc->hdr.patch_id;
+-				*new_rev = rev;
+-
+-				/* save ucode patch */
+-				memcpy(amd_ucode_patch, mc,
+-				       min_t(u32, header[1], PATCH_MAX_SIZE));
+-			}
+-		}
+-
+-		offset  = header[1] + SECTION_HDR_SIZE;
+-		data   += offset;
+-		left   -= offset;
+-	}
+-}
+-
+-void __init load_ucode_amd_bsp(void)
+-{
+-	struct cpio_data cp;
+-	void **data;
+-	size_t *size;
+-
+-#ifdef CONFIG_X86_32
+-	data =  (void **)__pa_nodebug(&ucode_cpio.data);
+-	size = (size_t *)__pa_nodebug(&ucode_cpio.size);
+-#else
+-	data = &ucode_cpio.data;
+-	size = &ucode_cpio.size;
+-#endif
+-
+-	cp = find_ucode_in_initrd();
+-	if (!cp.data)
+-		return;
+-
+-	*data = cp.data;
+-	*size = cp.size;
+-
+-	apply_ucode_in_initrd(cp.data, cp.size);
+-}
+-
+-#ifdef CONFIG_X86_32
+-/*
+- * On 32-bit, since AP's early load occurs before paging is turned on, we
+- * cannot traverse cpu_equiv_table and pcache in kernel heap memory. So during
+- * cold boot, AP will apply_ucode_in_initrd() just like the BSP. During
+- * save_microcode_in_initrd_amd() BSP's patch is copied to amd_ucode_patch,
+- * which is used upon resume from suspend.
+- */
+-void load_ucode_amd_ap(void)
+-{
+-	struct microcode_amd *mc;
+-	size_t *usize;
+-	void **ucode;
+-
+-	mc = (struct microcode_amd *)__pa(amd_ucode_patch);
+-	if (mc->hdr.patch_id && mc->hdr.processor_rev_id) {
+-		__apply_microcode_amd(mc);
+-		return;
+-	}
+-
+-	ucode = (void *)__pa_nodebug(&container);
+-	usize = (size_t *)__pa_nodebug(&container_size);
+-
+-	if (!*ucode || !*usize)
+-		return;
+-
+-	apply_ucode_in_initrd(*ucode, *usize);
+-}
+-
+-static void __init collect_cpu_sig_on_bsp(void *arg)
+-{
+-	unsigned int cpu = smp_processor_id();
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-
+-	uci->cpu_sig.sig = cpuid_eax(0x00000001);
+-}
+-#else
+-void load_ucode_amd_ap(void)
+-{
+-	unsigned int cpu = smp_processor_id();
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-	struct equiv_cpu_entry *eq;
+-	struct microcode_amd *mc;
+-	u32 rev, eax;
+-	u16 eq_id;
+-
+-	/* Exit if called on the BSP. */
+-	if (!cpu)
+-		return;
+-
+-	if (!container)
+-		return;
+-
+-	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, eax);
+-
+-	uci->cpu_sig.rev = rev;
+-	uci->cpu_sig.sig = eax;
+-
+-	eax = cpuid_eax(0x00000001);
+-	eq  = (struct equiv_cpu_entry *)(container + CONTAINER_HDR_SZ);
+-
+-	eq_id = find_equiv_id(eq, eax);
+-	if (!eq_id)
+-		return;
+-
+-	if (eq_id == this_equiv_id) {
+-		mc = (struct microcode_amd *)amd_ucode_patch;
+-
+-		if (mc && rev < mc->hdr.patch_id) {
+-			if (!__apply_microcode_amd(mc))
+-				ucode_new_rev = mc->hdr.patch_id;
+-		}
+-
+-	} else {
+-		if (!ucode_cpio.data)
+-			return;
+-
+-		/*
+-		 * AP has a different equivalence ID than BSP, looks like
+-		 * mixed-steppings silicon so go through the ucode blob anew.
+-		 */
+-		apply_ucode_in_initrd(ucode_cpio.data, ucode_cpio.size);
+-	}
+-}
+-#endif
+-
+-int __init save_microcode_in_initrd_amd(void)
+-{
+-	enum ucode_state ret;
+-	u32 eax;
+-
+-#ifdef CONFIG_X86_32
+-	unsigned int bsp = boot_cpu_data.cpu_index;
+-	struct ucode_cpu_info *uci = ucode_cpu_info + bsp;
+-
+-	if (!uci->cpu_sig.sig)
+-		smp_call_function_single(bsp, collect_cpu_sig_on_bsp, NULL, 1);
+-
+-	/*
+-	 * Take into account the fact that the ramdisk might get relocated
+-	 * and therefore we need to recompute the container's position in
+-	 * virtual memory space.
+-	 */
+-	container = (u8 *)(__va((u32)relocated_ramdisk) +
+-			   ((u32)container - boot_params.hdr.ramdisk_image));
+-#endif
+-	if (ucode_new_rev)
+-		pr_info("microcode: updated early to new patch_level=0x%08x\n",
+-			ucode_new_rev);
+-
+-	if (!container)
+-		return -EINVAL;
+-
+-	eax   = cpuid_eax(0x00000001);
+-	eax   = ((eax >> 8) & 0xf) + ((eax >> 20) & 0xff);
+-
+-	ret = load_microcode_amd(eax, container, container_size);
+-	if (ret != UCODE_OK)
+-		return -EINVAL;
+-
+-	/*
+-	 * This will be freed any msec now, stash patches for the current
+-	 * family and switch to patch cache for cpu hotplug, etc later.
+-	 */
+-	container = NULL;
+-	container_size = 0;
+-
+-	return 0;
+-}
+diff --git a/arch/x86/kernel/microcode_core.c b/arch/x86/kernel/microcode_core.c
+deleted file mode 100644
+index 15c987698b0f..000000000000
+--- a/arch/x86/kernel/microcode_core.c
++++ /dev/null
+@@ -1,645 +0,0 @@
+-/*
+- *	Intel CPU Microcode Update Driver for Linux
+- *
+- *	Copyright (C) 2000-2006 Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
+- *		      2006	Shaohua Li <shaohua.li@intel.com>
+- *
+- *	This driver allows to upgrade microcode on Intel processors
+- *	belonging to IA-32 family - PentiumPro, Pentium II,
+- *	Pentium III, Xeon, Pentium 4, etc.
+- *
+- *	Reference: Section 8.11 of Volume 3a, IA-32 Intel? Architecture
+- *	Software Developer's Manual
+- *	Order Number 253668 or free download from:
+- *
+- *	http://developer.intel.com/Assets/PDF/manual/253668.pdf	
+- *
+- *	For more information, go to http://www.urbanmyth.org/microcode
+- *
+- *	This program is free software; you can redistribute it and/or
+- *	modify it under the terms of the GNU General Public License
+- *	as published by the Free Software Foundation; either version
+- *	2 of the License, or (at your option) any later version.
+- *
+- *	1.0	16 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Initial release.
+- *	1.01	18 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Added read() support + cleanups.
+- *	1.02	21 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Added 'device trimming' support. open(O_WRONLY) zeroes
+- *		and frees the saved copy of applied microcode.
+- *	1.03	29 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Made to use devfs (/dev/cpu/microcode) + cleanups.
+- *	1.04	06 Jun 2000, Simon Trimmer <simon@veritas.com>
+- *		Added misc device support (now uses both devfs and misc).
+- *		Added MICROCODE_IOCFREE ioctl to clear memory.
+- *	1.05	09 Jun 2000, Simon Trimmer <simon@veritas.com>
+- *		Messages for error cases (non Intel & no suitable microcode).
+- *	1.06	03 Aug 2000, Tigran Aivazian <tigran@veritas.com>
+- *		Removed ->release(). Removed exclusive open and status bitmap.
+- *		Added microcode_rwsem to serialize read()/write()/ioctl().
+- *		Removed global kernel lock usage.
+- *	1.07	07 Sep 2000, Tigran Aivazian <tigran@veritas.com>
+- *		Write 0 to 0x8B msr and then cpuid before reading revision,
+- *		so that it works even if there were no update done by the
+- *		BIOS. Otherwise, reading from 0x8B gives junk (which happened
+- *		to be 0 on my machine which is why it worked even when I
+- *		disabled update by the BIOS)
+- *		Thanks to Eric W. Biederman <ebiederman@lnxi.com> for the fix.
+- *	1.08	11 Dec 2000, Richard Schaal <richard.schaal@intel.com> and
+- *			     Tigran Aivazian <tigran@veritas.com>
+- *		Intel Pentium 4 processor support and bugfixes.
+- *	1.09	30 Oct 2001, Tigran Aivazian <tigran@veritas.com>
+- *		Bugfix for HT (Hyper-Threading) enabled processors
+- *		whereby processor resources are shared by all logical processors
+- *		in a single CPU package.
+- *	1.10	28 Feb 2002 Asit K Mallick <asit.k.mallick@intel.com> and
+- *		Tigran Aivazian <tigran@veritas.com>,
+- *		Serialize updates as required on HT processors due to
+- *		speculative nature of implementation.
+- *	1.11	22 Mar 2002 Tigran Aivazian <tigran@veritas.com>
+- *		Fix the panic when writing zero-length microcode chunk.
+- *	1.12	29 Sep 2003 Nitin Kamble <nitin.a.kamble@intel.com>,
+- *		Jun Nakajima <jun.nakajima@intel.com>
+- *		Support for the microcode updates in the new format.
+- *	1.13	10 Oct 2003 Tigran Aivazian <tigran@veritas.com>
+- *		Removed ->read() method and obsoleted MICROCODE_IOCFREE ioctl
+- *		because we no longer hold a copy of applied microcode
+- *		in kernel memory.
+- *	1.14	25 Jun 2004 Tigran Aivazian <tigran@veritas.com>
+- *		Fix sigmatch() macro to handle old CPUs with pf == 0.
+- *		Thanks to Stuart Swales for pointing out this bug.
+- */
+-
+-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+-
+-#include <linux/platform_device.h>
+-#include <linux/miscdevice.h>
+-#include <linux/capability.h>
+-#include <linux/kernel.h>
+-#include <linux/module.h>
+-#include <linux/mutex.h>
+-#include <linux/cpu.h>
+-#include <linux/fs.h>
+-#include <linux/mm.h>
+-#include <linux/syscore_ops.h>
+-
+-#include <asm/microcode.h>
+-#include <asm/processor.h>
+-#include <asm/cpu_device_id.h>
+-#include <asm/perf_event.h>
+-
+-MODULE_DESCRIPTION("Microcode Update Driver");
+-MODULE_AUTHOR("Tigran Aivazian <tigran@aivazian.fsnet.co.uk>");
+-MODULE_LICENSE("GPL");
+-
+-#define MICROCODE_VERSION	"2.00"
+-
+-static struct microcode_ops	*microcode_ops;
+-
+-/*
+- * Synchronization.
+- *
+- * All non cpu-hotplug-callback call sites use:
+- *
+- * - microcode_mutex to synchronize with each other;
+- * - get/put_online_cpus() to synchronize with
+- *   the cpu-hotplug-callback call sites.
+- *
+- * We guarantee that only a single cpu is being
+- * updated at any particular moment of time.
+- */
+-static DEFINE_MUTEX(microcode_mutex);
+-
+-struct ucode_cpu_info		ucode_cpu_info[NR_CPUS];
+-EXPORT_SYMBOL_GPL(ucode_cpu_info);
+-
+-/*
+- * Operations that are run on a target cpu:
+- */
+-
+-struct cpu_info_ctx {
+-	struct cpu_signature	*cpu_sig;
+-	int			err;
+-};
+-
+-static void collect_cpu_info_local(void *arg)
+-{
+-	struct cpu_info_ctx *ctx = arg;
+-
+-	ctx->err = microcode_ops->collect_cpu_info(smp_processor_id(),
+-						   ctx->cpu_sig);
+-}
+-
+-static int collect_cpu_info_on_target(int cpu, struct cpu_signature *cpu_sig)
+-{
+-	struct cpu_info_ctx ctx = { .cpu_sig = cpu_sig, .err = 0 };
+-	int ret;
+-
+-	ret = smp_call_function_single(cpu, collect_cpu_info_local, &ctx, 1);
+-	if (!ret)
+-		ret = ctx.err;
+-
+-	return ret;
+-}
+-
+-static int collect_cpu_info(int cpu)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-	int ret;
+-
+-	memset(uci, 0, sizeof(*uci));
+-
+-	ret = collect_cpu_info_on_target(cpu, &uci->cpu_sig);
+-	if (!ret)
+-		uci->valid = 1;
+-
+-	return ret;
+-}
+-
+-struct apply_microcode_ctx {
+-	int err;
+-};
+-
+-static void apply_microcode_local(void *arg)
+-{
+-	struct apply_microcode_ctx *ctx = arg;
+-
+-	ctx->err = microcode_ops->apply_microcode(smp_processor_id());
+-}
+-
+-static int apply_microcode_on_target(int cpu)
+-{
+-	struct apply_microcode_ctx ctx = { .err = 0 };
+-	int ret;
+-
+-	ret = smp_call_function_single(cpu, apply_microcode_local, &ctx, 1);
+-	if (!ret)
+-		ret = ctx.err;
+-
+-	return ret;
+-}
+-
+-#ifdef CONFIG_MICROCODE_OLD_INTERFACE
+-static int do_microcode_update(const void __user *buf, size_t size)
+-{
+-	int error = 0;
+-	int cpu;
+-
+-	for_each_online_cpu(cpu) {
+-		struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-		enum ucode_state ustate;
+-
+-		if (!uci->valid)
+-			continue;
+-
+-		ustate = microcode_ops->request_microcode_user(cpu, buf, size);
+-		if (ustate == UCODE_ERROR) {
+-			error = -1;
+-			break;
+-		} else if (ustate == UCODE_OK)
+-			apply_microcode_on_target(cpu);
+-	}
+-
+-	return error;
+-}
+-
+-static int microcode_open(struct inode *inode, struct file *file)
+-{
+-	return capable(CAP_SYS_RAWIO) ? nonseekable_open(inode, file) : -EPERM;
+-}
+-
+-static ssize_t microcode_write(struct file *file, const char __user *buf,
+-			       size_t len, loff_t *ppos)
+-{
+-	ssize_t ret = -EINVAL;
+-
+-	if ((len >> PAGE_SHIFT) > totalram_pages) {
+-		pr_err("too much data (max %ld pages)\n", totalram_pages);
+-		return ret;
+-	}
+-
+-	get_online_cpus();
+-	mutex_lock(&microcode_mutex);
+-
+-	if (do_microcode_update(buf, len) == 0)
+-		ret = (ssize_t)len;
+-
+-	if (ret > 0)
+-		perf_check_microcode();
+-
+-	mutex_unlock(&microcode_mutex);
+-	put_online_cpus();
+-
+-	return ret;
+-}
+-
+-static const struct file_operations microcode_fops = {
+-	.owner			= THIS_MODULE,
+-	.write			= microcode_write,
+-	.open			= microcode_open,
+-	.llseek		= no_llseek,
+-};
+-
+-static struct miscdevice microcode_dev = {
+-	.minor			= MICROCODE_MINOR,
+-	.name			= "microcode",
+-	.nodename		= "cpu/microcode",
+-	.fops			= &microcode_fops,
+-};
+-
+-static int __init microcode_dev_init(void)
+-{
+-	int error;
+-
+-	error = misc_register(&microcode_dev);
+-	if (error) {
+-		pr_err("can't misc_register on minor=%d\n", MICROCODE_MINOR);
+-		return error;
+-	}
+-
+-	return 0;
+-}
+-
+-static void __exit microcode_dev_exit(void)
+-{
+-	misc_deregister(&microcode_dev);
+-}
+-
+-MODULE_ALIAS_MISCDEV(MICROCODE_MINOR);
+-MODULE_ALIAS("devname:cpu/microcode");
+-#else
+-#define microcode_dev_init()	0
+-#define microcode_dev_exit()	do { } while (0)
+-#endif
+-
+-/* fake device for request_firmware */
+-static struct platform_device	*microcode_pdev;
+-
+-static int reload_for_cpu(int cpu)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-	enum ucode_state ustate;
+-	int err = 0;
+-
+-	if (!uci->valid)
+-		return err;
+-
+-	ustate = microcode_ops->request_microcode_fw(cpu, &microcode_pdev->dev, true);
+-	if (ustate == UCODE_OK)
+-		apply_microcode_on_target(cpu);
+-	else
+-		if (ustate == UCODE_ERROR)
+-			err = -EINVAL;
+-	return err;
+-}
+-
+-static ssize_t reload_store(struct device *dev,
+-			    struct device_attribute *attr,
+-			    const char *buf, size_t size)
+-{
+-	unsigned long val;
+-	int cpu;
+-	ssize_t ret = 0, tmp_ret;
+-
+-	ret = kstrtoul(buf, 0, &val);
+-	if (ret)
+-		return ret;
+-
+-	if (val != 1)
+-		return size;
+-
+-	get_online_cpus();
+-	mutex_lock(&microcode_mutex);
+-	for_each_online_cpu(cpu) {
+-		tmp_ret = reload_for_cpu(cpu);
+-		if (tmp_ret != 0)
+-			pr_warn("Error reloading microcode on CPU %d\n", cpu);
+-
+-		/* save retval of the first encountered reload error */
+-		if (!ret)
+-			ret = tmp_ret;
+-	}
+-	if (!ret)
+-		perf_check_microcode();
+-	mutex_unlock(&microcode_mutex);
+-	put_online_cpus();
+-
+-	if (!ret)
+-		ret = size;
+-
+-	return ret;
+-}
+-
+-static ssize_t version_show(struct device *dev,
+-			struct device_attribute *attr, char *buf)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + dev->id;
+-
+-	return sprintf(buf, "0x%x\n", uci->cpu_sig.rev);
+-}
+-
+-static ssize_t pf_show(struct device *dev,
+-			struct device_attribute *attr, char *buf)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + dev->id;
+-
+-	return sprintf(buf, "0x%x\n", uci->cpu_sig.pf);
+-}
+-
+-static DEVICE_ATTR(reload, 0200, NULL, reload_store);
+-static DEVICE_ATTR(version, 0400, version_show, NULL);
+-static DEVICE_ATTR(processor_flags, 0400, pf_show, NULL);
+-
+-static struct attribute *mc_default_attrs[] = {
+-	&dev_attr_version.attr,
+-	&dev_attr_processor_flags.attr,
+-	NULL
+-};
+-
+-static struct attribute_group mc_attr_group = {
+-	.attrs			= mc_default_attrs,
+-	.name			= "microcode",
+-};
+-
+-static void microcode_fini_cpu(int cpu)
+-{
+-	microcode_ops->microcode_fini_cpu(cpu);
+-}
+-
+-static enum ucode_state microcode_resume_cpu(int cpu)
+-{
+-	pr_debug("CPU%d updated upon resume\n", cpu);
+-
+-	if (apply_microcode_on_target(cpu))
+-		return UCODE_ERROR;
+-
+-	return UCODE_OK;
+-}
+-
+-static enum ucode_state microcode_init_cpu(int cpu, bool refresh_fw)
+-{
+-	enum ucode_state ustate;
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-
+-	if (uci && uci->valid)
+-		return UCODE_OK;
+-
+-	if (collect_cpu_info(cpu))
+-		return UCODE_ERROR;
+-
+-	/* --dimm. Trigger a delayed update? */
+-	if (system_state != SYSTEM_RUNNING)
+-		return UCODE_NFOUND;
+-
+-	ustate = microcode_ops->request_microcode_fw(cpu, &microcode_pdev->dev,
+-						     refresh_fw);
+-
+-	if (ustate == UCODE_OK) {
+-		pr_debug("CPU%d updated upon init\n", cpu);
+-		apply_microcode_on_target(cpu);
+-	}
+-
+-	return ustate;
+-}
+-
+-static enum ucode_state microcode_update_cpu(int cpu)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-
+-	if (uci->valid)
+-		return microcode_resume_cpu(cpu);
+-
+-	return microcode_init_cpu(cpu, false);
+-}
+-
+-static int mc_device_add(struct device *dev, struct subsys_interface *sif)
+-{
+-	int err, cpu = dev->id;
+-
+-	if (!cpu_online(cpu))
+-		return 0;
+-
+-	pr_debug("CPU%d added\n", cpu);
+-
+-	err = sysfs_create_group(&dev->kobj, &mc_attr_group);
+-	if (err)
+-		return err;
+-
+-	if (microcode_init_cpu(cpu, true) == UCODE_ERROR)
+-		return -EINVAL;
+-
+-	return err;
+-}
+-
+-static int mc_device_remove(struct device *dev, struct subsys_interface *sif)
+-{
+-	int cpu = dev->id;
+-
+-	if (!cpu_online(cpu))
+-		return 0;
+-
+-	pr_debug("CPU%d removed\n", cpu);
+-	microcode_fini_cpu(cpu);
+-	sysfs_remove_group(&dev->kobj, &mc_attr_group);
+-	return 0;
+-}
+-
+-static struct subsys_interface mc_cpu_interface = {
+-	.name			= "microcode",
+-	.subsys			= &cpu_subsys,
+-	.add_dev		= mc_device_add,
+-	.remove_dev		= mc_device_remove,
+-};
+-
+-/**
+- * mc_bp_resume - Update boot CPU microcode during resume.
+- */
+-static void mc_bp_resume(void)
+-{
+-	int cpu = smp_processor_id();
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-
+-	if (uci->valid && uci->mc)
+-		microcode_ops->apply_microcode(cpu);
+-}
+-
+-static struct syscore_ops mc_syscore_ops = {
+-	.resume			= mc_bp_resume,
+-};
+-
+-static int
+-mc_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu)
+-{
+-	unsigned int cpu = (unsigned long)hcpu;
+-	struct device *dev;
+-
+-	dev = get_cpu_device(cpu);
+-
+-	switch (action & ~CPU_TASKS_FROZEN) {
+-	case CPU_ONLINE:
+-		microcode_update_cpu(cpu);
+-		pr_debug("CPU%d added\n", cpu);
+-		/*
+-		 * "break" is missing on purpose here because we want to fall
+-		 * through in order to create the sysfs group.
+-		 */
+-
+-	case CPU_DOWN_FAILED:
+-		if (sysfs_create_group(&dev->kobj, &mc_attr_group))
+-			pr_err("Failed to create group for CPU%d\n", cpu);
+-		break;
+-
+-	case CPU_DOWN_PREPARE:
+-		/* Suspend is in progress, only remove the interface */
+-		sysfs_remove_group(&dev->kobj, &mc_attr_group);
+-		pr_debug("CPU%d removed\n", cpu);
+-		break;
+-
+-	/*
+-	 * case CPU_DEAD:
+-	 *
+-	 * When a CPU goes offline, don't free up or invalidate the copy of
+-	 * the microcode in kernel memory, so that we can reuse it when the
+-	 * CPU comes back online without unnecessarily requesting the userspace
+-	 * for it again.
+-	 */
+-	}
+-
+-	/* The CPU refused to come up during a system resume */
+-	if (action == CPU_UP_CANCELED_FROZEN)
+-		microcode_fini_cpu(cpu);
+-
+-	return NOTIFY_OK;
+-}
+-
+-static struct notifier_block __refdata mc_cpu_notifier = {
+-	.notifier_call	= mc_cpu_callback,
+-};
+-
+-#ifdef MODULE
+-/* Autoload on Intel and AMD systems */
+-static const struct x86_cpu_id __initconst microcode_id[] = {
+-#ifdef CONFIG_MICROCODE_INTEL
+-	{ X86_VENDOR_INTEL, X86_FAMILY_ANY, X86_MODEL_ANY, },
+-#endif
+-#ifdef CONFIG_MICROCODE_AMD
+-	{ X86_VENDOR_AMD, X86_FAMILY_ANY, X86_MODEL_ANY, },
+-#endif
+-	{}
+-};
+-MODULE_DEVICE_TABLE(x86cpu, microcode_id);
+-#endif
+-
+-static struct attribute *cpu_root_microcode_attrs[] = {
+-	&dev_attr_reload.attr,
+-	NULL
+-};
+-
+-static struct attribute_group cpu_root_microcode_group = {
+-	.name  = "microcode",
+-	.attrs = cpu_root_microcode_attrs,
+-};
+-
+-static int __init microcode_init(void)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(0);
+-	int error;
+-
+-	if (c->x86_vendor == X86_VENDOR_INTEL)
+-		microcode_ops = init_intel_microcode();
+-	else if (c->x86_vendor == X86_VENDOR_AMD)
+-		microcode_ops = init_amd_microcode();
+-	else
+-		pr_err("no support for this CPU vendor\n");
+-
+-	if (!microcode_ops)
+-		return -ENODEV;
+-
+-	microcode_pdev = platform_device_register_simple("microcode", -1,
+-							 NULL, 0);
+-	if (IS_ERR(microcode_pdev))
+-		return PTR_ERR(microcode_pdev);
+-
+-	get_online_cpus();
+-	mutex_lock(&microcode_mutex);
+-
+-	error = subsys_interface_register(&mc_cpu_interface);
+-	if (!error)
+-		perf_check_microcode();
+-	mutex_unlock(&microcode_mutex);
+-	put_online_cpus();
+-
+-	if (error)
+-		goto out_pdev;
+-
+-	error = sysfs_create_group(&cpu_subsys.dev_root->kobj,
+-				   &cpu_root_microcode_group);
+-
+-	if (error) {
+-		pr_err("Error creating microcode group!\n");
+-		goto out_driver;
+-	}
+-
+-	error = microcode_dev_init();
+-	if (error)
+-		goto out_ucode_group;
+-
+-	register_syscore_ops(&mc_syscore_ops);
+-	register_hotcpu_notifier(&mc_cpu_notifier);
+-
+-	pr_info("Microcode Update Driver: v" MICROCODE_VERSION
+-		" <tigran@aivazian.fsnet.co.uk>, Peter Oruba\n");
+-
+-	return 0;
+-
+- out_ucode_group:
+-	sysfs_remove_group(&cpu_subsys.dev_root->kobj,
+-			   &cpu_root_microcode_group);
+-
+- out_driver:
+-	get_online_cpus();
+-	mutex_lock(&microcode_mutex);
+-
+-	subsys_interface_unregister(&mc_cpu_interface);
+-
+-	mutex_unlock(&microcode_mutex);
+-	put_online_cpus();
+-
+- out_pdev:
+-	platform_device_unregister(microcode_pdev);
+-	return error;
+-
+-}
+-module_init(microcode_init);
+-
+-static void __exit microcode_exit(void)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(0);
+-
+-	microcode_dev_exit();
+-
+-	unregister_hotcpu_notifier(&mc_cpu_notifier);
+-	unregister_syscore_ops(&mc_syscore_ops);
+-
+-	sysfs_remove_group(&cpu_subsys.dev_root->kobj,
+-			   &cpu_root_microcode_group);
+-
+-	get_online_cpus();
+-	mutex_lock(&microcode_mutex);
+-
+-	subsys_interface_unregister(&mc_cpu_interface);
+-
+-	mutex_unlock(&microcode_mutex);
+-	put_online_cpus();
+-
+-	platform_device_unregister(microcode_pdev);
+-
+-	microcode_ops = NULL;
+-
+-	if (c->x86_vendor == X86_VENDOR_AMD)
+-		exit_amd_microcode();
+-
+-	pr_info("Microcode Update Driver: v" MICROCODE_VERSION " removed.\n");
+-}
+-module_exit(microcode_exit);
+diff --git a/arch/x86/kernel/microcode_core_early.c b/arch/x86/kernel/microcode_core_early.c
+deleted file mode 100644
+index be7f8514f577..000000000000
+--- a/arch/x86/kernel/microcode_core_early.c
++++ /dev/null
+@@ -1,141 +0,0 @@
+-/*
+- *	X86 CPU microcode early update for Linux
+- *
+- *	Copyright (C) 2012 Fenghua Yu <fenghua.yu@intel.com>
+- *			   H Peter Anvin" <hpa@zytor.com>
+- *
+- *	This driver allows to early upgrade microcode on Intel processors
+- *	belonging to IA-32 family - PentiumPro, Pentium II,
+- *	Pentium III, Xeon, Pentium 4, etc.
+- *
+- *	Reference: Section 9.11 of Volume 3, IA-32 Intel Architecture
+- *	Software Developer's Manual.
+- *
+- *	This program is free software; you can redistribute it and/or
+- *	modify it under the terms of the GNU General Public License
+- *	as published by the Free Software Foundation; either version
+- *	2 of the License, or (at your option) any later version.
+- */
+-#include <linux/module.h>
+-#include <asm/microcode_intel.h>
+-#include <asm/microcode_amd.h>
+-#include <asm/processor.h>
+-
+-#define QCHAR(a, b, c, d) ((a) + ((b) << 8) + ((c) << 16) + ((d) << 24))
+-#define CPUID_INTEL1 QCHAR('G', 'e', 'n', 'u')
+-#define CPUID_INTEL2 QCHAR('i', 'n', 'e', 'I')
+-#define CPUID_INTEL3 QCHAR('n', 't', 'e', 'l')
+-#define CPUID_AMD1 QCHAR('A', 'u', 't', 'h')
+-#define CPUID_AMD2 QCHAR('e', 'n', 't', 'i')
+-#define CPUID_AMD3 QCHAR('c', 'A', 'M', 'D')
+-
+-#define CPUID_IS(a, b, c, ebx, ecx, edx)	\
+-		(!((ebx ^ (a))|(edx ^ (b))|(ecx ^ (c))))
+-
+-/*
+- * In early loading microcode phase on BSP, boot_cpu_data is not set up yet.
+- * x86_vendor() gets vendor id for BSP.
+- *
+- * In 32 bit AP case, accessing boot_cpu_data needs linear address. To simplify
+- * coding, we still use x86_vendor() to get vendor id for AP.
+- *
+- * x86_vendor() gets vendor information directly through cpuid.
+- */
+-static int x86_vendor(void)
+-{
+-	u32 eax = 0x00000000;
+-	u32 ebx, ecx = 0, edx;
+-
+-	native_cpuid(&eax, &ebx, &ecx, &edx);
+-
+-	if (CPUID_IS(CPUID_INTEL1, CPUID_INTEL2, CPUID_INTEL3, ebx, ecx, edx))
+-		return X86_VENDOR_INTEL;
+-
+-	if (CPUID_IS(CPUID_AMD1, CPUID_AMD2, CPUID_AMD3, ebx, ecx, edx))
+-		return X86_VENDOR_AMD;
+-
+-	return X86_VENDOR_UNKNOWN;
+-}
+-
+-static int x86_family(void)
+-{
+-	u32 eax = 0x00000001;
+-	u32 ebx, ecx = 0, edx;
+-	int x86;
+-
+-	native_cpuid(&eax, &ebx, &ecx, &edx);
+-
+-	x86 = (eax >> 8) & 0xf;
+-	if (x86 == 15)
+-		x86 += (eax >> 20) & 0xff;
+-
+-	return x86;
+-}
+-
+-void __init load_ucode_bsp(void)
+-{
+-	int vendor, x86;
+-
+-	if (!have_cpuid_p())
+-		return;
+-
+-	vendor = x86_vendor();
+-	x86 = x86_family();
+-
+-	switch (vendor) {
+-	case X86_VENDOR_INTEL:
+-		if (x86 >= 6)
+-			load_ucode_intel_bsp();
+-		break;
+-	case X86_VENDOR_AMD:
+-		if (x86 >= 0x10)
+-			load_ucode_amd_bsp();
+-		break;
+-	default:
+-		break;
+-	}
+-}
+-
+-void load_ucode_ap(void)
+-{
+-	int vendor, x86;
+-
+-	if (!have_cpuid_p())
+-		return;
+-
+-	vendor = x86_vendor();
+-	x86 = x86_family();
+-
+-	switch (vendor) {
+-	case X86_VENDOR_INTEL:
+-		if (x86 >= 6)
+-			load_ucode_intel_ap();
+-		break;
+-	case X86_VENDOR_AMD:
+-		if (x86 >= 0x10)
+-			load_ucode_amd_ap();
+-		break;
+-	default:
+-		break;
+-	}
+-}
+-
+-int __init save_microcode_in_initrd(void)
+-{
+-	struct cpuinfo_x86 *c = &boot_cpu_data;
+-
+-	switch (c->x86_vendor) {
+-	case X86_VENDOR_INTEL:
+-		if (c->x86 >= 6)
+-			save_microcode_in_initrd_intel();
+-		break;
+-	case X86_VENDOR_AMD:
+-		if (c->x86 >= 0x10)
+-			save_microcode_in_initrd_amd();
+-		break;
+-	default:
+-		break;
+-	}
+-
+-	return 0;
+-}
+diff --git a/arch/x86/kernel/microcode_intel.c b/arch/x86/kernel/microcode_intel.c
+deleted file mode 100644
+index 5fb2cebf556b..000000000000
+--- a/arch/x86/kernel/microcode_intel.c
++++ /dev/null
+@@ -1,333 +0,0 @@
+-/*
+- *	Intel CPU Microcode Update Driver for Linux
+- *
+- *	Copyright (C) 2000-2006 Tigran Aivazian <tigran@aivazian.fsnet.co.uk>
+- *		      2006	Shaohua Li <shaohua.li@intel.com>
+- *
+- *	This driver allows to upgrade microcode on Intel processors
+- *	belonging to IA-32 family - PentiumPro, Pentium II,
+- *	Pentium III, Xeon, Pentium 4, etc.
+- *
+- *	Reference: Section 8.11 of Volume 3a, IA-32 Intel? Architecture
+- *	Software Developer's Manual
+- *	Order Number 253668 or free download from:
+- *
+- *	http://developer.intel.com/Assets/PDF/manual/253668.pdf	
+- *
+- *	For more information, go to http://www.urbanmyth.org/microcode
+- *
+- *	This program is free software; you can redistribute it and/or
+- *	modify it under the terms of the GNU General Public License
+- *	as published by the Free Software Foundation; either version
+- *	2 of the License, or (at your option) any later version.
+- *
+- *	1.0	16 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Initial release.
+- *	1.01	18 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Added read() support + cleanups.
+- *	1.02	21 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Added 'device trimming' support. open(O_WRONLY) zeroes
+- *		and frees the saved copy of applied microcode.
+- *	1.03	29 Feb 2000, Tigran Aivazian <tigran@sco.com>
+- *		Made to use devfs (/dev/cpu/microcode) + cleanups.
+- *	1.04	06 Jun 2000, Simon Trimmer <simon@veritas.com>
+- *		Added misc device support (now uses both devfs and misc).
+- *		Added MICROCODE_IOCFREE ioctl to clear memory.
+- *	1.05	09 Jun 2000, Simon Trimmer <simon@veritas.com>
+- *		Messages for error cases (non Intel & no suitable microcode).
+- *	1.06	03 Aug 2000, Tigran Aivazian <tigran@veritas.com>
+- *		Removed ->release(). Removed exclusive open and status bitmap.
+- *		Added microcode_rwsem to serialize read()/write()/ioctl().
+- *		Removed global kernel lock usage.
+- *	1.07	07 Sep 2000, Tigran Aivazian <tigran@veritas.com>
+- *		Write 0 to 0x8B msr and then cpuid before reading revision,
+- *		so that it works even if there were no update done by the
+- *		BIOS. Otherwise, reading from 0x8B gives junk (which happened
+- *		to be 0 on my machine which is why it worked even when I
+- *		disabled update by the BIOS)
+- *		Thanks to Eric W. Biederman <ebiederman@lnxi.com> for the fix.
+- *	1.08	11 Dec 2000, Richard Schaal <richard.schaal@intel.com> and
+- *			     Tigran Aivazian <tigran@veritas.com>
+- *		Intel Pentium 4 processor support and bugfixes.
+- *	1.09	30 Oct 2001, Tigran Aivazian <tigran@veritas.com>
+- *		Bugfix for HT (Hyper-Threading) enabled processors
+- *		whereby processor resources are shared by all logical processors
+- *		in a single CPU package.
+- *	1.10	28 Feb 2002 Asit K Mallick <asit.k.mallick@intel.com> and
+- *		Tigran Aivazian <tigran@veritas.com>,
+- *		Serialize updates as required on HT processors due to
+- *		speculative nature of implementation.
+- *	1.11	22 Mar 2002 Tigran Aivazian <tigran@veritas.com>
+- *		Fix the panic when writing zero-length microcode chunk.
+- *	1.12	29 Sep 2003 Nitin Kamble <nitin.a.kamble@intel.com>,
+- *		Jun Nakajima <jun.nakajima@intel.com>
+- *		Support for the microcode updates in the new format.
+- *	1.13	10 Oct 2003 Tigran Aivazian <tigran@veritas.com>
+- *		Removed ->read() method and obsoleted MICROCODE_IOCFREE ioctl
+- *		because we no longer hold a copy of applied microcode
+- *		in kernel memory.
+- *	1.14	25 Jun 2004 Tigran Aivazian <tigran@veritas.com>
+- *		Fix sigmatch() macro to handle old CPUs with pf == 0.
+- *		Thanks to Stuart Swales for pointing out this bug.
+- */
+-
+-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+-
+-#include <linux/firmware.h>
+-#include <linux/uaccess.h>
+-#include <linux/kernel.h>
+-#include <linux/module.h>
+-#include <linux/vmalloc.h>
+-
+-#include <asm/microcode_intel.h>
+-#include <asm/processor.h>
+-#include <asm/msr.h>
+-
+-MODULE_DESCRIPTION("Microcode Update Driver");
+-MODULE_AUTHOR("Tigran Aivazian <tigran@aivazian.fsnet.co.uk>");
+-MODULE_LICENSE("GPL");
+-
+-static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
+-	unsigned int val[2];
+-
+-	memset(csig, 0, sizeof(*csig));
+-
+-	csig->sig = cpuid_eax(0x00000001);
+-
+-	if ((c->x86_model >= 5) || (c->x86 > 6)) {
+-		/* get processor flags from MSR 0x17 */
+-		rdmsr(MSR_IA32_PLATFORM_ID, val[0], val[1]);
+-		csig->pf = 1 << ((val[1] >> 18) & 7);
+-	}
+-
+-	csig->rev = c->microcode;
+-	pr_info("CPU%d sig=0x%x, pf=0x%x, revision=0x%x\n",
+-		cpu_num, csig->sig, csig->pf, csig->rev);
+-
+-	return 0;
+-}
+-
+-/*
+- * return 0 - no update found
+- * return 1 - found update
+- */
+-static int get_matching_mc(struct microcode_intel *mc_intel, int cpu)
+-{
+-	struct cpu_signature cpu_sig;
+-	unsigned int csig, cpf, crev;
+-
+-	collect_cpu_info(cpu, &cpu_sig);
+-
+-	csig = cpu_sig.sig;
+-	cpf = cpu_sig.pf;
+-	crev = cpu_sig.rev;
+-
+-	return get_matching_microcode(csig, cpf, mc_intel, crev);
+-}
+-
+-int apply_microcode(int cpu)
+-{
+-	struct microcode_intel *mc_intel;
+-	struct ucode_cpu_info *uci;
+-	unsigned int val[2];
+-	int cpu_num = raw_smp_processor_id();
+-	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
+-
+-	uci = ucode_cpu_info + cpu;
+-	mc_intel = uci->mc;
+-
+-	/* We should bind the task to the CPU */
+-	BUG_ON(cpu_num != cpu);
+-
+-	if (mc_intel == NULL)
+-		return 0;
+-
+-	/*
+-	 * Microcode on this CPU could be updated earlier. Only apply the
+-	 * microcode patch in mc_intel when it is newer than the one on this
+-	 * CPU.
+-	 */
+-	if (get_matching_mc(mc_intel, cpu) == 0)
+-		return 0;
+-
+-	/* write microcode via MSR 0x79 */
+-	wrmsr(MSR_IA32_UCODE_WRITE,
+-	      (unsigned long) mc_intel->bits,
+-	      (unsigned long) mc_intel->bits >> 16 >> 16);
+-	wrmsr(MSR_IA32_UCODE_REV, 0, 0);
+-
+-	/* As documented in the SDM: Do a CPUID 1 here */
+-	sync_core();
+-
+-	/* get the current revision from MSR 0x8B */
+-	rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
+-
+-	if (val[1] != mc_intel->hdr.rev) {
+-		pr_err("CPU%d update to revision 0x%x failed\n",
+-		       cpu_num, mc_intel->hdr.rev);
+-		return -1;
+-	}
+-	pr_info("CPU%d updated to revision 0x%x, date = %04x-%02x-%02x\n",
+-		cpu_num, val[1],
+-		mc_intel->hdr.date & 0xffff,
+-		mc_intel->hdr.date >> 24,
+-		(mc_intel->hdr.date >> 16) & 0xff);
+-
+-	uci->cpu_sig.rev = val[1];
+-	c->microcode = val[1];
+-
+-	return 0;
+-}
+-
+-static enum ucode_state generic_load_microcode(int cpu, void *data, size_t size,
+-				int (*get_ucode_data)(void *, const void *, size_t))
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-	u8 *ucode_ptr = data, *new_mc = NULL, *mc = NULL;
+-	int new_rev = uci->cpu_sig.rev;
+-	unsigned int leftover = size;
+-	enum ucode_state state = UCODE_OK;
+-	unsigned int curr_mc_size = 0;
+-	unsigned int csig, cpf;
+-
+-	while (leftover) {
+-		struct microcode_header_intel mc_header;
+-		unsigned int mc_size;
+-
+-		if (get_ucode_data(&mc_header, ucode_ptr, sizeof(mc_header)))
+-			break;
+-
+-		mc_size = get_totalsize(&mc_header);
+-		if (!mc_size || mc_size > leftover) {
+-			pr_err("error! Bad data in microcode data file\n");
+-			break;
+-		}
+-
+-		/* For performance reasons, reuse mc area when possible */
+-		if (!mc || mc_size > curr_mc_size) {
+-			vfree(mc);
+-			mc = vmalloc(mc_size);
+-			if (!mc)
+-				break;
+-			curr_mc_size = mc_size;
+-		}
+-
+-		if (get_ucode_data(mc, ucode_ptr, mc_size) ||
+-		    microcode_sanity_check(mc, 1) < 0) {
+-			break;
+-		}
+-
+-		csig = uci->cpu_sig.sig;
+-		cpf = uci->cpu_sig.pf;
+-		if (get_matching_microcode(csig, cpf, mc, new_rev)) {
+-			vfree(new_mc);
+-			new_rev = mc_header.rev;
+-			new_mc  = mc;
+-			mc = NULL;	/* trigger new vmalloc */
+-		}
+-
+-		ucode_ptr += mc_size;
+-		leftover  -= mc_size;
+-	}
+-
+-	vfree(mc);
+-
+-	if (leftover) {
+-		vfree(new_mc);
+-		state = UCODE_ERROR;
+-		goto out;
+-	}
+-
+-	if (!new_mc) {
+-		state = UCODE_NFOUND;
+-		goto out;
+-	}
+-
+-	vfree(uci->mc);
+-	uci->mc = (struct microcode_intel *)new_mc;
+-
+-	/*
+-	 * If early loading microcode is supported, save this mc into
+-	 * permanent memory. So it will be loaded early when a CPU is hot added
+-	 * or resumes.
+-	 */
+-	save_mc_for_early(new_mc);
+-
+-	pr_debug("CPU%d found a matching microcode update with version 0x%x (current=0x%x)\n",
+-		 cpu, new_rev, uci->cpu_sig.rev);
+-out:
+-	return state;
+-}
+-
+-static int get_ucode_fw(void *to, const void *from, size_t n)
+-{
+-	memcpy(to, from, n);
+-	return 0;
+-}
+-
+-static enum ucode_state request_microcode_fw(int cpu, struct device *device,
+-					     bool refresh_fw)
+-{
+-	char name[30];
+-	struct cpuinfo_x86 *c = &cpu_data(cpu);
+-	const struct firmware *firmware;
+-	enum ucode_state ret;
+-
+-	sprintf(name, "intel-ucode/%02x-%02x-%02x",
+-		c->x86, c->x86_model, c->x86_mask);
+-
+-	if (request_firmware(&firmware, name, device)) {
+-		pr_debug("data file %s load failed\n", name);
+-		return UCODE_NFOUND;
+-	}
+-
+-	ret = generic_load_microcode(cpu, (void *)firmware->data,
+-				     firmware->size, &get_ucode_fw);
+-
+-	release_firmware(firmware);
+-
+-	return ret;
+-}
+-
+-static int get_ucode_user(void *to, const void *from, size_t n)
+-{
+-	return copy_from_user(to, from, n);
+-}
+-
+-static enum ucode_state
+-request_microcode_user(int cpu, const void __user *buf, size_t size)
+-{
+-	return generic_load_microcode(cpu, (void *)buf, size, &get_ucode_user);
+-}
+-
+-static void microcode_fini_cpu(int cpu)
+-{
+-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+-
+-	vfree(uci->mc);
+-	uci->mc = NULL;
+-}
+-
+-static struct microcode_ops microcode_intel_ops = {
+-	.request_microcode_user		  = request_microcode_user,
+-	.request_microcode_fw             = request_microcode_fw,
+-	.collect_cpu_info                 = collect_cpu_info,
+-	.apply_microcode                  = apply_microcode,
+-	.microcode_fini_cpu               = microcode_fini_cpu,
+-};
+-
+-struct microcode_ops * __init init_intel_microcode(void)
+-{
+-	struct cpuinfo_x86 *c = &cpu_data(0);
+-
+-	if (c->x86_vendor != X86_VENDOR_INTEL || c->x86 < 6 ||
+-	    cpu_has(c, X86_FEATURE_IA64)) {
+-		pr_err("Intel CPU family 0x%x not supported\n", c->x86);
+-		return NULL;
+-	}
+-
+-	return &microcode_intel_ops;
+-}
+-
+diff --git a/arch/x86/kernel/microcode_intel_early.c b/arch/x86/kernel/microcode_intel_early.c
+deleted file mode 100644
+index 18f739129e72..000000000000
+--- a/arch/x86/kernel/microcode_intel_early.c
++++ /dev/null
+@@ -1,787 +0,0 @@
+-/*
+- *	Intel CPU microcode early update for Linux
+- *
+- *	Copyright (C) 2012 Fenghua Yu <fenghua.yu@intel.com>
+- *			   H Peter Anvin" <hpa@zytor.com>
+- *
+- *	This allows to early upgrade microcode on Intel processors
+- *	belonging to IA-32 family - PentiumPro, Pentium II,
+- *	Pentium III, Xeon, Pentium 4, etc.
+- *
+- *	Reference: Section 9.11 of Volume 3, IA-32 Intel Architecture
+- *	Software Developer's Manual.
+- *
+- *	This program is free software; you can redistribute it and/or
+- *	modify it under the terms of the GNU General Public License
+- *	as published by the Free Software Foundation; either version
+- *	2 of the License, or (at your option) any later version.
+- */
+-#include <linux/module.h>
+-#include <linux/mm.h>
+-#include <linux/slab.h>
+-#include <linux/earlycpio.h>
+-#include <linux/initrd.h>
+-#include <linux/cpu.h>
+-#include <asm/msr.h>
+-#include <asm/microcode_intel.h>
+-#include <asm/processor.h>
+-#include <asm/tlbflush.h>
+-#include <asm/setup.h>
+-
+-unsigned long mc_saved_in_initrd[MAX_UCODE_COUNT];
+-struct mc_saved_data {
+-	unsigned int mc_saved_count;
+-	struct microcode_intel **mc_saved;
+-} mc_saved_data;
+-
+-static enum ucode_state
+-generic_load_microcode_early(struct microcode_intel **mc_saved_p,
+-			     unsigned int mc_saved_count,
+-			     struct ucode_cpu_info *uci)
+-{
+-	struct microcode_intel *ucode_ptr, *new_mc = NULL;
+-	int new_rev = uci->cpu_sig.rev;
+-	enum ucode_state state = UCODE_OK;
+-	unsigned int mc_size;
+-	struct microcode_header_intel *mc_header;
+-	unsigned int csig = uci->cpu_sig.sig;
+-	unsigned int cpf = uci->cpu_sig.pf;
+-	int i;
+-
+-	for (i = 0; i < mc_saved_count; i++) {
+-		ucode_ptr = mc_saved_p[i];
+-
+-		mc_header = (struct microcode_header_intel *)ucode_ptr;
+-		mc_size = get_totalsize(mc_header);
+-		if (get_matching_microcode(csig, cpf, ucode_ptr, new_rev)) {
+-			new_rev = mc_header->rev;
+-			new_mc  = ucode_ptr;
+-		}
+-	}
+-
+-	if (!new_mc) {
+-		state = UCODE_NFOUND;
+-		goto out;
+-	}
+-
+-	uci->mc = (struct microcode_intel *)new_mc;
+-out:
+-	return state;
+-}
+-
+-static void
+-microcode_pointer(struct microcode_intel **mc_saved,
+-		  unsigned long *mc_saved_in_initrd,
+-		  unsigned long initrd_start, int mc_saved_count)
+-{
+-	int i;
+-
+-	for (i = 0; i < mc_saved_count; i++)
+-		mc_saved[i] = (struct microcode_intel *)
+-			      (mc_saved_in_initrd[i] + initrd_start);
+-}
+-
+-#ifdef CONFIG_X86_32
+-static void
+-microcode_phys(struct microcode_intel **mc_saved_tmp,
+-	       struct mc_saved_data *mc_saved_data)
+-{
+-	int i;
+-	struct microcode_intel ***mc_saved;
+-
+-	mc_saved = (struct microcode_intel ***)
+-		   __pa_nodebug(&mc_saved_data->mc_saved);
+-	for (i = 0; i < mc_saved_data->mc_saved_count; i++) {
+-		struct microcode_intel *p;
+-
+-		p = *(struct microcode_intel **)
+-			__pa_nodebug(mc_saved_data->mc_saved + i);
+-		mc_saved_tmp[i] = (struct microcode_intel *)__pa_nodebug(p);
+-	}
+-}
+-#endif
+-
+-static enum ucode_state
+-load_microcode(struct mc_saved_data *mc_saved_data,
+-	       unsigned long *mc_saved_in_initrd,
+-	       unsigned long initrd_start,
+-	       struct ucode_cpu_info *uci)
+-{
+-	struct microcode_intel *mc_saved_tmp[MAX_UCODE_COUNT];
+-	unsigned int count = mc_saved_data->mc_saved_count;
+-
+-	if (!mc_saved_data->mc_saved) {
+-		microcode_pointer(mc_saved_tmp, mc_saved_in_initrd,
+-				  initrd_start, count);
+-
+-		return generic_load_microcode_early(mc_saved_tmp, count, uci);
+-	} else {
+-#ifdef CONFIG_X86_32
+-		microcode_phys(mc_saved_tmp, mc_saved_data);
+-		return generic_load_microcode_early(mc_saved_tmp, count, uci);
+-#else
+-		return generic_load_microcode_early(mc_saved_data->mc_saved,
+-						    count, uci);
+-#endif
+-	}
+-}
+-
+-static u8 get_x86_family(unsigned long sig)
+-{
+-	u8 x86;
+-
+-	x86 = (sig >> 8) & 0xf;
+-
+-	if (x86 == 0xf)
+-		x86 += (sig >> 20) & 0xff;
+-
+-	return x86;
+-}
+-
+-static u8 get_x86_model(unsigned long sig)
+-{
+-	u8 x86, x86_model;
+-
+-	x86 = get_x86_family(sig);
+-	x86_model = (sig >> 4) & 0xf;
+-
+-	if (x86 == 0x6 || x86 == 0xf)
+-		x86_model += ((sig >> 16) & 0xf) << 4;
+-
+-	return x86_model;
+-}
+-
+-/*
+- * Given CPU signature and a microcode patch, this function finds if the
+- * microcode patch has matching family and model with the CPU.
+- */
+-static enum ucode_state
+-matching_model_microcode(struct microcode_header_intel *mc_header,
+-			unsigned long sig)
+-{
+-	u8 x86, x86_model;
+-	u8 x86_ucode, x86_model_ucode;
+-	struct extended_sigtable *ext_header;
+-	unsigned long total_size = get_totalsize(mc_header);
+-	unsigned long data_size = get_datasize(mc_header);
+-	int ext_sigcount, i;
+-	struct extended_signature *ext_sig;
+-
+-	x86 = get_x86_family(sig);
+-	x86_model = get_x86_model(sig);
+-
+-	x86_ucode = get_x86_family(mc_header->sig);
+-	x86_model_ucode = get_x86_model(mc_header->sig);
+-
+-	if (x86 == x86_ucode && x86_model == x86_model_ucode)
+-		return UCODE_OK;
+-
+-	/* Look for ext. headers: */
+-	if (total_size <= data_size + MC_HEADER_SIZE)
+-		return UCODE_NFOUND;
+-
+-	ext_header = (struct extended_sigtable *)
+-		     mc_header + data_size + MC_HEADER_SIZE;
+-	ext_sigcount = ext_header->count;
+-	ext_sig = (void *)ext_header + EXT_HEADER_SIZE;
+-
+-	for (i = 0; i < ext_sigcount; i++) {
+-		x86_ucode = get_x86_family(ext_sig->sig);
+-		x86_model_ucode = get_x86_model(ext_sig->sig);
+-
+-		if (x86 == x86_ucode && x86_model == x86_model_ucode)
+-			return UCODE_OK;
+-
+-		ext_sig++;
+-	}
+-
+-	return UCODE_NFOUND;
+-}
+-
+-static int
+-save_microcode(struct mc_saved_data *mc_saved_data,
+-	       struct microcode_intel **mc_saved_src,
+-	       unsigned int mc_saved_count)
+-{
+-	int i, j;
+-	struct microcode_intel **mc_saved_p;
+-	int ret;
+-
+-	if (!mc_saved_count)
+-		return -EINVAL;
+-
+-	/*
+-	 * Copy new microcode data.
+-	 */
+-	mc_saved_p = kmalloc(mc_saved_count*sizeof(struct microcode_intel *),
+-			     GFP_KERNEL);
+-	if (!mc_saved_p)
+-		return -ENOMEM;
+-
+-	for (i = 0; i < mc_saved_count; i++) {
+-		struct microcode_intel *mc = mc_saved_src[i];
+-		struct microcode_header_intel *mc_header = &mc->hdr;
+-		unsigned long mc_size = get_totalsize(mc_header);
+-		mc_saved_p[i] = kmalloc(mc_size, GFP_KERNEL);
+-		if (!mc_saved_p[i]) {
+-			ret = -ENOMEM;
+-			goto err;
+-		}
+-		if (!mc_saved_src[i]) {
+-			ret = -EINVAL;
+-			goto err;
+-		}
+-		memcpy(mc_saved_p[i], mc, mc_size);
+-	}
+-
+-	/*
+-	 * Point to newly saved microcode.
+-	 */
+-	mc_saved_data->mc_saved = mc_saved_p;
+-	mc_saved_data->mc_saved_count = mc_saved_count;
+-
+-	return 0;
+-
+-err:
+-	for (j = 0; j <= i; j++)
+-		kfree(mc_saved_p[j]);
+-	kfree(mc_saved_p);
+-
+-	return ret;
+-}
+-
+-/*
+- * A microcode patch in ucode_ptr is saved into mc_saved
+- * - if it has matching signature and newer revision compared to an existing
+- *   patch mc_saved.
+- * - or if it is a newly discovered microcode patch.
+- *
+- * The microcode patch should have matching model with CPU.
+- */
+-static void _save_mc(struct microcode_intel **mc_saved, u8 *ucode_ptr,
+-		     unsigned int *mc_saved_count_p)
+-{
+-	int i;
+-	int found = 0;
+-	unsigned int mc_saved_count = *mc_saved_count_p;
+-	struct microcode_header_intel *mc_header;
+-
+-	mc_header = (struct microcode_header_intel *)ucode_ptr;
+-	for (i = 0; i < mc_saved_count; i++) {
+-		unsigned int sig, pf;
+-		unsigned int new_rev;
+-		struct microcode_header_intel *mc_saved_header =
+-			     (struct microcode_header_intel *)mc_saved[i];
+-		sig = mc_saved_header->sig;
+-		pf = mc_saved_header->pf;
+-		new_rev = mc_header->rev;
+-
+-		if (get_matching_sig(sig, pf, ucode_ptr, new_rev)) {
+-			found = 1;
+-			if (update_match_revision(mc_header, new_rev)) {
+-				/*
+-				 * Found an older ucode saved before.
+-				 * Replace the older one with this newer
+-				 * one.
+-				 */
+-				mc_saved[i] =
+-					(struct microcode_intel *)ucode_ptr;
+-				break;
+-			}
+-		}
+-	}
+-	if (i >= mc_saved_count && !found)
+-		/*
+-		 * This ucode is first time discovered in ucode file.
+-		 * Save it to memory.
+-		 */
+-		mc_saved[mc_saved_count++] =
+-				 (struct microcode_intel *)ucode_ptr;
+-
+-	*mc_saved_count_p = mc_saved_count;
+-}
+-
+-/*
+- * Get microcode matching with BSP's model. Only CPUs with the same model as
+- * BSP can stay in the platform.
+- */
+-static enum ucode_state __init
+-get_matching_model_microcode(int cpu, unsigned long start,
+-			     void *data, size_t size,
+-			     struct mc_saved_data *mc_saved_data,
+-			     unsigned long *mc_saved_in_initrd,
+-			     struct ucode_cpu_info *uci)
+-{
+-	u8 *ucode_ptr = data;
+-	unsigned int leftover = size;
+-	enum ucode_state state = UCODE_OK;
+-	unsigned int mc_size;
+-	struct microcode_header_intel *mc_header;
+-	struct microcode_intel *mc_saved_tmp[MAX_UCODE_COUNT];
+-	unsigned int mc_saved_count = mc_saved_data->mc_saved_count;
+-	int i;
+-
+-	while (leftover) {
+-		mc_header = (struct microcode_header_intel *)ucode_ptr;
+-
+-		mc_size = get_totalsize(mc_header);
+-		if (!mc_size || mc_size > leftover ||
+-			microcode_sanity_check(ucode_ptr, 0) < 0)
+-			break;
+-
+-		leftover -= mc_size;
+-
+-		/*
+-		 * Since APs with same family and model as the BSP may boot in
+-		 * the platform, we need to find and save microcode patches
+-		 * with the same family and model as the BSP.
+-		 */
+-		if (matching_model_microcode(mc_header, uci->cpu_sig.sig) !=
+-			 UCODE_OK) {
+-			ucode_ptr += mc_size;
+-			continue;
+-		}
+-
+-		_save_mc(mc_saved_tmp, ucode_ptr, &mc_saved_count);
+-
+-		ucode_ptr += mc_size;
+-	}
+-
+-	if (leftover) {
+-		state = UCODE_ERROR;
+-		goto out;
+-	}
+-
+-	if (mc_saved_count == 0) {
+-		state = UCODE_NFOUND;
+-		goto out;
+-	}
+-
+-	for (i = 0; i < mc_saved_count; i++)
+-		mc_saved_in_initrd[i] = (unsigned long)mc_saved_tmp[i] - start;
+-
+-	mc_saved_data->mc_saved_count = mc_saved_count;
+-out:
+-	return state;
+-}
+-
+-static int collect_cpu_info_early(struct ucode_cpu_info *uci)
+-{
+-	unsigned int val[2];
+-	u8 x86, x86_model;
+-	struct cpu_signature csig;
+-	unsigned int eax, ebx, ecx, edx;
+-
+-	csig.sig = 0;
+-	csig.pf = 0;
+-	csig.rev = 0;
+-
+-	memset(uci, 0, sizeof(*uci));
+-
+-	eax = 0x00000001;
+-	ecx = 0;
+-	native_cpuid(&eax, &ebx, &ecx, &edx);
+-	csig.sig = eax;
+-
+-	x86 = get_x86_family(csig.sig);
+-	x86_model = get_x86_model(csig.sig);
+-
+-	if ((x86_model >= 5) || (x86 > 6)) {
+-		/* get processor flags from MSR 0x17 */
+-		native_rdmsr(MSR_IA32_PLATFORM_ID, val[0], val[1]);
+-		csig.pf = 1 << ((val[1] >> 18) & 7);
+-	}
+-	native_wrmsr(MSR_IA32_UCODE_REV, 0, 0);
+-
+-	/* As documented in the SDM: Do a CPUID 1 here */
+-	sync_core();
+-
+-	/* get the current revision from MSR 0x8B */
+-	native_rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
+-
+-	csig.rev = val[1];
+-
+-	uci->cpu_sig = csig;
+-	uci->valid = 1;
+-
+-	return 0;
+-}
+-
+-#ifdef DEBUG
+-static void __ref show_saved_mc(void)
+-{
+-	int i, j;
+-	unsigned int sig, pf, rev, total_size, data_size, date;
+-	struct ucode_cpu_info uci;
+-
+-	if (mc_saved_data.mc_saved_count == 0) {
+-		pr_debug("no micorcode data saved.\n");
+-		return;
+-	}
+-	pr_debug("Total microcode saved: %d\n", mc_saved_data.mc_saved_count);
+-
+-	collect_cpu_info_early(&uci);
+-
+-	sig = uci.cpu_sig.sig;
+-	pf = uci.cpu_sig.pf;
+-	rev = uci.cpu_sig.rev;
+-	pr_debug("CPU%d: sig=0x%x, pf=0x%x, rev=0x%x\n",
+-		 smp_processor_id(), sig, pf, rev);
+-
+-	for (i = 0; i < mc_saved_data.mc_saved_count; i++) {
+-		struct microcode_header_intel *mc_saved_header;
+-		struct extended_sigtable *ext_header;
+-		int ext_sigcount;
+-		struct extended_signature *ext_sig;
+-
+-		mc_saved_header = (struct microcode_header_intel *)
+-				  mc_saved_data.mc_saved[i];
+-		sig = mc_saved_header->sig;
+-		pf = mc_saved_header->pf;
+-		rev = mc_saved_header->rev;
+-		total_size = get_totalsize(mc_saved_header);
+-		data_size = get_datasize(mc_saved_header);
+-		date = mc_saved_header->date;
+-
+-		pr_debug("mc_saved[%d]: sig=0x%x, pf=0x%x, rev=0x%x, toal size=0x%x, date = %04x-%02x-%02x\n",
+-			 i, sig, pf, rev, total_size,
+-			 date & 0xffff,
+-			 date >> 24,
+-			 (date >> 16) & 0xff);
+-
+-		/* Look for ext. headers: */
+-		if (total_size <= data_size + MC_HEADER_SIZE)
+-			continue;
+-
+-		ext_header = (struct extended_sigtable *)
+-			     mc_saved_header + data_size + MC_HEADER_SIZE;
+-		ext_sigcount = ext_header->count;
+-		ext_sig = (void *)ext_header + EXT_HEADER_SIZE;
+-
+-		for (j = 0; j < ext_sigcount; j++) {
+-			sig = ext_sig->sig;
+-			pf = ext_sig->pf;
+-
+-			pr_debug("\tExtended[%d]: sig=0x%x, pf=0x%x\n",
+-				 j, sig, pf);
+-
+-			ext_sig++;
+-		}
+-
+-	}
+-}
+-#else
+-static inline void show_saved_mc(void)
+-{
+-}
+-#endif
+-
+-#if defined(CONFIG_MICROCODE_INTEL_EARLY) && defined(CONFIG_HOTPLUG_CPU)
+-static DEFINE_MUTEX(x86_cpu_microcode_mutex);
+-/*
+- * Save this mc into mc_saved_data. So it will be loaded early when a CPU is
+- * hot added or resumes.
+- *
+- * Please make sure this mc should be a valid microcode patch before calling
+- * this function.
+- */
+-int save_mc_for_early(u8 *mc)
+-{
+-	struct microcode_intel *mc_saved_tmp[MAX_UCODE_COUNT];
+-	unsigned int mc_saved_count_init;
+-	unsigned int mc_saved_count;
+-	struct microcode_intel **mc_saved;
+-	int ret = 0;
+-	int i;
+-
+-	/*
+-	 * Hold hotplug lock so mc_saved_data is not accessed by a CPU in
+-	 * hotplug.
+-	 */
+-	mutex_lock(&x86_cpu_microcode_mutex);
+-
+-	mc_saved_count_init = mc_saved_data.mc_saved_count;
+-	mc_saved_count = mc_saved_data.mc_saved_count;
+-	mc_saved = mc_saved_data.mc_saved;
+-
+-	if (mc_saved && mc_saved_count)
+-		memcpy(mc_saved_tmp, mc_saved,
+-		       mc_saved_count * sizeof(struct mirocode_intel *));
+-	/*
+-	 * Save the microcode patch mc in mc_save_tmp structure if it's a newer
+-	 * version.
+-	 */
+-
+-	_save_mc(mc_saved_tmp, mc, &mc_saved_count);
+-
+-	/*
+-	 * Save the mc_save_tmp in global mc_saved_data.
+-	 */
+-	ret = save_microcode(&mc_saved_data, mc_saved_tmp, mc_saved_count);
+-	if (ret) {
+-		pr_err("Cannot save microcode patch.\n");
+-		goto out;
+-	}
+-
+-	show_saved_mc();
+-
+-	/*
+-	 * Free old saved microcod data.
+-	 */
+-	if (mc_saved) {
+-		for (i = 0; i < mc_saved_count_init; i++)
+-			kfree(mc_saved[i]);
+-		kfree(mc_saved);
+-	}
+-
+-out:
+-	mutex_unlock(&x86_cpu_microcode_mutex);
+-
+-	return ret;
+-}
+-EXPORT_SYMBOL_GPL(save_mc_for_early);
+-#endif
+-
+-static __initdata char ucode_name[] = "kernel/x86/microcode/GenuineIntel.bin";
+-static __init enum ucode_state
+-scan_microcode(unsigned long start, unsigned long end,
+-		struct mc_saved_data *mc_saved_data,
+-		unsigned long *mc_saved_in_initrd,
+-		struct ucode_cpu_info *uci)
+-{
+-	unsigned int size = end - start + 1;
+-	struct cpio_data cd;
+-	long offset = 0;
+-#ifdef CONFIG_X86_32
+-	char *p = (char *)__pa_nodebug(ucode_name);
+-#else
+-	char *p = ucode_name;
+-#endif
+-
+-	cd.data = NULL;
+-	cd.size = 0;
+-
+-	cd = find_cpio_data(p, (void *)start, size, &offset);
+-	if (!cd.data)
+-		return UCODE_ERROR;
+-
+-
+-	return get_matching_model_microcode(0, start, cd.data, cd.size,
+-					    mc_saved_data, mc_saved_in_initrd,
+-					    uci);
+-}
+-
+-/*
+- * Print ucode update info.
+- */
+-static void
+-print_ucode_info(struct ucode_cpu_info *uci, unsigned int date)
+-{
+-	int cpu = smp_processor_id();
+-
+-	pr_info("CPU%d microcode updated early to revision 0x%x, date = %04x-%02x-%02x\n",
+-		cpu,
+-		uci->cpu_sig.rev,
+-		date & 0xffff,
+-		date >> 24,
+-		(date >> 16) & 0xff);
+-}
+-
+-#ifdef CONFIG_X86_32
+-
+-static int delay_ucode_info;
+-static int current_mc_date;
+-
+-/*
+- * Print early updated ucode info after printk works. This is delayed info dump.
+- */
+-void show_ucode_info_early(void)
+-{
+-	struct ucode_cpu_info uci;
+-
+-	if (delay_ucode_info) {
+-		collect_cpu_info_early(&uci);
+-		print_ucode_info(&uci, current_mc_date);
+-		delay_ucode_info = 0;
+-	}
+-}
+-
+-/*
+- * At this point, we can not call printk() yet. Keep microcode patch number in
+- * mc_saved_data.mc_saved and delay printing microcode info in
+- * show_ucode_info_early() until printk() works.
+- */
+-static void print_ucode(struct ucode_cpu_info *uci)
+-{
+-	struct microcode_intel *mc_intel;
+-	int *delay_ucode_info_p;
+-	int *current_mc_date_p;
+-
+-	mc_intel = uci->mc;
+-	if (mc_intel == NULL)
+-		return;
+-
+-	delay_ucode_info_p = (int *)__pa_nodebug(&delay_ucode_info);
+-	current_mc_date_p = (int *)__pa_nodebug(&current_mc_date);
+-
+-	*delay_ucode_info_p = 1;
+-	*current_mc_date_p = mc_intel->hdr.date;
+-}
+-#else
+-
+-/*
+- * Flush global tlb. We only do this in x86_64 where paging has been enabled
+- * already and PGE should be enabled as well.
+- */
+-static inline void flush_tlb_early(void)
+-{
+-	__native_flush_tlb_global_irq_disabled();
+-}
+-
+-static inline void print_ucode(struct ucode_cpu_info *uci)
+-{
+-	struct microcode_intel *mc_intel;
+-
+-	mc_intel = uci->mc;
+-	if (mc_intel == NULL)
+-		return;
+-
+-	print_ucode_info(uci, mc_intel->hdr.date);
+-}
+-#endif
+-
+-static int apply_microcode_early(struct mc_saved_data *mc_saved_data,
+-				 struct ucode_cpu_info *uci)
+-{
+-	struct microcode_intel *mc_intel;
+-	unsigned int val[2];
+-
+-	mc_intel = uci->mc;
+-	if (mc_intel == NULL)
+-		return 0;
+-
+-	/* write microcode via MSR 0x79 */
+-	native_wrmsr(MSR_IA32_UCODE_WRITE,
+-	      (unsigned long) mc_intel->bits,
+-	      (unsigned long) mc_intel->bits >> 16 >> 16);
+-	native_wrmsr(MSR_IA32_UCODE_REV, 0, 0);
+-
+-	/* As documented in the SDM: Do a CPUID 1 here */
+-	sync_core();
+-
+-	/* get the current revision from MSR 0x8B */
+-	native_rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
+-	if (val[1] != mc_intel->hdr.rev)
+-		return -1;
+-
+-#ifdef CONFIG_X86_64
+-	/* Flush global tlb. This is precaution. */
+-	flush_tlb_early();
+-#endif
+-	uci->cpu_sig.rev = val[1];
+-
+-	print_ucode(uci);
+-
+-	return 0;
+-}
+-
+-/*
+- * This function converts microcode patch offsets previously stored in
+- * mc_saved_in_initrd to pointers and stores the pointers in mc_saved_data.
+- */
+-int __init save_microcode_in_initrd_intel(void)
+-{
+-	unsigned int count = mc_saved_data.mc_saved_count;
+-	struct microcode_intel *mc_saved[MAX_UCODE_COUNT];
+-	int ret = 0;
+-
+-	if (count == 0)
+-		return ret;
+-
+-	microcode_pointer(mc_saved, mc_saved_in_initrd, initrd_start, count);
+-	ret = save_microcode(&mc_saved_data, mc_saved, count);
+-	if (ret)
+-		pr_err("Cannot save microcode patches from initrd.\n");
+-
+-	show_saved_mc();
+-
+-	return ret;
+-}
+-
+-static void __init
+-_load_ucode_intel_bsp(struct mc_saved_data *mc_saved_data,
+-		      unsigned long *mc_saved_in_initrd,
+-		      unsigned long initrd_start_early,
+-		      unsigned long initrd_end_early,
+-		      struct ucode_cpu_info *uci)
+-{
+-	collect_cpu_info_early(uci);
+-	scan_microcode(initrd_start_early, initrd_end_early, mc_saved_data,
+-		       mc_saved_in_initrd, uci);
+-	load_microcode(mc_saved_data, mc_saved_in_initrd,
+-		       initrd_start_early, uci);
+-	apply_microcode_early(mc_saved_data, uci);
+-}
+-
+-void __init
+-load_ucode_intel_bsp(void)
+-{
+-	u64 ramdisk_image, ramdisk_size;
+-	unsigned long initrd_start_early, initrd_end_early;
+-	struct ucode_cpu_info uci;
+-#ifdef CONFIG_X86_32
+-	struct boot_params *boot_params_p;
+-
+-	boot_params_p = (struct boot_params *)__pa_nodebug(&boot_params);
+-	ramdisk_image = boot_params_p->hdr.ramdisk_image;
+-	ramdisk_size  = boot_params_p->hdr.ramdisk_size;
+-	initrd_start_early = ramdisk_image;
+-	initrd_end_early = initrd_start_early + ramdisk_size;
+-
+-	_load_ucode_intel_bsp(
+-		(struct mc_saved_data *)__pa_nodebug(&mc_saved_data),
+-		(unsigned long *)__pa_nodebug(&mc_saved_in_initrd),
+-		initrd_start_early, initrd_end_early, &uci);
+-#else
+-	ramdisk_image = boot_params.hdr.ramdisk_image;
+-	ramdisk_size  = boot_params.hdr.ramdisk_size;
+-	initrd_start_early = ramdisk_image + PAGE_OFFSET;
+-	initrd_end_early = initrd_start_early + ramdisk_size;
+-
+-	_load_ucode_intel_bsp(&mc_saved_data, mc_saved_in_initrd,
+-			      initrd_start_early, initrd_end_early, &uci);
+-#endif
+-}
+-
+-void load_ucode_intel_ap(void)
+-{
+-	struct mc_saved_data *mc_saved_data_p;
+-	struct ucode_cpu_info uci;
+-	unsigned long *mc_saved_in_initrd_p;
+-	unsigned long initrd_start_addr;
+-#ifdef CONFIG_X86_32
+-	unsigned long *initrd_start_p;
+-
+-	mc_saved_in_initrd_p =
+-		(unsigned long *)__pa_nodebug(mc_saved_in_initrd);
+-	mc_saved_data_p = (struct mc_saved_data *)__pa_nodebug(&mc_saved_data);
+-	initrd_start_p = (unsigned long *)__pa_nodebug(&initrd_start);
+-	initrd_start_addr = (unsigned long)__pa_nodebug(*initrd_start_p);
+-#else
+-	mc_saved_data_p = &mc_saved_data;
+-	mc_saved_in_initrd_p = mc_saved_in_initrd;
+-	initrd_start_addr = initrd_start;
+-#endif
+-
+-	/*
+-	 * If there is no valid ucode previously saved in memory, no need to
+-	 * update ucode on this AP.
+-	 */
+-	if (mc_saved_data_p->mc_saved_count == 0)
+-		return;
+-
+-	collect_cpu_info_early(&uci);
+-	load_microcode(mc_saved_data_p, mc_saved_in_initrd_p,
+-		       initrd_start_addr, &uci);
+-	apply_microcode_early(mc_saved_data_p, &uci);
+-}
+diff --git a/arch/x86/kernel/microcode_intel_lib.c b/arch/x86/kernel/microcode_intel_lib.c
+deleted file mode 100644
+index ce69320d0179..000000000000
+--- a/arch/x86/kernel/microcode_intel_lib.c
++++ /dev/null
+@@ -1,174 +0,0 @@
+-/*
+- *	Intel CPU Microcode Update Driver for Linux
+- *
+- *	Copyright (C) 2012 Fenghua Yu <fenghua.yu@intel.com>
+- *			   H Peter Anvin" <hpa@zytor.com>
+- *
+- *	This driver allows to upgrade microcode on Intel processors
+- *	belonging to IA-32 family - PentiumPro, Pentium II,
+- *	Pentium III, Xeon, Pentium 4, etc.
+- *
+- *	Reference: Section 8.11 of Volume 3a, IA-32 Intel? Architecture
+- *	Software Developer's Manual
+- *	Order Number 253668 or free download from:
+- *
+- *	http://developer.intel.com/Assets/PDF/manual/253668.pdf
+- *
+- *	For more information, go to http://www.urbanmyth.org/microcode
+- *
+- *	This program is free software; you can redistribute it and/or
+- *	modify it under the terms of the GNU General Public License
+- *	as published by the Free Software Foundation; either version
+- *	2 of the License, or (at your option) any later version.
+- *
+- */
+-#include <linux/firmware.h>
+-#include <linux/uaccess.h>
+-#include <linux/kernel.h>
+-#include <linux/module.h>
+-
+-#include <asm/microcode_intel.h>
+-#include <asm/processor.h>
+-#include <asm/msr.h>
+-
+-static inline int
+-update_match_cpu(unsigned int csig, unsigned int cpf,
+-		 unsigned int sig, unsigned int pf)
+-{
+-	return (!sigmatch(sig, csig, pf, cpf)) ? 0 : 1;
+-}
+-
+-int
+-update_match_revision(struct microcode_header_intel *mc_header, int rev)
+-{
+-	return (mc_header->rev <= rev) ? 0 : 1;
+-}
+-
+-int microcode_sanity_check(void *mc, int print_err)
+-{
+-	unsigned long total_size, data_size, ext_table_size;
+-	struct microcode_header_intel *mc_header = mc;
+-	struct extended_sigtable *ext_header = NULL;
+-	int sum, orig_sum, ext_sigcount = 0, i;
+-	struct extended_signature *ext_sig;
+-
+-	total_size = get_totalsize(mc_header);
+-	data_size = get_datasize(mc_header);
+-
+-	if (data_size + MC_HEADER_SIZE > total_size) {
+-		if (print_err)
+-			pr_err("error! Bad data size in microcode data file\n");
+-		return -EINVAL;
+-	}
+-
+-	if (mc_header->ldrver != 1 || mc_header->hdrver != 1) {
+-		if (print_err)
+-			pr_err("error! Unknown microcode update format\n");
+-		return -EINVAL;
+-	}
+-	ext_table_size = total_size - (MC_HEADER_SIZE + data_size);
+-	if (ext_table_size) {
+-		if ((ext_table_size < EXT_HEADER_SIZE)
+-		 || ((ext_table_size - EXT_HEADER_SIZE) % EXT_SIGNATURE_SIZE)) {
+-			if (print_err)
+-				pr_err("error! Small exttable size in microcode data file\n");
+-			return -EINVAL;
+-		}
+-		ext_header = mc + MC_HEADER_SIZE + data_size;
+-		if (ext_table_size != exttable_size(ext_header)) {
+-			if (print_err)
+-				pr_err("error! Bad exttable size in microcode data file\n");
+-			return -EFAULT;
+-		}
+-		ext_sigcount = ext_header->count;
+-	}
+-
+-	/* check extended table checksum */
+-	if (ext_table_size) {
+-		int ext_table_sum = 0;
+-		int *ext_tablep = (int *)ext_header;
+-
+-		i = ext_table_size / DWSIZE;
+-		while (i--)
+-			ext_table_sum += ext_tablep[i];
+-		if (ext_table_sum) {
+-			if (print_err)
+-				pr_warn("aborting, bad extended signature table checksum\n");
+-			return -EINVAL;
+-		}
+-	}
+-
+-	/* calculate the checksum */
+-	orig_sum = 0;
+-	i = (MC_HEADER_SIZE + data_size) / DWSIZE;
+-	while (i--)
+-		orig_sum += ((int *)mc)[i];
+-	if (orig_sum) {
+-		if (print_err)
+-			pr_err("aborting, bad checksum\n");
+-		return -EINVAL;
+-	}
+-	if (!ext_table_size)
+-		return 0;
+-	/* check extended signature checksum */
+-	for (i = 0; i < ext_sigcount; i++) {
+-		ext_sig = (void *)ext_header + EXT_HEADER_SIZE +
+-			  EXT_SIGNATURE_SIZE * i;
+-		sum = orig_sum
+-			- (mc_header->sig + mc_header->pf + mc_header->cksum)
+-			+ (ext_sig->sig + ext_sig->pf + ext_sig->cksum);
+-		if (sum) {
+-			if (print_err)
+-				pr_err("aborting, bad checksum\n");
+-			return -EINVAL;
+-		}
+-	}
+-	return 0;
+-}
+-EXPORT_SYMBOL_GPL(microcode_sanity_check);
+-
+-/*
+- * return 0 - no update found
+- * return 1 - found update
+- */
+-int get_matching_sig(unsigned int csig, int cpf, void *mc, int rev)
+-{
+-	struct microcode_header_intel *mc_header = mc;
+-	struct extended_sigtable *ext_header;
+-	unsigned long total_size = get_totalsize(mc_header);
+-	int ext_sigcount, i;
+-	struct extended_signature *ext_sig;
+-
+-	if (update_match_cpu(csig, cpf, mc_header->sig, mc_header->pf))
+-		return 1;
+-
+-	/* Look for ext. headers: */
+-	if (total_size <= get_datasize(mc_header) + MC_HEADER_SIZE)
+-		return 0;
+-
+-	ext_header = mc + get_datasize(mc_header) + MC_HEADER_SIZE;
+-	ext_sigcount = ext_header->count;
+-	ext_sig = (void *)ext_header + EXT_HEADER_SIZE;
+-
+-	for (i = 0; i < ext_sigcount; i++) {
+-		if (update_match_cpu(csig, cpf, ext_sig->sig, ext_sig->pf))
+-			return 1;
+-		ext_sig++;
+-	}
+-	return 0;
+-}
+-
+-/*
+- * return 0 - no update found
+- * return 1 - found update
+- */
+-int get_matching_microcode(unsigned int csig, int cpf, void *mc, int rev)
+-{
+-	struct microcode_header_intel *mc_header = mc;
+-
+-	if (!update_match_revision(mc_header, rev))
+-		return 0;
+-
+-	return get_matching_sig(csig, cpf, mc, rev);
+-}
+-EXPORT_SYMBOL_GPL(get_matching_microcode);
+
