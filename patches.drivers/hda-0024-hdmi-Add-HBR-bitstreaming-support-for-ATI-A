@@ -1,0 +1,102 @@
+From 461cf6b39dded3ddb15a2300a534aba039870e5f Mon Sep 17 00:00:00 2001
+From: Anssi Hannula <anssi.hannula@iki.fi>
+Date: Thu, 24 Oct 2013 21:10:37 +0300
+Subject: [PATCH] ALSA: hda - hdmi: Add HBR bitstreaming support for ATI/AMD HDMI codecs
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: 461cf6b39dded3ddb15a2300a534aba039870e5f
+Patch-mainline: 3.13-rc1
+References: bnc#866937
+
+ATI/AMD HDMI codecs do not include standard HDA HDMI HBR support (which
+is required for bitstreaming DTS-HD and Dolby TrueHD), instead they have
+custom verbs for checking and enabling it.
+
+Add support for the ATI/AMD HDMI HBR verbs.
+
+The specification is available at:
+http://www.x.org/docs/AMD/AMD_HDA_verbs_v2.pdf
+
+V2: adapted to hdmi_ops infrastructure
+
+Signed-off-by: Anssi Hannula <anssi.hannula@iki.fi>
+Tested-by: Peter Frühberger <fritsch@xbmc.org> # v1
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ sound/pci/hda/patch_hdmi.c |   35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+--- a/sound/pci/hda/patch_hdmi.c
++++ b/sound/pci/hda/patch_hdmi.c
+@@ -2859,6 +2859,7 @@ static int patch_nvhdmi(struct hda_codec
+ #define ATI_VERB_SET_MULTICHANNEL_23	0x778
+ #define ATI_VERB_SET_MULTICHANNEL_45	0x779
+ #define ATI_VERB_SET_MULTICHANNEL_67	0x77a
++#define ATI_VERB_SET_HBR_CONTROL	0x77c
+ #define ATI_VERB_SET_MULTICHANNEL_1	0x785
+ #define ATI_VERB_SET_MULTICHANNEL_3	0x786
+ #define ATI_VERB_SET_MULTICHANNEL_5	0x787
+@@ -2870,6 +2871,7 @@ static int patch_nvhdmi(struct hda_codec
+ #define ATI_VERB_GET_MULTICHANNEL_23	0xf78
+ #define ATI_VERB_GET_MULTICHANNEL_45	0xf79
+ #define ATI_VERB_GET_MULTICHANNEL_67	0xf7a
++#define ATI_VERB_GET_HBR_CONTROL	0xf7c
+ #define ATI_VERB_GET_MULTICHANNEL_1	0xf85
+ #define ATI_VERB_GET_MULTICHANNEL_3	0xf86
+ #define ATI_VERB_GET_MULTICHANNEL_5	0xf87
+@@ -2881,6 +2883,9 @@ static int patch_nvhdmi(struct hda_codec
+ #define ATI_MULTICHANNEL_MODE_PAIRED	0
+ #define ATI_MULTICHANNEL_MODE_SINGLE	1
+ 
++#define ATI_HBR_CAPABLE 0x01
++#define ATI_HBR_ENABLE 0x10
++
+ static int atihdmi_pin_get_eld(struct hda_codec *codec, hda_nid_t nid,
+ 			   unsigned char *buf, int *eld_size)
+ {
+@@ -3075,6 +3080,35 @@ static void atihdmi_paired_cea_alloc_to_
+ 	WARN_ON(count != channels);
+ }
+ 
++static int atihdmi_pin_hbr_setup(struct hda_codec *codec, hda_nid_t pin_nid,
++				 bool hbr)
++{
++	int hbr_ctl, hbr_ctl_new;
++
++	hbr_ctl = snd_hda_codec_read(codec, pin_nid, 0, ATI_VERB_GET_HBR_CONTROL, 0);
++	if (hbr_ctl & ATI_HBR_CAPABLE) {
++		if (hbr)
++			hbr_ctl_new = hbr_ctl | ATI_HBR_ENABLE;
++		else
++			hbr_ctl_new = hbr_ctl & ~ATI_HBR_ENABLE;
++
++		snd_printdd("atihdmi_pin_hbr_setup: "
++				"NID=0x%x, %shbr-ctl=0x%x\n",
++				pin_nid,
++				hbr_ctl == hbr_ctl_new ? "" : "new-",
++				hbr_ctl_new);
++
++		if (hbr_ctl != hbr_ctl_new)
++			snd_hda_codec_write(codec, pin_nid, 0,
++						ATI_VERB_SET_HBR_CONTROL,
++						hbr_ctl_new);
++
++	} else if (hbr)
++		return -EINVAL;
++
++	return 0;
++}
++
+ static int atihdmi_init(struct hda_codec *codec)
+ {
+ 	struct hdmi_spec *spec = codec->spec;
+@@ -3120,6 +3154,7 @@ static int patch_atihdmi(struct hda_code
+ 	spec->ops.pin_get_slot_channel = atihdmi_pin_get_slot_channel;
+ 	spec->ops.pin_set_slot_channel = atihdmi_pin_set_slot_channel;
+ 	spec->ops.pin_setup_infoframe = atihdmi_pin_setup_infoframe;
++	spec->ops.pin_hbr_setup = atihdmi_pin_hbr_setup;
+ 
+ 	if (!has_amd_full_remap_support(codec)) {
+ 		/* override to ATI/AMD-specific versions with pairwise mapping */
