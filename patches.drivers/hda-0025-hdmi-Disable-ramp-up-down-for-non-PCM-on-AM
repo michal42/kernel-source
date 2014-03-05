@@ -1,0 +1,89 @@
+From 84d69e790f48ff2e8472a8cf602243e43683eaf0 Mon Sep 17 00:00:00 2001
+From: Anssi Hannula <anssi.hannula@iki.fi>
+Date: Thu, 24 Oct 2013 21:10:38 +0300
+Subject: [PATCH] ALSA: hda - hdmi: Disable ramp-up/down for non-PCM on AMD codecs
+Git-commit: 84d69e790f48ff2e8472a8cf602243e43683eaf0
+Patch-mainline: 3.13-rc1
+References: bnc#866937
+
+Recent AMD HDMI codecs (revision ID 3 and later, 0x100300 as reported by
+procfs codec#0) have a configurable ramp-up/down functionality.
+
+The documentation ( http://www.x.org/docs/AMD/AMD_HDA_verbs_v2.pdf )
+specifies that 180 ("180/256 =~ 0.7") is recommended for PCM and 0 for
+non-PCM.
+
+Apply the recommended values according to provided S/PDIF AES0 settings
+since ramp-up/down does not make sense for non-PCM.
+
+V2: adapted to hdmi_ops infrastructure
+
+* More note from Anssi:
+actually, re-reading mails reveals that Olivier didn't find the
+expected difference with this setting, except for "maybe slightly
+slower startup with AES0=6" (i.e. value 0, which is unexpected).
+
+So maybe
+a) it makes too unnoticiable a difference, or
+b) only affects certain hardware (card and/or sink), or
+c) ramp-up/down is only triggered with the MUTE bit of
+   ATI_VERB_SET_MULTICHANNEL_xx which is also rev3+ specific,
+   but is not presently used by the driver,
+or something else.
+
+So there's a significant chance setting ramp rate is useless for us ATM,
+but probably does not do actual harm either.
+
+Signed-off-by: Anssi Hannula <anssi.hannula@iki.fi>
+Tested-by: Olivier Langlois <olivier@trillion01.com> # v1
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ sound/pci/hda/patch_hdmi.c |   22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+--- a/sound/pci/hda/patch_hdmi.c
++++ b/sound/pci/hda/patch_hdmi.c
+@@ -2878,6 +2878,10 @@ static int patch_nvhdmi(struct hda_codec
+ #define ATI_VERB_GET_MULTICHANNEL_7	0xf88
+ #define ATI_VERB_GET_MULTICHANNEL_MODE	0xf89
+ 
++/* AMD specific HDA cvt verbs */
++#define ATI_VERB_SET_RAMP_RATE		0x770
++#define ATI_VERB_GET_RAMP_RATE		0xf70
++
+ #define ATI_OUT_ENABLE 0x1
+ 
+ #define ATI_MULTICHANNEL_MODE_PAIRED	0
+@@ -3109,6 +3113,23 @@ static int atihdmi_pin_hbr_setup(struct
+ 	return 0;
+ }
+ 
++static int atihdmi_setup_stream(struct hda_codec *codec, hda_nid_t cvt_nid,
++				hda_nid_t pin_nid, u32 stream_tag, int format)
++{
++
++	if (is_amdhdmi_rev3_or_later(codec)) {
++		int ramp_rate = 180; /* default as per AMD spec */
++		/* disable ramp-up/down for non-pcm as per AMD spec */
++		if (format & AC_FMT_TYPE_NON_PCM)
++			ramp_rate = 0;
++
++		snd_hda_codec_write(codec, cvt_nid, 0, ATI_VERB_SET_RAMP_RATE, ramp_rate);
++	}
++
++	return hdmi_setup_stream(codec, cvt_nid, pin_nid, stream_tag, format);
++}
++
++
+ static int atihdmi_init(struct hda_codec *codec)
+ {
+ 	struct hdmi_spec *spec = codec->spec;
+@@ -3155,6 +3176,7 @@ static int patch_atihdmi(struct hda_code
+ 	spec->ops.pin_set_slot_channel = atihdmi_pin_set_slot_channel;
+ 	spec->ops.pin_setup_infoframe = atihdmi_pin_setup_infoframe;
+ 	spec->ops.pin_hbr_setup = atihdmi_pin_hbr_setup;
++	spec->ops.setup_stream = atihdmi_setup_stream;
+ 
+ 	if (!has_amd_full_remap_support(codec)) {
+ 		/* override to ATI/AMD-specific versions with pairwise mapping */
