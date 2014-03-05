@@ -1,0 +1,65 @@
+From 13122e6ebf24d9f676d8a40edc2e9a265e89b628 Mon Sep 17 00:00:00 2001
+From: Anssi Hannula <anssi.hannula@iki.fi>
+Date: Sun, 10 Nov 2013 20:56:10 +0200
+Subject: [PATCH] ALSA: hda - hdmi: Add error-checking to some codec reads
+Git-commit: 13122e6ebf24d9f676d8a40edc2e9a265e89b628
+Patch-mainline: 3.13-rc1
+References: bnc#866937
+
+Add error checks to HBR status reads (both generic and ATI/AMD) and
+ATI/AMD codec reads for ELD generation.
+
+Unchecked errors in these just caused more errors later on (invalid
+codec writes for the HBR ones and ELD parsing errors for the ATI/AMD ELD
+ones), but it is better to catch them earlier.
+
+Signed-off-by: Anssi Hannula <anssi.hannula@iki.fi>
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ sound/pci/hda/hda_eld.c    |    5 ++++-
+ sound/pci/hda/patch_hdmi.c |    5 ++++-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+--- a/sound/pci/hda/hda_eld.c
++++ b/sound/pci/hda/hda_eld.c
+@@ -680,7 +680,7 @@ int snd_hdmi_get_eld_ati(struct hda_code
+ 
+ 	spkalloc = snd_hda_codec_read(codec, nid, 0, ATI_VERB_GET_SPEAKER_ALLOCATION, 0);
+ 
+-	if (!spkalloc) {
++	if (spkalloc <= 0) {
+ 		snd_printd(KERN_INFO "HDMI ATI/AMD: no speaker allocation for ELD\n");
+ 		return -EINVAL;
+ 	}
+@@ -742,6 +742,9 @@ int snd_hdmi_get_eld_ati(struct hda_code
+ 		snd_hda_codec_write(codec, nid, 0, ATI_VERB_SET_AUDIO_DESCRIPTOR, i << 3);
+ 		ati_sad = snd_hda_codec_read(codec, nid, 0, ATI_VERB_GET_AUDIO_DESCRIPTOR, 0);
+ 
++		if (ati_sad <= 0)
++			continue;
++
+ 		if (ati_sad & ATI_AUDIODESC_RATES) {
+ 			/* format is supported, copy SAD as-is */
+ 			buf[pos++] = (ati_sad & 0x0000ff) >> 0;
+--- a/sound/pci/hda/patch_hdmi.c
++++ b/sound/pci/hda/patch_hdmi.c
+@@ -1263,6 +1263,9 @@ static int hdmi_pin_hbr_setup(struct hda
+ 		pinctl = snd_hda_codec_read(codec, pin_nid, 0,
+ 					    AC_VERB_GET_PIN_WIDGET_CONTROL, 0);
+ 
++		if (pinctl < 0)
++			return hbr ? -EINVAL : 0;
++
+ 		new_pinctl = pinctl & ~AC_PINCTL_EPT;
+ 		if (hbr)
+ 			new_pinctl |= AC_PINCTL_EPT_HBR;
+@@ -3101,7 +3104,7 @@ static int atihdmi_pin_hbr_setup(struct
+ 	int hbr_ctl, hbr_ctl_new;
+ 
+ 	hbr_ctl = snd_hda_codec_read(codec, pin_nid, 0, ATI_VERB_GET_HBR_CONTROL, 0);
+-	if (hbr_ctl & ATI_HBR_CAPABLE) {
++	if (hbr_ctl >= 0 && (hbr_ctl & ATI_HBR_CAPABLE)) {
+ 		if (hbr)
+ 			hbr_ctl_new = hbr_ctl | ATI_HBR_ENABLE;
+ 		else
