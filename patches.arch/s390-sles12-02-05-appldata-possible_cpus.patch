@@ -1,0 +1,34 @@
+From: Gerald Schaefer <gerald.schaefer@de.ibm.com>
+Subject: appldata_os: fix cpu array size calculation
+Patch-mainline: not yet
+Git-commit: -
+References: bnc#865896, LTC#104859
+
+Description:  appldata_os: fix cpu array size calculation
+Symptom:      Loading the appldata_os module fails with the following error:
+              could not insert 'appldata_os': Cannot allocate memory
+Problem:      The cpu array size calculation uses the NR_CPUS config option,
+              which was recently increased from 64 to 256. With a value of
+              256, the cpu array will no longer fit into one APPLDATA record.
+Solution:     Use num_possible_cpus() instead of NR_CPUS. For z/VM, this will
+              still result in a value of 64. This is not true for LPAR, but
+              the appldata feature is not available for LPAR.
+Reproduction: modprobe appldata_os
+
+Signed-off-by: Gerald Schaefer <gerald.schaefer@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/appldata/appldata_os.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/arch/s390/appldata/appldata_os.c
++++ b/arch/s390/appldata/appldata_os.c
+@@ -171,7 +171,7 @@ static int __init appldata_os_init(void)
+ 	int rc, max_size;
+ 
+ 	max_size = sizeof(struct appldata_os_data) +
+-		   (NR_CPUS * sizeof(struct appldata_os_per_cpu));
++		   (num_possible_cpus() * sizeof(struct appldata_os_per_cpu));
+ 	if (max_size > APPLDATA_MAX_REC_SIZE) {
+ 		pr_err("Maximum OS record size %i exceeds the maximum "
+ 		       "record size %i\n", max_size, APPLDATA_MAX_REC_SIZE);
