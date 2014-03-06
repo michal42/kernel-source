@@ -12,8 +12,8 @@ I/O to a known faulty device.
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 
 ---
- drivers/md/raid10.c |   32 +++++++++++++++++++++++++++-----
- 1 file changed, 27 insertions(+), 5 deletions(-)
+ drivers/md/raid10.c |   34 ++++++++++++++++++++++++++++------
+ 1 file changed, 28 insertions(+), 6 deletions(-)
 
 --- linux-3.12-SLE12.orig/drivers/md/raid10.c
 +++ linux-3.12-SLE12/drivers/md/raid10.c
@@ -65,28 +65,30 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  		else
  			generic_make_request(bio);
  		bio = next;
-@@ -1585,6 +1605,10 @@ retry_write:
+@@ -1587,6 +1607,11 @@ retry_write:
  			else
  				plug = NULL;
  			spin_lock_irqsave(&conf->device_lock, flags);
-+			trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
-+					      mbio, disk_devt(mddev->gendisk),
-+					      r10_bio->sector);
++			if (mddev->gendisk)
++				trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
++						      mbio, disk_devt(mddev->gendisk),
++						      r10_bio->sector);
 +			mbio->bi_bdev = (void *)conf->mirrors[d].rdev;
  			if (plug) {
  				bio_list_add(&plug->pending, mbio);
  				plug->pending_cnt++;
-@@ -1592,9 +1616,6 @@ retry_write:
+@@ -1594,10 +1619,6 @@ retry_write:
  				bio_list_add(&conf->pending_bio_list, mbio);
  				conf->pending_count++;
  			}
--			trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
--					      mbio, disk_devt(mddev->gendisk),
--					      r10_bio->sector);
+-			if (mddev->gendisk)
+-				trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
+-						      mbio, disk_devt(mddev->gendisk),
+-						      r10_bio->sector);
  			spin_unlock_irqrestore(&conf->device_lock, flags);
  			if (!plug)
  				md_wakeup_thread(mddev->thread);
-@@ -1623,6 +1644,7 @@ retry_write:
+@@ -1626,6 +1647,7 @@ retry_write:
  
  			atomic_inc(&r10_bio->remaining);
  			spin_lock_irqsave(&conf->device_lock, flags);

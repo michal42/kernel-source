@@ -8,8 +8,8 @@ This patch adds tracepoints for md/raid10.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/md/raid10.c |   40 ++++++++++++++++++++++++++++++++++++----
- 1 file changed, 36 insertions(+), 4 deletions(-)
+ drivers/md/raid10.c |   41 ++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 38 insertions(+), 3 deletions(-)
 
 --- linux-3.12-SLE12.orig/drivers/md/raid10.c
 +++ linux-3.12-SLE12/drivers/md/raid10.c
@@ -100,29 +100,22 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  		mddev->reshape_position = conf->reshape_progress;
  		set_bit(MD_CHANGE_DEVS, &mddev->flags);
  		set_bit(MD_CHANGE_PENDING, &mddev->flags);
-@@ -1344,7 +1359,6 @@ read_again:
- 		    test_bit(R10BIO_FailFast, &r10_bio->state))
- 			read_bio->bi_rw |= REQ_FAILFAST_DEV;
- 		read_bio->bi_private = r10_bio;
--
- 		if (max_sectors < r10_bio->sectors) {
- 			/* Could not read all from this device, so we will
- 			 * need another r10_bio.
-@@ -1373,8 +1387,12 @@ read_again:
+@@ -1373,8 +1388,13 @@ read_again:
  			r10_bio->mddev = mddev;
  			r10_bio->sector = bio->bi_sector + sectors_handled;
  			goto read_again;
 -		} else
 +		} else {
-+			trace_block_bio_remap(bdev_get_queue(read_bio->bi_bdev),
-+					      read_bio, disk_devt(mddev->gendisk),
-+					      r10_bio->sector);
++			if (mddev->gendisk)
++				trace_block_bio_remap(bdev_get_queue(read_bio->bi_bdev),
++						      read_bio, disk_devt(mddev->gendisk),
++						      r10_bio->sector);
  			generic_make_request(read_bio);
 +		}
  		return;
  	}
  
-@@ -1511,6 +1529,7 @@ retry_write:
+@@ -1511,6 +1531,7 @@ retry_write:
  				rdev_dec_pending(rdev, mddev);
  			}
  		}
@@ -130,17 +123,18 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  		allow_barrier(conf);
  		md_wait_for_blocked_rdev(blocked_rdev, mddev);
  		wait_barrier(conf);
-@@ -1573,6 +1592,9 @@ retry_write:
+@@ -1573,6 +1594,10 @@ retry_write:
  				bio_list_add(&conf->pending_bio_list, mbio);
  				conf->pending_count++;
  			}
-+			trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
-+					      mbio, disk_devt(mddev->gendisk),
-+					      r10_bio->sector);
++			if (mddev->gendisk)
++				trace_block_bio_remap(bdev_get_queue(mbio->bi_bdev),
++						      mbio, disk_devt(mddev->gendisk),
++						      r10_bio->sector);
  			spin_unlock_irqrestore(&conf->device_lock, flags);
  			if (!plug)
  				md_wakeup_thread(mddev->thread);
-@@ -1984,6 +2006,8 @@ static void end_sync_read(struct bio *bi
+@@ -1984,6 +2009,8 @@ static void end_sync_read(struct bio *bi
  	struct r10conf *conf = r10_bio->mddev->private;
  	int d;
  
@@ -149,7 +143,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	if (bio == r10_bio->master_bio) {
  		/* this is a reshape read */
  		d = r10_bio->read_slot; /* really the read dev */
-@@ -2052,6 +2076,8 @@ static void end_sync_write(struct bio *b
+@@ -2052,6 +2079,8 @@ static void end_sync_write(struct bio *b
  	int repl;
  	struct md_rdev *rdev = NULL;
  
@@ -158,7 +152,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	d = find_bio_disk(conf, r10_bio, bio, &slot, &repl);
  	if (repl)
  		rdev = conf->mirrors[d].replacement;
-@@ -2690,6 +2716,7 @@ static void handle_read_error(struct mdd
+@@ -2690,6 +2719,7 @@ static void handle_read_error(struct mdd
  	char b[BDEVNAME_SIZE];
  	unsigned long do_sync;
  	int max_sectors;
@@ -166,7 +160,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  
  	/* we got a read error. Maybe the drive is bad.  Maybe just
  	 * the block and we can fix it.
-@@ -2701,6 +2728,7 @@ static void handle_read_error(struct mdd
+@@ -2701,6 +2731,7 @@ static void handle_read_error(struct mdd
  	 */
  	bio = r10_bio->devs[slot].bio;
  	bdevname(bio->bi_bdev, b);
@@ -174,7 +168,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  	bio_put(bio);
  	r10_bio->devs[slot].bio = NULL;
  
-@@ -2781,8 +2809,12 @@ read_more:
+@@ -2781,8 +2812,12 @@ read_more:
  			+ sectors_handled;
  
  		goto read_more;
