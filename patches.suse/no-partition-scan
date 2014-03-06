@@ -1,7 +1,8 @@
 From: Hannes Reinecke <hare@suse.de>
+Date: Thu, 6 Mar 2014 14:34:17 +0100
 Subject: Implement 'no_partition_scan' commandline option
 Refences: FATE#303697
-Patch-mainline:  Not yet
+Patch-mainline: Probably never
 
 Under certain setups the partition table on the disk is not
 useable directly (eg for dmraid or multipathing). So we should
@@ -9,17 +10,16 @@ be able to switch it off completely so as not to be flooded with
 pointless messages.
 
 Signed-off-by: Hannes Reinecke <hare@suse.de>
-
 ---
- block/genhd.c         |   39 +++++++++++++++++++++++++++++++++++++--
- fs/partitions/check.c |    2 ++
- include/linux/genhd.h |    1 +
- 3 files changed, 40 insertions(+), 2 deletions(-)
+ block/genhd.c | 40 ++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 38 insertions(+), 2 deletions(-)
 
+diff --git a/block/genhd.c b/block/genhd.c
+index 791f419..24b69e8 100644
 --- a/block/genhd.c
 +++ b/block/genhd.c
-@@ -504,6 +504,18 @@ static int exact_lock(dev_t devt, void *
- 	disk_part_iter_exit(&piter);
+@@ -502,6 +502,18 @@ static int exact_lock(dev_t devt, void *data)
+ 	return 0;
  }
  
 +static int __read_mostly no_partition_scan;
@@ -34,26 +34,27 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
 +
 +__setup("no_partition_scan", no_partition_scan_setup);
 +
- /**
-  * add_disk - add partitioning information to kernel list
-  * @disk: per-device partitioning information
-@@ -528,6 +540,9 @@ void add_disk(struct gendisk *disk)
- 
- 	disk->flags |= GENHD_FL_UP;
+ static void register_disk(struct gendisk *disk)
+ {
+ 	struct device *ddev = disk_to_dev(disk);
+@@ -538,6 +550,9 @@ static void register_disk(struct gendisk *disk)
+ 	disk->part0.holder_dir = kobject_create_and_add("holders", &ddev->kobj);
+ 	disk->slave_dir = kobject_create_and_add("slaves", &ddev->kobj);
  
 +	if (no_partition_scan)
-+		disk->flags |= GENHD_FL_NO_PARTITION_SCAN;
++		disk->flags |= GENHD_FL_NO_PART_SCAN;
 +
- 	retval = blk_alloc_devt(&disk->part0, &devt);
- 	if (retval) {
- 		WARN_ON(1);
-@@ -817,7 +832,27 @@ static ssize_t disk_range_show(struct de
+ 	/* No minors to use for partitions */
+ 	if (!disk_part_scan_enabled(disk))
+ 		goto exit;
+@@ -922,7 +937,28 @@ static ssize_t disk_range_show(struct device *dev,
  {
  	struct gendisk *disk = dev_to_disk(dev);
  
 -	return sprintf(buf, "%d\n", disk->minors);
 +	return sprintf(buf, "%d\n",
-+		       (disk->flags & GENHD_FL_NO_PARTITION_SCAN ? 0 : disk->minors));
++		       (disk->flags & GENHD_FL_NO_PART_SCAN) ?
++		       0 : disk->minors);
 +}
 +
 +static ssize_t disk_range_store(struct device *dev,
@@ -65,9 +66,9 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
 +
 +	if (count > 0 && sscanf(buf, "%d", &i) > 0) {
 +		if (i == 0)
-+			disk->flags |= GENHD_FL_NO_PARTITION_SCAN;
++			disk->flags |= GENHD_FL_NO_PART_SCAN;
 +		else if (i <= disk->minors)
-+			disk->flags &= ~GENHD_FL_NO_PARTITION_SCAN;
++			disk->flags &= ~GENHD_FL_NO_PART_SCAN;
 +		else
 +			count = -EINVAL;
 +	}
@@ -76,7 +77,7 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  }
  
  static ssize_t disk_ext_range_show(struct device *dev,
-@@ -871,7 +906,7 @@ static ssize_t disk_discard_alignment_sh
+@@ -976,7 +1012,7 @@ static ssize_t disk_discard_alignment_show(struct device *dev,
  	return sprintf(buf, "%d\n", queue_discard_alignment(disk->queue));
  }
  
@@ -85,24 +86,6 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
  static DEVICE_ATTR(ext_range, S_IRUGO, disk_ext_range_show, NULL);
  static DEVICE_ATTR(removable, S_IRUGO, disk_removable_show, NULL);
  static DEVICE_ATTR(ro, S_IRUGO, disk_ro_show, NULL);
---- a/fs/partitions/check.c
-+++ b/fs/partitions/check.c
-@@ -597,6 +597,8 @@ rescan:
- 		disk->fops->revalidate_disk(disk);
- 	check_disk_size_change(disk, bdev);
- 	bdev->bd_invalidated = 0;
-+	if (disk->flags & GENHD_FL_NO_PARTITION_SCAN)
-+		return 0;
- 	if (!get_capacity(disk) || !(state = check_partition(disk, bdev)))
- 		return 0;
- 	if (IS_ERR(state)) {
---- a/include/linux/genhd.h
-+++ b/include/linux/genhd.h
-@@ -116,6 +116,7 @@ struct hd_struct {
- #define GENHD_FL_EXT_DEVT			64 /* allow extended devt */
- #define GENHD_FL_NATIVE_CAPACITY		128
- #define GENHD_FL_BLOCK_EVENTS_ON_EXCL_WRITE	256
-+#define GENHD_FL_NO_PARTITION_SCAN		512
- 
- enum {
- 	DISK_EVENT_MEDIA_CHANGE			= 1 << 0, /* media changed */
+-- 
+1.7.12.4
+
