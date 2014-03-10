@@ -30,12 +30,11 @@ Acked-by: NeilBrown <neilb@suse.de>
 Signed-off-by: Neil Brown <neilb@suse.de>
 
 ---
- net/sunrpc/xprt.c     |    2 +-
- net/sunrpc/xprtsock.c |    4 ++++
- 2 files changed, 5 insertions(+), 1 deletion(-)
+ net/sunrpc/xprt.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
---- linux-3.12-SLE12.orig/net/sunrpc/xprt.c
-+++ linux-3.12-SLE12/net/sunrpc/xprt.c
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
 @@ -497,7 +497,7 @@ void xprt_wait_for_buffer_space(struct r
  	struct rpc_rqst *req = task->tk_rqstp;
  	struct rpc_xprt *xprt = req->rq_xprt;
@@ -45,23 +44,3 @@ Signed-off-by: Neil Brown <neilb@suse.de>
  	rpc_sleep_on(&xprt->pending, task, action);
  }
  EXPORT_SYMBOL_GPL(xprt_wait_for_buffer_space);
---- linux-3.12-SLE12.orig/net/sunrpc/xprtsock.c
-+++ linux-3.12-SLE12/net/sunrpc/xprtsock.c
-@@ -505,6 +505,7 @@ static int xs_nospace(struct rpc_task *t
- 	struct rpc_xprt *xprt = req->rq_xprt;
- 	struct sock_xprt *transport = container_of(xprt, struct sock_xprt, xprt);
- 	int ret = -EAGAIN;
-+	struct sock *sk = transport->inet;
- 
- 	dprintk("RPC: %5u xmit incomplete (%u left of %u)\n",
- 			task->tk_pid, req->rq_slen - req->rq_bytes_sent,
-@@ -531,6 +532,9 @@ static int xs_nospace(struct rpc_task *t
- 	}
- 
- 	spin_unlock_bh(&xprt->transport_lock);
-+
-+	/* Race breaker in case memory is freed before above code is called */
-+	sk->sk_write_space(sk);
- 	return ret;
- }
- 
