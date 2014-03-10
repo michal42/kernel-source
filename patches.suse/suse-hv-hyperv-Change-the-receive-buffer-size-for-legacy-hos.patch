@@ -1,0 +1,51 @@
+From: Haiyang Zhang <haiyangz@microsoft.com>
+Date: Sun, 9 Mar 2014 16:10:59 -0700
+Subject: hyperv: Change the receive buffer size for legacy hosts
+Patch-mainline: submitted (lkml 2014-03-09)
+
+Due to a bug in the Hyper-V host verion 2008R2, we need to use a slightly smaller
+receive buffer size, otherwise the buffer will not be accepted by the legacy hosts.
+
+Signed-off-by: Haiyang Zhang <haiyangz@microsoft.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/net/hyperv/hyperv_net.h | 1 +
+ drivers/net/hyperv/netvsc.c     | 6 +++++-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/hyperv/hyperv_net.h b/drivers/net/hyperv/hyperv_net.h
+index 84431f6..d551c87 100644
+--- a/drivers/net/hyperv/hyperv_net.h
++++ b/drivers/net/hyperv/hyperv_net.h
+@@ -517,6 +517,7 @@ struct nvsp_message {
+ #define NETVSC_MTU 65536
+ 
+ #define NETVSC_RECEIVE_BUFFER_SIZE		(1024*1024*16)	/* 16MB */
++#define NETVSC_RECEIVE_BUFFER_SIZE_LEGACY	(1024*1024*15)  /* 15MB */
+ 
+ #define NETVSC_RECEIVE_BUFFER_ID		0xcafe
+ 
+diff --git a/drivers/net/hyperv/netvsc.c b/drivers/net/hyperv/netvsc.c
+index d9cd89d..356b80a 100644
+--- a/drivers/net/hyperv/netvsc.c
++++ b/drivers/net/hyperv/netvsc.c
+@@ -366,6 +366,11 @@ static int netvsc_connect_vsp(struct hv_device *device)
+ 		goto cleanup;
+ 
+ 	/* Post the big receive buffer to NetVSP */
++	if (net_device->nvsp_version <= NVSP_PROTOCOL_VERSION_2)
++		net_device->recv_buf_size = NETVSC_RECEIVE_BUFFER_SIZE_LEGACY;
++	else
++		net_device->recv_buf_size = NETVSC_RECEIVE_BUFFER_SIZE;
++
+ 	ret = netvsc_init_recv_buf(device);
+ 
+ cleanup:
+@@ -899,7 +904,6 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
+ 	ndev = net_device->ndev;
+ 
+ 	/* Initialize the NetVSC channel extension */
+-	net_device->recv_buf_size = NETVSC_RECEIVE_BUFFER_SIZE;
+ 	spin_lock_init(&net_device->recv_pkt_list_lock);
+ 
+ 	INIT_LIST_HEAD(&net_device->recv_pkt_list);
