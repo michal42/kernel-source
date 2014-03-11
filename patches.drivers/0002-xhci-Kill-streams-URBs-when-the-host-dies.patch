@@ -1,0 +1,62 @@
+From d05f10415fd334ec17256745aeb326a6214f88d2 Mon Sep 17 00:00:00 2001
+From: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Patch-Mainline: v3.15
+References: FATE#315595
+Git-Commit: 21d0e51bfb290349adc02fa8fec716d77f53df51
+Date: Fri, 21 Feb 2014 14:29:02 -0800
+Subject: [PATCH 2/3] xhci: Kill streams URBs when the host dies.
+
+If the host controller stops responding to commands, we need to kill all
+the URBs that were queued to all endpoints.  The current code would only
+kill URBs that had been queued to the endpoint rings.  ep->ring is set
+to NULL if streams has been enabled for the endpoint, which means URBs
+submitted with a non-zero stream_id would never get killed.  Fix this.
+
+Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/xhci-ring.c | 28 +++++++++++++++++++++-------
+ 1 file changed, 21 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/host/xhci-ring.c b/drivers/usb/host/xhci-ring.c
+index 8fea44a..d601d7f 100644
+--- a/drivers/usb/host/xhci-ring.c
++++ b/drivers/usb/host/xhci-ring.c
+@@ -928,13 +928,27 @@ static void xhci_kill_endpoint_urbs(struct xhci_hcd *xhci,
+ 	struct xhci_ring *ring;
+ 
+ 	ep = &xhci->devs[slot_id]->eps[ep_index];
+-	ring = ep->ring;
+-	if (!ring)
+-		return;
+-	xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
+-			"Killing URBs for slot ID %u, ep index %u",
+-			slot_id, ep_index);
+-	xhci_kill_ring_urbs(xhci, ring);
++	if ((ep->ep_state & EP_HAS_STREAMS) ||
++			(ep->ep_state & EP_GETTING_NO_STREAMS)) {
++		int stream_id;
++
++		for (stream_id = 0; stream_id < ep->stream_info->num_streams;
++				stream_id++) {
++			xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
++					"Killing URBs for slot ID %u, ep index %u, stream %u",
++					slot_id, ep_index, stream_id + 1);
++			xhci_kill_ring_urbs(xhci,
++					ep->stream_info->stream_rings[stream_id]);
++		}
++	} else {
++		ring = ep->ring;
++		if (!ring)
++			return;
++		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
++				"Killing URBs for slot ID %u, ep index %u",
++				slot_id, ep_index);
++		xhci_kill_ring_urbs(xhci, ring);
++	}
+ 	while (!list_empty(&ep->cancelled_td_list)) {
+ 		cur_td = list_first_entry(&ep->cancelled_td_list,
+ 				struct xhci_td, cancelled_td_list);
+-- 
+1.8.4.5
+
