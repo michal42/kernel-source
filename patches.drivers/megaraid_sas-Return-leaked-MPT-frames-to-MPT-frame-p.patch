@@ -1,0 +1,40 @@
+From: Adam Radford <aradford@gmail.com>
+Date: Wed, 12 Mar 2014 09:23:00 +0100
+Subject: megaraid_sas: Return leaked MPT frames to MPT frame pool
+References: FATE#315929,bnc#854993
+Patch-Mainline: submitted to scsi-misc
+
+The following patch for megaraid_sas will return leaked
+MPT frames from any polled DCMD's that timeout to the MPT
+frame pool.
+
+Signed-off-by: Adam Radford <aradford@gmail.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/megaraid/megaraid_sas_fusion.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.c b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+index 5a994da..654b234 100644
+--- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
++++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+@@ -2432,11 +2432,14 @@ int megasas_reset_fusion(struct Scsi_Host *shost)
+ 							instance,
+ 							cmd_mfi->context.smid
+ 							-1);
+-						if (!req_desc)
++						if (!req_desc) {
+ 							printk(KERN_WARNING
+ 							       "req_desc NULL"
+ 							       "\n");
+-						else {
++							/* Return leaked MPT
++							   frame */
++							megasas_return_cmd_fusion(instance, cmd_fusion);
++						} else {
+ 							instance->instancet->
+ 							fire_cmd(instance,
+ 								 req_desc->
+-- 
+1.7.12.4
+
