@@ -1,0 +1,64 @@
+From: Adam Radford <aradford@gmail.com>
+Date: Wed, 12 Mar 2014 09:22:17 +0100
+Subject: megaraid_sas: Fix megasas_ioc_init_fusion
+References: FATE#315929,bnc#854993
+Patch-Mainline: submitted to scsi-misc
+
+The following patch for megaraid_sas fixes the
+megasas_ioc_init_fusion function to use a local stack
+variable for the IOCinit frame physical address
+instead of clobbering the first request descriptor.
+
+Signed-off-by: Adam Radford <aradford@gmail.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/megaraid/megaraid_sas_fusion.c | 17 +++++++----------
+ 1 file changed, 7 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.c b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+index e452f68..5a994da 100644
+--- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
++++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+@@ -585,7 +585,7 @@ megasas_ioc_init_fusion(struct megasas_instance *instance)
+ 	struct megasas_cmd *cmd;
+ 	u8 ret;
+ 	struct fusion_context *fusion;
+-	union MEGASAS_REQUEST_DESCRIPTOR_UNION *req_desc;
++	union MEGASAS_REQUEST_DESCRIPTOR_UNION req_desc;
+ 	int i;
+ 	struct megasas_header *frame_hdr;
+ 
+@@ -647,15 +647,12 @@ megasas_ioc_init_fusion(struct megasas_instance *instance)
+ 	init_frame->queue_info_new_phys_addr_lo = cpu_to_le32((u32)ioc_init_handle);
+ 	init_frame->data_xfer_len = cpu_to_le32(sizeof(struct MPI2_IOC_INIT_REQUEST));
+ 
+-	req_desc =
+-	  (union MEGASAS_REQUEST_DESCRIPTOR_UNION *)fusion->req_frames_desc;
+-
+-	req_desc->Words = 0;
+-	req_desc->MFAIo.RequestFlags =
++	req_desc.Words = 0;
++	req_desc.MFAIo.RequestFlags =
+ 		(MEGASAS_REQ_DESCRIPT_FLAGS_MFA <<
+ 		 MEGASAS_REQ_DESCRIPT_FLAGS_TYPE_SHIFT);
+-	cpu_to_le32s((u32 *)&req_desc->MFAIo);
+-	req_desc->Words |= cpu_to_le64(cmd->frame_phys_addr);
++	cpu_to_le32s((u32 *)&req_desc.MFAIo);
++	req_desc.Words |= cpu_to_le64(cmd->frame_phys_addr);
+ 
+ 	/*
+ 	 * disable the intr before firing the init frame
+@@ -669,8 +666,8 @@ megasas_ioc_init_fusion(struct megasas_instance *instance)
+ 			break;
+ 	}
+ 
+-	instance->instancet->fire_cmd(instance, req_desc->u.low,
+-				      req_desc->u.high, instance->reg_set);
++	instance->instancet->fire_cmd(instance, req_desc.u.low,
++				      req_desc.u.high, instance->reg_set);
+ 
+ 	wait_and_poll(instance, cmd);
+ 
+-- 
+1.7.12.4
+

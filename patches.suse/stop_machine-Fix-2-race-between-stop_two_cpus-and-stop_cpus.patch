@@ -1,0 +1,36 @@
+From e8929550fe12030be413130a3796a40520e934d1 Mon Sep 17 00:00:00 2001
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Tue, 11 Mar 2014 16:08:27 +0000
+Subject: [PATCH] stop_machine: Fix^2 race between stop_two_cpus() and
+ stop_cpus()
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (Expected 3.14)
+
+We must use smp_call_function_single(.wait=1) for the
+irq_cpu_stop_queue_work() to ensure the queueing is actually done under
+stop_cpus_lock. Without this we could have dropped the lock by the time
+we do the queueing and get the race we tried to fix.
+
+Fixes: 7053ea1a34fa ("stop_machine: Fix race between stop_two_cpus() and stop_cpus()")
+
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/stop_machine.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/stop_machine.c b/kernel/stop_machine.c
+index 84571e0..01fbae5 100644
+--- a/kernel/stop_machine.c
++++ b/kernel/stop_machine.c
+@@ -293,7 +293,7 @@ int stop_two_cpus(unsigned int cpu1, unsigned int cpu2, cpu_stop_fn_t fn, void *
+ 	 */
+ 	smp_call_function_single(min(cpu1, cpu2),
+ 				 &irq_cpu_stop_queue_work,
+-				 &call_args, 0);
++				 &call_args, 1);
+ 	lg_local_unlock(&stop_cpus_lock);
+ 	preempt_enable();
+ 
