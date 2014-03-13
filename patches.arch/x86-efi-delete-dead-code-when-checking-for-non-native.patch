@@ -1,0 +1,67 @@
+From: Matt Fleming <matt.fleming@intel.com>
+Date: Fri, 10 Jan 2014 13:01:39 +0000
+Subject: x86/efi: Delete dead code when checking for non-native
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git
+Git-commit: 099240ac111aac454962e6399c0cc51d1511504a
+Patch-mainline: Queued in subsystem maintainer repo
+References: fate#315017
+
+Both efi_free_boot_services() and efi_enter_virtual_mode() are invoked
+from init/main.c, but only if the EFI runtime services are available.
+This is not the case for non-native boots, e.g. where a 64-bit kernel is
+booted with 32-bit EFI firmware.
+
+Delete the dead code.
+
+Acked-by: Borislav Petkov <bp@suse.de>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+---
+ arch/x86/platform/efi/efi.c | 12 ------------
+ 1 file changed, 12 deletions(-)
+
+Index: current/arch/x86/platform/efi/efi.c
+===================================================================
+--- current.orig/arch/x86/platform/efi/efi.c
++++ current/arch/x86/platform/efi/efi.c
+@@ -456,9 +456,6 @@ void __init efi_free_boot_services(void)
+ {
+ 	void *p;
+ 
+-	if (!efi_is_native())
+-		return;
+-
+ 	for (p = memmap.map; p < memmap.map_end; p += memmap.desc_size) {
+ 		efi_memory_desc_t *md = p;
+ 		unsigned long long start = md->phys_addr;
+@@ -989,15 +986,6 @@ static void __init kexec_enter_virtual_m
+ 	efi.systab = NULL;
+ 
+ 	/*
+-	 * We don't do virtual mode, since we don't do runtime services, on
+-	 * non-native EFI
+-	 */
+-	if (!efi_is_native()) {
+-		efi_unmap_memmap();
+-		return;
+-	}
+-
+-	/*
+ 	* Map efi regions which were passed via setup_data. The virt_addr is a
+ 	* fixed addr which was used in first kernel of a kexec boot.
+ 	*/
+@@ -1076,15 +1064,6 @@ static void __init __efi_enter_virtual_m
+ 
+ 	efi.systab = NULL;
+ 
+-	/*
+-	 * We don't do virtual mode, since we don't do runtime services, on
+-	 * non-native EFI
+-	 */
+-	if (!efi_is_native()) {
+-		efi_unmap_memmap();
+-		return;
+-	}
+-
+ 	efi_merge_regions();
+ 	new_memmap = efi_map_regions(&count, &pg_shift);
+ 	if (!new_memmap) {
