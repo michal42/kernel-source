@@ -1,0 +1,65 @@
+From: Michael wang <wangyun@linux.vnet.ibm.com>
+Date: Wed, 13 Nov 2013 11:10:56 +0800
+Subject: [PATCH] sched: Fix endless sync_sched/rcu() loop inside _cpu_down()
+Git-commit: 106dd5afde3cd10db7e1370b6ddc77f0b2496a75
+Patch-mainline: v3.13-rc1
+References: Automatic NUMA Balancing (fate#315482)
+
+Commit 6acce3ef8:
+
+	sched: Remove get_online_cpus() usage
+
+tries to do sync_sched/rcu() inside _cpu_down() but triggers:
+
+	INFO: task swapper/0:1 blocked for more than 120 seconds.
+	...
+	[<ffffffff811263dc>] synchronize_rcu+0x2c/0x30
+	[<ffffffff81d1bd82>] _cpu_down+0x2b2/0x340
+	...
+
+It was caused by that in the rcu boost case we rely on smpboot thread to
+finish the rcu callback, which has already been parked before sync in here
+and leads to the endless sync_sched/rcu().
+
+This patch exchanges the sequence of smpboot_park_threads() and
+sync_sched/rcu() to fix the bug.
+
+Reported-by: Fengguang Wu <fengguang.wu@intel.com>
+Tested-by: Fengguang Wu <fengguang.wu@intel.com>
+Signed-off-by: Michael Wang <wangyun@linux.vnet.ibm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/5282EDC0.6060003@linux.vnet.ibm.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+---
+ kernel/cpu.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/kernel/cpu.c
++++ b/kernel/cpu.c
+@@ -306,7 +306,6 @@ static int __ref _cpu_down(unsigned int
+ 				__func__, cpu);
+ 		goto out_release;
+ 	}
+-	smpboot_park_threads(cpu);
+ 
+ 	/*
+ 	 * By now we've cleared cpu_active_mask, wait for all preempt-disabled
+@@ -315,12 +314,16 @@ static int __ref _cpu_down(unsigned int
+ 	 *
+ 	 * For CONFIG_PREEMPT we have preemptible RCU and its sync_rcu() might
+ 	 * not imply sync_sched(), so explicitly call both.
++	 *
++	 * Do sync before park smpboot threads to take care the rcu boost case.
+ 	 */
+ #ifdef CONFIG_PREEMPT
+ 	synchronize_sched();
+ #endif
+ 	synchronize_rcu();
+ 
++	smpboot_park_threads(cpu);
++
+ 	/*
+ 	 * So now all preempt/rcu users must observe !cpu_active().
+ 	 */
