@@ -1,0 +1,101 @@
+From e42cb4df004bf23eed4f38ef7992725cca7f9797 Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Thu, 20 Feb 2014 15:32:38 -0800
+Subject: [PATCH] blk-mq: support partial I/O completions
+Git-commit: feb71dae1f9e0aeb056f7f639a21e620d327fc66
+Patch-mainline: v3.14-rc6
+References: fate#315209
+
+Add a new blk_mq_end_io_partial function to partially complete requests
+as needed by the SCSI layer.  We do this by reusing blk_update_request
+to advance the bio instead of having a simplified version of it in
+the blk-mq code.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ block/blk-mq.c         |   37 +++++--------------------------------
+ include/linux/blk-mq.h |    8 +++++++-
+ 2 files changed, 12 insertions(+), 33 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index d725caf..1b8b50d 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -283,38 +283,10 @@ void blk_mq_free_request(struct request *rq)
+ 	__blk_mq_free_request(hctx, ctx, rq);
+ }
+ 
+-static void blk_mq_bio_endio(struct request *rq, struct bio *bio, int error)
++bool blk_mq_end_io_partial(struct request *rq, int error, unsigned int nr_bytes)
+ {
+-	if (error)
+-		clear_bit(BIO_UPTODATE, &bio->bi_flags);
+-	else if (!test_bit(BIO_UPTODATE, &bio->bi_flags))
+-		error = -EIO;
+-
+-	if (unlikely(rq->cmd_flags & REQ_QUIET))
+-		set_bit(BIO_QUIET, &bio->bi_flags);
+-
+-	/* don't actually finish bio if it's part of flush sequence */
+-	if (!(rq->cmd_flags & REQ_FLUSH_SEQ))
+-		bio_endio(bio, error);
+-}
+-
+-void blk_mq_end_io(struct request *rq, int error)
+-{
+-	struct bio *bio = rq->bio;
+-	unsigned int bytes = 0;
+-
+-	trace_block_rq_complete(rq->q, rq);
+-
+-	while (bio) {
+-		struct bio *next = bio->bi_next;
+-
+-		bio->bi_next = NULL;
+-		bytes += bio->bi_size;
+-		blk_mq_bio_endio(rq, bio, error);
+-		bio = next;
+-	}
+-
+-	blk_account_io_completion(rq, bytes);
++	if (blk_update_request(rq, error, blk_rq_bytes(rq)))
++		return true;
+ 
+ 	blk_account_io_done(rq);
+ 
+@@ -322,8 +294,9 @@ void blk_mq_end_io(struct request *rq, int error)
+ 		rq->end_io(rq, error);
+ 	else
+ 		blk_mq_free_request(rq);
++	return false;
+ }
+-EXPORT_SYMBOL(blk_mq_end_io);
++EXPORT_SYMBOL(blk_mq_end_io_partial);
+ 
+ static void __blk_mq_complete_request_remote(void *data)
+ {
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index 847d0b5..d737caa 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -133,7 +133,13 @@ struct blk_mq_hw_ctx *blk_mq_map_queue(struct request_queue *, const int ctx_ind
+ struct blk_mq_hw_ctx *blk_mq_alloc_single_hw_queue(struct blk_mq_reg *, unsigned int);
+ void blk_mq_free_single_hw_queue(struct blk_mq_hw_ctx *, unsigned int);
+ 
+-void blk_mq_end_io(struct request *rq, int error);
++bool blk_mq_end_io_partial(struct request *rq, int error,
++		unsigned int nr_bytes);
++static inline void blk_mq_end_io(struct request *rq, int error)
++{
++	bool done = !blk_mq_end_io_partial(rq, error, blk_rq_bytes(rq));
++	BUG_ON(!done);
++}
+ 
+ void blk_mq_complete_request(struct request *rq);
+ 
+-- 
+1.6.0.2
+
