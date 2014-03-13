@@ -1,56 +1,40 @@
 From: Hannes Reinecke <hare@suse.de>
+Date: Thu, 27 Feb 2014 12:30:51 +0100
 Subject: tty: Set correct tty name in 'active' sysfs attribute
+Patch-mainline: not yet, sitting in the tty tree
 References: bnc#861528
-Patch-Mainline: 3.14-rc3
-Git-commit: d8a5dc3033af2fd6d16030d2ee4fbd073460fe54
 
 The 'active' sysfs attribute should refer to the currently active tty
-devices the console is running on, not the currently active console.
-
-The console structure doesn't refer to any device in sysfs, only the tty
-the console is running on has.  So we need to print out the tty names in
+devices the console is running on, not the currently active console. The
+console structure doesn't refer to any device in sysfs, only the tty the
+console is running on has. So we need to print out the tty names in
 'active', not the console names.
 
-This resolves an issue on s390 platforms in determining the correct
-console device to use.
+There is one special-case, which is tty0. If the console is directed to
+it, we want 'tty0' to show up in the file, so user-space knows that the
+messages get forwarded to the active VT. The ->device() callback would
+resolve tty0, though. Hence, treat it special and don't call into the VT
+layer to resolve it (plymouth is known to depend on it).
 
 Cc: Lennart Poettering <lennart@poettering.net>
 Cc: Kay Sievers <kay@vrfy.org>
+Cc: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Cc: Jiri Slaby <jslaby@suse.cz>
-Cc: David Herrmann <dh.herrmann@gmail.com>
+Cc: stable <stable@vger.kernel.org>
 Signed-off-by: Werner Fink <werner@suse.de>
 Signed-off-by: Hannes Reinecke <hare@suse.de>
-Cc: stable <stable@vger.kernel.org>
+Signed-off-by: David Herrmann <dh.herrmann@gmail.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- Documentation/ABI/testing/sysfs-tty |  3 ++-
- drivers/tty/tty_io.c                | 25 ++++++++++++++++++-------
- 2 files changed, 20 insertions(+), 8 deletions(-)
+ drivers/tty/tty_io.c | 23 +++++++++++++++++------
+ 1 file changed, 17 insertions(+), 6 deletions(-)
 
-diff --git a/Documentation/ABI/testing/sysfs-tty b/Documentation/ABI/testing/sysfs-tty
-index ad22fb0..a2ccec3 100644
---- a/Documentation/ABI/testing/sysfs-tty
-+++ b/Documentation/ABI/testing/sysfs-tty
-@@ -3,7 +3,8 @@ Date:		Nov 2010
- Contact:	Kay Sievers <kay.sievers@vrfy.org>
- Description:
- 		 Shows the list of currently configured
--		 console devices, like 'tty1 ttyS0'.
-+		 tty devices used for the console,
-+		 like 'tty1 ttyS0'.
- 		 The last entry in the file is the active
- 		 device connected to /dev/console.
- 		 The file supports poll() to detect virtual
 diff --git a/drivers/tty/tty_io.c b/drivers/tty/tty_io.c
-index c74a00a..bd2715a 100644
+index c74a00ad7add..d3448a90f0f9 100644
 --- a/drivers/tty/tty_io.c
 +++ b/drivers/tty/tty_io.c
-@@ -1267,16 +1267,17 @@ static void pty_line_name(struct tty_driver *driver, int index, char *p)
-  *	@p: output buffer of at least 7 bytes
-  *
-  *	Generate a name from a driver reference and write it to the output
-- *	buffer.
-+ *	buffer. Return the number of bytes written.
+@@ -1271,12 +1271,13 @@ static void pty_line_name(struct tty_driver *driver, int index, char *p)
   *
   *	Locking: None
   */
@@ -75,21 +59,21 @@ index c74a00a..bd2715a 100644
 -		count += sprintf(buf + count, "%s%d%c",
 -				 cs[i]->name, cs[i]->index, i ? ' ':'\n');
 +	while (i--) {
-+		struct tty_driver *driver;
-+		const char *name = cs[i]->name;
 +		int index = cs[i]->index;
++		struct tty_driver *drv = cs[i]->device(cs[i], &index);
 +
-+		driver = cs[i]->device(cs[i], &index);
-+		if (driver) {
-+			count += tty_line_name(driver, index, buf + count);
-+			count += sprintf(buf + count, "%c", i ? ' ':'\n');
-+		} else
-+			count += sprintf(buf + count, "%s%d%c",
-+					 name, index, i ? ' ':'\n');
++		/* don't resolve tty0 as some programs depend on it */
++		if (drv && (cs[i]->index > 0 || drv->major != TTY_MAJOR))
++			count += tty_line_name(drv, index, buf + count);
++		else
++			count += sprintf(buf + count, "%s%d",
++					 cs[i]->name, cs[i]->index);
++
++		count += sprintf(buf + count, "%c", i ? ' ':'\n');
 +	}
  	console_unlock();
  
  	return count;
 -- 
-1.7.12.4
+1.9.0
 
