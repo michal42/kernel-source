@@ -1,0 +1,72 @@
+From 5aa3d718f259007121b9366d36315fb8a2983d3d Mon Sep 17 00:00:00 2001
+From: Borislav Petkov <bp@suse.de>
+Date: Wed, 4 Dec 2013 20:50:42 +0100
+Subject: x86, ramdisk: Export relocated ramdisk VA
+Git-commit: 5aa3d718f259
+Patch-mainline: v3.14-rc1
+References: fate#315602
+
+The ramdisk can possibly get relocated if the whole image is not mapped.
+And since we're going over it in the microcode loader and fishing out
+the relevant microcode patches, we want access it at its new location.
+Thus, export it.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Tested-by: Aravind Gopalakrishnan <Aravind.Gopalakrishnan@amd.com>
+Automatically created from "patches.arch/x86-ramdisk-export-relocated-ramdisk-va.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 12:38:21.000000000 +0100
++++ sle12/arch/x86/kernel/setup-xen.c	2014-03-11 10:48:09.000000000 +0100
+@@ -329,6 +329,10 @@ static void __init reserve_brk(void)
+ 	_brk_start = 0;
+ }
+ 
++#ifndef CONFIG_XEN
++u64 relocated_ramdisk;
++#endif
++
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 
+ static u64 __init get_ramdisk_image(void)
+@@ -364,25 +368,24 @@ static void __init relocate_initrd(void)
+ 	u64 ramdisk_image = get_ramdisk_image();
+ 	u64 ramdisk_size  = get_ramdisk_size();
+ 	u64 area_size     = PAGE_ALIGN(ramdisk_size);
+-	u64 ramdisk_here;
+ 	unsigned long slop, clen, mapaddr;
+ 	char *p, *q;
+ 
+ 	/* We need to move the initrd down into directly mapped mem */
+-	ramdisk_here = memblock_find_in_range(0, PFN_PHYS(max_pfn_mapped),
+-						 area_size, PAGE_SIZE);
++	relocated_ramdisk = memblock_find_in_range(0, PFN_PHYS(max_pfn_mapped),
++						   area_size, PAGE_SIZE);
+ 
+-	if (!ramdisk_here)
++	if (!relocated_ramdisk)
+ 		panic("Cannot find place for new RAMDISK of size %lld\n",
+-			 ramdisk_size);
++		      ramdisk_size);
+ 
+ 	/* Note: this includes all the mem currently occupied by
+ 	   the initrd, we rely on that fact to keep the data intact. */
+-	memblock_reserve(ramdisk_here, area_size);
+-	initrd_start = ramdisk_here + PAGE_OFFSET;
++	memblock_reserve(relocated_ramdisk, area_size);
++	initrd_start = relocated_ramdisk + PAGE_OFFSET;
+ 	initrd_end   = initrd_start + ramdisk_size;
+ 	printk(KERN_INFO "Allocated new RAMDISK: [mem %#010llx-%#010llx]\n",
+-			 ramdisk_here, ramdisk_here + ramdisk_size - 1);
++	       relocated_ramdisk, relocated_ramdisk + ramdisk_size - 1);
+ 
+ 	q = (char *)initrd_start;
+ 
+@@ -406,7 +409,7 @@ static void __init relocate_initrd(void)
+ 	printk(KERN_INFO "Move RAMDISK from [mem %#010llx-%#010llx] to"
+ 		" [mem %#010llx-%#010llx]\n",
+ 		ramdisk_image, ramdisk_image + ramdisk_size - 1,
+-		ramdisk_here, ramdisk_here + ramdisk_size - 1);
++		relocated_ramdisk, relocated_ramdisk + ramdisk_size - 1);
+ #else
+ 	printk(KERN_ERR "initrd extends beyond end of memory "
+ 	       "(%#010Lx > %#010Lx)\ndisabling initrd\n",

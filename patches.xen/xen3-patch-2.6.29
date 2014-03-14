@@ -101,7 +101,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #endif /* !ASSEMBLY_ */
  
  #endif /* _ASM_X86_HW_IRQ_H */
---- sle12.orig/arch/x86/include/asm/hypervisor.h	2014-02-27 13:38:51.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/hypervisor.h	2014-03-12 11:04:53.000000000 +0100
 +++ sle12/arch/x86/include/asm/hypervisor.h	2013-05-23 17:21:57.000000000 +0200
 @@ -62,3 +62,7 @@ static inline void init_hypervisor_platf
  static inline bool hypervisor_x2apic_available(void) { return false; }
@@ -766,7 +766,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	}
 --- sle12.orig/arch/x86/kernel/cpu/Makefile	2013-08-09 12:27:55.000000000 +0200
 +++ sle12/arch/x86/kernel/cpu/Makefile	2013-08-09 14:49:21.000000000 +0200
-@@ -47,7 +47,7 @@ obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr
+@@ -48,7 +48,7 @@ obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr
  
  obj-$(CONFIG_HYPERVISOR_GUEST)		+= vmware.o hypervisor.o mshyperv.o
  
@@ -5520,41 +5520,6 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #include <asm/system.h>
  #include <asm/ldt.h>
  #include <asm/desc.h>
---- sle12.orig/arch/x86/kernel/machine_kexec_32.c	2012-04-10 16:47:16.000000000 +0200
-+++ sle12/arch/x86/kernel/machine_kexec_32.c	2012-04-10 16:55:45.000000000 +0200
-@@ -45,6 +45,17 @@ static int machine_kexec_alloc_page_tabl
- {
- 	image->arch.pgd = (pgd_t *)get_zeroed_page(GFP_KERNEL);
- #ifdef CONFIG_X86_PAE
-+#ifdef CONFIG_XEN /* machine address must fit into xki->page_list[PA_PGD] */
-+	if (image->arch.pgd) {
-+		struct page *pg = virt_to_page(image->arch.pgd);
-+
-+		if (xen_limit_pages_to_max_mfn(pg, 0, BITS_PER_LONG) < 0) {
-+			image->arch.pgd = NULL;
-+			__free_page(pg);
-+			return -ENOMEM;
-+		}
-+	}
-+#endif
- 	image->arch.pmd0 = (pmd_t *)get_zeroed_page(GFP_KERNEL);
- 	image->arch.pmd1 = (pmd_t *)get_zeroed_page(GFP_KERNEL);
- #endif
-@@ -122,13 +133,7 @@ void machine_kexec_setup_load_arg(xen_ke
- 	memcpy(control_page, relocate_kernel, PAGE_SIZE);
- 
- 	xki->page_list[PA_CONTROL_PAGE] = __ma(control_page);
--	xki->page_list[PA_PGD] = __ma(kexec_pgd);
--#ifdef CONFIG_X86_PAE
--	xki->page_list[PA_PMD_0] = __ma(kexec_pmd0);
--	xki->page_list[PA_PMD_1] = __ma(kexec_pmd1);
--#endif
--	xki->page_list[PA_PTE_0] = __ma(kexec_pte0);
--	xki->page_list[PA_PTE_1] = __ma(kexec_pte1);
-+	xki->page_list[PA_PGD] = __ma(image->arch.pgd);
- 
- 	if (image->type == KEXEC_TYPE_DEFAULT)
- 		xki->page_list[PA_SWAP_PAGE] = page_to_phys(image->swap_page);
 --- sle12.orig/arch/x86/kernel/mpparse-xen.c	2011-02-01 14:39:24.000000000 +0100
 +++ sle12/arch/x86/kernel/mpparse-xen.c	2011-02-01 14:42:26.000000000 +0100
 @@ -2,7 +2,7 @@
@@ -8819,7 +8784,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  int acpi_processor_cst_has_changed(struct acpi_processor *pr)
  {
  	int cpu;
---- sle12.orig/drivers/gpu/drm/i915/i915_drv.c	2014-02-27 13:38:51.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/i915/i915_drv.c	2014-03-12 11:04:53.000000000 +0100
 +++ sle12/drivers/gpu/drm/i915/i915_drv.c	2013-10-29 10:16:31.000000000 +0100
 @@ -914,7 +914,7 @@ static const struct file_operations i915
  	.open = drm_open,
@@ -8830,7 +8795,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	.poll = drm_poll,
  	.read = drm_read,
  #ifdef CONFIG_COMPAT
---- sle12.orig/drivers/gpu/drm/i915/i915_drv.h	2014-02-27 13:38:51.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/i915/i915_drv.h	2014-03-12 11:04:53.000000000 +0100
 +++ sle12/drivers/gpu/drm/i915/i915_drv.h	2013-10-29 10:16:31.000000000 +0100
 @@ -1947,6 +1947,11 @@ int __i915_add_request(struct intel_ring
  	__i915_add_request(ring, NULL, NULL, seqno)
@@ -8844,7 +8809,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  int i915_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf);
  int __must_check
  i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj,
---- sle12.orig/drivers/gpu/drm/i915/i915_gem.c	2014-02-27 13:38:51.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/i915/i915_gem.c	2014-03-12 11:04:53.000000000 +0100
 +++ sle12/drivers/gpu/drm/i915/i915_gem.c	2013-09-26 12:51:40.000000000 +0200
 @@ -1316,6 +1316,17 @@ i915_gem_mmap_ioctl(struct drm_device *d
  	return 0;
@@ -9890,9 +9855,9 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	preempt_enable_no_resched();
  	VOID(HYPERVISOR_vcpu_op(VCPUOP_down, smp_processor_id(), NULL));
  	cpu_bringup();
---- sle12.orig/drivers/xen/core/spinlock.c	2014-01-09 11:22:34.000000000 +0100
+--- sle12.orig/drivers/xen/core/spinlock.c	2014-03-11 10:19:06.000000000 +0100
 +++ sle12/drivers/xen/core/spinlock.c	2014-01-09 11:26:29.000000000 +0100
-@@ -316,12 +316,12 @@ bool xen_spin_wait(raw_spinlock_t *lock,
+@@ -318,12 +318,12 @@ bool xen_spin_wait(raw_spinlock_t *lock,
  	return false;
  }
  
@@ -9909,7 +9874,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	return nxt;
  }
  
-@@ -333,13 +333,13 @@ void xen_spin_kick(const raw_spinlock_t 
+@@ -335,13 +335,13 @@ void xen_spin_kick(const raw_spinlock_t 
  		return;
  
  	if (unlikely(!cpu_online(local)))
@@ -9925,7 +9890,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		if (start == stop)
  			return;
  	}
-@@ -399,7 +399,7 @@ void xen_spin_kick(const raw_spinlock_t 
+@@ -401,7 +401,7 @@ void xen_spin_kick(const raw_spinlock_t 
  			notify_remote_via_evtchn(per_cpu(poll_evtchn, cpu));
  			return;
  		}
