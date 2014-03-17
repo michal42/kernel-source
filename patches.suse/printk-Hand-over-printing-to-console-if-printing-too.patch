@@ -42,11 +42,11 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  kernel/printk/printk.c              | 196 ++++++++++++++++++++++++++++++++----
  2 files changed, 195 insertions(+), 17 deletions(-)
 
-diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
-index 7116fda7077f..bb4318a6a2c7 100644
---- a/Documentation/kernel-parameters.txt
-+++ b/Documentation/kernel-parameters.txt
-@@ -2621,6 +2621,22 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+Index: linux-3.12-SLE12/Documentation/kernel-parameters.txt
+===================================================================
+--- linux-3.12-SLE12.orig/Documentation/kernel-parameters.txt
++++ linux-3.12-SLE12/Documentation/kernel-parameters.txt
+@@ -2558,6 +2558,22 @@ bytes respectively. Such letter suffixes
  			Format: <bool>  (1/Y/y=enable, 0/N/n=disable)
  			default: disabled
  
@@ -69,10 +69,10 @@ index 7116fda7077f..bb4318a6a2c7 100644
  	printk.time=	Show timing data prefixed to each printk message line
  			Format: <bool>  (1/Y/y=enable, 0/N/n=disable)
  
-diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
-index 91c554e027c5..8ef179b170d4 100644
---- a/kernel/printk/printk.c
-+++ b/kernel/printk/printk.c
+Index: linux-3.12-SLE12/kernel/printk/printk.c
+===================================================================
+--- linux-3.12-SLE12.orig/kernel/printk/printk.c
++++ linux-3.12-SLE12/kernel/printk/printk.c
 @@ -45,6 +45,7 @@
  #include <linux/poll.h>
  #include <linux/irq_work.h>
@@ -113,7 +113,7 @@ index 91c554e027c5..8ef179b170d4 100644
  #ifdef CONFIG_LOCKDEP
  static struct lockdep_map console_lock_dep_map = {
  	.name = "console_lock"
-@@ -254,6 +280,19 @@ static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
+@@ -254,6 +280,19 @@ static char __log_buf[__LOG_BUF_LEN] __a
  static char *log_buf = __log_buf;
  static u32 log_buf_len = __LOG_BUF_LEN;
  
@@ -133,7 +133,7 @@ index 91c554e027c5..8ef179b170d4 100644
  /* human readable text of the record */
  static char *log_text(const struct printk_log *msg)
  {
-@@ -1942,6 +1981,7 @@ void console_lock(void)
+@@ -1944,6 +1983,7 @@ void console_lock(void)
  	if (console_suspended)
  		return;
  	console_locked = 1;
@@ -141,7 +141,7 @@ index 91c554e027c5..8ef179b170d4 100644
  	console_may_schedule = 1;
  	mutex_acquire(&console_lock_dep_map, 0, 0, _RET_IP_);
  }
-@@ -1964,12 +2004,45 @@ int console_trylock(void)
+@@ -1966,12 +2006,44 @@ int console_trylock(void)
  		return 0;
  	}
  	console_locked = 1;
@@ -163,7 +163,6 @@ index 91c554e027c5..8ef179b170d4 100644
 + */
 +static int console_lock_try_spin(void)
 +{
-+	WARN_ON_ONCE(!in_atomic());
 +	/* Someone already spinning? Don't waste cpu time... */
 +	if (test_and_set_bit(PRINTK_CONSOLE_SPIN_B, &printk_handover_state))
 +		return 0;
@@ -187,7 +186,7 @@ index 91c554e027c5..8ef179b170d4 100644
  int is_console_locked(void)
  {
  	return console_locked;
-@@ -2004,15 +2077,44 @@ out:
+@@ -2006,15 +2078,44 @@ out:
  	raw_spin_unlock_irqrestore(&logbuf_lock, flags);
  }
  
@@ -235,7 +234,7 @@ index 91c554e027c5..8ef179b170d4 100644
   *
   * If there is output waiting, we wake /dev/kmsg and syslog() users.
   *
-@@ -2025,6 +2127,8 @@ void console_unlock(void)
+@@ -2027,6 +2128,8 @@ void console_unlock(void)
  	unsigned long flags;
  	bool wake_klogd = false;
  	bool retry;
@@ -244,7 +243,7 @@ index 91c554e027c5..8ef179b170d4 100644
  
  	if (console_suspended) {
  		up(&console_sem);
-@@ -2041,6 +2145,11 @@ again:
+@@ -2043,6 +2146,11 @@ again:
  		size_t len;
  		int level;
  
@@ -256,7 +255,7 @@ index 91c554e027c5..8ef179b170d4 100644
  		raw_spin_lock_irqsave(&logbuf_lock, flags);
  		if (seen_seq != log_next_seq) {
  			wake_klogd = true;
-@@ -2054,8 +2163,10 @@ again:
+@@ -2056,8 +2164,10 @@ again:
  			console_prev = 0;
  		}
  skip:
@@ -268,7 +267,7 @@ index 91c554e027c5..8ef179b170d4 100644
  
  		msg = log_from_idx(console_idx);
  		if (msg->flags & LOG_NOCONS) {
-@@ -2086,31 +2197,39 @@ skip:
+@@ -2088,31 +2198,39 @@ skip:
  		stop_critical_timings();	/* don't trace print latency */
  		call_console_drivers(level, text, len);
  		start_critical_timings();
@@ -321,7 +320,7 @@ index 91c554e027c5..8ef179b170d4 100644
  
  	if (wake_klogd)
  		wake_up_klogd();
-@@ -2148,6 +2267,7 @@ void console_unblank(void)
+@@ -2150,6 +2268,7 @@ void console_unblank(void)
  		console_lock();
  
  	console_locked = 1;
@@ -329,7 +328,7 @@ index 91c554e027c5..8ef179b170d4 100644
  	console_may_schedule = 0;
  	for_each_console(c)
  		if ((c->flags & CON_ENABLED) && c->unblank)
-@@ -2424,9 +2544,38 @@ int unregister_console(struct console *console)
+@@ -2425,9 +2544,38 @@ int unregister_console(struct console *c
  }
  EXPORT_SYMBOL(unregister_console);
  
@@ -368,7 +367,7 @@ index 91c554e027c5..8ef179b170d4 100644
  
  	for_each_console(con) {
  		if (!keep_bootcon && con->flags & CON_BOOT) {
-@@ -2434,6 +2583,19 @@ static int __init printk_late_init(void)
+@@ -2437,6 +2585,19 @@ static int __init printk_late_init(void)
  		}
  	}
  	hotcpu_notifier(console_cpu_notify, 0);
@@ -388,6 +387,3 @@ index 91c554e027c5..8ef179b170d4 100644
  	return 0;
  }
  late_initcall(printk_late_init);
--- 
-1.8.1.4
-
