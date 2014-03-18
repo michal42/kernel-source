@@ -1,0 +1,81 @@
+From: Matt Fleming <matt.fleming@intel.com>
+Date: Wed, 15 Jan 2014 13:36:33 +0000
+Subject: efi: Set feature flags inside feature init functions
+Git-repo: git://kerncvs.suse.de/kernel.git
+Git-commit: 0f8093a92da77afe24fd258a5a1037bb2b97a870
+Patch-mainline: v3.15-rc1
+References: fate#315017
+
+It makes more sense to set the feature flag in the success path of the
+detection function than it does to rely on the caller doing it. Apart
+from it being more logical to group the code and data together, it sets
+a much better example for new EFI architectures.
+
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ arch/x86/platform/efi/efi.c | 11 +++++++----
+ drivers/firmware/efi/efi.c  |  3 +++
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+Index: current/arch/x86/platform/efi/efi.c
+===================================================================
+--- current.orig/arch/x86/platform/efi/efi.c
++++ current/arch/x86/platform/efi/efi.c
+@@ -577,6 +577,8 @@ static int __init efi_systab_init(void *
+ 		       efi.systab->hdr.revision >> 16,
+ 		       efi.systab->hdr.revision & 0xffff);
+ 
++	set_bit(EFI_SYSTEM_TABLES, &efi.flags);
++
+ 	return 0;
+ }
+ 
+@@ -612,6 +614,8 @@ static int __init efi_runtime_init(void)
+ 	efi.get_time = phys_efi_get_time;
+ 	early_iounmap(runtime, sizeof(efi_runtime_services_t));
+ 
++	set_bit(EFI_RUNTIME_SERVICES, &efi.flags);
++
+ 	return 0;
+ }
+ 
+@@ -629,6 +633,8 @@ static int __init efi_memmap_init(void)
+ 	if (add_efi_memmap)
+ 		do_add_efi_memmap();
+ 
++	set_bit(EFI_MEMMAP, &efi.flags);
++
+ 	return 0;
+ }
+ 
+@@ -739,8 +745,6 @@ void __init efi_init(void)
+ 	if (efi_config_init(arch_tables))
+ 		return;
+ 
+-	set_bit(EFI_CONFIG_TABLES, &efi.flags);
+-
+ 	/*
+ 	 * Note: We currently don't support runtime services on an EFI
+ 	 * that doesn't match the kernel 32/64-bit mode.
+@@ -751,7 +755,6 @@ void __init efi_init(void)
+ 	else {
+ 		if (disable_runtime || efi_runtime_init())
+ 			return;
+-		set_bit(EFI_RUNTIME_SERVICES, &efi.flags);
+ 	}
+ 
+ 	if (efi_memmap_init())
+Index: current/drivers/firmware/efi/efi.c
+===================================================================
+--- current.orig/drivers/firmware/efi/efi.c
++++ current/drivers/firmware/efi/efi.c
+@@ -313,5 +313,8 @@ int __init efi_config_init(efi_config_ta
+ 	}
+ 	pr_cont("\n");
+ 	early_iounmap(config_tables, efi.systab->nr_tables * sz);
++
++	set_bit(EFI_CONFIG_TABLES, &efi.flags);
++
+ 	return 0;
+ }
