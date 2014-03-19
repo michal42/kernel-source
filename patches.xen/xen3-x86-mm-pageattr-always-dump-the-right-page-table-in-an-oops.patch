@@ -1,0 +1,80 @@
+From: Matt Fleming <matt.fleming@intel.com>
+Date: Fri, 6 Dec 2013 21:13:04 +0000
+Subject: x86/mm/pageattr: Always dump the right page table in an oops
+Patch-mainline: Queued in subsystem maintainer repo
+References: fate#315017
+
+Now that we have EFI-specific page tables we need to lookup the pgd when
+dumping those page tables, rather than assuming that swapper_pgdir is
+the current pgdir.
+
+Remove the double underscore prefix, which is usually reserved for
+static functions.
+
+Acked-by: Borislav Petkov <bp@suse.de>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Automatically created from "patches.arch/x86-mm-pageattr-always-dump-the-right-page-table-in-an-oops.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_types.h	2014-03-19 14:15:10.000000000 +0100
++++ sle12/arch/x86/include/mach-xen/asm/pgtable_types.h	2014-03-19 14:17:20.000000000 +0100
+@@ -437,6 +437,8 @@ static inline void update_page_count(int
+  * as a pte too.
+  */
+ extern pte_t *lookup_address(unsigned long address, unsigned int *level);
++extern pte_t *lookup_address_in_pgd(pgd_t *pgd, unsigned long address,
++				    unsigned int *level);
+ extern phys_addr_t slow_virt_to_phys(void *__address);
+ extern int kernel_map_pages_in_pgd(pgd_t *pgd, u64 pfn, unsigned long address,
+ 				   unsigned numpages, unsigned long page_flags);
+--- sle12.orig/arch/x86/mm/fault-xen.c	2013-11-25 11:39:13.000000000 +0100
++++ sle12/arch/x86/mm/fault-xen.c	2014-03-19 14:17:20.000000000 +0100
+@@ -590,8 +590,13 @@ show_fault_oops(struct pt_regs *regs, un
+ 
+ 	if (error_code & PF_INSTR) {
+ 		unsigned int level;
++		pgd_t *pgd;
++		pte_t *pte;
+ 
+-		pte_t *pte = lookup_address(address, &level);
++		pgd = __va(read_cr3() & PHYSICAL_PAGE_MASK);
++		pgd += pgd_index(address);
++
++		pte = lookup_address_in_pgd(pgd, address, &level);
+ 
+ 		if (pte && pte_present(*pte) && !pte_exec(*pte))
+ 			printk(nx_warning, from_kuid(&init_user_ns, current_uid()));
+--- sle12.orig/arch/x86/mm/pageattr-xen.c	2014-03-19 14:16:47.000000000 +0100
++++ sle12/arch/x86/mm/pageattr-xen.c	2014-03-19 14:17:20.000000000 +0100
+@@ -323,8 +323,12 @@ static inline pgprot_t static_protection
+ 	return prot;
+ }
+ 
+-static pte_t *__lookup_address_in_pgd(pgd_t *pgd, unsigned long address,
+-				      unsigned int *level)
++/*
++ * Lookup the page table entry for a virtual address in a specific pgd.
++ * Return a pointer to the entry and the level of the mapping.
++ */
++pte_t *lookup_address_in_pgd(pgd_t *pgd, unsigned long address,
++			     unsigned int *level)
+ {
+ 	pud_t *pud;
+ 	pmd_t *pmd;
+@@ -365,7 +369,7 @@ static pte_t *__lookup_address_in_pgd(pg
+  */
+ pte_t *lookup_address(unsigned long address, unsigned int *level)
+ {
+-        return __lookup_address_in_pgd(pgd_offset_k(address), address, level);
++        return lookup_address_in_pgd(pgd_offset_k(address), address, level);
+ }
+ EXPORT_SYMBOL_GPL(lookup_address);
+ 
+@@ -373,7 +377,7 @@ static pte_t *_lookup_address_cpa(struct
+ 				  unsigned int *level)
+ {
+         if (cpa->pgd)
+-		return __lookup_address_in_pgd(cpa->pgd + pgd_index(address),
++		return lookup_address_in_pgd(cpa->pgd + pgd_index(address),
+ 					       address, level);
+ 
+         return lookup_address(address, level);

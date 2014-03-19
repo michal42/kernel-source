@@ -7,7 +7,7 @@ Acked-by: jbeulich@novell.com
 
 2.6.33/kernel/sysctl_check.c (would need to be reverted there)
 
---- sle12.orig/arch/x86/Kconfig	2014-01-23 11:14:10.000000000 +0100
+--- sle12.orig/arch/x86/Kconfig	2013-09-26 12:31:55.000000000 +0200
 +++ sle12/arch/x86/Kconfig	2014-01-23 11:14:58.000000000 +0100
 @@ -103,10 +103,10 @@ config X86
  	select BUILDTIME_EXTABLE_SORT
@@ -38,15 +38,7 @@ Acked-by: jbeulich@novell.com
  	default y
  
  config X86_32_LAZY_GS
-@@ -336,6 +336,7 @@ config X86_MPPARSE
- 
- config X86_XEN
- 	bool "Xen-compatible"
-+	depends on X86_32
- 	select XEN
- 	select X86_PAE
- 	select SWIOTLB
-@@ -380,6 +381,7 @@ endif
+@@ -371,6 +371,7 @@ endif
  
  config X86_64_XEN
  	bool "Enable Xen compatible kernel"
@@ -54,7 +46,7 @@ Acked-by: jbeulich@novell.com
  	select XEN
  	select SWIOTLB
  	help
-@@ -740,7 +742,7 @@ source "arch/x86/Kconfig.cpu"
+@@ -731,7 +732,7 @@ source "arch/x86/Kconfig.cpu"
  config HPET_TIMER
  	def_bool X86_64
  	prompt "HPET Timer Support" if X86_32
@@ -63,25 +55,7 @@ Acked-by: jbeulich@novell.com
  	---help---
  	  Use the IA-PC HPET (High Precision Event Timer) to manage
  	  time in preference to the PIT and RTC, if a HPET is
-@@ -1058,7 +1060,7 @@ config I8K
- 
- config X86_REBOOTFIXUPS
- 	bool "Enable X86 board specific fixups for reboot"
--	depends on X86_32 && !X86_XEN
-+	depends on X86_32 && !XEN
- 	---help---
- 	  This enables chipset and/or board specific fixups to be done
- 	  in order to get reboot to work correctly. This is only needed on
-@@ -1484,7 +1486,7 @@ config X86_RESERVE_LOW
- config MATH_EMULATION
- 	bool
- 	prompt "Math emulation" if X86_32
--	depends on !X86_XEN
-+	depends on !XEN
- 	---help---
- 	  Linux can emulate a math coprocessor (used for floating point
- 	  operations) if you don't have one. 486DX and Pentium processors have
-@@ -1929,6 +1931,7 @@ endmenu
+@@ -1921,6 +1922,7 @@ endmenu
  config ARCH_ENABLE_MEMORY_HOTPLUG
  	def_bool y
  	depends on X86_64 || (X86_32 && HIGHMEM)
@@ -89,16 +63,7 @@ Acked-by: jbeulich@novell.com
  
  config ARCH_ENABLE_MEMORY_HOTREMOVE
  	def_bool y
-@@ -2122,7 +2125,7 @@ choice
- 
- config PCI_GOBIOS
- 	bool "BIOS"
--	depends on !X86_XEN
-+	depends on !XEN
- 
- config PCI_GOMMCONFIG
- 	bool "MMConfig"
-@@ -2191,7 +2194,7 @@ config PCI_CNB20LE_QUIRK
+@@ -2175,7 +2177,7 @@ config PCI_CNB20LE_QUIRK
  
  config XEN_PCIDEV_FRONTEND
  	bool "Xen PCI Frontend" if X86_64
@@ -207,7 +172,7 @@ Acked-by: jbeulich@novell.com
  		kfree(buf);
  		return -EINVAL;
  	}
---- sle12.orig/arch/x86/kernel/cpu/Makefile	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/kernel/cpu/Makefile	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/kernel/cpu/Makefile	2013-08-09 12:27:55.000000000 +0200
 @@ -48,6 +48,8 @@ obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr
  
@@ -239,7 +204,7 @@ Acked-by: jbeulich@novell.com
  	c->x86_clflush_size = 32;
  	memset(&c->x86_capability, 0, sizeof c->x86_capability);
  
---- sle12.orig/arch/x86/kernel/cpu/intel.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/kernel/cpu/intel.c	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/kernel/cpu/intel.c	2014-01-23 11:14:53.000000000 +0100
 @@ -297,6 +297,7 @@ static void srat_detect_node(struct cpui
  #endif
@@ -471,57 +436,6 @@ Acked-by: jbeulich@novell.com
  #endif
  		early_console = &early_vga_console;
   	} else if (!strncmp(buf, "simnow", 6)) {
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:36:16.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:36:44.000000000 +0100
-@@ -254,6 +254,7 @@ check_userspace:
- 	jb resume_kernel		# not returning to v8086 or userspace
- 
- ENTRY(resume_userspace)
-+	LOCKDEP_SYS_EXIT
-  	DISABLE_INTERRUPTS(CLBR_ANY)	# make sure we don't miss an interrupt
- 					# setting need_resched or sigpending
- 					# between sampling and the iret
-@@ -341,6 +342,7 @@ sysenter_past_esp:
- 	jae syscall_badsys
- 	call *sys_call_table(,%eax,4)
- 	movl %eax,PT_EAX(%esp)
-+	LOCKDEP_SYS_EXIT
- 	DISABLE_INTERRUPTS(CLBR_ANY)
- 	TRACE_IRQS_OFF
- 	movl TI_flags(%ebp), %ecx
-@@ -406,6 +408,7 @@ syscall_call:
- 	call *sys_call_table(,%eax,4)
- 	movl %eax,PT_EAX(%esp)		# store the return value
- syscall_exit:
-+	LOCKDEP_SYS_EXIT
- 	DISABLE_INTERRUPTS(CLBR_ANY)	# make sure we don't miss an interrupt
- 					# setting need_resched or sigpending
- 					# between sampling and the iret
-@@ -478,7 +481,7 @@ ldt_ss:
- 	 * is still available to implement the setting of the high
- 	 * 16-bits in the INTERRUPT_RETURN paravirt-op.
- 	 */
--	cmpl $0, paravirt_ops+PARAVIRT_enabled
-+	cmpl $0, pv_info+PARAVIRT_enabled
- 	jne restore_nocheck
- #endif
- 
-@@ -540,6 +543,7 @@ work_pending:
- 	jz work_notifysig
- work_resched:
- 	call schedule
-+	LOCKDEP_SYS_EXIT
- 	DISABLE_INTERRUPTS(CLBR_ANY)	# make sure we don't miss an interrupt
- 					# setting need_resched or sigpending
- 					# between sampling and the iret
-@@ -1268,6 +1272,6 @@ ENTRY(kernel_thread_helper)
- ENDPROC(kernel_thread_helper)
- 
- .section .rodata,"a"
--#include "syscall_table.S"
-+#include "syscall_table_32.S"
- 
- syscall_table_size=(.-sys_call_table)
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:21:43.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:28:06.000000000 +0200
 @@ -57,7 +57,7 @@
@@ -597,17 +511,6 @@ Acked-by: jbeulich@novell.com
  	call do_exit
  	CFI_ENDPROC
  ENDPROC(child_rip)
---- sle12.orig/arch/x86/kernel/fixup.c	2008-01-28 12:24:18.000000000 +0100
-+++ sle12/arch/x86/kernel/fixup.c	2011-01-31 17:56:27.000000000 +0100
-@@ -34,7 +34,7 @@
- #include <linux/delay.h>
- #include <linux/version.h>
- 
--#define DP(_f, _args...) printk(KERN_ALERT "  " _f "\n" , ## _args )
-+#define DP(_f, _args...) pr_alert("  " _f "\n" , ## _args )
- 
- fastcall void do_fixup_4gb_segment(struct pt_regs *regs, long error_code)
- {
 --- sle12.orig/arch/x86/kernel/head64-xen.c	2011-08-09 10:41:42.000000000 +0200
 +++ sle12/arch/x86/kernel/head64-xen.c	2011-08-09 10:44:02.000000000 +0200
 @@ -1,5 +1,5 @@
@@ -1144,134 +1047,6 @@ Acked-by: jbeulich@novell.com
 +	WARN_ON(irqs_disabled());	/* for portability */
  	if (mem && vaddr >= mem->virt_base && vaddr < (mem->virt_base + (mem->size << PAGE_SHIFT))) {
  		int page = (vaddr - mem->virt_base) >> PAGE_SHIFT;
- 
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-07-05 10:49:33.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2011-01-31 17:56:27.000000000 +0100
-@@ -1,6 +1,4 @@
- /*
-- *  linux/arch/i386/kernel/process.c
-- *
-  *  Copyright (C) 1995  Linus Torvalds
-  *
-  *  Pentium III FXSR, SSE support
-@@ -190,6 +188,10 @@ void cpu_idle(void)
- 	}
- }
- 
-+static void do_nothing(void *unused)
-+{
-+}
-+
- void cpu_idle_wait(void)
- {
- 	unsigned int cpu, this_cpu = get_cpu();
-@@ -214,13 +216,20 @@ void cpu_idle_wait(void)
- 				cpu_clear(cpu, map);
- 		}
- 		cpus_and(map, map, cpu_online_map);
-+		/*
-+		 * We waited 1 sec, if a CPU still did not call idle
-+		 * it may be because it is in idle and not waking up
-+		 * because it has nothing to do.
-+		 * Give all the remaining CPUS a kick.
-+		 */
-+		smp_call_function_mask(map, do_nothing, 0, 0);
- 	} while (!cpus_empty(map));
- 
- 	set_cpus_allowed(current, tmp);
- }
- EXPORT_SYMBOL_GPL(cpu_idle_wait);
- 
--void __devinit select_idle_routine(const struct cpuinfo_x86 *c)
-+void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c)
- {
- }
- 
-@@ -238,34 +247,52 @@ static int __init idle_setup(char *str)
- }
- early_param("idle", idle_setup);
- 
--void show_regs(struct pt_regs * regs)
-+void __show_registers(struct pt_regs *regs, int all)
- {
- 	unsigned long cr0 = 0L, cr2 = 0L, cr3 = 0L, cr4 = 0L;
- 	unsigned long d0, d1, d2, d3, d6, d7;
-+	unsigned long esp;
-+	unsigned short ss, gs;
-+
-+	if (user_mode_vm(regs)) {
-+		esp = regs->esp;
-+		ss = regs->xss & 0xffff;
-+		savesegment(gs, gs);
-+	} else {
-+		esp = (unsigned long) (&regs->esp);
-+		savesegment(ss, ss);
-+		savesegment(gs, gs);
-+	}
- 
- 	printk("\n");
--	printk("Pid: %d, comm: %20s\n", current->pid, current->comm);
--	printk("EIP: %04x:[<%08lx>] CPU: %d\n",0xffff & regs->xcs,regs->eip, smp_processor_id());
-+	printk("Pid: %d, comm: %s %s (%s %.*s)\n",
-+			task_pid_nr(current), current->comm,
-+			print_tainted(), init_utsname()->release,
-+			(int)strcspn(init_utsname()->version, " "),
-+			init_utsname()->version);
-+
-+	printk("EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
-+			0xffff & regs->xcs, regs->eip, regs->eflags,
-+			smp_processor_id());
- 	print_symbol("EIP is at %s\n", regs->eip);
- 
--	if (user_mode_vm(regs))
--		printk(" ESP: %04x:%08lx",0xffff & regs->xss,regs->esp);
--	printk(" EFLAGS: %08lx    %s  (%s %.*s)\n",
--	       regs->eflags, print_tainted(), init_utsname()->release,
--	       (int)strcspn(init_utsname()->version, " "),
--	       init_utsname()->version);
- 	printk("EAX: %08lx EBX: %08lx ECX: %08lx EDX: %08lx\n",
--		regs->eax,regs->ebx,regs->ecx,regs->edx);
--	printk("ESI: %08lx EDI: %08lx EBP: %08lx",
--		regs->esi, regs->edi, regs->ebp);
--	printk(" DS: %04x ES: %04x FS: %04x\n",
--	       0xffff & regs->xds,0xffff & regs->xes, 0xffff & regs->xfs);
-+		regs->eax, regs->ebx, regs->ecx, regs->edx);
-+	printk("ESI: %08lx EDI: %08lx EBP: %08lx ESP: %08lx\n",
-+		regs->esi, regs->edi, regs->ebp, esp);
-+	printk(" DS: %04x ES: %04x FS: %04x GS: %04x SS: %04x\n",
-+	       regs->xds & 0xffff, regs->xes & 0xffff,
-+	       regs->xfs & 0xffff, gs, ss);
-+
-+	if (!all)
-+		return;
- 
- 	cr0 = read_cr0();
- 	cr2 = read_cr2();
- 	cr3 = read_cr3();
- 	cr4 = read_cr4_safe();
--	printk("CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n", cr0, cr2, cr3, cr4);
-+	printk("CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n",
-+			cr0, cr2, cr3, cr4);
- 
- 	get_debugreg(d0, 0);
- 	get_debugreg(d1, 1);
-@@ -273,10 +300,16 @@ void show_regs(struct pt_regs * regs)
- 	get_debugreg(d3, 3);
- 	printk("DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
- 			d0, d1, d2, d3);
-+
- 	get_debugreg(d6, 6);
- 	get_debugreg(d7, 7);
--	printk("DR6: %08lx DR7: %08lx\n", d6, d7);
-+	printk("DR6: %08lx DR7: %08lx\n",
-+			d6, d7);
-+}
- 
-+void show_regs(struct pt_regs *regs)
-+{
-+	__show_registers(regs, 1);
- 	show_trace(NULL, regs, &regs->esp);
- }
  
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2011-02-02 08:31:50.000000000 +0100
 +++ sle12/arch/x86/kernel/process_64-xen.c	2011-02-02 08:32:00.000000000 +0100
@@ -2177,7 +1952,7 @@ Acked-by: jbeulich@novell.com
 -	return 1;
 -}
 -__setup("pagefaulttrace", enable_pagefaulttrace);
---- sle12.orig/arch/x86/mm/hypervisor.c	2012-05-31 14:43:34.000000000 +0200
+--- sle12.orig/arch/x86/mm/hypervisor.c	2013-03-14 15:51:51.000000000 +0100
 +++ sle12/arch/x86/mm/hypervisor.c	2012-05-31 14:43:47.000000000 +0200
 @@ -71,8 +71,8 @@ static inline bool use_lazy_mmu_mode(voi
  
@@ -2281,90 +2056,6 @@ Acked-by: jbeulich@novell.com
  	cr_mcl[i - 1].args[MULTI_UVMFLAGS_INDEX] = order
  						   ? UVMF_TLB_FLUSH|UVMF_ALL
  						   : UVMF_INVLPG|UVMF_ALL;
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-01-31 17:49:31.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-01-31 17:56:27.000000000 +0100
-@@ -94,7 +94,14 @@ static pte_t * __init one_page_table_ini
- #else
- 	if (!(__pmd_val(*pmd) & _PAGE_PRESENT)) {
- #endif
--		pte_t *page_table = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
-+		pte_t *page_table = NULL;
-+
-+#ifdef CONFIG_DEBUG_PAGEALLOC
-+		page_table = (pte_t *) alloc_bootmem_pages(PAGE_SIZE);
-+#endif
-+		if (!page_table)
-+			page_table =
-+				(pte_t *)alloc_bootmem_low_pages(PAGE_SIZE);
- 
- 		paravirt_alloc_pt(&init_mm, __pa(page_table) >> PAGE_SHIFT);
- 		make_lowmem_page_readonly(page_table,
-@@ -102,7 +109,7 @@ static pte_t * __init one_page_table_ini
- 		set_pmd(pmd, __pmd(__pa(page_table) | _PAGE_TABLE));
- 		BUG_ON(page_table != pte_offset_kernel(pmd, 0));
- 	}
--	
-+
- 	return pte_offset_kernel(pmd, 0);
- }
- 
-@@ -360,8 +367,13 @@ static void __init set_highmem_pages_ini
- {
- 	int pfn;
- 	for (pfn = highstart_pfn; pfn < highend_pfn
--				  && pfn < xen_start_info->nr_pages; pfn++)
--		add_one_highpage_init(pfn_to_page(pfn), pfn, bad_ppro);
-+				  && pfn < xen_start_info->nr_pages; pfn++) {
-+		/*
-+		 * Holes under sparsemem might not have no mem_map[]:
-+		 */
-+		if (pfn_valid(pfn))
-+			add_one_highpage_init(pfn_to_page(pfn), pfn, bad_ppro);
-+	}
- 
- 	/* XEN: init high-mem pages outside initial allocation. */
- 	for (; pfn < highend_pfn; pfn++) {
-@@ -785,35 +797,18 @@ int arch_add_memory(int nid, u64 start, 
- 	return __add_pages(zone, start_pfn, nr_pages);
- }
- 
--int remove_memory(u64 start, u64 size)
--{
--	return -EINVAL;
--}
--EXPORT_SYMBOL_GPL(remove_memory);
- #endif
- 
- struct kmem_cache *pmd_cache;
- 
- void __init pgtable_cache_init(void)
- {
--	size_t pgd_size = PTRS_PER_PGD*sizeof(pgd_t);
--
--	if (PTRS_PER_PMD > 1) {
-+	if (PTRS_PER_PMD > 1)
- 		pmd_cache = kmem_cache_create("pmd",
--					PTRS_PER_PMD*sizeof(pmd_t),
--					PTRS_PER_PMD*sizeof(pmd_t),
--					SLAB_PANIC,
--					pmd_ctor);
--		if (!SHARED_KERNEL_PMD) {
--			/* If we're in PAE mode and have a non-shared
--			   kernel pmd, then the pgd size must be a
--			   page size.  This is because the pgd_list
--			   links through the page structure, so there
--			   can only be one pgd per page for this to
--			   work. */
--			pgd_size = PAGE_SIZE;
--		}
--	}
-+					      PTRS_PER_PMD*sizeof(pmd_t),
-+					      PTRS_PER_PMD*sizeof(pmd_t),
-+					      SLAB_PANIC,
-+					      pmd_ctor);
- }
- 
- /*
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2011-01-31 17:49:31.000000000 +0100
 +++ sle12/arch/x86/mm/init_64-xen.c	2011-01-31 17:56:27.000000000 +0100
 @@ -798,7 +798,7 @@ static void xen_finish_init_mapping(void
@@ -2676,34 +2367,6 @@ Acked-by: jbeulich@novell.com
  
  	flush_map(&l);
  
---- sle12.orig/arch/x86/mm/pgtable_32-xen.c	2011-01-31 17:49:31.000000000 +0100
-+++ sle12/arch/x86/mm/pgtable_32-xen.c	2011-01-31 17:56:27.000000000 +0100
-@@ -6,6 +6,7 @@
- #include <linux/kernel.h>
- #include <linux/errno.h>
- #include <linux/mm.h>
-+#include <linux/nmi.h>
- #include <linux/swap.h>
- #include <linux/smp.h>
- #include <linux/highmem.h>
-@@ -46,6 +47,8 @@ void show_mem(void)
- 	for_each_online_pgdat(pgdat) {
- 		pgdat_resize_lock(pgdat, &flags);
- 		for (i = 0; i < pgdat->node_spanned_pages; ++i) {
-+			if (unlikely(i % MAX_ORDER_NR_PAGES == 0))
-+				touch_nmi_watchdog();
- 			page = pgdat_page_nr(pgdat, i);
- 			total++;
- 			if (PageHighMem(page))
-@@ -206,7 +209,7 @@ void pte_free(struct page *pte)
- 	__free_page(pte);
- }
- 
--void pmd_ctor(void *pmd, struct kmem_cache *cache, unsigned long flags)
-+void pmd_ctor(struct kmem_cache *cache, void *pmd)
- {
- 	memset(pmd, 0, PTRS_PER_PMD*sizeof(pmd_t));
- }
 --- sle12.orig/arch/x86/pci/pcifront.c	2009-03-18 10:39:31.000000000 +0100
 +++ sle12/arch/x86/pci/pcifront.c	2011-01-31 17:56:27.000000000 +0100
 @@ -31,7 +31,7 @@ static int __init pcifront_x86_stub_init
@@ -2715,7 +2378,7 @@ Acked-by: jbeulich@novell.com
  
  	/* Copied from arch/i386/pci/common.c */
  	pci_cache_line_size = 32 >> 2;
---- sle12.orig/drivers/acpi/processor_core.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/acpi/processor_core.c	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/acpi/processor_core.c	2013-03-21 14:20:28.000000000 +0100
 @@ -200,11 +200,21 @@ int acpi_get_cpuid(acpi_handle handle, i
  	}
@@ -2781,7 +2444,7 @@ Acked-by: jbeulich@novell.com
  
  
  static inline int
---- sle12.orig/drivers/cpuidle/Kconfig	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/cpuidle/Kconfig	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/cpuidle/Kconfig	2013-09-26 12:40:55.000000000 +0200
 @@ -2,6 +2,7 @@ menu "CPU Idle"
  
@@ -2791,7 +2454,7 @@ Acked-by: jbeulich@novell.com
  	default y if ACPI || PPC_PSERIES
  	select CPU_IDLE_GOV_LADDER if (!NO_HZ && !NO_HZ_IDLE)
  	select CPU_IDLE_GOV_MENU if (NO_HZ || NO_HZ_IDLE)
---- sle12.orig/drivers/dma/Kconfig	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/dma/Kconfig	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/dma/Kconfig	2013-05-23 17:09:25.000000000 +0200
 @@ -62,7 +62,7 @@ config INTEL_IOATDMA
  	tristate "Intel I/OAT DMA support"
@@ -2802,14 +2465,14 @@ Acked-by: jbeulich@novell.com
  	help
  	  Enable support for the Intel(R) I/OAT DMA engine present
  	  in recent Intel Xeon chipsets.
---- sle12.orig/drivers/dma/ioat/Makefile	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/dma/ioat/Makefile	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/dma/ioat/Makefile	2011-01-31 17:56:27.000000000 +0100
 @@ -1,2 +1,3 @@
  obj-$(CONFIG_INTEL_IOATDMA) += ioatdma.o
 -ioatdma-y := pci.o dma.o dma_v2.o dma_v3.o dca.o
 +dca-$(CONFIG_DCA) := dca.o
 +ioatdma-y := pci.o dma.o dma_v2.o dma_v3.o $(dca-y) $(dca-m)
---- sle12.orig/drivers/dma/ioat/dca.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/dma/ioat/dca.c	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/dma/ioat/dca.c	2013-05-23 17:09:55.000000000 +0200
 @@ -707,3 +707,15 @@ struct dca_provider *ioat3_dca_init(stru
  
@@ -2827,7 +2490,7 @@ Acked-by: jbeulich@novell.com
 +	free_dca_provider(device->dca);
 +	device->dca = NULL;
 +}
---- sle12.orig/drivers/dma/ioat/dma.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/dma/ioat/dma.h	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/dma/ioat/dma.h	2013-05-23 17:09:55.000000000 +0200
 @@ -374,4 +374,22 @@ void ioat_stop(struct ioat_chan_common *
  extern const struct sysfs_ops ioat_sysfs_ops;
@@ -2852,7 +2515,7 @@ Acked-by: jbeulich@novell.com
 +#endif
 +
  #endif /* IOATDMA_H */
---- sle12.orig/drivers/dma/ioat/pci.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/dma/ioat/pci.c	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/dma/ioat/pci.c	2013-05-23 17:10:02.000000000 +0200
 @@ -29,7 +29,6 @@
  #include <linux/module.h>
@@ -6190,17 +5853,6 @@ Acked-by: jbeulich@novell.com
  #define flush_agp_cache() wbinvd()
  
  /* Convert a physical address to an address suitable for the GART. */
---- sle12.orig/arch/x86/include/mach-xen/asm/cmpxchg_32.h	2011-12-23 11:18:49.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/cmpxchg_32.h	2011-12-23 11:19:52.000000000 +0100
-@@ -1,8 +1,6 @@
- #ifndef _ASM_X86_XEN_CMPXCHG_32_H
- #define _ASM_X86_XEN_CMPXCHG_32_H
- 
--#include_next <asm/cmpxchg_32.h>
--
- static inline u64 get_64bit(const volatile u64 *ptr)
- {
- 	u64 res;
 --- sle12.orig/arch/x86/include/mach-xen/asm/cmpxchg_64.h	2011-12-23 11:18:57.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/cmpxchg_64.h	2011-12-23 11:19:55.000000000 +0100
 @@ -1,8 +1,6 @@
@@ -6720,442 +6372,6 @@ Acked-by: jbeulich@novell.com
 +}
 +
 +#endif /* __HYPERCALL_H__ */
---- sle12.orig/arch/x86/include/mach-xen/asm/hypercall_32.h	2012-10-31 10:58:57.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/hypercall_32.h	2012-10-31 11:11:48.000000000 +0100
-@@ -1,195 +1,10 @@
--/******************************************************************************
-- * hypercall.h
-- * 
-- * Linux-specific hypervisor handling.
-- * 
-- * Copyright (c) 2002-2004, K A Fraser
-- * 
-- * This program is free software; you can redistribute it and/or
-- * modify it under the terms of the GNU General Public License version 2
-- * as published by the Free Software Foundation; or, when distributed
-- * separately from the Linux kernel or incorporated into other
-- * software packages, subject to the following license:
-- * 
-- * Permission is hereby granted, free of charge, to any person obtaining a copy
-- * of this source file (the "Software"), to deal in the Software without
-- * restriction, including without limitation the rights to use, copy, modify,
-- * merge, publish, distribute, sublicense, and/or sell copies of the Software,
-- * and to permit persons to whom the Software is furnished to do so, subject to
-- * the following conditions:
-- * 
-- * The above copyright notice and this permission notice shall be included in
-- * all copies or substantial portions of the Software.
-- * 
-- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-- * IN THE SOFTWARE.
-- */
--
--#ifndef __HYPERCALL_H__
--#define __HYPERCALL_H__
--
--#include <linux/stringify.h>
--
--#ifndef __HYPERVISOR_H__
--# error "please don't include this file directly"
--#endif
--
--#ifdef CONFIG_XEN
--#define HYPERCALL_STR(name)					\
--	"call hypercall_page + ("__stringify(__HYPERVISOR_##name)" * 32)"
--#else
--#define HYPERCALL_STR(name)					\
--	"mov hypercall_stubs,%%eax; "				\
--	"add $("__stringify(__HYPERVISOR_##name)" * 32),%%eax; "\
--	"call *%%eax"
--#endif
--
--#define _hypercall0(type, name)			\
--({						\
--	type __res;				\
--	asm volatile (				\
--		HYPERCALL_STR(name)		\
--		: "=a" (__res)			\
--		:				\
--		: "memory" );			\
--	__res;					\
--})
--
--#define _hypercall1(type, name, a1)				\
--({								\
--	type __res;						\
--	long __ign1;						\
--	asm volatile (						\
--		HYPERCALL_STR(name)				\
--		: "=a" (__res), "=b" (__ign1)			\
--		: "1" ((long)(a1))				\
--		: "memory" );					\
--	__res;							\
--})
--
--#define _hypercall2(type, name, a1, a2)				\
--({								\
--	type __res;						\
--	long __ign1, __ign2;					\
--	asm volatile (						\
--		HYPERCALL_STR(name)				\
--		: "=a" (__res), "=b" (__ign1), "=c" (__ign2)	\
--		: "1" ((long)(a1)), "2" ((long)(a2))		\
--		: "memory" );					\
--	__res;							\
--})
--
--#define _hypercall3(type, name, a1, a2, a3)			\
--({								\
--	type __res;						\
--	long __ign1, __ign2, __ign3;				\
--	asm volatile (						\
--		HYPERCALL_STR(name)				\
--		: "=a" (__res), "=b" (__ign1), "=c" (__ign2), 	\
--		"=d" (__ign3)					\
--		: "1" ((long)(a1)), "2" ((long)(a2)),		\
--		"3" ((long)(a3))				\
--		: "memory" );					\
--	__res;							\
--})
--
--#define _hypercall4(type, name, a1, a2, a3, a4)			\
--({								\
--	type __res;						\
--	long __ign1, __ign2, __ign3, __ign4;			\
--	asm volatile (						\
--		HYPERCALL_STR(name)				\
--		: "=a" (__res), "=b" (__ign1), "=c" (__ign2),	\
--		"=d" (__ign3), "=S" (__ign4)			\
--		: "1" ((long)(a1)), "2" ((long)(a2)),		\
--		"3" ((long)(a3)), "4" ((long)(a4))		\
--		: "memory" );					\
--	__res;							\
--})
--
--#define _hypercall5(type, name, a1, a2, a3, a4, a5)		\
--({								\
--	type __res;						\
--	long __ign1, __ign2, __ign3, __ign4, __ign5;		\
--	asm volatile (						\
--		HYPERCALL_STR(name)				\
--		: "=a" (__res), "=b" (__ign1), "=c" (__ign2),	\
--		"=d" (__ign3), "=S" (__ign4), "=D" (__ign5)	\
--		: "1" ((long)(a1)), "2" ((long)(a2)),		\
--		"3" ((long)(a3)), "4" ((long)(a4)),		\
--		"5" ((long)(a5))				\
--		: "memory" );					\
--	__res;							\
--})
--
--#define _hypercall(type, op, a1, a2, a3, a4, a5)		\
--({								\
--	type __res;						\
--	register typeof((a1)+0) __arg1 asm("ebx") = (a1);	\
--	register typeof((a2)+0) __arg2 asm("ecx") = (a2);	\
--	register typeof((a3)+0) __arg3 asm("edx") = (a3);	\
--	register typeof((a4)+0) __arg4 asm("esi") = (a4);	\
--	register typeof((a5)+0) __arg5 asm("edi") = (a5);	\
--	asm volatile (						\
--		"call *%6"					\
--		: "=a" (__res), "+r" (__arg1), "+r" (__arg2),	\
--		  "+r" (__arg3), "+r" (__arg4), "+r" (__arg5)	\
--		: "0" (hypercall_page + (op) * 32)		\
--		: "memory" );					\
--	__res;							\
--})
-+#define HYPERCALL_arg1 "ebx"
-+#define HYPERCALL_arg2 "ecx"
-+#define HYPERCALL_arg3 "edx"
-+#define HYPERCALL_arg4 "esi"
-+#define HYPERCALL_arg5 "edi"
- 
- #if CONFIG_XEN_COMPAT <= 0x030002
--int __must_check HYPERVISOR_event_channel_op_compat(int, void *);
--int __must_check HYPERVISOR_physdev_op_compat(int, void *);
--#endif
--
--static inline int __must_check
--HYPERVISOR_set_trap_table(
--	const trap_info_t *table)
--{
--	return _hypercall1(int, set_trap_table, table);
--}
--
--static inline int __must_check
--HYPERVISOR_mmu_update(
--	mmu_update_t *req, unsigned int count, unsigned int *success_count,
--	domid_t domid)
--{
--	if (arch_use_lazy_mmu_mode())
--		return xen_multi_mmu_update(req, count, success_count, domid);
--	return _hypercall4(int, mmu_update, req, count, success_count, domid);
--}
--
--static inline int __must_check
--HYPERVISOR_mmuext_op(
--	struct mmuext_op *op, unsigned int count, unsigned int *success_count,
--	domid_t domid)
--{
--	if (arch_use_lazy_mmu_mode())
--		return xen_multi_mmuext_op(op, count, success_count, domid);
--	return _hypercall4(int, mmuext_op, op, count, success_count, domid);
--}
--
--static inline int __must_check
--HYPERVISOR_set_gdt(
--	unsigned long *frame_list, unsigned int entries)
--{
--	return _hypercall2(int, set_gdt, frame_list, entries);
--}
--
--static inline int __must_check
--HYPERVISOR_stack_switch(
--	unsigned long ss, unsigned long esp)
--{
--	return _hypercall2(int, stack_switch, ss, esp);
--}
--
- static inline int __must_check
- HYPERVISOR_set_callbacks(
- 	unsigned long event_selector, unsigned long event_address,
-@@ -199,80 +14,24 @@ HYPERVISOR_set_callbacks(
- 			   event_selector, event_address,
- 			   failsafe_selector, failsafe_address);
- }
--
--static inline int
--HYPERVISOR_fpu_taskswitch(
--	int set)
--{
--	return _hypercall1(int, fpu_taskswitch, set);
--}
--
--static inline int __must_check
--HYPERVISOR_sched_op_compat(
--	int cmd, unsigned long arg)
--{
--	return _hypercall2(int, sched_op_compat, cmd, arg);
--}
--
--static inline int __must_check
--HYPERVISOR_sched_op(
--	int cmd, void *arg)
--{
--	return _hypercall2(int, sched_op, cmd, arg);
--}
-+#endif
- 
- static inline long __must_check
- HYPERVISOR_set_timer_op(
- 	u64 timeout)
- {
--	unsigned long timeout_hi = (unsigned long)(timeout>>32);
--	unsigned long timeout_lo = (unsigned long)timeout;
--	return _hypercall2(long, set_timer_op, timeout_lo, timeout_hi);
--}
--
--static inline int __must_check
--HYPERVISOR_platform_op(
--	struct xen_platform_op *platform_op)
--{
--	platform_op->interface_version = XENPF_INTERFACE_VERSION;
--	return _hypercall1(int, platform_op, platform_op);
--}
--
--static inline int __must_check
--HYPERVISOR_set_debugreg(
--	unsigned int reg, unsigned long value)
--{
--	return _hypercall2(int, set_debugreg, reg, value);
--}
--
--static inline unsigned long __must_check
--HYPERVISOR_get_debugreg(
--	unsigned int reg)
--{
--	return _hypercall1(unsigned long, get_debugreg, reg);
-+	return _hypercall2(long, set_timer_op,
-+			   (unsigned long)timeout,
-+			   (unsigned long)(timeout>>32));
- }
- 
- static inline int __must_check
- HYPERVISOR_update_descriptor(
- 	u64 ma, u64 desc)
- {
--	return _hypercall4(int, update_descriptor, ma, ma>>32, desc, desc>>32);
--}
--
--static inline int __must_check
--HYPERVISOR_memory_op(
--	unsigned int cmd, void *arg)
--{
--	if (arch_use_lazy_mmu_mode())
--		xen_multicall_flush(false);
--	return _hypercall2(int, memory_op, cmd, arg);
--}
--
--static inline int __must_check
--HYPERVISOR_multicall(
--	multicall_entry_t *call_list, unsigned int nr_calls)
--{
--	return _hypercall2(int, multicall, call_list, nr_calls);
-+	return _hypercall4(int, update_descriptor,
-+			   (unsigned long)ma, (unsigned long)(ma>>32),
-+			   (unsigned long)desc, (unsigned long)(desc>>32));
- }
- 
- static inline int __must_check
-@@ -291,57 +50,6 @@ HYPERVISOR_update_va_mapping(
- }
- 
- static inline int __must_check
--HYPERVISOR_event_channel_op(
--	int cmd, void *arg)
--{
--	int rc = _hypercall2(int, event_channel_op, cmd, arg);
--
--#if CONFIG_XEN_COMPAT <= 0x030002
--	if (unlikely(rc == -ENOSYS))
--		rc = HYPERVISOR_event_channel_op_compat(cmd, arg);
--#endif
--
--	return rc;
--}
--
--static inline int __must_check
--HYPERVISOR_xen_version(
--	int cmd, void *arg)
--{
--	return _hypercall2(int, xen_version, cmd, arg);
--}
--
--static inline int __must_check
--HYPERVISOR_console_io(
--	int cmd, unsigned int count, char *str)
--{
--	return _hypercall3(int, console_io, cmd, count, str);
--}
--
--static inline int __must_check
--HYPERVISOR_physdev_op(
--	int cmd, void *arg)
--{
--	int rc = _hypercall2(int, physdev_op, cmd, arg);
--
--#if CONFIG_XEN_COMPAT <= 0x030002
--	if (unlikely(rc == -ENOSYS))
--		rc = HYPERVISOR_physdev_op_compat(cmd, arg);
--#endif
--
--	return rc;
--}
--
--static inline int __must_check
--HYPERVISOR_grant_table_op(
--	unsigned int cmd, void *uop, unsigned int count)
--{
--	if (arch_use_lazy_mmu_mode())
--		xen_multicall_flush(false);
--	return _hypercall3(int, grant_table_op, cmd, uop, count);
--}
--
--static inline int __must_check
- HYPERVISOR_update_va_mapping_otherdomain(
- 	unsigned long va, pte_t new_val, unsigned long flags, domid_t domid)
- {
-@@ -352,86 +60,3 @@ HYPERVISOR_update_va_mapping_otherdomain
- 	return _hypercall5(int, update_va_mapping_otherdomain, va,
- 			   new_val.pte_low, pte_hi, flags, domid);
- }
--
--static inline int __must_check
--HYPERVISOR_vm_assist(
--	unsigned int cmd, unsigned int type)
--{
--	return _hypercall2(int, vm_assist, cmd, type);
--}
--
--static inline int __must_check
--HYPERVISOR_vcpu_op(
--	int cmd, unsigned int vcpuid, void *extra_args)
--{
--	return _hypercall3(int, vcpu_op, cmd, vcpuid, extra_args);
--}
--
--static inline int __must_check
--HYPERVISOR_suspend(
--	unsigned long srec)
--{
--	struct sched_shutdown sched_shutdown = {
--		.reason = SHUTDOWN_suspend
--	};
--
--	int rc = _hypercall3(int, sched_op, SCHEDOP_shutdown,
--			     &sched_shutdown, srec);
--
--#if CONFIG_XEN_COMPAT <= 0x030002
--	if (rc == -ENOSYS)
--		rc = _hypercall3(int, sched_op_compat, SCHEDOP_shutdown,
--				 SHUTDOWN_suspend, srec);
--#endif
--
--	return rc;
--}
--
--#if CONFIG_XEN_COMPAT <= 0x030002
--static inline int
--HYPERVISOR_nmi_op(
--	unsigned long op, void *arg)
--{
--	return _hypercall2(int, nmi_op, op, arg);
--}
--#endif
--
--#ifndef CONFIG_XEN
--static inline unsigned long __must_check
--HYPERVISOR_hvm_op(
--    int op, void *arg)
--{
--    return _hypercall2(unsigned long, hvm_op, op, arg);
--}
--#endif
--
--static inline int __must_check
--HYPERVISOR_callback_op(
--	int cmd, const void *arg)
--{
--	return _hypercall2(int, callback_op, cmd, arg);
--}
--
--static inline int __must_check
--HYPERVISOR_xenoprof_op(
--	int op, void *arg)
--{
--	return _hypercall2(int, xenoprof_op, op, arg);
--}
--
--static inline int __must_check
--HYPERVISOR_kexec_op(
--	unsigned long op, void *args)
--{
--	return _hypercall2(int, kexec_op, op, args);
--}
--
--static inline int __must_check
--HYPERVISOR_tmem_op(
--	struct tmem_op *op)
--{
--	return _hypercall1(int, tmem_op, op);
--}
--
--
--#endif /* __HYPERCALL_H__ */
 --- sle12.orig/arch/x86/include/mach-xen/asm/hypercall_64.h	2012-10-31 10:59:05.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/hypercall_64.h	2012-10-31 11:11:50.000000000 +0100
 @@ -1,202 +1,10 @@
@@ -7639,50 +6855,6 @@ Acked-by: jbeulich@novell.com
 +#else
 +# include "irqflags_64.h"
 +#endif
---- sle12.orig/arch/x86/include/mach-xen/asm/irqflags_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/irqflags_32.h	2011-01-31 17:56:27.000000000 +0100
-@@ -150,6 +150,23 @@ static inline int raw_irqs_disabled_flag
- 									\
- 	raw_irqs_disabled_flags(flags);					\
- })
-+
-+/*
-+ * makes the traced hardirq state match with the machine state
-+ *
-+ * should be a rarely used function, only in places where its
-+ * otherwise impossible to know the irq state, like in traps.
-+ */
-+static inline void trace_hardirqs_fixup_flags(unsigned long flags)
-+{
-+	if (raw_irqs_disabled_flags(flags))
-+		trace_hardirqs_off();
-+	else
-+		trace_hardirqs_on();
-+}
-+
-+#define trace_hardirqs_fixup() \
-+	trace_hardirqs_fixup_flags(__raw_local_save_flags())
- #endif /* __ASSEMBLY__ */
- 
- /*
-@@ -181,4 +198,17 @@ static inline int raw_irqs_disabled_flag
- # define TRACE_IRQS_OFF
- #endif
- 
-+#ifdef CONFIG_DEBUG_LOCK_ALLOC
-+# define LOCKDEP_SYS_EXIT			\
-+	pushl %eax;				\
-+	pushl %ecx;				\
-+	pushl %edx;				\
-+	call lockdep_sys_exit;			\
-+	popl %edx;				\
-+	popl %ecx;				\
-+	popl %eax;
-+#else
-+# define LOCKDEP_SYS_EXIT
-+#endif
-+
- #endif
 --- sle12.orig/arch/x86/include/mach-xen/asm/irqflags_64.h	2011-01-31 17:32:29.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/irqflags_64.h	2011-01-31 17:56:27.000000000 +0100
 @@ -116,6 +116,22 @@ static inline int raw_irqs_disabled_flag
@@ -7914,29 +7086,6 @@ Acked-by: jbeulich@novell.com
 +#else
 +# include "pgtable_64.h"
 +#endif
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-07 15:38:23.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-01-31 17:56:27.000000000 +0100
-@@ -17,10 +17,7 @@
- #include <asm/fixmap.h>
- #include <linux/threads.h>
- 
--#ifndef _I386_BITOPS_H
--#include <asm/bitops.h>
--#endif
--
-+#include <linux/bitops.h>
- #include <linux/slab.h>
- #include <linux/list.h>
- #include <linux/spinlock.h>
-@@ -40,7 +37,7 @@ extern spinlock_t pgd_lock;
- extern struct page *pgd_list;
- void check_pgt_cache(void);
- 
--void pmd_ctor(void *, struct kmem_cache *, unsigned long);
-+void pmd_ctor(struct kmem_cache *, void *);
- void pgtable_cache_init(void);
- void paging_init(void);
- 
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-02-07 15:38:18.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-01-31 17:56:27.000000000 +0100
 @@ -9,7 +9,7 @@
@@ -7964,116 +7113,6 @@ Acked-by: jbeulich@novell.com
 +#else
 +# include "processor_64.h"
 +#endif
---- sle12.orig/arch/x86/include/mach-xen/asm/processor_32.h	2011-01-31 17:49:31.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/processor_32.h	2011-01-31 17:56:27.000000000 +0100
-@@ -70,17 +70,22 @@ struct cpuinfo_x86 {
- 	char	pad0;
- 	int	x86_power;
- 	unsigned long loops_per_jiffy;
-+#ifndef CONFIG_XEN
- #ifdef CONFIG_SMP
- 	cpumask_t llc_shared_map;	/* cpus sharing the last level cache */
- #endif
- 	unsigned char x86_max_cores;	/* cpuid returned max cores value */
- 	unsigned char apicid;
-+#endif
- 	unsigned short x86_clflush_size;
--#ifdef CONFIG_SMP
-+#ifdef CONFIG_X86_HT
- 	unsigned char booted_cores;	/* number of cores as seen by OS */
- 	__u8 phys_proc_id; 		/* Physical processor id. */
- 	__u8 cpu_core_id;  		/* Core id */
- #endif
-+#ifdef CONFIG_SMP
-+	__u8 cpu_index;			/* index into per_cpu list */
-+#endif
- } __attribute__((__aligned__(SMP_CACHE_BYTES)));
- 
- #define X86_VENDOR_INTEL 0
-@@ -106,14 +111,19 @@ DECLARE_PER_CPU(struct tss_struct, init_
- #endif
- 
- #ifdef CONFIG_SMP
--extern struct cpuinfo_x86 cpu_data[];
--#define current_cpu_data cpu_data[smp_processor_id()]
-+DECLARE_PER_CPU(struct cpuinfo_x86, cpu_info);
-+#define cpu_data(cpu)		per_cpu(cpu_info, cpu)
-+#define current_cpu_data	cpu_data(smp_processor_id())
- #else
--#define cpu_data (&boot_cpu_data)
--#define current_cpu_data boot_cpu_data
-+#define cpu_data(cpu)		boot_cpu_data
-+#define current_cpu_data	boot_cpu_data
- #endif
- 
--extern	int cpu_llc_id[NR_CPUS];
-+/*
-+ * the following now lives in the per cpu area:
-+ * extern	int cpu_llc_id[NR_CPUS];
-+ */
-+DECLARE_PER_CPU(u8, cpu_llc_id);
- extern char ignore_fpu_irq;
- 
- void __init cpu_detect(struct cpuinfo_x86 *c);
-@@ -560,7 +570,9 @@ static inline void xen_set_iopl_mask(uns
-  * clear %ecx since some cpus (Cyrix MII) do not set or clear %ecx
-  * resulting in stale register contents being returned.
-  */
--static inline void cpuid(unsigned int op, unsigned int *eax, unsigned int *ebx, unsigned int *ecx, unsigned int *edx)
-+static inline void cpuid(unsigned int op,
-+			 unsigned int *eax, unsigned int *ebx,
-+			 unsigned int *ecx, unsigned int *edx)
- {
- 	*eax = op;
- 	*ecx = 0;
-@@ -568,8 +580,9 @@ static inline void cpuid(unsigned int op
- }
- 
- /* Some CPUID calls want 'count' to be placed in ecx */
--static inline void cpuid_count(int op, int count, int *eax, int *ebx, int *ecx,
--			       int *edx)
-+static inline void cpuid_count(unsigned int op, int count,
-+			       unsigned int *eax, unsigned int *ebx,
-+			       unsigned int *ecx, unsigned int *edx)
- {
- 	*eax = op;
- 	*ecx = count;
-@@ -639,6 +652,17 @@ static inline unsigned int cpuid_edx(uns
- #define K7_NOP7        ".byte 0x8D,0x04,0x05,0,0,0,0\n"
- #define K7_NOP8        K7_NOP7 ASM_NOP1
- 
-+/* P6 nops */
-+/* uses eax dependencies (Intel-recommended choice) */
-+#define P6_NOP1	GENERIC_NOP1
-+#define P6_NOP2	".byte 0x66,0x90\n"
-+#define P6_NOP3	".byte 0x0f,0x1f,0x00\n"
-+#define P6_NOP4	".byte 0x0f,0x1f,0x40,0\n"
-+#define P6_NOP5	".byte 0x0f,0x1f,0x44,0x00,0\n"
-+#define P6_NOP6	".byte 0x66,0x0f,0x1f,0x44,0x00,0\n"
-+#define P6_NOP7	".byte 0x0f,0x1f,0x80,0,0,0,0\n"
-+#define P6_NOP8	".byte 0x0f,0x1f,0x84,0x00,0,0,0,0\n"
-+
- #ifdef CONFIG_MK8
- #define ASM_NOP1 K8_NOP1
- #define ASM_NOP2 K8_NOP2
-@@ -657,6 +681,17 @@ static inline unsigned int cpuid_edx(uns
- #define ASM_NOP6 K7_NOP6
- #define ASM_NOP7 K7_NOP7
- #define ASM_NOP8 K7_NOP8
-+#elif defined(CONFIG_M686) || defined(CONFIG_MPENTIUMII) || \
-+      defined(CONFIG_MPENTIUMIII) || defined(CONFIG_MPENTIUMM) || \
-+      defined(CONFIG_MCORE2) || defined(CONFIG_PENTIUM4)
-+#define ASM_NOP1 P6_NOP1
-+#define ASM_NOP2 P6_NOP2
-+#define ASM_NOP3 P6_NOP3
-+#define ASM_NOP4 P6_NOP4
-+#define ASM_NOP5 P6_NOP5
-+#define ASM_NOP6 P6_NOP6
-+#define ASM_NOP7 P6_NOP7
-+#define ASM_NOP8 P6_NOP8
- #else
- #define ASM_NOP1 GENERIC_NOP1
- #define ASM_NOP2 GENERIC_NOP2
 --- sle12.orig/arch/x86/include/mach-xen/asm/processor_64.h	2011-01-31 17:49:31.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/processor_64.h	2011-01-31 17:56:27.000000000 +0100
 @@ -62,19 +62,26 @@ struct cpuinfo_x86 {
@@ -8198,52 +7237,6 @@ Acked-by: jbeulich@novell.com
 +#else
 +# include "smp_64.h"
 +#endif
---- sle12.orig/arch/x86/include/mach-xen/asm/smp_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/smp_32.h	2011-01-31 17:56:27.000000000 +0100
-@@ -11,7 +11,7 @@
- #endif
- 
- #if defined(CONFIG_X86_LOCAL_APIC) && !defined(__ASSEMBLY__)
--#include <asm/bitops.h>
-+#include <linux/bitops.h>
- #include <asm/mpspec.h>
- #include <asm/apic.h>
- #ifdef CONFIG_X86_IO_APIC
-@@ -29,19 +29,20 @@
-  
- extern void smp_alloc_memory(void);
- extern int pic_mode;
--extern int smp_num_siblings;
--extern cpumask_t cpu_sibling_map[];
--extern cpumask_t cpu_core_map[];
- 
- extern void (*mtrr_hook) (void);
- extern void zap_low_mappings (void);
- extern void lock_ipi_call_lock(void);
- extern void unlock_ipi_call_lock(void);
- 
-+#ifndef CONFIG_XEN
- #define MAX_APICID 256
--extern u8 x86_cpu_to_apicid[];
-+extern u8 __initdata x86_cpu_to_apicid_init[];
-+extern void *x86_cpu_to_apicid_ptr;
-+DECLARE_PER_CPU(u8, x86_cpu_to_apicid);
-+#endif
- 
--#define cpu_physical_id(cpu)	x86_cpu_to_apicid[cpu]
-+#define cpu_physical_id(cpu)	(cpu)
- 
- #ifdef CONFIG_HOTPLUG_CPU
- extern void cpu_exit_clear(void);
-@@ -148,7 +149,7 @@ extern unsigned int num_processors;
- #else /* CONFIG_SMP */
- 
- #define safe_smp_processor_id()		0
--#define cpu_physical_id(cpu)		boot_cpu_physical_apicid
-+#define cpu_physical_id(cpu)		0
- 
- #define NO_PROC_ID		0xFF		/* No processor magic marker */
- 
 --- sle12.orig/arch/x86/include/mach-xen/asm/smp_64.h	2011-01-31 17:32:29.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/smp_64.h	2011-01-31 17:56:27.000000000 +0100
 @@ -38,12 +38,11 @@ extern void smp_alloc_memory(void);
@@ -8320,27 +7313,6 @@ Acked-by: jbeulich@novell.com
 +#else
 +# include "tlbflush_64.h"
 +#endif
---- sle12.orig/arch/x86/include/mach-xen/asm/tlbflush_32.h	2011-01-31 17:49:31.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/tlbflush_32.h	2011-01-31 17:56:27.000000000 +0100
-@@ -23,7 +23,6 @@
-  *  - flush_tlb_page(vma, vmaddr) flushes one page
-  *  - flush_tlb_range(vma, start, end) flushes a range of pages
-  *  - flush_tlb_kernel_range(start, end) flushes a range of kernel pages
-- *  - flush_tlb_pgtables(mm, start, end) flushes a range of page tables
-  *
-  * ..but the i386 has somewhat limited tlb flushing capabilities,
-  * and page-granular flushes are available only on i486 and up.
-@@ -97,10 +96,4 @@ static inline void flush_tlb_kernel_rang
- 	flush_tlb_all();
- }
- 
--static inline void flush_tlb_pgtables(struct mm_struct *mm,
--				      unsigned long start, unsigned long end)
--{
--	/* i386 does not keep any page table caches in TLB */
--}
--
- #endif /* _I386_TLBFLUSH_H */
 --- sle12.orig/arch/x86/include/mach-xen/asm/tlbflush_64.h	2011-01-31 17:49:31.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/tlbflush_64.h	2011-01-31 17:56:27.000000000 +0100
 @@ -28,7 +28,6 @@
@@ -8388,7 +7360,7 @@ Acked-by: jbeulich@novell.com
 +} while (0)
 +
 +#endif
---- sle12.orig/arch/x86/include/asm/mmu.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/mmu.h	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/include/asm/mmu.h	2011-06-30 16:30:20.000000000 +0200
 @@ -16,6 +16,9 @@ typedef struct {
  	/* True if mm supports a task running in 32 bit compatibility mode. */
@@ -8429,7 +7401,7 @@ Acked-by: jbeulich@novell.com
  /* add a backtrace entry, to be called from the ->backtrace callback */
  void oprofile_add_trace(unsigned long eip);
  
---- sle12.orig/include/uapi/linux/sysctl.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/include/uapi/linux/sysctl.h	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/include/uapi/linux/sysctl.h	2011-01-31 17:56:27.000000000 +0100
 @@ -59,6 +59,7 @@ enum
  	CTL_BUS=8,		/* Busses */
@@ -8610,7 +7582,7 @@ Acked-by: jbeulich@novell.com
  #endif
  	VMCOREINFO_SYMBOL(_stext);
  	VMCOREINFO_SYMBOL(vmap_area_list);
---- sle12.orig/kernel/sysctl_binary.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/kernel/sysctl_binary.c	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/kernel/sysctl_binary.c	2013-08-09 12:28:28.000000000 +0200
 @@ -872,6 +872,14 @@ static const struct bin_table bin_bus_ta
  };

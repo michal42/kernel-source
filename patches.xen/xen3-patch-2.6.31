@@ -20,7 +20,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	select HAVE_IOREMAP_PROT
  	select HAVE_KPROBES
  	select HAVE_MEMBLOCK
-@@ -952,7 +952,7 @@ config X86_REROUTE_FOR_BROKEN_BOOT_IRQS
+@@ -945,7 +945,7 @@ config X86_REROUTE_FOR_BROKEN_BOOT_IRQS
  config X86_MCE
  	bool "Machine Check / overheating reporting"
  	default y
@@ -29,7 +29,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	---help---
  	  Machine Check support allows the processor to notify the
  	  kernel if it detects a problem (e.g. overheating, data corruption).
-@@ -977,7 +977,7 @@ config X86_MCE_AMD
+@@ -970,7 +970,7 @@ config X86_MCE_AMD
  
  config X86_ANCIENT_MCE
  	bool "Support for old Pentium 5 / WinChip machine checks"
@@ -38,7 +38,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	---help---
  	  Include support for machine check handling on old Pentium 5 or WinChip
  	  systems. These typically need to be enabled explicitely on the command
-@@ -1720,6 +1720,7 @@ config KEXEC_JUMP
+@@ -1712,6 +1712,7 @@ config KEXEC_JUMP
  
  config PHYSICAL_START
  	hex "Physical address where the kernel is loaded" if (EXPERT || CRASH_DUMP || XEN)
@@ -48,7 +48,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	  This gives the physical address where the kernel is loaded.
 --- sle12.orig/arch/x86/Kconfig.debug	2014-01-09 11:22:51.000000000 +0100
 +++ sle12/arch/x86/Kconfig.debug	2014-01-09 11:28:21.000000000 +0100
-@@ -167,6 +167,7 @@ config IOMMU_DEBUG
+@@ -176,6 +176,7 @@ config IOMMU_DEBUG
  
  config IOMMU_STRESS
  	bool "Enable IOMMU stress-test mode"
@@ -81,7 +81,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  #endif
  #endif
  
---- sle12.orig/arch/x86/include/asm/required-features.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/required-features.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/include/asm/required-features.h	2013-03-21 14:47:09.000000000 +0100
 @@ -54,7 +54,7 @@
  #endif
@@ -387,28 +387,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  /* local pte updates need not use xchg for locking */
  static inline pte_t xen_local_ptep_get_and_clear(pte_t *ptep, pte_t res)
  {
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-01 14:44:12.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-01 14:50:44.000000000 +0100
-@@ -48,13 +48,17 @@ extern void set_pmd_pfn(unsigned long, u
- #endif
- 
- #if defined(CONFIG_HIGHPTE)
-+#define __KM_PTE			\
-+	(in_nmi() ? KM_NMI_PTE : 	\
-+	 in_irq() ? KM_IRQ_PTE :	\
-+	 KM_PTE0)
- #define pte_offset_map(dir, address)					\
--	((pte_t *)kmap_atomic_pte(pmd_page(*(dir)), KM_PTE0) +		\
-+	((pte_t *)kmap_atomic_pte(pmd_page(*(dir)), __KM_PTE) +		\
- 	 pte_index((address)))
- #define pte_offset_map_nested(dir, address)				\
- 	((pte_t *)kmap_atomic_pte(pmd_page(*(dir)), KM_PTE1) +		\
- 	 pte_index((address)))
--#define pte_unmap(pte) kunmap_atomic((pte), KM_PTE0)
-+#define pte_unmap(pte) kunmap_atomic((pte), __KM_PTE)
- #define pte_unmap_nested(pte) kunmap_atomic((pte), KM_PTE1)
- #else
- #define pte_offset_map(dir, address)					\
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 09:58:46.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 09:59:12.000000000 +0100
 @@ -33,10 +33,6 @@ extern pgd_t init_level4_pgt[];
@@ -2729,153 +2707,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  }
  
  #undef e820
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:42:37.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:43:23.000000000 +0100
-@@ -48,7 +48,6 @@
- #include <asm/segment.h>
- #include <asm/smp.h>
- #include <asm/page_types.h>
--#include <asm/desc.h>
- #include <asm/percpu.h>
- #include <asm/dwarf2.h>
- #include <asm/processor-flags.h>
-@@ -88,7 +87,7 @@ NMI_MASK	= 0x80000000
- #define preempt_stop(clobbers)	DISABLE_INTERRUPTS(clobbers); TRACE_IRQS_OFF
- #else
- #define preempt_stop(clobbers)
--#define resume_kernel		restore_nocheck
-+#define resume_kernel		restore_all
- #endif
- 
- .macro TRACE_IRQS_IRET
-@@ -376,7 +375,7 @@ END(ret_from_exception)
- ENTRY(resume_kernel)
- 	DISABLE_INTERRUPTS(CLBR_ANY)
- 	cmpl $0,TI_preempt_count(%ebp)	# non-zero preempt_count ?
--	jnz restore_nocheck
-+	jnz restore_all
- need_resched:
- 	movl TI_flags(%ebp), %ecx	# need_resched set ?
- 	testb $_TIF_NEED_RESCHED, %cl
-@@ -570,6 +569,8 @@ syscall_exit:
- 	jne syscall_exit_work
- 
- restore_all:
-+	TRACE_IRQS_IRET
-+restore_all_notrace:
- #ifndef CONFIG_XEN
- 	movl PT_EFLAGS(%esp), %eax	# mix EFLAGS, SS and CS
- 	# Warning: PT_OLDSS(%esp) contains the wrong/random values if we
-@@ -595,8 +596,6 @@ restore_nocheck:
- 	CFI_REMEMBER_STATE
- 	jnz restore_all_enable_events	#        != 0 => enable event delivery
- #endif
--	TRACE_IRQS_IRET
--restore_nocheck_notrace:
- 	RESTORE_REGS 4			# skip orig_eax/error_code
- 	CFI_ADJUST_CFA_OFFSET -4
- irq_return:
-@@ -633,22 +632,34 @@ ldt_ss:
- 	jne restore_nocheck
- #endif
- 
--	/* If returning to userspace with 16bit stack,
--	 * try to fix the higher word of ESP, as the CPU
--	 * won't restore it.
--	 * This is an "official" bug of all the x86-compatible
--	 * CPUs, which we can try to work around to make
--	 * dosemu and wine happy. */
--	movl PT_OLDESP(%esp), %eax
--	movl %esp, %edx
--	call patch_espfix_desc
-+/*
-+ * Setup and switch to ESPFIX stack
-+ *
-+ * We're returning to userspace with a 16 bit stack. The CPU will not
-+ * restore the high word of ESP for us on executing iret... This is an
-+ * "official" bug of all the x86-compatible CPUs, which we can work
-+ * around to make dosemu and wine happy. We do this by preloading the
-+ * high word of ESP with the high word of the userspace ESP while
-+ * compensating for the offset by changing to the ESPFIX segment with
-+ * a base address that matches for the difference.
-+ */
-+	mov %esp, %edx			/* load kernel esp */
-+	mov PT_OLDESP(%esp), %eax	/* load userspace esp */
-+	mov %dx, %ax			/* eax: new kernel esp */
-+	sub %eax, %edx			/* offset (low word is 0) */
-+	PER_CPU(gdt_page, %ebx)
-+	shr $16, %edx
-+	mov %dl, GDT_ENTRY_ESPFIX_SS * 8 + 4(%ebx) /* bits 16..23 */
-+	mov %dh, GDT_ENTRY_ESPFIX_SS * 8 + 7(%ebx) /* bits 24..31 */
- 	pushl $__ESPFIX_SS
- 	CFI_ADJUST_CFA_OFFSET 4
--	pushl %eax
-+	push %eax			/* new kernel esp */
- 	CFI_ADJUST_CFA_OFFSET 4
-+	/* Disable interrupts, but do not irqtrace this section: we
-+	 * will soon execute iret and the tracer was already set to
-+	 * the irqstate after the iret */
- 	DISABLE_INTERRUPTS(CLBR_EAX)
--	TRACE_IRQS_OFF
--	lss (%esp), %esp
-+	lss (%esp), %esp		/* switch to espfix segment */
- 	CFI_ADJUST_CFA_OFFSET -8
- 	jmp restore_nocheck
- #else
-@@ -787,15 +798,24 @@ PTREGSCALL(vm86old)
- 
- #ifndef CONFIG_XEN
- .macro FIXUP_ESPFIX_STACK
--	/* since we are on a wrong stack, we cant make it a C code :( */
-+/*
-+ * Switch back for ESPFIX stack to the normal zerobased stack
-+ *
-+ * We can't call C functions using the ESPFIX stack. This code reads
-+ * the high word of the segment base from the GDT and swiches to the
-+ * normal stack and adjusts ESP with the matching offset.
-+ */
-+	/* fixup the stack */
- 	PER_CPU(gdt_page, %ebx)
--	GET_DESC_BASE(GDT_ENTRY_ESPFIX_SS, %ebx, %eax, %ax, %al, %ah)
--	addl %esp, %eax
-+	mov GDT_ENTRY_ESPFIX_SS * 8 + 4(%ebx), %al /* bits 16..23 */
-+	mov GDT_ENTRY_ESPFIX_SS * 8 + 7(%ebx), %ah /* bits 24..31 */
-+	shl $16, %eax
-+	addl %esp, %eax			/* the adjusted stack pointer */
- 	pushl $__KERNEL_DS
- 	CFI_ADJUST_CFA_OFFSET 4
- 	pushl %eax
- 	CFI_ADJUST_CFA_OFFSET 4
--	lss (%esp), %esp
-+	lss (%esp), %esp		/* switch to the normal stack segment */
- 	CFI_ADJUST_CFA_OFFSET -8
- .endm
- .macro UNWIND_ESPFIX_STACK
-@@ -1285,6 +1305,7 @@ ENTRY(ftrace_graph_caller)
- 	pushl %edx
- 	movl 0xc(%esp), %edx
- 	lea 0x4(%ebp), %eax
-+	movl (%ebp), %ecx
- 	subl $MCOUNT_INSN_SIZE, %edx
- 	call prepare_ftrace_return
- 	popl %edx
-@@ -1299,6 +1320,7 @@ return_to_handler:
- 	pushl %eax
- 	pushl %ecx
- 	pushl %edx
-+	movl %ebp, %eax
- 	call ftrace_return_to_handler
- 	movl %eax, 0xc(%esp)
- 	popl %edx
-@@ -1598,7 +1620,7 @@ nmi_stack_correct:
- 	xorl %edx,%edx		# zero error code
- 	movl %esp,%eax		# pt_regs pointer
- 	call do_nmi
--	jmp restore_nocheck_notrace
-+	jmp restore_all_notrace
- 	CFI_ENDPROC
- 
- nmi_stack_fixup:
 --- sle12.orig/arch/x86/kernel/entry_64.S	2013-09-26 12:44:37.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64.S	2013-09-26 12:57:56.000000000 +0200
 @@ -1515,7 +1515,7 @@ apicinterrupt3 HYPERVISOR_CALLBACK_VECTO
@@ -2938,21 +2769,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  #endif
  
  #ifndef CONFIG_XEN
---- sle12.orig/arch/x86/kernel/head_32-xen.S	2011-08-09 11:00:03.000000000 +0200
-+++ sle12/arch/x86/kernel/head_32-xen.S	2012-12-06 16:11:21.000000000 +0100
-@@ -125,12 +125,6 @@ ENTRY(hypercall_page)
- 	CFI_ENDPROC
- 
- /*
-- * Real beginning of normal "text" segment
-- */
--ENTRY(stext)
--ENTRY(_stext)
--
--/*
-  * BSS section
-  */
- .section ".bss.page_aligned","wa"
 --- sle12.orig/arch/x86/kernel/head_64-xen.S	2012-12-04 13:40:41.000000000 +0100
 +++ sle12/arch/x86/kernel/head_64-xen.S	2011-08-09 11:03:31.000000000 +0200
 @@ -15,7 +15,6 @@
@@ -3449,60 +3265,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
 +	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
 +}
 +
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-08-10 10:35:22.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-08-10 10:35:33.000000000 +0200
-@@ -9,8 +9,6 @@
-  * This file handles the architecture-dependent parts of process handling..
-  */
- 
--#include <stdarg.h>
--
- #include <linux/stackprotector.h>
- #include <linux/cpu.h>
- #include <linux/errno.h>
-@@ -33,7 +31,6 @@
- #include <linux/module.h>
- #include <linux/kallsyms.h>
- #include <linux/ptrace.h>
--#include <linux/random.h>
- #include <linux/personality.h>
- #include <linux/tick.h>
- #include <linux/percpu.h>
-@@ -299,7 +296,8 @@ int copy_thread(unsigned long clone_flag
- 		p->thread.io_bitmap_max = 0;
- 	}
- 
--	ds_copy_thread(p, current);
-+	clear_tsk_thread_flag(p, TIF_DS_AREA_MSR);
-+	p->thread.ds_ctx = NULL;
- 
- 	clear_tsk_thread_flag(p, TIF_DEBUGCTLMSR);
- 	p->thread.debugctlmsr = 0;
-@@ -476,7 +474,7 @@ __switch_to(struct task_struct *prev_p, 
- 	 * done before math_state_restore, so the TS bit is up
- 	 * to date.
- 	 */
--	arch_leave_lazy_cpu_mode();
-+	arch_end_context_switch(next_p);
- 
- 	/* If the task has used fpu the last 5 timeslices, just do a full
- 	 * restore of the math state immediately to avoid the trap; the
-@@ -566,15 +564,3 @@ unsigned long get_wchan(struct task_stru
- 	return 0;
- }
- 
--unsigned long arch_align_stack(unsigned long sp)
--{
--	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
--		sp -= get_random_int() % 8192;
--	return sp & ~0xf;
--}
--
--unsigned long arch_randomize_brk(struct mm_struct *mm)
--{
--	unsigned long range_end = mm->brk + 0x02000000;
--	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
--}
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2012-08-10 10:35:20.000000000 +0200
 +++ sle12/arch/x86/kernel/process_64-xen.c	2012-08-10 10:35:34.000000000 +0200
 @@ -17,8 +17,6 @@
@@ -4116,32 +3878,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  
  	check_v8086_mode(regs, address, tsk);
  
---- sle12.orig/arch/x86/mm/highmem_32-xen.c	2011-02-01 14:44:12.000000000 +0100
-+++ sle12/arch/x86/mm/highmem_32-xen.c	2011-02-01 14:50:44.000000000 +0100
-@@ -44,7 +44,6 @@ void *kmap_atomic_prot(struct page *page
- 	vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
- 	BUG_ON(!pte_none(*(kmap_pte-idx)));
- 	set_pte_at(&init_mm, vaddr, kmap_pte-idx, mk_pte(page, prot));
--	/*arch_flush_lazy_mmu_mode();*/
- 
- 	return (void *)vaddr;
- }
-@@ -74,7 +73,6 @@ void kunmap_atomic(void *kvaddr, enum km
- #endif
- 	}
- 
--	/*arch_flush_lazy_mmu_mode();*/
- 	pagefault_enable();
- }
- 
-@@ -150,6 +148,7 @@ EXPORT_SYMBOL(kmap);
- EXPORT_SYMBOL(kunmap);
- EXPORT_SYMBOL(kmap_atomic);
- EXPORT_SYMBOL(kunmap_atomic);
-+EXPORT_SYMBOL(kmap_atomic_prot);
- #ifdef CONFIG_HIGHPTE
- EXPORT_SYMBOL(kmap_atomic_to_page);
- #endif
 --- sle12.orig/arch/x86/mm/hypervisor.c	2012-05-31 14:44:38.000000000 +0200
 +++ sle12/arch/x86/mm/hypervisor.c	2011-03-23 09:59:29.000000000 +0100
 @@ -116,8 +116,8 @@ static int _xen_multicall_flush(bool ret
@@ -4297,137 +4033,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  
  	if (use_gbpages)
  		page_size_mask |= 1 << PG_LEVEL_1G;
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-11-03 12:27:10.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-02-01 14:50:44.000000000 +0100
-@@ -52,12 +52,9 @@
- #include <asm/swiotlb.h>
- #include <asm/setup.h>
- #include <asm/cacheflush.h>
-+#include <asm/page_types.h>
- #include <asm/init.h>
- 
--unsigned long max_low_pfn_mapped;
--unsigned long max_pfn_mapped;
--
--DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
- unsigned long highstart_pfn, highend_pfn;
- 
- static noinline int do_test_wp_bit(void);
-@@ -122,7 +119,7 @@ static pte_t * __init one_page_table_ini
- 		pte_t *page_table = NULL;
- 
- 		if (after_bootmem) {
--#ifdef CONFIG_DEBUG_PAGEALLOC
-+#if defined(CONFIG_DEBUG_PAGEALLOC) || defined(CONFIG_KMEMCHECK)
- 			page_table = (pte_t *) alloc_bootmem_pages(PAGE_SIZE);
- #endif
- 			if (!page_table)
-@@ -569,7 +566,7 @@ static inline void save_pg_dir(void)
- }
- #endif /* !CONFIG_ACPI_SLEEP */
- 
--void zap_low_mappings(void)
-+void zap_low_mappings(bool early)
- {
- 	int i;
- 
-@@ -586,64 +583,16 @@ void zap_low_mappings(void)
- 		set_pgd(swapper_pg_dir+i, __pgd(0));
- #endif
- 	}
--	flush_tlb_all();
--}
- 
--int nx_enabled;
-+	if (early)
-+		__flush_tlb();
-+	else
-+		flush_tlb_all();
-+}
- 
- pteval_t __supported_pte_mask __read_mostly = ~(_PAGE_NX | _PAGE_GLOBAL);
- EXPORT_SYMBOL_GPL(__supported_pte_mask);
- 
--#ifdef CONFIG_X86_PAE
--
--static int disable_nx __initdata;
--
--/*
-- * noexec = on|off
-- *
-- * Control non executable mappings.
-- *
-- * on      Enable
-- * off     Disable
-- */
--static int __init noexec_setup(char *str)
--{
--	if (!str || !strcmp(str, "on")) {
--		if (cpu_has_nx) {
--			__supported_pte_mask |= _PAGE_NX;
--			disable_nx = 0;
--		}
--	} else {
--		if (!strcmp(str, "off")) {
--			disable_nx = 1;
--			__supported_pte_mask &= ~_PAGE_NX;
--		} else {
--			return -EINVAL;
--		}
--	}
--
--	return 0;
--}
--early_param("noexec", noexec_setup);
--
--void __init set_nx(void)
--{
--	unsigned int v[4], l, h;
--
--	if (cpu_has_pae && (cpuid_eax(0x80000000) > 0x80000001)) {
--		cpuid(0x80000001, &v[0], &v[1], &v[2], &v[3]);
--
--		if ((v[3] & (1 << 20)) && !disable_nx) {
--			rdmsr(MSR_EFER, l, h);
--			l |= EFER_NX;
--			wrmsr(MSR_EFER, l, h);
--			nx_enabled = 1;
--			__supported_pte_mask |= _PAGE_NX;
--		}
--	}
--}
--#endif
--
- /* user-defined highmem size */
- static unsigned int highmem_pages = -1;
- 
-@@ -763,15 +712,15 @@ void __init initmem_init(unsigned long s
- 	highstart_pfn = highend_pfn = max_pfn;
- 	if (max_pfn > max_low_pfn)
- 		highstart_pfn = max_low_pfn;
--	memory_present(0, 0, highend_pfn);
- 	e820_register_active_regions(0, 0, highend_pfn);
-+	sparse_memory_present_with_active_regions(0);
- 	printk(KERN_NOTICE "%ldMB HIGHMEM available.\n",
- 		pages_to_mb(highend_pfn - highstart_pfn));
- 	num_physpages = highend_pfn;
- 	high_memory = (void *) __va(highstart_pfn * PAGE_SIZE - 1) + 1;
- #else
--	memory_present(0, 0, max_low_pfn);
- 	e820_register_active_regions(0, 0, max_low_pfn);
-+	sparse_memory_present_with_active_regions(0);
- 	num_physpages = max_low_pfn;
- 	high_memory = (void *) __va(max_low_pfn * PAGE_SIZE - 1) + 1;
- #endif
-@@ -1074,7 +1023,7 @@ void __init mem_init(void)
- 		test_wp_bit();
- 
- 	save_pg_dir();
--	zap_low_mappings();
-+	zap_low_mappings(true);
- 
- 	SetPagePinned(virt_to_page(init_mm.pgd));
- }
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2013-08-15 13:01:33.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2011-06-30 17:04:34.000000000 +0200
 @@ -56,21 +56,11 @@
@@ -4560,16 +4165,6 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  #endif
  
  #ifndef CONFIG_XEN
---- sle12.orig/arch/x86/mm/iomap_32-xen.c	2011-02-01 14:44:12.000000000 +0100
-+++ sle12/arch/x86/mm/iomap_32-xen.c	2011-02-01 14:50:44.000000000 +0100
-@@ -84,7 +84,6 @@ iounmap_atomic(void *kvaddr, enum km_typ
- 	if (vaddr == __fix_to_virt(FIX_KMAP_BEGIN+idx))
- 		kpte_clear_flush(kmap_pte-idx, vaddr);
- 
--	/*arch_flush_lazy_mmu_mode();*/
- 	pagefault_enable();
- }
- EXPORT_SYMBOL_GPL(iounmap_atomic);
 --- sle12.orig/arch/x86/mm/pageattr-xen.c	2011-03-23 09:58:23.000000000 +0100
 +++ sle12/arch/x86/mm/pageattr-xen.c	2011-03-23 09:59:25.000000000 +0100
 @@ -11,6 +11,7 @@
@@ -4879,7 +4474,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  
  	if (pgd == NULL)
  		goto out;
---- sle12.orig/arch/x86/pci/i386.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/pci/i386.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/pci/i386.c	2013-09-26 12:57:34.000000000 +0200
 @@ -384,12 +384,14 @@ void __init pcibios_resource_survey(void
  		pcibios_allocate_resources(bus, 1);
@@ -4973,7 +4568,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	return new;
  }
  
---- sle12.orig/drivers/edac/Kconfig	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/edac/Kconfig	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/edac/Kconfig	2013-03-21 14:47:42.000000000 +0100
 @@ -106,6 +106,7 @@ config EDAC_GHES
  config EDAC_AMD64
@@ -4983,7 +4578,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	help
  	  Support for error detection and correction of DRAM ECC errors on
  	  the AMD64 families of memory controllers (K8 and F10h)
---- sle12.orig/drivers/gpu/drm/ttm/ttm_bo.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/ttm/ttm_bo.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/gpu/drm/ttm/ttm_bo.c	2014-01-09 11:28:16.000000000 +0100
 @@ -1363,6 +1363,14 @@ int ttm_bo_global_init(struct drm_global
  		ret = -ENOMEM;
@@ -5000,7 +4595,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  
  	INIT_LIST_HEAD(&glob->swap_lru);
  	INIT_LIST_HEAD(&glob->device_list);
---- sle12.orig/drivers/gpu/drm/ttm/ttm_bo_vm.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/ttm/ttm_bo_vm.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/gpu/drm/ttm/ttm_bo_vm.c	2013-09-26 12:57:25.000000000 +0200
 @@ -141,7 +141,13 @@ static int ttm_bo_vm_fault(struct vm_are
  	if (bo->mem.bus.is_iomem) {
@@ -6243,7 +5838,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	xen_spinlock_cleanup(cpu);
  }
  
---- sle12.orig/drivers/xen/evtchn.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/xen/evtchn.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/xen/evtchn.c	2014-01-30 10:32:56.000000000 +0100
 @@ -50,10 +50,17 @@
  #include <linux/mutex.h>
@@ -6894,7 +6489,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  	netfront_accel_vnic *vnic = (netfront_accel_vnic *)np->accel_priv;
  
  	DPRINTK("%s %s\n", __FUNCTION__, dev->nodename);
---- sle12.orig/drivers/xen/sys-hypervisor.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/xen/sys-hypervisor.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/xen/sys-hypervisor.c	2012-10-31 11:16:11.000000000 +0100
 @@ -13,14 +13,20 @@
  #include <linux/kobject.h>
@@ -7690,7 +7285,7 @@ Automatically created from "patches.kernel.org/patch-2.6.31" by xen-port-patches
  }
  
  void
---- sle12.orig/mm/init-mm.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/mm/init-mm.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/mm/init-mm.c	2011-04-13 13:55:08.000000000 +0200
 @@ -13,6 +13,10 @@
  #define INIT_MM_CONTEXT(name)

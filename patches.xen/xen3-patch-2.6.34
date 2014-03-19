@@ -58,7 +58,7 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
  	.quad sys_modify_ldt
  	.quad compat_sys_adjtimex
  	.quad sys32_mprotect		/* 125 */
---- sle12.orig/arch/x86/include/asm/i8259.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/i8259.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/include/asm/i8259.h	2011-04-13 13:58:56.000000000 +0200
 @@ -54,6 +54,7 @@ extern struct irq_chip i8259A_chip;
  
@@ -415,25 +415,6 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
   * Allocate and free page tables.
   */
  extern pgd_t *pgd_alloc(struct mm_struct *);
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-01 14:50:44.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-01 15:03:03.000000000 +0100
-@@ -18,7 +18,6 @@
- #include <linux/threads.h>
- 
- #include <linux/bitops.h>
--#include <linux/slab.h>
- #include <linux/list.h>
- #include <linux/spinlock.h>
- #include <linux/sched.h>
-@@ -79,7 +78,7 @@ do {									\
-  * The i386 doesn't have any external MMU info: the kernel page
-  * tables contain all the necessary information.
-  */
--#define update_mmu_cache(vma, address, pte) do { } while (0)
-+#define update_mmu_cache(vma, address, ptep) do { } while (0)
- 
- void make_lowmem_page_readonly(void *va, unsigned int feature);
- void make_lowmem_page_writable(void *va, unsigned int feature);
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 09:59:12.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:01:13.000000000 +0100
 @@ -131,7 +131,7 @@ static inline int pgd_large(pgd_t pgd) {
@@ -1923,82 +1904,6 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
  		reserve_region_with_split(&iomem_resource, start, end,
  					  "RAM buffer");
  	}
---- sle12.orig/arch/x86/kernel/head32-xen.c	2011-02-01 14:55:46.000000000 +0100
-+++ sle12/arch/x86/kernel/head32-xen.c	2011-05-09 11:41:42.000000000 +0200
-@@ -6,13 +6,12 @@
-  */
- 
- #include <linux/init.h>
--#include <linux/spinlock.h>
- #include <linux/start_kernel.h>
-+#include <linux/mm.h>
- 
- #include <asm/setup.h>
- #include <asm/sections.h>
- #include <asm/e820.h>
--#include <asm/pgtable.h>
- #include <asm/trampoline.h>
- #include <asm/apic.h>
- #include <asm/io_apic.h>
-@@ -48,15 +47,26 @@ void __init i386_start_kernel(void)
- 	BUG_ON(pte_index(hypervisor_virt_start));
- #endif
- 
-+#ifdef CONFIG_X86_TRAMPOLINE
-+	/*
-+	 * But first pinch a few for the stack/trampoline stuff
-+	 * FIXME: Don't need the extra page at 4K, but need to fix
-+	 * trampoline before removing it. (see the GDT stuff)
-+	 */
-+	reserve_early_overlap_ok(PAGE_SIZE, PAGE_SIZE + PAGE_SIZE,
-+					 "EX TRAMPOLINE");
-+#endif
-+
- 	reserve_early(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
- 
- #ifndef CONFIG_XEN
- #ifdef CONFIG_BLK_DEV_INITRD
- 	/* Reserve INITRD */
- 	if (boot_params.hdr.type_of_loader && boot_params.hdr.ramdisk_image) {
-+		/* Assume only end is not page aligned */
- 		u64 ramdisk_image = boot_params.hdr.ramdisk_image;
- 		u64 ramdisk_size  = boot_params.hdr.ramdisk_size;
--		u64 ramdisk_end   = ramdisk_image + ramdisk_size;
-+		u64 ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
- 		reserve_early(ramdisk_image, ramdisk_end, "RAMDISK");
- 	}
- #endif
---- sle12.orig/arch/x86/kernel/head_32-xen.S	2012-12-06 16:11:53.000000000 +0100
-+++ sle12/arch/x86/kernel/head_32-xen.S	2011-08-09 11:07:43.000000000 +0200
-@@ -66,8 +66,8 @@ ENTRY(startup_32)
- 	 * The linker can't handle this by relocation.  Manually set
- 	 * base address in stack canary segment descriptor.
- 	 */
--	movl $per_cpu__gdt_page,%eax
--	movl $per_cpu__stack_canary,%ecx
-+	movl $gdt_page,%eax
-+	movl $stack_canary,%ecx
- 	movw %cx, 8 * GDT_ENTRY_STACK_CANARY + 2(%eax)
- 	shrl $16, %ecx
- 	movb %cl, 8 * GDT_ENTRY_STACK_CANARY + 4(%eax)
-@@ -78,7 +78,7 @@ ENTRY(startup_32)
- 	# need to be preserved.
- 
- 	movl XEN_START_mfn_list(%esi), %ebx
--	movl $(per_cpu__gdt_page - __PAGE_OFFSET), %eax
-+	movl $(gdt_page - __PAGE_OFFSET), %eax
- 	shrl $PAGE_SHIFT, %eax
- 	movl (%ebx,%eax,4), %ecx
- 	pushl %ecx			# frame number for set_gdt below
-@@ -88,7 +88,7 @@ ENTRY(startup_32)
- 	shldl $PAGE_SHIFT, %ecx, %edx
- 	shll $PAGE_SHIFT, %ecx
- 	orl $_PAGE_PRESENT|_PAGE_ACCESSED|_PAGE_DIRTY, %ecx
--	movl $per_cpu__gdt_page, %ebx
-+	movl $gdt_page, %ebx
- 	movl $__HYPERVISOR_update_va_mapping, %eax
- 	int $0x82
- 
 --- sle12.orig/arch/x86/kernel/ldt-xen.c	2011-02-01 14:54:13.000000000 +0100
 +++ sle12/arch/x86/kernel/ldt-xen.c	2011-02-01 15:03:03.000000000 +0100
 @@ -7,6 +7,7 @@
@@ -2157,21 +2062,6 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
  			" performance may degrade.\n");
  	}
  #endif
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-08-10 10:46:17.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-02-29 14:17:47.000000000 +0100
-@@ -177,12 +177,6 @@ void __show_regs(struct pt_regs *regs, i
- 			d6, d7);
- }
- 
--void show_regs(struct pt_regs *regs)
--{
--	show_registers(regs);
--	show_trace(NULL, regs, &regs->sp, regs->bp);
--}
--
- void release_thread(struct task_struct *dead_task)
- {
- 	BUG_ON(dead_task->mm);
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2012-08-01 12:01:43.000000000 +0200
 +++ sle12/arch/x86/kernel/process_64-xen.c	2011-02-02 08:47:22.000000000 +0100
 @@ -215,12 +215,6 @@ void __show_regs(struct pt_regs *regs, i
@@ -2590,101 +2480,6 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
 +	free_init_pages("initrd memory", start, PAGE_ALIGN(end));
  }
  #endif
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-02-01 14:55:46.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-02-01 15:03:03.000000000 +0100
-@@ -25,11 +25,11 @@
- #include <linux/pfn.h>
- #include <linux/poison.h>
- #include <linux/bootmem.h>
--#include <linux/slab.h>
- #include <linux/proc_fs.h>
- #include <linux/memory_hotplug.h>
- #include <linux/initrd.h>
- #include <linux/cpumask.h>
-+#include <linux/gfp.h>
- #include <linux/dma-mapping.h>
- #include <linux/scatterlist.h>
- 
-@@ -257,6 +257,7 @@ kernel_physical_mapping_init(unsigned lo
- 			     unsigned long page_size_mask)
- {
- 	int use_pse = page_size_mask == (1<<PG_LEVEL_2M);
-+	unsigned long last_map_addr = end;
- 	unsigned long start_pfn, end_pfn;
- 	pgd_t *pgd_base = swapper_pg_dir;
- 	int pgd_idx, pmd_idx, pte_ofs;
-@@ -376,9 +377,10 @@ repeat:
- 					prot = PAGE_KERNEL_EXEC;
- 
- 				pages_4k++;
--				if (mapping_iter == 1)
-+				if (mapping_iter == 1) {
- 					set_pte(pte, pfn_pte(pfn, init_prot));
--				else
-+					last_map_addr = (pfn << PAGE_SHIFT) + PAGE_SIZE;
-+				} else
- 					set_pte(pte, pfn_pte(pfn, prot));
- 			}
- 		}
-@@ -404,7 +406,7 @@ repeat:
- 		mapping_iter = 2;
- 		goto repeat;
- 	}
--	return 0;
-+	return last_map_addr;
- }
- 
- pte_t *kmap_pte;
-@@ -750,6 +752,7 @@ static void __init zone_sizes_init(void)
- 	free_area_init_nodes(max_zone_pfns);
- }
- 
-+#ifndef CONFIG_NO_BOOTMEM
- static unsigned long __init setup_node_bootmem(int nodeid,
- 				 unsigned long start_pfn,
- 				 unsigned long end_pfn,
-@@ -766,13 +769,14 @@ static unsigned long __init setup_node_b
- 	printk(KERN_INFO "  node %d bootmap %08lx - %08lx\n",
- 		 nodeid, bootmap, bootmap + bootmap_size);
- 	free_bootmem_with_active_regions(nodeid, end_pfn);
--	early_res_to_bootmem(start_pfn<<PAGE_SHIFT, end_pfn<<PAGE_SHIFT);
- 
- 	return bootmap + bootmap_size;
- }
-+#endif
- 
- void __init setup_bootmem_allocator(void)
- {
-+#ifndef CONFIG_NO_BOOTMEM
- 	int nodeid;
- 	unsigned long bootmap_size, bootmap;
- 	unsigned long end_xen_pfn = min(max_low_pfn, xen_start_info->nr_pages);
-@@ -787,11 +791,17 @@ void __init setup_bootmem_allocator(void
- 	if (bootmap == -1L)
- 		panic("Cannot find bootmem map of size %ld\n", bootmap_size);
- 	reserve_early(bootmap, bootmap + bootmap_size, "BOOTMAP");
-+#elif defined(CONFIG_XEN)
-+	if (max_low_pfn > xen_start_info->nr_pages)
-+		reserve_early(xen_start_info->nr_pages << PAGE_SHIFT,
-+			      max_low_pfn << PAGE_SHIFT, "BALLOON");
-+#endif
- 
- 	printk(KERN_INFO "  mapped low ram: 0 - %08lx\n",
- 		 max_pfn_mapped<<PAGE_SHIFT);
- 	printk(KERN_INFO "  low ram: 0 - %08lx\n", max_low_pfn<<PAGE_SHIFT);
- 
-+#ifndef CONFIG_NO_BOOTMEM
- 	for_each_online_node(nodeid) {
- 		 unsigned long start_pfn, end_pfn;
- 
-@@ -809,6 +819,7 @@ void __init setup_bootmem_allocator(void
- 		bootmap = setup_node_bootmem(nodeid, start_pfn, end_pfn,
- 						 bootmap);
- 	}
-+#endif
- 
- 	after_bootmem = 1;
- }
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2011-06-30 17:10:32.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2011-06-30 17:10:52.000000000 +0200
 @@ -32,6 +32,7 @@
@@ -2962,24 +2757,6 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
  void __pte_free(pgtable_t pte)
  {
  	if (!PageHighMem(pte)) {
---- sle12.orig/arch/x86/mm/pgtable_32-xen.c	2011-02-01 14:44:12.000000000 +0100
-+++ sle12/arch/x86/mm/pgtable_32-xen.c	2011-02-01 15:03:03.000000000 +0100
-@@ -6,7 +6,6 @@
- #include <linux/swap.h>
- #include <linux/smp.h>
- #include <linux/highmem.h>
--#include <linux/slab.h>
- #include <linux/pagemap.h>
- #include <linux/spinlock.h>
- #include <linux/module.h>
-@@ -142,6 +141,7 @@ static int __init parse_reservetop(char 
- 
- 	address = memparse(arg, &arg);
- 	reserve_top_address(address);
-+	fixup_early_ioremap();
- 	return 0;
- }
- early_param("reservetop", parse_reservetop);
 --- sle12.orig/drivers/acpi/acpi_pad-xen.c	2013-09-26 14:11:20.000000000 +0200
 +++ sle12/drivers/acpi/acpi_pad-xen.c	2012-06-01 11:18:36.000000000 +0200
 @@ -27,7 +27,7 @@
@@ -4008,7 +3785,7 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
  #include <asm/dma.h>
 --- sle12.orig/mm/page_alloc.c	2013-09-26 12:56:56.000000000 +0200
 +++ sle12/mm/page_alloc.c	2014-02-06 14:21:20.000000000 +0100
-@@ -5666,7 +5666,8 @@ static void __setup_per_zone_wmarks(void
+@@ -5669,7 +5669,8 @@ static void __setup_per_zone_wmarks(void
  			high = percpu_pagelist_fraction
  			       ? zone->present_pages / percpu_pagelist_fraction
  			       : 5 * zone_batchsize(zone);
@@ -4018,7 +3795,7 @@ Automatically created from "patches.kernel.org/patch-2.6.34" by xen-port-patches
  		}
  	}
  #endif
-@@ -6572,6 +6573,11 @@ static const struct trace_print_flags pa
+@@ -6575,6 +6576,11 @@ static const struct trace_print_flags pa
  #ifdef CONFIG_TRANSPARENT_HUGEPAGE
  	{1UL << PG_compound_lock,	"compound_lock"	},
  #endif

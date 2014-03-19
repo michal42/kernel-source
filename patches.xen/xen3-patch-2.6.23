@@ -5,7 +5,7 @@ Patch-mainline: 2.6.23
 Automatically created from "patches.kernel.org/patch-2.6.23" by xen-port-patches.py
 Acked-by: jbeulich@novell.com
 
---- sle12.orig/arch/x86/Kbuild	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/arch/x86/Kbuild	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/Kbuild	2012-06-13 15:13:30.000000000 +0200
 @@ -1,7 +1,7 @@
  obj-$(CONFIG_KVM) += kvm/
@@ -16,7 +16,7 @@ Acked-by: jbeulich@novell.com
  
  # lguest paravirtualization support
  obj-$(CONFIG_LGUEST_GUEST) += lguest/
---- sle12.orig/arch/x86/kernel/asm-offsets.c	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/arch/x86/kernel/asm-offsets.c	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/kernel/asm-offsets.c	2011-04-13 12:42:43.000000000 +0200
 @@ -17,7 +17,7 @@
  #include <asm/bootparam.h>
@@ -74,91 +74,6 @@ Acked-by: jbeulich@novell.com
  {
  }
  
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:36:16.000000000 +0100
-@@ -452,9 +452,6 @@ restore_nocheck_notrace:
- 1:	INTERRUPT_RETURN
- .section .fixup,"ax"
- iret_exc:
--#ifndef CONFIG_XEN
--	ENABLE_INTERRUPTS(CLBR_NONE)
--#endif
- 	pushl $0			# no error code
- 	pushl $do_iret_error
- 	jmp error_code
---- sle12.orig/arch/x86/kernel/head_32-xen.S	2012-12-06 16:06:48.000000000 +0100
-+++ sle12/arch/x86/kernel/head_32-xen.S	2012-12-06 16:07:12.000000000 +0100
-@@ -93,7 +93,10 @@ ENTRY(_stext)
- /*
-  * BSS section
-  */
--.section ".bss.page_aligned","w"
-+.section ".bss.page_aligned","wa"
-+	.align PAGE_SIZE_asm
-+ENTRY(swapper_pg_pmd)
-+	.fill 1024,4,0
- ENTRY(empty_zero_page)
- 	.fill 4096,1,0
- 
-@@ -155,36 +158,36 @@ ENTRY(empty_zero_page)
- #endif /* CONFIG_XEN_COMPAT <= 0x030002 */
- 
- 
--	ELFNOTE(Xen, XEN_ELFNOTE_GUEST_OS,       .asciz, "linux")	
--	ELFNOTE(Xen, XEN_ELFNOTE_GUEST_VERSION,  .asciz, "2.6")
--	ELFNOTE(Xen, XEN_ELFNOTE_XEN_VERSION,    .asciz, "xen-3.0")
--	ELFNOTE(Xen, XEN_ELFNOTE_VIRT_BASE,      .long,  __PAGE_OFFSET)
-+	ELFNOTE(Xen, XEN_ELFNOTE_GUEST_OS,       .asciz "linux")
-+	ELFNOTE(Xen, XEN_ELFNOTE_GUEST_VERSION,  .asciz "2.6")
-+	ELFNOTE(Xen, XEN_ELFNOTE_XEN_VERSION,    .asciz "xen-3.0")
-+	ELFNOTE(Xen, XEN_ELFNOTE_VIRT_BASE,      .long __PAGE_OFFSET)
- #if CONFIG_XEN_COMPAT <= 0x030002
--	ELFNOTE(Xen, XEN_ELFNOTE_PADDR_OFFSET,   .long,  __PAGE_OFFSET)
-+	ELFNOTE(Xen, XEN_ELFNOTE_PADDR_OFFSET,   .long __PAGE_OFFSET)
- #else
--	ELFNOTE(Xen, XEN_ELFNOTE_PADDR_OFFSET,   .long,  0)
-+	ELFNOTE(Xen, XEN_ELFNOTE_PADDR_OFFSET,   .long 0)
- #endif
--	ELFNOTE(Xen, XEN_ELFNOTE_ENTRY,          .long,  startup_32)
--	ELFNOTE(Xen, XEN_ELFNOTE_HYPERCALL_PAGE, .long,  hypercall_page)
--	ELFNOTE(Xen, XEN_ELFNOTE_HV_START_LOW,   .long,  HYPERVISOR_VIRT_START)
--	ELFNOTE(Xen, XEN_ELFNOTE_FEATURES,       .ascii, "writable_page_tables";
--						 .ascii  "|writable_descriptor_tables";
--						 .ascii  "|auto_translated_physmap";
--						 .ascii  "|pae_pgdir_above_4gb";
--						 .ascii  "|supervisor_mode_kernel";
--						 .asciz  XEN_DOM0_CAP_STR)
--	ELFNOTE(Xen, XEN_ELFNOTE_SUPPORTED_FEATURES, .long, XEN_DOM0_CAP |
-+	ELFNOTE(Xen, XEN_ELFNOTE_ENTRY,          .long startup_32)
-+	ELFNOTE(Xen, XEN_ELFNOTE_HYPERCALL_PAGE, .long hypercall_page)
-+	ELFNOTE(Xen, XEN_ELFNOTE_HV_START_LOW,   .long HYPERVISOR_VIRT_START)
-+	ELFNOTE(Xen, XEN_ELFNOTE_FEATURES,       .ascii "writable_page_tables";
-+						 .ascii "|writable_descriptor_tables";
-+						 .ascii "|auto_translated_physmap";
-+						 .ascii "|pae_pgdir_above_4gb";
-+						 .ascii "|supervisor_mode_kernel";
-+						 .asciz XEN_DOM0_CAP_STR)
-+	ELFNOTE(Xen, XEN_ELFNOTE_SUPPORTED_FEATURES, .long XEN_DOM0_CAP |
- 					   (1 << XENFEAT_writable_page_tables) |
- 					   (1 << XENFEAT_writable_descriptor_tables) |
- 					   (1 << XENFEAT_auto_translated_physmap) |
- 					   (1 << XENFEAT_pae_pgdir_above_4gb) |
- 					   (1 << XENFEAT_supervisor_mode_kernel))
- #ifdef CONFIG_X86_PAE
--	ELFNOTE(Xen, XEN_ELFNOTE_PAE_MODE,       .asciz, "yes")
--	ELFNOTE(Xen, XEN_ELFNOTE_L1_MFN_VALID,   .quad,  _PAGE_PRESENT,_PAGE_PRESENT)
-+	ELFNOTE(Xen, XEN_ELFNOTE_PAE_MODE,       .asciz "yes")
-+	ELFNOTE(Xen, XEN_ELFNOTE_L1_MFN_VALID,   .quad _PAGE_PRESENT, _PAGE_PRESENT)
- #else
--	ELFNOTE(Xen, XEN_ELFNOTE_PAE_MODE,       .asciz, "no")
--	ELFNOTE(Xen, XEN_ELFNOTE_L1_MFN_VALID,   .long,  _PAGE_PRESENT,_PAGE_PRESENT)
-+	ELFNOTE(Xen, XEN_ELFNOTE_PAE_MODE,       .asciz "no")
-+	ELFNOTE(Xen, XEN_ELFNOTE_L1_MFN_VALID,   .long _PAGE_PRESENT, _PAGE_PRESENT)
- #endif
--	ELFNOTE(Xen, XEN_ELFNOTE_LOADER,         .asciz, "generic")
--	ELFNOTE(Xen, XEN_ELFNOTE_SUSPEND_CANCEL, .long,  1)
-+	ELFNOTE(Xen, XEN_ELFNOTE_LOADER,         .asciz "generic")
-+	ELFNOTE(Xen, XEN_ELFNOTE_SUSPEND_CANCEL, .long 1)
 --- sle12.orig/arch/x86/kernel/cpu/microcode/core-xen.c	2011-12-01 15:01:09.000000000 +0100
 +++ sle12/arch/x86/kernel/cpu/microcode/core-xen.c	2011-01-31 17:49:31.000000000 +0100
 @@ -33,6 +33,7 @@
@@ -180,123 +95,6 @@ Acked-by: jbeulich@novell.com
  
  int iommu_merge __read_mostly = 0;
  EXPORT_SYMBOL(iommu_merge);
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-07-05 10:49:20.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-07-05 10:49:33.000000000 +0200
-@@ -241,6 +241,7 @@ early_param("idle", idle_setup);
- void show_regs(struct pt_regs * regs)
- {
- 	unsigned long cr0 = 0L, cr2 = 0L, cr3 = 0L, cr4 = 0L;
-+	unsigned long d0, d1, d2, d3, d6, d7;
- 
- 	printk("\n");
- 	printk("Pid: %d, comm: %20s\n", current->pid, current->comm);
-@@ -265,6 +266,17 @@ void show_regs(struct pt_regs * regs)
- 	cr3 = read_cr3();
- 	cr4 = read_cr4_safe();
- 	printk("CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n", cr0, cr2, cr3, cr4);
-+
-+	get_debugreg(d0, 0);
-+	get_debugreg(d1, 1);
-+	get_debugreg(d2, 2);
-+	get_debugreg(d3, 3);
-+	printk("DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
-+			d0, d1, d2, d3);
-+	get_debugreg(d6, 6);
-+	get_debugreg(d7, 7);
-+	printk("DR6: %08lx DR7: %08lx\n", d6, d7);
-+
- 	show_trace(NULL, regs, &regs->esp);
- }
- 
-@@ -473,7 +485,30 @@ int dump_task_regs(struct task_struct *t
- 	return 1;
- }
- 
--static noinline void __switch_to_xtra(struct task_struct *next_p)
-+#ifdef CONFIG_SECCOMP
-+void hard_disable_TSC(void)
-+{
-+	write_cr4(read_cr4() | X86_CR4_TSD);
-+}
-+void disable_TSC(void)
-+{
-+	preempt_disable();
-+	if (!test_and_set_thread_flag(TIF_NOTSC))
-+		/*
-+		 * Must flip the CPU state synchronously with
-+		 * TIF_NOTSC in the current running context.
-+		 */
-+		hard_disable_TSC();
-+	preempt_enable();
-+}
-+void hard_enable_TSC(void)
-+{
-+	write_cr4(read_cr4() & ~X86_CR4_TSD);
-+}
-+#endif /* CONFIG_SECCOMP */
-+
-+static noinline void
-+__switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p)
- {
- 	struct thread_struct *next;
- 
-@@ -488,33 +523,17 @@ static noinline void __switch_to_xtra(st
- 		set_debugreg(next->debugreg[6], 6);
- 		set_debugreg(next->debugreg[7], 7);
- 	}
--}
- 
--/*
-- * This function selects if the context switch from prev to next
-- * has to tweak the TSC disable bit in the cr4.
-- */
--static inline void disable_tsc(struct task_struct *prev_p,
--			       struct task_struct *next_p)
--{
--	struct thread_info *prev, *next;
--
--	/*
--	 * gcc should eliminate the ->thread_info dereference if
--	 * has_secure_computing returns 0 at compile time (SECCOMP=n).
--	 */
--	prev = task_thread_info(prev_p);
--	next = task_thread_info(next_p);
--
--	if (has_secure_computing(prev) || has_secure_computing(next)) {
--		/* slow path here */
--		if (has_secure_computing(prev) &&
--		    !has_secure_computing(next)) {
--			write_cr4(read_cr4() & ~X86_CR4_TSD);
--		} else if (!has_secure_computing(prev) &&
--			   has_secure_computing(next))
--			write_cr4(read_cr4() | X86_CR4_TSD);
-+#ifdef CONFIG_SECCOMP
-+	if (test_tsk_thread_flag(prev_p, TIF_NOTSC) ^
-+	    test_tsk_thread_flag(next_p, TIF_NOTSC)) {
-+		/* prev and next are different */
-+		if (test_tsk_thread_flag(next_p, TIF_NOTSC))
-+			hard_disable_TSC();
-+		else
-+			hard_enable_TSC();
- 	}
-+#endif
- }
- 
- /*
-@@ -655,10 +674,9 @@ struct task_struct fastcall * __switch_t
- 	/*
- 	 * Now maybe handle debug registers
- 	 */
--	if (unlikely(task_thread_info(next_p)->flags & _TIF_WORK_CTXSW))
--		__switch_to_xtra(next_p);
--
--	disable_tsc(prev_p, next_p);
-+	if (unlikely(task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV ||
-+		     task_thread_info(next_p)->flags & _TIF_WORK_CTXSW_NEXT))
-+		__switch_to_xtra(prev_p, next_p);
- 
- 	/*
- 	 * Leave lazy mode, flushing any hypercalls made here.
 --- sle12.orig/arch/x86/kernel/time-xen.c	2014-01-23 11:14:08.000000000 +0100
 +++ sle12/arch/x86/kernel/time-xen.c	2014-01-23 11:14:23.000000000 +0100
 @@ -74,11 +74,12 @@
@@ -573,93 +371,6 @@ Acked-by: jbeulich@novell.com
  #ifdef CONFIG_KPROBES
  fastcall void __kprobes do_int3(struct pt_regs *regs, long error_code)
  {
---- sle12.orig/arch/x86/mm/highmem_32-xen.c	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/mm/highmem_32-xen.c	2011-01-31 17:49:31.000000000 +0100
-@@ -34,17 +34,16 @@ void *kmap_atomic_prot(struct page *page
- 	/* even !CONFIG_PREEMPT needs this, for in_atomic in do_page_fault */
- 	pagefault_disable();
- 
--	idx = type + KM_TYPE_NR*smp_processor_id();
--	BUG_ON(!pte_none(*(kmap_pte-idx)));
--
- 	if (!PageHighMem(page))
- 		return page_address(page);
- 
-+	idx = type + KM_TYPE_NR*smp_processor_id();
- 	vaddr = __fix_to_virt(FIX_KMAP_BEGIN + idx);
-+	BUG_ON(!pte_none(*(kmap_pte-idx)));
- 	set_pte_at(&init_mm, vaddr, kmap_pte-idx, mk_pte(page, prot));
- 	/*arch_flush_lazy_mmu_mode();*/
- 
--	return (void*) vaddr;
-+	return (void *)vaddr;
- }
- 
- void *kmap_atomic(struct page *page, enum km_type type)
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-01-31 17:49:31.000000000 +0100
-@@ -96,7 +96,7 @@ static pte_t * __init one_page_table_ini
- #endif
- 		pte_t *page_table = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
- 
--		paravirt_alloc_pt(__pa(page_table) >> PAGE_SHIFT);
-+		paravirt_alloc_pt(&init_mm, __pa(page_table) >> PAGE_SHIFT);
- 		make_lowmem_page_readonly(page_table,
- 					  XENFEAT_writable_page_tables);
- 		set_pmd(pmd, __pmd(__pa(page_table) | _PAGE_TABLE));
-@@ -453,7 +453,7 @@ static void __init pagetable_init (void)
- 	xen_pagetable_setup_done(pgd_base);
- }
- 
--#if defined(CONFIG_SOFTWARE_SUSPEND) || defined(CONFIG_ACPI_SLEEP)
-+#if defined(CONFIG_HIBERNATION) || defined(CONFIG_ACPI)
- /*
-  * Swap suspend & friends need this for resume because things like the intel-agp
-  * driver might have split up a kernel 4MB mapping.
-@@ -492,9 +492,13 @@ void zap_low_mappings (void)
- 	flush_tlb_all();
- }
- 
-+int nx_enabled = 0;
-+
-+#ifdef CONFIG_X86_PAE
-+
- static int disable_nx __initdata = 0;
- u64 __supported_pte_mask __read_mostly = ~_PAGE_NX;
--EXPORT_SYMBOL(__supported_pte_mask);
-+EXPORT_SYMBOL_GPL(__supported_pte_mask);
- 
- /*
-  * noexec = on|off
-@@ -521,9 +525,6 @@ static int __init noexec_setup(char *str
- }
- early_param("noexec", noexec_setup);
- 
--int nx_enabled = 0;
--#ifdef CONFIG_X86_PAE
--
- static void __init set_nx(void)
- {
- 	unsigned int v[4], l, h;
-@@ -770,7 +771,7 @@ void __init mem_init(void)
- 	zap_low_mappings();
- #endif
- 
--	set_bit(PG_pinned, &virt_to_page(init_mm.pgd)->flags);
-+	SetPagePinned(virt_to_page(init_mm.pgd));
- }
- 
- #ifdef CONFIG_MEMORY_HOTPLUG
-@@ -802,8 +803,7 @@ void __init pgtable_cache_init(void)
- 					PTRS_PER_PMD*sizeof(pmd_t),
- 					PTRS_PER_PMD*sizeof(pmd_t),
- 					SLAB_PANIC,
--					pmd_ctor,
--					NULL);
-+					pmd_ctor);
- 		if (!SHARED_KERNEL_PMD) {
- 			/* If we're in PAE mode and have a non-shared
- 			   kernel pmd, then the pgd size must be a
 --- sle12.orig/arch/x86/mm/ioremap-xen.c	2011-01-31 17:32:29.000000000 +0100
 +++ sle12/arch/x86/mm/ioremap-xen.c	2011-02-07 15:38:30.000000000 +0100
 @@ -344,9 +344,8 @@ void iounmap(volatile void __iomem *addr
@@ -673,107 +384,7 @@ Acked-by: jbeulich@novell.com
  				 PAGE_KERNEL);
  		global_flush_tlb();
  	} 
---- sle12.orig/arch/x86/mm/pgtable_32-xen.c	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/mm/pgtable_32-xen.c	2011-01-31 17:49:31.000000000 +0100
-@@ -198,7 +198,7 @@ void pte_free(struct page *pte)
- 				va, pfn_pte(pfn, PAGE_KERNEL), 0))
- 				BUG();
- 	} else
--		clear_bit(PG_pinned, &pte->flags);
-+		ClearPagePinned(pte);
- 
- 	ClearPageForeign(pte);
- 	init_page_count(pte);
-@@ -249,7 +249,7 @@ static inline void pgd_list_del(pgd_t *p
- 
- #if (PTRS_PER_PMD == 1)
- /* Non-PAE pgd constructor */
--void pgd_ctor(void *pgd)
-+static void pgd_ctor(void *pgd)
- {
- 	unsigned long flags;
- 
-@@ -272,7 +272,7 @@ void pgd_ctor(void *pgd)
- }
- #else  /* PTRS_PER_PMD > 1 */
- /* PAE pgd constructor */
--void pgd_ctor(void *pgd)
-+static void pgd_ctor(void *pgd)
- {
- 	/* PAE, kernel PMD may be shared */
- 
-@@ -286,7 +286,7 @@ void pgd_ctor(void *pgd)
- }
- #endif	/* PTRS_PER_PMD */
- 
--void pgd_dtor(void *pgd)
-+static void pgd_dtor(void *pgd)
- {
- 	unsigned long flags; /* can be called from interrupt context */
- 
-@@ -644,9 +644,9 @@ static inline unsigned int pgd_walk_set_
- 
- 	if (PageHighMem(page)) {
- 		if (pgprot_val(flags) & _PAGE_RW)
--			clear_bit(PG_pinned, &page->flags);
-+			ClearPagePinned(page);
- 		else
--			set_bit(PG_pinned, &page->flags);
-+			SetPagePinned(page);
- 	} else {
- 		MULTI_update_va_mapping(per_cpu(pb_mcl, cpu) + seq,
- 				(unsigned long)__va(pfn << PAGE_SHIFT),
-@@ -716,19 +716,19 @@ static void __pgd_pin(pgd_t *pgd)
- 	pgd_walk(pgd, PAGE_KERNEL_RO);
- 	kmap_flush_unused();
- 	xen_pgd_pin(__pa(pgd));
--	set_bit(PG_pinned, &virt_to_page(pgd)->flags);
-+	SetPagePinned(virt_to_page(pgd));
- }
- 
- static void __pgd_unpin(pgd_t *pgd)
- {
- 	xen_pgd_unpin(__pa(pgd));
- 	pgd_walk(pgd, PAGE_KERNEL);
--	clear_bit(PG_pinned, &virt_to_page(pgd)->flags);
-+	ClearPagePinned(virt_to_page(pgd));
- }
- 
- static void pgd_test_and_unpin(pgd_t *pgd)
- {
--	if (test_bit(PG_pinned, &virt_to_page(pgd)->flags))
-+	if (PagePinned(virt_to_page(pgd)))
- 		__pgd_unpin(pgd);
- }
- 
-@@ -766,7 +766,7 @@ void mm_pin_all(void)
- 	 */
- 	spin_lock_irqsave(&pgd_lock, flags);
- 	for (page = pgd_list; page; page = (struct page *)page->index) {
--		if (!test_bit(PG_pinned, &page->flags))
-+		if (!PagePinned(page))
- 			__pgd_pin((pgd_t *)page_address(page));
- 	}
- 	spin_unlock_irqrestore(&pgd_lock, flags);
-@@ -774,7 +774,7 @@ void mm_pin_all(void)
- 
- void arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
- {
--	if (!test_bit(PG_pinned, &virt_to_page(mm->pgd)->flags))
-+	if (!PagePinned(virt_to_page(mm->pgd)))
- 		mm_pin(mm);
- }
- 
-@@ -800,7 +800,7 @@ void arch_exit_mmap(struct mm_struct *mm
- 
- 	task_unlock(tsk);
- 
--	if (test_bit(PG_pinned, &virt_to_page(mm->pgd)->flags) &&
-+	if (PagePinned(virt_to_page(mm->pgd)) &&
- 	    (atomic_read(&mm->mm_count) == 1) &&
- 	    !mm->context.has_foreign_mappings)
- 		mm_unpin(mm);
---- sle12.orig/arch/x86/xen/Kconfig	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/arch/x86/xen/Kconfig	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/xen/Kconfig	2013-05-23 17:06:53.000000000 +0200
 @@ -2,7 +2,7 @@
  # This Kconfig describes xen options
@@ -784,7 +395,7 @@ Acked-by: jbeulich@novell.com
  	bool "Xen guest support"
  	depends on PARAVIRT
  	select PARAVIRT_CLOCK
---- sle12.orig/arch/x86/xen/xen-head.S	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/arch/x86/xen/xen-head.S	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/xen/xen-head.S	2012-10-23 14:49:29.000000000 +0200
 @@ -1,7 +1,7 @@
  /* Xen-specific pieces of head.S, intended to be included in the right
@@ -1812,7 +1423,7 @@ Acked-by: jbeulich@novell.com
  #include <xen/interface/xen.h>
  #include <xen/interface/xenoprof.h>
  #include <xen/xenoprof.h>
---- sle12.orig/arch/x86/vdso/vdso32/note.S	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/arch/x86/vdso/vdso32/note.S	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/vdso/vdso32/note.S	2011-01-31 17:49:31.000000000 +0100
 @@ -13,7 +13,7 @@ ELFNOTE_START(Linux, 0, "a")
  	.long LINUX_VERSION_CODE
@@ -1847,7 +1458,7 @@ Acked-by: jbeulich@novell.com
  
  # regulators early, since some subsystems rely on them to initialize
  obj-$(CONFIG_REGULATOR)		+= regulator/
---- sle12.orig/drivers/block/Kconfig	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/drivers/block/Kconfig	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/block/Kconfig	2014-01-09 11:18:23.000000000 +0100
 @@ -467,9 +467,9 @@ config XILINX_SYSACE
  	help
@@ -1861,7 +1472,7 @@ Acked-by: jbeulich@novell.com
  	default y
  	select XEN_XENBUS_FRONTEND
  	help
---- sle12.orig/drivers/block/Makefile	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/drivers/block/Makefile	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/block/Makefile	2013-03-21 14:17:06.000000000 +0100
 @@ -34,7 +34,7 @@ obj-$(CONFIG_VIODASD)		+= viodasd.o
  obj-$(CONFIG_BLK_DEV_SX8)	+= sx8.o
@@ -1872,7 +1483,7 @@ Acked-by: jbeulich@novell.com
  obj-$(CONFIG_XEN_BLKDEV_BACKEND)	+= xen-blkback/
  obj-$(CONFIG_BLK_DEV_DRBD)     += drbd/
  obj-$(CONFIG_BLK_DEV_RBD)     += rbd.o
---- sle12.orig/drivers/tty/hvc/Kconfig	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/drivers/tty/hvc/Kconfig	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/tty/hvc/Kconfig	2013-03-21 14:17:16.000000000 +0100
 @@ -61,7 +61,7 @@ config HVC_IUCV
  
@@ -1883,7 +1494,7 @@ Acked-by: jbeulich@novell.com
  	select HVC_DRIVER
  	select HVC_IRQ
  	default y
---- sle12.orig/drivers/net/Kconfig	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/drivers/net/Kconfig	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/net/Kconfig	2013-08-09 12:20:21.000000000 +0200
 @@ -313,9 +313,9 @@ source "drivers/net/wan/Kconfig"
  
@@ -1897,7 +1508,7 @@ Acked-by: jbeulich@novell.com
  	select XEN_XENBUS_FRONTEND
  	default y
  	help
---- sle12.orig/drivers/net/Makefile	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/drivers/net/Makefile	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/drivers/net/Makefile	2013-08-09 12:20:23.000000000 +0200
 @@ -58,7 +58,7 @@ obj-$(CONFIG_WIMAX) += wimax/
  obj-$(CONFIG_IEEE802154) += ieee802154/
@@ -3487,323 +3098,6 @@ Acked-by: jbeulich@novell.com
  #include <xen/interface/xen.h>
  #include <xen/interface/xenoprof.h>
  #include "../../../drivers/oprofile/cpu_buffer.h"
---- sle12.orig/arch/x86/include/mach-xen/asm/fixmap_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/fixmap_32.h	2011-01-31 17:49:31.000000000 +0100
-@@ -53,6 +53,8 @@ extern unsigned long __FIXADDR_TOP;
- enum fixed_addresses {
- 	FIX_HOLE,
- 	FIX_VDSO,
-+	FIX_DBGP_BASE,
-+	FIX_EARLYCON_MEM_BASE,
- #ifdef CONFIG_X86_LOCAL_APIC
- 	FIX_APIC_BASE,	/* local (CPU) APIC) -- required for SMP or not */
- #endif
---- sle12.orig/arch/x86/include/mach-xen/asm/highmem.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/highmem.h	2011-01-31 17:49:31.000000000 +0100
-@@ -75,8 +75,7 @@ struct page *kmap_atomic_to_page(void *p
- 
- #define kmap_atomic_pte(page, type) \
- 	kmap_atomic_prot(page, type, \
--	                 test_bit(PG_pinned, &(page)->flags) \
--	                 ? PAGE_KERNEL_RO : kmap_prot)
-+	                 PagePinned(page) ? PAGE_KERNEL_RO : kmap_prot)
- 
- #define flush_cache_kmaps()	do { } while (0)
- 
---- sle12.orig/arch/x86/include/mach-xen/asm/maddr_32.h	2011-08-08 12:54:10.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/maddr_32.h	2011-01-31 17:49:31.000000000 +0100
-@@ -155,6 +155,7 @@ static inline paddr_t pte_machine_to_phy
- 
- #ifdef CONFIG_X86_PAE
- #define __pte_ma(x)	((pte_t) { (x), (maddr_t)(x) >> 32 } )
-+extern unsigned long long __supported_pte_mask;
- static inline pte_t pfn_pte_ma(unsigned long page_nr, pgprot_t pgprot)
- {
- 	pte_t pte;
---- sle12.orig/arch/x86/include/mach-xen/asm/mmu_context_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/mmu_context_32.h	2011-01-31 17:49:31.000000000 +0100
-@@ -16,7 +16,7 @@ void mm_pin_all(void);
- static inline void xen_activate_mm(struct mm_struct *prev,
- 				   struct mm_struct *next)
- {
--	if (!test_bit(PG_pinned, &virt_to_page(next->pgd)->flags))
-+	if (!PagePinned(virt_to_page(next->pgd)))
- 		mm_pin(next);
- }
- 
-@@ -51,6 +51,8 @@ static inline void __prepare_arch_switch
- 		: : "r" (0) );
- }
- 
-+void leave_mm(unsigned long cpu);
-+
- static inline void switch_mm(struct mm_struct *prev,
- 			     struct mm_struct *next,
- 			     struct task_struct *tsk)
-@@ -60,7 +62,7 @@ static inline void switch_mm(struct mm_s
- 
- 	if (likely(prev != next)) {
- 		BUG_ON(!xen_feature(XENFEAT_writable_page_tables) &&
--		       !test_bit(PG_pinned, &virt_to_page(next->pgd)->flags));
-+		       !PagePinned(virt_to_page(next->pgd)));
- 
- 		/* stop flush ipis for the previous mm */
- 		cpu_clear(cpu, prev->cpu_vm_mask);
---- sle12.orig/arch/x86/include/mach-xen/asm/pgalloc_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgalloc_32.h	2011-01-31 17:49:31.000000000 +0100
-@@ -5,7 +5,7 @@
- #include <linux/mm.h>		/* for struct page */
- #include <asm/io.h>		/* for phys_to_virt and page_to_pseudophys */
- 
--#define paravirt_alloc_pt(pfn) do { } while (0)
-+#define paravirt_alloc_pt(mm, pfn) do { } while (0)
- #define paravirt_alloc_pd(pfn) do { } while (0)
- #define paravirt_alloc_pd(pfn) do { } while (0)
- #define paravirt_alloc_pd_clone(pfn, clonepfn, start, count) do { } while (0)
-@@ -14,15 +14,15 @@
- 
- #define pmd_populate_kernel(mm, pmd, pte)			\
- do {								\
--	paravirt_alloc_pt(__pa(pte) >> PAGE_SHIFT);		\
-+	paravirt_alloc_pt(mm, __pa(pte) >> PAGE_SHIFT);		\
- 	set_pmd(pmd, __pmd(_PAGE_TABLE + __pa(pte)));		\
- } while (0)
- 
- #define pmd_populate(mm, pmd, pte) 					\
- do {									\
- 	unsigned long pfn = page_to_pfn(pte);				\
--	paravirt_alloc_pt(pfn);						\
--	if (test_bit(PG_pinned, &virt_to_page((mm)->pgd)->flags)) {	\
-+	paravirt_alloc_pt(mm, pfn);					\
-+	if (PagePinned(virt_to_page((mm)->pgd))) {			\
- 		if (!PageHighMem(pte))					\
- 			BUG_ON(HYPERVISOR_update_va_mapping(		\
- 			  (unsigned long)__va(pfn << PAGE_SHIFT),	\
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-07 15:38:07.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-07 15:38:23.000000000 +0100
-@@ -26,9 +26,6 @@
- #include <linux/spinlock.h>
- #include <linux/sched.h>
- 
--/* Is this pagetable pinned? */
--#define PG_pinned	PG_arch_1
--
- struct vm_area_struct;
- 
- /*
-@@ -82,7 +79,7 @@ void paging_init(void);
-  * area for the same reason. ;)
-  */
- #define VMALLOC_OFFSET	(8*1024*1024)
--#define VMALLOC_START	(((unsigned long) high_memory + vmalloc_earlyreserve + \
-+#define VMALLOC_START	(((unsigned long) high_memory + \
- 			2*VMALLOC_OFFSET-1) & ~(VMALLOC_OFFSET-1))
- #ifdef CONFIG_HIGHMEM
- # define VMALLOC_END	(PKMAP_BASE-2*PAGE_SIZE)
-@@ -231,8 +228,6 @@ extern unsigned long pg0[];
-  * The following only work if pte_present() is true.
-  * Undefined behaviour if not..
-  */
--static inline int pte_user(pte_t pte)		{ return (pte).pte_low & _PAGE_USER; }
--static inline int pte_read(pte_t pte)		{ return (pte).pte_low & _PAGE_USER; }
- static inline int pte_dirty(pte_t pte)		{ return (pte).pte_low & _PAGE_DIRTY; }
- static inline int pte_young(pte_t pte)		{ return (pte).pte_low & _PAGE_ACCESSED; }
- static inline int pte_write(pte_t pte)		{ return (pte).pte_low & _PAGE_RW; }
-@@ -243,13 +238,9 @@ static inline int pte_huge(pte_t pte)		{
-  */
- static inline int pte_file(pte_t pte)		{ return (pte).pte_low & _PAGE_FILE; }
- 
--static inline pte_t pte_rdprotect(pte_t pte)	{ (pte).pte_low &= ~_PAGE_USER; return pte; }
--static inline pte_t pte_exprotect(pte_t pte)	{ (pte).pte_low &= ~_PAGE_USER; return pte; }
- static inline pte_t pte_mkclean(pte_t pte)	{ (pte).pte_low &= ~_PAGE_DIRTY; return pte; }
- static inline pte_t pte_mkold(pte_t pte)	{ (pte).pte_low &= ~_PAGE_ACCESSED; return pte; }
- static inline pte_t pte_wrprotect(pte_t pte)	{ (pte).pte_low &= ~_PAGE_RW; return pte; }
--static inline pte_t pte_mkread(pte_t pte)	{ (pte).pte_low |= _PAGE_USER; return pte; }
--static inline pte_t pte_mkexec(pte_t pte)	{ (pte).pte_low |= _PAGE_USER; return pte; }
- static inline pte_t pte_mkdirty(pte_t pte)	{ (pte).pte_low |= _PAGE_DIRTY; return pte; }
- static inline pte_t pte_mkyoung(pte_t pte)	{ (pte).pte_low |= _PAGE_ACCESSED; return pte; }
- static inline pte_t pte_mkwrite(pte_t pte)	{ (pte).pte_low |= _PAGE_RW; return pte; }
-@@ -295,22 +286,20 @@ static inline pte_t xen_local_ptep_get_a
- #define ptep_set_access_flags(vma, address, ptep, entry, dirty)		\
- ({									\
- 	int __changed = !pte_same(*(ptep), entry);			\
--	if (__changed && (dirty))					\
--		ptep_establish(vma, address, ptep, entry);		\
-+	if (__changed && (dirty)) {					\
-+		if ( likely((vma)->vm_mm == current->mm) ) {		\
-+			BUG_ON(HYPERVISOR_update_va_mapping(address,	\
-+				entry,					\
-+				(unsigned long)(vma)->vm_mm->cpu_vm_mask.bits| \
-+					UVMF_INVLPG|UVMF_MULTI));	\
-+		} else {						\
-+			xen_l1_entry_update(ptep, entry);		\
-+			flush_tlb_page(vma, address);			\
-+		}							\
-+	}								\
- 	__changed;							\
- })
- 
--#define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_DIRTY
--#define ptep_test_and_clear_dirty(vma, addr, ptep) ({			\
--	int __ret = 0;							\
--	if (pte_dirty(*(ptep)))						\
--		__ret = test_and_clear_bit(_PAGE_BIT_DIRTY,		\
--						&(ptep)->pte_low);	\
--	if (__ret)							\
--		pte_update((vma)->vm_mm, addr, ptep);			\
--	__ret;								\
--})
--
- #define __HAVE_ARCH_PTEP_TEST_AND_CLEAR_YOUNG
- #define ptep_test_and_clear_young(vma, addr, ptep) ({			\
- 	int __ret = 0;							\
-@@ -322,44 +311,13 @@ static inline pte_t xen_local_ptep_get_a
- 	__ret;								\
- })
- 
--/*
-- * Rules for using ptep_establish: the pte MUST be a user pte, and
-- * must be a present->present transition.
-- */
--#define __HAVE_ARCH_PTEP_ESTABLISH
--#define ptep_establish(vma, address, ptep, pteval)			\
--do {									\
--	if ( likely((vma)->vm_mm == current->mm) ) {			\
--		BUG_ON(HYPERVISOR_update_va_mapping(address,		\
--			pteval,						\
--			(unsigned long)(vma)->vm_mm->cpu_vm_mask.bits|	\
--				UVMF_INVLPG|UVMF_MULTI));		\
--	} else {							\
--		xen_l1_entry_update(ptep, pteval);			\
--		flush_tlb_page(vma, address);				\
--	}								\
--} while (0)
--
--#define __HAVE_ARCH_PTEP_CLEAR_DIRTY_FLUSH
--#define ptep_clear_flush_dirty(vma, address, ptep)			\
--({									\
--	pte_t __pte = *(ptep);						\
--	int __dirty = pte_dirty(__pte);					\
--	__pte = pte_mkclean(__pte);					\
--	if (test_bit(PG_pinned, &virt_to_page((vma)->vm_mm->pgd)->flags)) \
--		(void)ptep_set_access_flags(vma, address, ptep, __pte, __dirty); \
--	else if (__dirty)						\
--		(ptep)->pte_low = __pte.pte_low;			\
--	__dirty;							\
--})
--
- #define __HAVE_ARCH_PTEP_CLEAR_YOUNG_FLUSH
- #define ptep_clear_flush_young(vma, address, ptep)			\
- ({									\
- 	pte_t __pte = *(ptep);						\
- 	int __young = pte_young(__pte);					\
- 	__pte = pte_mkold(__pte);					\
--	if (test_bit(PG_pinned, &virt_to_page((vma)->vm_mm->pgd)->flags)) \
-+	if (PagePinned(virt_to_page((vma)->vm_mm->pgd)))		\
- 		(void)ptep_set_access_flags(vma, address, ptep, __pte, __young); \
- 	else if (__young)						\
- 		(ptep)->pte_low = __pte.pte_low;			\
-@@ -383,7 +341,7 @@ static inline pte_t ptep_get_and_clear(s
- #define ptep_get_and_clear_full(mm, addr, ptep, full)			\
- 	((full) ? ({							\
- 		pte_t __res = *(ptep);					\
--		if (test_bit(PG_pinned, &virt_to_page((mm)->pgd)->flags)) \
-+		if (PagePinned(virt_to_page((mm)->pgd)))		\
- 			xen_l1_entry_update(ptep, __pte(0));		\
- 		else							\
- 			*(ptep) = __pte(0);				\
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-01-31 17:49:31.000000000 +0100
-@@ -23,26 +23,11 @@
- #define pud_present(pud)			1
- 
- /*
-- * Is the pte executable?
-- */
--static inline int pte_x(pte_t pte)
--{
--	return !(__pte_val(pte) & _PAGE_NX);
--}
--
--/*
-- * All present user-pages with !NX bit are user-executable:
-- */
--static inline int pte_exec(pte_t pte)
--{
--	return pte_user(pte) && pte_x(pte);
--}
--/*
-  * All present pages with !NX bit are kernel-executable:
-  */
- static inline int pte_exec_kernel(pte_t pte)
- {
--	return pte_x(pte);
-+	return !(__pte_val(pte) & _PAGE_NX);
- }
- 
- /* Rules for using set_pte: the pte being assigned *must* be
---- sle12.orig/arch/x86/include/mach-xen/asm/processor_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/processor_32.h	2011-01-31 17:49:31.000000000 +0100
-@@ -89,7 +89,6 @@ struct cpuinfo_x86 {
- #define X86_VENDOR_UMC 3
- #define X86_VENDOR_NEXGEN 4
- #define X86_VENDOR_CENTAUR 5
--#define X86_VENDOR_RISE 6
- #define X86_VENDOR_TRANSMETA 7
- #define X86_VENDOR_NSC 8
- #define X86_VENDOR_NUM 9
-@@ -122,6 +121,7 @@ void __init cpu_detect(struct cpuinfo_x8
- extern void identify_boot_cpu(void);
- extern void identify_secondary_cpu(struct cpuinfo_x86 *);
- extern void print_cpu_info(struct cpuinfo_x86 *);
-+extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
- extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
- extern unsigned short num_cache_leaves;
- 
-@@ -171,17 +171,6 @@ static inline void clear_in_cr4 (unsigne
- 	write_cr4(cr4);
- }
- 
--/*
-- *      NSC/Cyrix CPU indexed register access macros
-- */
--
--#define getCx86(reg) ({ outb((reg), 0x22); inb(0x23); })
--
--#define setCx86(reg, data) do { \
--	outb((reg), 0x22); \
--	outb((data), 0x23); \
--} while (0)
--
- /* Stop speculative execution */
- static inline void sync_core(void)
- {
-@@ -230,6 +219,10 @@ extern int bootloader_type;
- 
- #define HAVE_ARCH_PICK_MMAP_LAYOUT
- 
-+extern void hard_disable_TSC(void);
-+extern void disable_TSC(void);
-+extern void hard_enable_TSC(void);
-+
- /*
-  * Size of io_bitmap.
-  */
---- sle12.orig/arch/x86/include/mach-xen/asm/tlbflush_32.h	2011-01-31 17:32:29.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/tlbflush_32.h	2011-01-31 17:49:31.000000000 +0100
-@@ -91,7 +91,11 @@ struct tlb_state
- DECLARE_PER_CPU(struct tlb_state, cpu_tlbstate);
- #endif	/* SMP */
- 
--#define flush_tlb_kernel_range(start, end) flush_tlb_all()
-+static inline void flush_tlb_kernel_range(unsigned long start,
-+					unsigned long end)
-+{
-+	flush_tlb_all();
-+}
- 
- static inline void flush_tlb_pgtables(struct mm_struct *mm,
- 				      unsigned long start, unsigned long end)
 --- sle12.orig/arch/x86/include/mach-xen/asm/fixmap_64.h	2011-01-31 17:32:29.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/fixmap_64.h	2011-01-31 17:49:31.000000000 +0100
 @@ -23,9 +23,9 @@
@@ -4055,7 +3349,7 @@ Acked-by: jbeulich@novell.com
  #endif
  
  #define PREEMPT_ACTIVE		0x10000000
---- sle12.orig/arch/x86/include/asm/xen/interface.h	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/xen/interface.h	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/arch/x86/include/asm/xen/interface.h	2014-01-30 10:11:44.000000000 +0100
 @@ -10,17 +10,20 @@
  #define _ASM_X86_XEN_INTERFACE_H
@@ -4113,7 +3407,7 @@ Acked-by: jbeulich@novell.com
  
  /*
   * SEGMENT DESCRIPTOR TABLES
---- sle12.orig/include/linux/elfnote.h	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/include/linux/elfnote.h	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/include/linux/elfnote.h	2011-01-31 17:49:31.000000000 +0100
 @@ -52,7 +52,7 @@
  4484:.balign 4				;	\
@@ -4174,7 +3468,7 @@ Acked-by: jbeulich@novell.com
  
 -#endif /* __ASM_XEN_DRIVER_UTIL_H__ */
 +#endif /* __XEN_DRIVER_UTIL_H__ */
---- sle12.orig/include/xen/features.h	2014-02-06 13:51:35.000000000 +0100
+--- sle12.orig/include/xen/features.h	2014-03-19 11:17:22.000000000 +0100
 +++ sle12/include/xen/features.h	2011-01-31 17:49:31.000000000 +0100
 @@ -10,6 +10,7 @@
  #define __XEN_FEATURES_H__

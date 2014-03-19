@@ -11,7 +11,7 @@ Acked-by: jbeulich@novell.com
 
 --- sle12.orig/arch/x86/Kconfig	2013-09-26 13:00:47.000000000 +0200
 +++ sle12/arch/x86/Kconfig	2014-01-23 11:20:57.000000000 +0100
-@@ -1269,7 +1269,7 @@ config ARCH_PHYS_ADDR_T_64BIT
+@@ -1262,7 +1262,7 @@ config ARCH_PHYS_ADDR_T_64BIT
  
  config ARCH_DMA_ADDR_T_64BIT
  	def_bool y
@@ -20,7 +20,7 @@ Acked-by: jbeulich@novell.com
  
  config DIRECT_GBPAGES
  	bool "Enable 1GB pages for kernel pagetables" if EXPERT
-@@ -2196,7 +2196,7 @@ source "drivers/pci/Kconfig"
+@@ -2180,7 +2180,7 @@ source "drivers/pci/Kconfig"
  
  # x86_64 have no ISA slots, but can have ISA-style DMA.
  config ISA_DMA_API
@@ -29,7 +29,7 @@ Acked-by: jbeulich@novell.com
  	default y
  	help
  	  Enables ISA-style DMA support for devices requiring such controllers.
-@@ -2255,7 +2255,7 @@ config SCx200HR_TIMER
+@@ -2239,7 +2239,7 @@ config SCx200HR_TIMER
  
  config OLPC
  	bool "One Laptop Per Child support"
@@ -89,34 +89,6 @@ Acked-by: jbeulich@novell.com
  extern void early_iounmap(void __iomem *addr, unsigned long size);
  extern void fixup_early_ioremap(void);
  extern bool is_early_ioremap_ptep(pte_t *ptep);
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-03-23 10:10:03.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-04-12 15:59:10.000000000 +0200
-@@ -63,8 +63,6 @@ static inline void xen_pmd_clear(pmd_t *
- 
- static inline void pud_clear(pud_t *pudp)
- {
--	pgdval_t pgd;
--
- 	set_pud(pudp, __pud(0));
- 
- 	/*
-@@ -73,13 +71,10 @@ static inline void pud_clear(pud_t *pudp
- 	 * section 8.1: in PAE mode we explicitly have to flush the
- 	 * TLB via cr3 if the top-level pgd is changed...
- 	 *
--	 * Make sure the pud entry we're updating is within the
--	 * current pgd to avoid unnecessary TLB flushes.
-+	 * Currently all places where pud_clear() is called either have
-+	 * flush_tlb_mm() followed or don't need TLB flush (x86_64 code or
-+	 * pud_clear_bad()), so we don't need TLB flush here.
- 	 */
--	pgd = read_cr3();
--	if (__pa(pudp) >= pgd && __pa(pudp) <
--	    (pgd + sizeof(pgd_t)*PTRS_PER_PGD))
--		xen_tlb_flush();
- }
- 
- #ifdef CONFIG_SMP
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:10:05.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-04-12 15:59:10.000000000 +0200
 @@ -165,7 +165,6 @@ static inline int pgd_large(pgd_t pgd) {
@@ -1258,58 +1230,6 @@ Acked-by: jbeulich@novell.com
  	e820_remove_range(mem_size, ULLONG_MAX - mem_size, E820_RAM, 1);
  
  	i = e820.nr_map - 1;
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:54:04.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:55:30.000000000 +0100
-@@ -66,6 +66,8 @@
- #define sysexit_audit	syscall_exit_work
- #endif
- 
-+	.section .entry.text, "ax"
-+
- /*
-  * We use macros for low-level operations which need to be overridden
-  * for paravirtualization.  The following will never clobber any registers:
-@@ -399,7 +401,7 @@ sysenter_past_esp:
- 	 * A tiny bit of offset fixup is necessary - 4*4 means the 4 words
- 	 * pushed above; +8 corresponds to copy_thread's esp0 setting.
- 	 */
--	pushl_cfi ((TI_sysenter_return)-THREAD_SIZE_asm+8+4*4)(%esp)
-+	pushl_cfi ((TI_sysenter_return)-THREAD_SIZE+8+4*4)(%esp)
- 	CFI_REL_OFFSET eip, 0
- 
- 	pushl_cfi %eax
-@@ -858,7 +860,7 @@ ENDPROC(ptregs_clone)
-  */
- .section .init.rodata,"a"
- ENTRY(interrupt)
--.text
-+.section .entry.text, "ax"
- 	.p2align 5
- 	.p2align CONFIG_X86_L1_CACHE_SHIFT
- ENTRY(irq_entries_start)
-@@ -877,7 +879,7 @@ vector=FIRST_EXTERNAL_VECTOR
-       .endif
-       .previous
- 	.long 1b
--      .text
-+      .section .entry.text, "ax"
- vector=vector+1
-     .endif
-   .endr
-@@ -1683,11 +1685,10 @@ END(general_protection)
- #ifdef CONFIG_KVM_GUEST
- ENTRY(async_page_fault)
- 	RING0_EC_FRAME
--	pushl $do_async_page_fault
--	CFI_ADJUST_CFA_OFFSET 4
-+	pushl_cfi $do_async_page_fault
- 	jmp error_code
- 	CFI_ENDPROC
--END(apf_page_fault)
-+END(async_page_fault)
- #endif
- 
- /*
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:24:48.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:41:39.000000000 +0200
 @@ -21,7 +21,7 @@
@@ -1339,24 +1259,6 @@ Acked-by: jbeulich@novell.com
   *
   * SYSCALL does not save anything on the stack and does not change the
   * stack pointer.
---- sle12.orig/arch/x86/kernel/head32-xen.c	2011-05-09 11:42:46.000000000 +0200
-+++ sle12/arch/x86/kernel/head32-xen.c	2011-05-09 11:43:03.000000000 +0200
-@@ -51,15 +51,6 @@ void __init i386_start_kernel(void)
- 
- 	memblock_init();
- 
--#ifdef CONFIG_X86_TRAMPOLINE
--	/*
--	 * But first pinch a few for the stack/trampoline stuff
--	 * FIXME: Don't need the extra page at 4K, but need to fix
--	 * trampoline before removing it. (see the GDT stuff)
--	 */
--	memblock_x86_reserve_range(PAGE_SIZE, PAGE_SIZE + PAGE_SIZE, "EX TRAMPOLINE");
--#endif
--
- 	memblock_x86_reserve_range(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
- 
- #ifndef CONFIG_XEN
 --- sle12.orig/arch/x86/kernel/head64-xen.c	2011-02-01 15:09:47.000000000 +0100
 +++ sle12/arch/x86/kernel/head64-xen.c	2011-04-12 15:59:10.000000000 +0200
 @@ -95,9 +95,6 @@ void __init x86_64_start_kernel(char * r
@@ -1369,26 +1271,6 @@ Acked-by: jbeulich@novell.com
  	for (i = 0; i < NUM_EXCEPTION_VECTORS; i++) {
  #ifdef CONFIG_EARLY_PRINTK
  		set_intr_gate(i, &early_idt_handlers[i]);
---- sle12.orig/arch/x86/kernel/head_32-xen.S	2011-08-09 11:07:43.000000000 +0200
-+++ sle12/arch/x86/kernel/head_32-xen.S	2012-12-06 16:14:11.000000000 +0100
-@@ -92,7 +92,7 @@ ENTRY(startup_32)
- 	movl $__HYPERVISOR_update_va_mapping, %eax
- 	int $0x82
- 
--	movl $(PAGE_SIZE_asm / 8), %ecx
-+	movl $(PAGE_SIZE / 8), %ecx
- 	movl %esp, %ebx
- 	movl $__HYPERVISOR_set_gdt, %eax
- 	int $0x82
-@@ -127,7 +127,7 @@ ENTRY(hypercall_page)
-  * BSS section
-  */
- __PAGE_ALIGNED_BSS
--	.align PAGE_SIZE_asm
-+	.align PAGE_SIZE
- ENTRY(swapper_pg_fixmap)
- 	.fill 1024,4,0
- ENTRY(empty_zero_page)
 --- sle12.orig/arch/x86/kernel/ioport-xen.c	2011-02-01 14:55:46.000000000 +0100
 +++ sle12/arch/x86/kernel/ioport-xen.c	2011-04-12 16:53:32.000000000 +0200
 @@ -14,23 +14,10 @@
@@ -2082,51 +1964,6 @@ Acked-by: jbeulich@novell.com
  
  	if (!after_bootmem)
  		early_memtest(start, end);
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-02-01 15:41:35.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-04-13 17:01:32.000000000 +0200
-@@ -65,10 +65,10 @@ bool __read_mostly __vmalloc_start_set =
- 
- static __init void *alloc_low_page(void)
- {
--	unsigned long pfn = e820_table_end++;
-+	unsigned long pfn = pgt_buf_end++;
- 	void *adr;
- 
--	if (pfn >= e820_table_top)
-+	if (pfn >= pgt_buf_top)
- 		panic("alloc_low_page: ran out of memory");
- 
- 	adr = __va(pfn * PAGE_SIZE);
-@@ -173,8 +173,8 @@ static pte_t *__init page_table_kmap_che
- 	if (pmd_idx_kmap_begin != pmd_idx_kmap_end
- 	    && (vaddr >> PMD_SHIFT) >= pmd_idx_kmap_begin
- 	    && (vaddr >> PMD_SHIFT) <= pmd_idx_kmap_end
--	    && ((__pa(pte) >> PAGE_SHIFT) < e820_table_start
--		|| (__pa(pte) >> PAGE_SHIFT) >= e820_table_end)) {
-+	    && ((__pa(pte) >> PAGE_SHIFT) < pgt_buf_start
-+		|| (__pa(pte) >> PAGE_SHIFT) >= pgt_buf_end)) {
- 		pte_t *newpte;
- 		int i;
- 
-@@ -646,8 +646,7 @@ void __init find_low_pfn_range(void)
- }
- 
- #ifndef CONFIG_NEED_MULTIPLE_NODES
--void __init initmem_init(unsigned long start_pfn, unsigned long end_pfn,
--				int acpi, int k8)
-+void __init initmem_init(void)
- {
- #ifdef CONFIG_HIGHMEM
- 	highstart_pfn = highend_pfn = max_pfn;
-@@ -986,7 +985,7 @@ static void mark_nxdata_nx(void)
- {
- 	/*
- 	 * When this called, init has already been executed and released,
--	 * so everything past _etext sould be NX.
-+	 * so everything past _etext should be NX.
- 	 */
- 	unsigned long start = PFN_ALIGN(_etext);
- 	/*
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2011-03-17 14:22:21.000000000 +0100
 +++ sle12/arch/x86/mm/init_64-xen.c	2013-04-05 09:16:26.000000000 +0200
 @@ -210,9 +210,9 @@ static __ref void *spp_getpage(void)
@@ -2574,14 +2411,14 @@ Acked-by: jbeulich@novell.com
  
  obj-$(CONFIG_USB_CATC)          += usb/
  obj-$(CONFIG_USB_KAWETH)        += usb/
---- sle12.orig/drivers/net/xen-netback/Makefile	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/net/xen-netback/Makefile	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/net/xen-netback/Makefile	2011-04-13 14:42:19.000000000 +0200
 @@ -1,3 +1,3 @@
 -obj-$(CONFIG_XEN_NETDEV_BACKEND) := xen-netback.o
 +obj-$(CONFIG_PARAVIRT_XEN_NETDEV_BACKEND) := xen-netback.o
  
  xen-netback-y := netback.o xenbus.o interface.o
---- sle12.orig/drivers/scsi/scsi_error.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/scsi/scsi_error.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/scsi/scsi_error.c	2014-02-06 14:22:40.000000000 +0100
 @@ -1847,6 +1847,31 @@ int scsi_decide_disposition(struct scsi_
  		}
@@ -2615,7 +2452,7 @@ Acked-by: jbeulich@novell.com
  	default:
  		return FAILED;
  	}
---- sle12.orig/drivers/watchdog/Kconfig	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/watchdog/Kconfig	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/watchdog/Kconfig	2013-09-26 13:01:14.000000000 +0200
 @@ -1284,7 +1284,7 @@ config WATCHDOG_RIO
  
@@ -2626,7 +2463,7 @@ Acked-by: jbeulich@novell.com
  	help
  	  Say Y here to support the hypervisor watchdog capability provided
  	  by Xen 4.0 and newer.  The watchdog timeout period is normally one
---- sle12.orig/drivers/watchdog/xen_wdt.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/watchdog/xen_wdt.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/watchdog/xen_wdt.c	2012-04-10 17:11:39.000000000 +0200
 @@ -1,7 +1,8 @@
  /*

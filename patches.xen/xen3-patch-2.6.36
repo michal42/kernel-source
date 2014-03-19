@@ -27,7 +27,7 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  
  config ARCH_SUPPORTS_UPROBES
  	def_bool y
-@@ -1149,7 +1149,7 @@ config X86_CPUID
+@@ -1142,7 +1142,7 @@ config X86_CPUID
  
  choice
  	prompt "High Memory Support"
@@ -36,7 +36,7 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  	default HIGHMEM4G
  	depends on X86_32
  
-@@ -1192,7 +1192,7 @@ config NOHIGHMEM
+@@ -1185,7 +1185,7 @@ config NOHIGHMEM
  
  config HIGHMEM4G
  	bool "4GB"
@@ -122,17 +122,6 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
 +	.quad sys32_fanotify_mark
 +	.quad sys_prlimit64		/* 340 */
  ia32_syscall_end:
---- sle12.orig/arch/x86/include/mach-xen/asm/highmem.h	2011-02-01 14:44:12.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/highmem.h	2011-02-01 15:04:27.000000000 +0100
-@@ -60,7 +60,7 @@ void *kmap(struct page *page);
- void kunmap(struct page *page);
- void *kmap_atomic_prot(struct page *page, enum km_type type, pgprot_t prot);
- void *kmap_atomic(struct page *page, enum km_type type);
--void kunmap_atomic(void *kvaddr, enum km_type type);
-+void kunmap_atomic_notypecheck(void *kvaddr, enum km_type type);
- void *kmap_atomic_pfn(unsigned long pfn, enum km_type type);
- void *kmap_atomic_prot_pfn(unsigned long pfn, enum km_type type, pgprot_t prot);
- struct page *kmap_atomic_to_page(void *ptr);
 --- sle12.orig/arch/x86/include/mach-xen/asm/pci.h	2011-02-01 15:03:03.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pci.h	2011-02-01 15:04:27.000000000 +0100
 @@ -30,6 +30,9 @@ extern struct pci_bus *pci_scan_bus_on_n
@@ -182,27 +171,6 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  #endif
  
  static inline void init_hw_perf_events(void) {}
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-03-23 09:58:44.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-03-23 10:02:02.000000000 +0100
-@@ -86,7 +86,7 @@ static inline void pud_clear(pud_t *pudp
- static inline pte_t xen_ptep_get_and_clear(pte_t *ptep, pte_t res)
- {
- 	uint64_t val = __pte_val(res);
--	if (__cmpxchg64(ptep, val, 0) != val) {
-+	if (__cmpxchg64(&ptep->pte, val, 0) != val) {
- 		/* xchg acts as a barrier before the setting of the high bits */
- 		res.pte_low = xchg(&ptep->pte_low, 0);
- 		res.pte_high = ptep->pte_high;
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-01 15:03:03.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_32.h	2011-02-01 15:04:27.000000000 +0100
-@@ -25,6 +25,7 @@
- struct vm_area_struct;
- 
- extern pgd_t *swapper_pg_dir;
-+extern pgd_t trampoline_pg_dir[1024];
- 
- static inline void pgtable_cache_init(void) { }
- static inline void check_pgt_cache(void) { }
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:01:13.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:02:08.000000000 +0100
 @@ -128,8 +128,8 @@ static inline int pgd_large(pgd_t pgd) {
@@ -428,7 +396,7 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  
  	/*
  	 * Initialize MSR_IA32_ENERGY_PERF_BIAS if BIOS did not.
---- sle12.orig/arch/x86/kernel/cpu/scattered.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/kernel/cpu/scattered.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/kernel/cpu/scattered.c	2013-05-23 17:40:28.000000000 +0200
 @@ -42,6 +42,7 @@ void init_scattered_cpuid_features(struc
  		{ X86_FEATURE_HW_PSTATE,	CR_EDX, 7, 0x80000007, 0 },
@@ -446,47 +414,6 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  		{ 0, 0, 0, 0, 0 }
  	};
  
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:51:05.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:51:38.000000000 +0100
-@@ -656,14 +656,14 @@ ldt_ss:
-  * compensating for the offset by changing to the ESPFIX segment with
-  * a base address that matches for the difference.
-  */
-+#define GDT_ESPFIX_SS PER_CPU_VAR(gdt_page) + (GDT_ENTRY_ESPFIX_SS * 8)
- 	mov %esp, %edx			/* load kernel esp */
- 	mov PT_OLDESP(%esp), %eax	/* load userspace esp */
- 	mov %dx, %ax			/* eax: new kernel esp */
- 	sub %eax, %edx			/* offset (low word is 0) */
--	PER_CPU(gdt_page, %ebx)
- 	shr $16, %edx
--	mov %dl, GDT_ENTRY_ESPFIX_SS * 8 + 4(%ebx) /* bits 16..23 */
--	mov %dh, GDT_ENTRY_ESPFIX_SS * 8 + 7(%ebx) /* bits 24..31 */
-+	mov %dl, GDT_ESPFIX_SS + 4 /* bits 16..23 */
-+	mov %dh, GDT_ESPFIX_SS + 7 /* bits 24..31 */
- 	pushl $__ESPFIX_SS
- 	CFI_ADJUST_CFA_OFFSET 4
- 	push %eax			/* new kernel esp */
-@@ -862,9 +862,8 @@ ptregs_clone:
-  * normal stack and adjusts ESP with the matching offset.
-  */
- 	/* fixup the stack */
--	PER_CPU(gdt_page, %ebx)
--	mov GDT_ENTRY_ESPFIX_SS * 8 + 4(%ebx), %al /* bits 16..23 */
--	mov GDT_ENTRY_ESPFIX_SS * 8 + 7(%ebx), %ah /* bits 24..31 */
-+	mov GDT_ESPFIX_SS + 4, %al /* bits 16..23 */
-+	mov GDT_ESPFIX_SS + 7, %ah /* bits 24..31 */
- 	shl $16, %eax
- 	addl %esp, %eax			/* the adjusted stack pointer */
- 	pushl $__KERNEL_DS
-@@ -1132,7 +1131,7 @@ ENTRY(simd_coprocessor_error)
- 	.balign 4
- 	.long 661b
- 	.long 663f
--	.byte X86_FEATURE_XMM
-+	.word X86_FEATURE_XMM
- 	.byte 662b-661b
- 	.byte 664f-663f
- .previous
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:40:00.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:24:12.000000000 +0200
 @@ -1035,13 +1035,13 @@ END(kernel_thread_helper)
@@ -718,26 +645,6 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  		printk(KERN_INFO "using C1E aware idle routine\n");
  		pm_idle = c1e_idle;
  	} else
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-08-10 10:46:29.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-02-29 14:18:16.000000000 +0100
-@@ -59,6 +59,8 @@
- #include <asm/syscalls.h>
- #include <asm/debugreg.h>
- 
-+#include <trace/events/power.h>
-+
- asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
- asmlinkage void cstar_ret_from_fork(void) __asm__("cstar_ret_from_fork");
- 
-@@ -114,6 +116,8 @@ void cpu_idle(void)
- 			stop_critical_timings();
- 			xen_idle();
- 			start_critical_timings();
-+
-+			trace_power_end(smp_processor_id());
- 		}
- 		tick_nohz_restart_sched_tick();
- 		preempt_enable_no_resched();
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2012-07-05 11:57:44.000000000 +0200
 +++ sle12/arch/x86/kernel/process_64-xen.c	2011-02-02 08:47:56.000000000 +0100
 @@ -56,6 +56,8 @@
@@ -930,26 +837,6 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  
  	/* User-space => ok to do another page fault: */
  	if (is_prefetch(regs, error_code, address))
---- sle12.orig/arch/x86/mm/highmem_32-xen.c	2011-02-01 14:54:13.000000000 +0100
-+++ sle12/arch/x86/mm/highmem_32-xen.c	2011-02-01 15:04:27.000000000 +0100
-@@ -53,7 +53,7 @@ void *kmap_atomic(struct page *page, enu
- 	return kmap_atomic_prot(page, type, kmap_prot);
- }
- 
--void kunmap_atomic(void *kvaddr, enum km_type type)
-+void kunmap_atomic_notypecheck(void *kvaddr, enum km_type type)
- {
- 	unsigned long vaddr = (unsigned long) kvaddr & PAGE_MASK;
- 	enum fixed_addresses idx = type + KM_TYPE_NR*smp_processor_id();
-@@ -147,7 +147,7 @@ void copy_highpage(struct page *to, stru
- EXPORT_SYMBOL(kmap);
- EXPORT_SYMBOL(kunmap);
- EXPORT_SYMBOL(kmap_atomic);
--EXPORT_SYMBOL(kunmap_atomic);
-+EXPORT_SYMBOL(kunmap_atomic_notypecheck);
- EXPORT_SYMBOL(kmap_atomic_prot);
- EXPORT_SYMBOL(kmap_atomic_to_page);
- EXPORT_SYMBOL(clear_highpage);
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2011-06-30 17:10:52.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2011-02-01 15:04:27.000000000 +0100
 @@ -2,7 +2,7 @@
@@ -961,32 +848,6 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
   *  Copyright (C) 2002,2003 Andi Kleen <ak@suse.de>
   *
   *  Jun Nakajima <jun.nakajima@intel.com>
---- sle12.orig/arch/x86/mm/iomap_32-xen.c	2011-02-01 14:54:13.000000000 +0100
-+++ sle12/arch/x86/mm/iomap_32-xen.c	2011-02-01 15:04:27.000000000 +0100
-@@ -75,7 +75,7 @@ void *kmap_atomic_prot_pfn(unsigned long
- /*
-  * Map 'mfn' using fixed map 'type' and protections 'prot'
-  */
--void *
-+void __iomem *
- iomap_atomic_prot_pfn(unsigned long mfn, enum km_type type, pgprot_t prot)
- {
- 	/*
-@@ -88,12 +88,12 @@ iomap_atomic_prot_pfn(unsigned long mfn,
- 		prot = PAGE_KERNEL_UC_MINUS;
- 
- 	pgprot_val(prot) |= _PAGE_IOMAP;
--	return kmap_atomic_prot_pfn(mfn, type, prot);
-+	return (void __force __iomem *) kmap_atomic_prot_pfn(mfn, type, prot);
- }
- EXPORT_SYMBOL_GPL(iomap_atomic_prot_pfn);
- 
- void
--iounmap_atomic(void *kvaddr, enum km_type type)
-+iounmap_atomic(void __iomem *kvaddr, enum km_type type)
- {
- 	unsigned long vaddr = (unsigned long) kvaddr & PAGE_MASK;
- 	enum fixed_addresses idx = type + KM_TYPE_NR*smp_processor_id();
 --- sle12.orig/arch/x86/mm/ioremap-xen.c	2011-02-07 15:41:54.000000000 +0100
 +++ sle12/arch/x86/mm/ioremap-xen.c	2012-11-26 14:22:41.000000000 +0100
 @@ -215,7 +215,7 @@ int ioremap_check_change_attr(unsigned l
@@ -1052,7 +913,7 @@ Automatically created from "patches.kernel.org/patch-2.6.36" by xen-port-patches
  
  config XEN_MAX_DOMAIN_MEMORY
         int
---- sle12.orig/arch/x86/xen/enlighten.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/xen/enlighten.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/xen/enlighten.c	2013-05-23 17:40:35.000000000 +0200
 @@ -166,8 +166,8 @@ static DEFINE_PER_CPU(struct tls_descs, 
  static void clamp_max_cpus(void)

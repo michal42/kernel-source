@@ -7,7 +7,7 @@ Patch-mainline: 3.8
 Automatically created from "patch-3.8" by xen-port-patches.py
 Acked-by: jbeulich@suse.com
 
---- sle12.orig/Documentation/filesystems/proc.txt	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/Documentation/filesystems/proc.txt	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/Documentation/filesystems/proc.txt	2013-01-11 14:57:37.000000000 +0100
 @@ -463,6 +463,7 @@ manner. The codes are the following:
      mm  - mixed map area
@@ -19,7 +19,7 @@ Acked-by: jbeulich@suse.com
  Note that there is no guarantee that every flag and associated mnemonic will
 --- sle12.orig/arch/x86/Kconfig	2013-10-29 10:19:17.000000000 +0100
 +++ sle12/arch/x86/Kconfig	2014-01-23 11:22:48.000000000 +0100
-@@ -1825,7 +1825,7 @@ config HOTPLUG_CPU
+@@ -1817,7 +1817,7 @@ config HOTPLUG_CPU
  config BOOTPARAM_HOTPLUG_CPU0
  	bool "Set default setting of cpu0_hotpluggable"
  	default n
@@ -28,7 +28,7 @@ Acked-by: jbeulich@suse.com
  	---help---
  	  Set whether default state of cpu0_hotpluggable is on or off.
  
-@@ -1854,7 +1854,7 @@ config BOOTPARAM_HOTPLUG_CPU0
+@@ -1846,7 +1846,7 @@ config BOOTPARAM_HOTPLUG_CPU0
  config DEBUG_HOTPLUG_CPU0
  	def_bool n
  	prompt "Debug CPU0 hotplug"
@@ -400,39 +400,6 @@ Acked-by: jbeulich@suse.com
  #endif
  
  #ifndef CONFIG_X86_NO_TSS
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 12:03:02.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-09 15:32:33.000000000 +0100
-@@ -802,30 +802,11 @@ ENTRY(ptregs_##name) ; \
- ENDPROC(ptregs_##name)
- 
- PTREGSCALL1(iopl)
--PTREGSCALL0(fork)
--PTREGSCALL0(vfork)
--PTREGSCALL2(sigaltstack)
- PTREGSCALL0(sigreturn)
- PTREGSCALL0(rt_sigreturn)
- PTREGSCALL2(vm86)
- PTREGSCALL1(vm86old)
- 
--/* Clone is an oddball.  The 4th arg is in %edi */
--ENTRY(ptregs_clone)
--	CFI_STARTPROC
--	leal 4(%esp),%eax
--	pushl_cfi %eax
--	pushl_cfi PT_EDI(%eax)
--	movl PT_EDX(%eax),%ecx
--	movl PT_ECX(%eax),%edx
--	movl PT_EBX(%eax),%eax
--	call sys_clone
--	addl $8,%esp
--	CFI_ADJUST_CFA_OFFSET -8
--	ret
--	CFI_ENDPROC
--ENDPROC(ptregs_clone)
--
- #ifndef CONFIG_XEN
- .macro FIXUP_ESPFIX_STACK
- /*
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:27:13.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2013-01-09 15:32:33.000000000 +0100
 @@ -59,7 +59,7 @@
@@ -542,44 +509,6 @@ Acked-by: jbeulich@suse.com
  /*
   * Idle related variables and functions
   */
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-10-29 17:13:41.000000000 +0100
-+++ sle12/arch/x86/kernel/process_32-xen.c	2013-01-09 15:32:33.000000000 +0100
-@@ -131,8 +131,7 @@ void release_thread(struct task_struct *
- }
- 
- int copy_thread(unsigned long clone_flags, unsigned long sp,
--	unsigned long arg,
--	struct task_struct *p, struct pt_regs *regs)
-+	unsigned long arg, struct task_struct *p)
- {
- 	struct pt_regs *childregs = task_pt_regs(p);
- 	struct task_struct *tsk;
-@@ -141,7 +140,7 @@ int copy_thread(unsigned long clone_flag
- 	p->thread.sp = (unsigned long) childregs;
- 	p->thread.sp0 = (unsigned long) (childregs+1);
- 
--	if (unlikely(!regs)) {
-+	if (unlikely(p->flags & PF_KTHREAD)) {
- 		/* kernel thread */
- 		memset(childregs, 0, sizeof(struct pt_regs));
- 		p->thread.ip = (unsigned long) ret_from_kernel_thread;
-@@ -159,12 +158,13 @@ int copy_thread(unsigned long clone_flag
- 		memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
- 		return 0;
- 	}
--	*childregs = *regs;
-+	*childregs = *current_pt_regs();
- 	childregs->ax = 0;
--	childregs->sp = sp;
-+	if (sp)
-+		childregs->sp = sp;
- 
- 	p->thread.ip = (unsigned long) ret_from_fork;
--	task_user_gs(p) = get_user_gs(regs);
-+	task_user_gs(p) = get_user_gs(current_pt_regs());
- 
- 	p->fpu_counter = 0;
- 	p->thread.io_bitmap_ptr = NULL;
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2012-10-29 17:13:41.000000000 +0100
 +++ sle12/arch/x86/kernel/process_64-xen.c	2013-01-09 15:32:33.000000000 +0100
 @@ -155,8 +155,7 @@ static inline u32 read_32bit_tls(struct 
@@ -811,7 +740,7 @@ Acked-by: jbeulich@suse.com
  	}
  #endif
  }
---- sle12.orig/arch/x86/kernel/topology.c	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/arch/x86/kernel/topology.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/kernel/topology.c	2013-01-11 16:04:30.000000000 +0100
 @@ -37,7 +37,9 @@ static DEFINE_PER_CPU(struct x86_cpu, cp
  
@@ -1111,20 +1040,6 @@ Acked-by: jbeulich@suse.com
  	} else {
  		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON|
  			     VM_FAULT_HWPOISON_LARGE))
---- sle12.orig/arch/x86/mm/init_32-xen.c	2013-04-05 09:22:57.000000000 +0200
-+++ sle12/arch/x86/mm/init_32-xen.c	2013-01-09 15:32:33.000000000 +0100
-@@ -771,10 +771,7 @@ static void __init test_wp_bit(void)
- 
- 	if (!boot_cpu_data.wp_works_ok) {
- 		printk(KERN_CONT "No.\n");
--#ifdef CONFIG_X86_WP_WORKS_OK
--		panic(
--  "This kernel doesn't support CPU's with broken WP. Recompile it for a 386!");
--#endif
-+		panic("Linux doesn't support CPUs with broken WP.");
- 	} else {
- 		printk(KERN_CONT "Ok.\n");
- 	}
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2013-04-05 09:22:56.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2013-04-05 09:23:18.000000000 +0200
 @@ -886,7 +886,9 @@ void __init paging_init(void)
@@ -1189,7 +1104,7 @@ Acked-by: jbeulich@suse.com
  		}
  	}
  
---- sle12.orig/arch/x86/pci/common.c	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/arch/x86/pci/common.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/pci/common.c	2013-06-20 15:31:28.000000000 +0200
 @@ -622,6 +622,7 @@ unsigned int pcibios_assign_all_busses(v
  
@@ -1643,7 +1558,7 @@ Acked-by: jbeulich@suse.com
  #endif
  xenbus_init(void)
  {
---- sle12.orig/fs/proc/task_mmu.c	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/fs/proc/task_mmu.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/fs/proc/task_mmu.c	2014-01-09 11:35:00.000000000 +0100
 @@ -572,8 +572,12 @@ static void show_smap_vma_flags(struct s
  		[ilog2(VM_ARCH_1)]	= "ar",
@@ -1658,7 +1573,7 @@ Acked-by: jbeulich@suse.com
  		[ilog2(VM_MERGEABLE)]	= "mg",
  	};
  	size_t i;
---- sle12.orig/include/linux/clocksource.h	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/include/linux/clocksource.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/include/linux/clocksource.h	2013-05-14 08:46:48.000000000 +0200
 @@ -16,7 +16,9 @@
  #include <linux/timer.h>

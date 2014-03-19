@@ -18,7 +18,7 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  	select HAVE_KERNEL_LZO if !XEN
  	select HAVE_KERNEL_LZ4
  	select HAVE_HW_BREAKPOINT
-@@ -604,7 +604,7 @@ config X86_ES7000
+@@ -595,7 +595,7 @@ config X86_ES7000
  
  config X86_32_IRIS
  	tristate "Eurobraille/Iris poweroff module"
@@ -41,7 +41,7 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  extern void setup_boot_APIC_clock(void);
  extern void setup_secondary_APIC_clock(void);
  extern int APIC_init_uniprocessor(void);
---- sle12.orig/arch/x86/include/asm/xen/hypervisor.h	2014-02-27 13:38:50.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/xen/hypervisor.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/include/asm/xen/hypervisor.h	2013-09-26 13:00:54.000000000 +0200
 @@ -43,7 +43,7 @@ static inline uint32_t xen_cpuid_base(vo
  	return hypervisor_cpuid_base("XenVMMXenVMM", 2);
@@ -367,40 +367,6 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  /*
   * clone_pgd_range(pgd_t *dst, pgd_t *src, int count);
   *
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-03-23 10:02:02.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable-3level.h	2011-03-23 10:10:03.000000000 +0100
-@@ -101,6 +101,31 @@ static inline pte_t xen_ptep_get_and_cle
- #define __pte_mfn(_pte) (((_pte).pte_low >> PAGE_SHIFT) | \
- 			 ((_pte).pte_high << (32-PAGE_SHIFT)))
- 
-+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-+#ifdef CONFIG_SMP
-+union split_pmd {
-+	struct {
-+		u32 pmd_low;
-+		u32 pmd_high;
-+	};
-+	pmd_t pmd;
-+};
-+static inline pmd_t xen_pmdp_get_and_clear(pmd_t *pmdp)
-+{
-+	union split_pmd res, *orig = (union split_pmd *)pmdp;
-+
-+	/* xchg acts as a barrier before setting of the high bits */
-+	res.pmd_low = xchg(&orig->pmd_low, 0);
-+	res.pmd_high = orig->pmd_high;
-+	orig->pmd_high = 0;
-+
-+	return res.pmd;
-+}
-+#else
-+#define xen_pmdp_get_and_clear(xp) xen_local_pmdp_get_and_clear(xp)
-+#endif
-+#endif
-+
- /*
-  * Bits 0, 6 and 7 are taken in the low part of the pte,
-  * put the 32 bits of offset into the high part.
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:02:27.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:10:05.000000000 +0100
 @@ -60,6 +60,16 @@ static inline void xen_set_pte(pte_t *pt
@@ -893,25 +859,6 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  #endif
  		buf++;
  	}
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:53:28.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:54:04.000000000 +0100
-@@ -1680,6 +1680,16 @@ ENTRY(general_protection)
- 	CFI_ENDPROC
- END(general_protection)
- 
-+#ifdef CONFIG_KVM_GUEST
-+ENTRY(async_page_fault)
-+	RING0_EC_FRAME
-+	pushl $do_async_page_fault
-+	CFI_ADJUST_CFA_OFFSET 4
-+	jmp error_code
-+	CFI_ENDPROC
-+END(apf_page_fault)
-+#endif
-+
- /*
-  * End of kprobes section
-  */
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:24:37.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:24:48.000000000 +0200
 @@ -333,17 +333,21 @@ NMI_MASK = 0x80000000
@@ -956,18 +903,6 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  #ifdef CONFIG_X86_MCE
  paranoidzeroentry machine_check *machine_check_vector(%rip)
  #endif
---- sle12.orig/arch/x86/kernel/head32-xen.c	2011-05-09 11:42:39.000000000 +0200
-+++ sle12/arch/x86/kernel/head32-xen.c	2011-05-09 11:42:46.000000000 +0200
-@@ -79,6 +79,9 @@ void __init i386_start_kernel(void)
- 	case X86_SUBARCH_MRST:
- 		x86_mrst_early_setup();
- 		break;
-+	case X86_SUBARCH_CE4100:
-+		x86_ce4100_early_setup();
-+		break;
- 	default:
- 		i386_default_early_setup();
- 		break;
 --- sle12.orig/arch/x86/kernel/irq-xen.c	2013-05-24 10:37:09.000000000 +0200
 +++ sle12/arch/x86/kernel/irq-xen.c	2013-05-24 10:37:17.000000000 +0200
 @@ -4,6 +4,7 @@
@@ -1416,26 +1351,6 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  	return 0;
  }
  early_param("idle", idle_setup);
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-02-29 14:18:16.000000000 +0100
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-02-29 14:18:55.000000000 +0100
-@@ -59,8 +59,6 @@
- #include <asm/syscalls.h>
- #include <asm/debugreg.h>
- 
--#include <trace/events/power.h>
--
- asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
- asmlinkage void cstar_ret_from_fork(void) __asm__("cstar_ret_from_fork");
- 
-@@ -116,8 +114,6 @@ void cpu_idle(void)
- 			stop_critical_timings();
- 			xen_idle();
- 			start_critical_timings();
--
--			trace_power_end(smp_processor_id());
- 		}
- 		tick_nohz_restart_sched_tick();
- 		preempt_enable_no_resched();
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2011-02-02 08:47:56.000000000 +0100
 +++ sle12/arch/x86/kernel/process_64-xen.c	2011-02-02 08:48:24.000000000 +0100
 @@ -56,8 +56,6 @@
@@ -1735,65 +1650,6 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  	set_memory_rw(begin, (end - begin) >> PAGE_SHIFT);
  
  	printk(KERN_INFO "Freeing %s: %luk freed\n", what, (end - begin) >> 10);
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-02-01 15:09:47.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-02-01 15:41:35.000000000 +0100
-@@ -47,6 +47,7 @@
- #include <asm/bugs.h>
- #include <asm/tlb.h>
- #include <asm/tlbflush.h>
-+#include <asm/olpc_ofw.h>
- #include <asm/pgalloc.h>
- #include <asm/sections.h>
- #include <asm/hypervisor.h>
-@@ -242,7 +243,7 @@ page_table_range_init(unsigned long star
- 
- static inline int is_kernel_text(unsigned long addr)
- {
--	if (addr >= PAGE_OFFSET && addr <= (unsigned long)__init_end)
-+	if (addr >= (unsigned long)_text && addr <= (unsigned long)__init_end)
- 		return 1;
- 	return 0;
- }
-@@ -775,6 +776,7 @@ void __init paging_init(void)
- 	/*
- 	 * NOTE: at this point the bootmem allocator is fully available.
- 	 */
-+	olpc_dt_build_devicetree();
- 	sparse_init();
- 	zone_sizes_init();
- }
-@@ -980,6 +982,23 @@ void set_kernel_text_ro(void)
- 	set_pages_ro(virt_to_page(start), size >> PAGE_SHIFT);
- }
- 
-+static void mark_nxdata_nx(void)
-+{
-+	/*
-+	 * When this called, init has already been executed and released,
-+	 * so everything past _etext sould be NX.
-+	 */
-+	unsigned long start = PFN_ALIGN(_etext);
-+	/*
-+	 * This comes from is_kernel_text upper limit. Also HPAGE where used:
-+	 */
-+	unsigned long size = (((unsigned long)__init_end + HPAGE_SIZE) & HPAGE_MASK) - start;
-+
-+	if (__supported_pte_mask & _PAGE_NX)
-+		printk(KERN_INFO "NX-protecting the kernel data: %luk\n", size >> 10);
-+	set_pages_nx(virt_to_page(start), size >> PAGE_SHIFT);
-+}
-+
- void mark_rodata_ro(void)
- {
- 	unsigned long start = PFN_ALIGN(_text);
-@@ -1014,6 +1033,7 @@ void mark_rodata_ro(void)
- 	printk(KERN_INFO "Testing CPA: write protecting again\n");
- 	set_pages_ro(virt_to_page(start), size >> PAGE_SHIFT);
- #endif
-+	mark_nxdata_nx();
- }
- #endif
- 
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2013-04-05 09:14:46.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2011-03-17 14:22:21.000000000 +0100
 @@ -173,18 +173,18 @@ void sync_global_pgds(unsigned long star
@@ -2159,7 +2015,7 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  /**
   * reserve_top_address - reserves a hole in the top of kernel address space
   * @reserve - size of hole to reserve
---- sle12.orig/drivers/acpi/apei/ghes.c	2014-02-27 13:38:50.000000000 +0100
+--- sle12.orig/drivers/acpi/apei/ghes.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/acpi/apei/ghes.c	2013-03-21 15:22:35.000000000 +0100
 @@ -170,7 +170,7 @@ static void __iomem *ghes_ioremap_pfn_nm
  
@@ -2270,7 +2126,7 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  		}
  	}
  	mutex_unlock(&pdev_list_mutex);
---- sle12.orig/drivers/scsi/arcmsr/arcmsr.h	2014-02-27 13:38:50.000000000 +0100
+--- sle12.orig/drivers/scsi/arcmsr/arcmsr.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/scsi/arcmsr/arcmsr.h	2011-04-13 14:08:57.000000000 +0200
 @@ -46,7 +46,7 @@
  struct device_attribute;
@@ -3573,7 +3429,7 @@ Automatically created from "patches.kernel.org/patch-2.6.38" by xen-port-patches
  		kfree(ret);
  		return ERR_PTR(-EINVAL);
  	}
---- sle12.orig/include/xen/gntdev.h	2014-02-27 13:38:50.000000000 +0100
+--- sle12.orig/include/xen/gntdev.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/include/xen/gntdev.h	2011-04-13 14:08:57.000000000 +0200
 @@ -1,150 +1,3 @@
 -/******************************************************************************

@@ -528,42 +528,6 @@ Automatically created from "patches.kernel.org/patch-2.6.35" by xen-port-patches
  		if (c == '\n') {
  			current_xpos = 0;
  			current_ypos++;
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:43:53.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 11:51:05.000000000 +0100
-@@ -53,6 +53,7 @@
- #include <asm/processor-flags.h>
- #include <asm/ftrace.h>
- #include <asm/irq_vectors.h>
-+#include <asm/cpufeature.h>
- #include <xen/interface/xen.h>
- 
- /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
-@@ -1123,7 +1124,25 @@ ENTRY(simd_coprocessor_error)
- 	RING0_INT_FRAME
- 	pushl $0
- 	CFI_ADJUST_CFA_OFFSET 4
-+#ifdef CONFIG_X86_INVD_BUG
-+	/* AMD 486 bug: invd from userspace calls exception 19 instead of #GP */
-+661:	pushl $do_general_protection
-+662:
-+.section .altinstructions,"a"
-+	.balign 4
-+	.long 661b
-+	.long 663f
-+	.byte X86_FEATURE_XMM
-+	.byte 662b-661b
-+	.byte 664f-663f
-+.previous
-+.section .altinstr_replacement,"ax"
-+663:	pushl $do_simd_coprocessor_error
-+664:
-+.previous
-+#else
- 	pushl $do_simd_coprocessor_error
-+#endif
- 	CFI_ADJUST_CFA_OFFSET 4
- 	jmp error_code
- 	CFI_ENDPROC
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:23:51.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:40:00.000000000 +0200
 @@ -585,8 +585,8 @@ auditsys:
@@ -719,39 +683,6 @@ Automatically created from "patches.kernel.org/patch-2.6.35" by xen-port-patches
  
  	if (test_tsk_thread_flag(prev_p, TIF_NOTSC) ^
  	    test_tsk_thread_flag(next_p, TIF_NOTSC)) {
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-02-29 14:17:47.000000000 +0100
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-08-10 10:46:29.000000000 +0200
-@@ -57,7 +57,6 @@
- #include <asm/cpu.h>
- #include <asm/idle.h>
- #include <asm/syscalls.h>
--#include <asm/ds.h>
- #include <asm/debugreg.h>
- 
- asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
-@@ -247,13 +246,6 @@ int copy_thread(unsigned long clone_flag
- 		kfree(p->thread.io_bitmap_ptr);
- 		p->thread.io_bitmap_max = 0;
- 	}
--
--	clear_tsk_thread_flag(p, TIF_DS_AREA_MSR);
--	p->thread.ds_ctx = NULL;
--
--	clear_tsk_thread_flag(p, TIF_DEBUGCTLMSR);
--	p->thread.debugctlmsr = 0;
--
- 	return err;
- }
- 
-@@ -428,7 +420,7 @@ __switch_to(struct task_struct *prev_p, 
- 
- 	/* we're going to use this soon, after a few expensive things */
- 	if (preload_fpu)
--		prefetch(next->xstate);
-+		prefetch(next->fpu.state);
- 
- 	/*
- 	 * Now maybe handle debug registers
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2011-02-02 08:47:22.000000000 +0100
 +++ sle12/arch/x86/kernel/process_64-xen.c	2012-07-05 11:57:44.000000000 +0200
 @@ -54,7 +54,6 @@
@@ -1857,7 +1788,7 @@ Automatically created from "patches.kernel.org/patch-2.6.35" by xen-port-patches
  }
  
  static void *memtype_seq_start(struct seq_file *seq, loff_t *pos)
---- sle12.orig/arch/x86/mm/pat_internal.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/mm/pat_internal.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/mm/pat_internal.h	2011-04-13 14:02:46.000000000 +0200
 @@ -21,6 +21,10 @@ static inline char *cattr_name(unsigned 
  	case _PAGE_CACHE_UC_MINUS:	return "uncached-minus";
@@ -1870,16 +1801,6 @@ Automatically created from "patches.kernel.org/patch-2.6.35" by xen-port-patches
  	default:			return "broken";
  	}
  }
---- sle12.orig/arch/x86/mm/pgtable_32-xen.c	2011-02-01 15:03:03.000000000 +0100
-+++ sle12/arch/x86/mm/pgtable_32-xen.c	2011-02-01 15:03:10.000000000 +0100
-@@ -9,7 +9,6 @@
- #include <linux/pagemap.h>
- #include <linux/spinlock.h>
- #include <linux/module.h>
--#include <linux/quicklist.h>
- 
- #include <asm/system.h>
- #include <asm/pgtable.h>
 --- sle12.orig/drivers/acpi/acpi_processor.c	2013-09-26 12:59:19.000000000 +0200
 +++ sle12/drivers/acpi/acpi_processor.c	2013-09-26 12:59:38.000000000 +0200
 @@ -296,6 +296,11 @@ static int acpi_processor_get_info(struc
@@ -1951,7 +1872,7 @@ Automatically created from "patches.kernel.org/patch-2.6.35" by xen-port-patches
  
  	if (processor_pm_external())
  		processor_notify_external(pr,
---- sle12.orig/drivers/gpu/drm/ttm/ttm_page_alloc.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/ttm/ttm_page_alloc.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/gpu/drm/ttm/ttm_page_alloc.c	2013-09-26 12:59:57.000000000 +0200
 @@ -503,6 +503,19 @@ static int ttm_alloc_new_pages(struct li
  	for (i = 0, cpages = 0; i < count; ++i) {

@@ -88,7 +88,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  extern int assign_irq_vector(int, struct irq_cfg *, const struct cpumask *);
  extern void send_cleanup_vector(struct irq_cfg *);
---- sle12.orig/arch/x86/include/asm/setup.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/setup.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/include/asm/setup.h	2014-03-12 11:33:11.000000000 +0100
 @@ -31,7 +31,7 @@
  extern u64 relocated_ramdisk;
@@ -1596,190 +1596,6 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  #endif
  	{}
  };
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:43:23.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-01-30 10:43:53.000000000 +0100
-@@ -338,6 +338,10 @@ ENTRY(ret_from_fork)
- END(ret_from_fork)
- 
- /*
-+ * Interrupt exit functions should be protected against kprobes
-+ */
-+	.pushsection .kprobes.text, "ax"
-+/*
-  * Return to user mode is not as complex as all this looks,
-  * but we want the default path for a system call return to
-  * go as quickly as possible which is why some of this is
-@@ -387,6 +391,10 @@ need_resched:
- END(resume_kernel)
- #endif
- 	CFI_ENDPROC
-+/*
-+ * End of kprobes section
-+ */
-+	.popsection
- 
- /* SYSENTER_RETURN points to after the "sysenter" instruction in
-    the vsyscall page.  See vsyscall-sysentry.S, which defines the symbol.  */
-@@ -539,10 +547,14 @@ ENTRY(ia32pv_sysenter_target)
- 	.align 4
- 	.long 1b,syscall_fault
- .previous
--	/* fall through */
-+	jmp system_call
- 	CFI_ENDPROC
- ENDPROC(ia32pv_sysenter_target)
- 
-+/*
-+ * syscall stub including irq exit should be protected against kprobes
-+ */
-+	.pushsection .kprobes.text, "ax"
- 	# system call handler stub
- ENTRY(system_call)
- 	RING0_INT_FRAME			# can't unwind into user space anyway
-@@ -775,26 +787,69 @@ syscall_badsys:
- 	jmp resume_userspace
- END(syscall_badsys)
- 	CFI_ENDPROC
-+/*
-+ * End of kprobes section
-+ */
-+	.popsection
- 
- /*
-  * System calls that need a pt_regs pointer.
-  */
--#define PTREGSCALL(name) \
-+#define PTREGSCALL0(name) \
- 	ALIGN; \
- ptregs_##name: \
- 	leal 4(%esp),%eax; \
- 	jmp sys_##name;
- 
--PTREGSCALL(iopl)
--PTREGSCALL(fork)
--PTREGSCALL(clone)
--PTREGSCALL(vfork)
--PTREGSCALL(execve)
--PTREGSCALL(sigaltstack)
--PTREGSCALL(sigreturn)
--PTREGSCALL(rt_sigreturn)
--PTREGSCALL(vm86)
--PTREGSCALL(vm86old)
-+#define PTREGSCALL1(name) \
-+	ALIGN; \
-+ptregs_##name: \
-+	leal 4(%esp),%edx; \
-+	movl (PT_EBX+4)(%esp),%eax; \
-+	jmp sys_##name;
-+
-+#define PTREGSCALL2(name) \
-+	ALIGN; \
-+ptregs_##name: \
-+	leal 4(%esp),%ecx; \
-+	movl (PT_ECX+4)(%esp),%edx; \
-+	movl (PT_EBX+4)(%esp),%eax; \
-+	jmp sys_##name;
-+
-+#define PTREGSCALL3(name) \
-+	ALIGN; \
-+ptregs_##name: \
-+	leal 4(%esp),%eax; \
-+	pushl %eax; \
-+	movl PT_EDX(%eax),%ecx; \
-+	movl PT_ECX(%eax),%edx; \
-+	movl PT_EBX(%eax),%eax; \
-+	call sys_##name; \
-+	addl $4,%esp; \
-+	ret
-+
-+PTREGSCALL1(iopl)
-+PTREGSCALL0(fork)
-+PTREGSCALL0(vfork)
-+PTREGSCALL3(execve)
-+PTREGSCALL2(sigaltstack)
-+PTREGSCALL0(sigreturn)
-+PTREGSCALL0(rt_sigreturn)
-+PTREGSCALL2(vm86)
-+PTREGSCALL1(vm86old)
-+
-+/* Clone is an oddball.  The 4th arg is in %edi */
-+	ALIGN;
-+ptregs_clone:
-+	leal 4(%esp),%eax
-+	pushl %eax
-+	pushl PT_EDI(%eax)
-+	movl PT_EDX(%eax),%ecx
-+	movl PT_ECX(%eax),%edx
-+	movl PT_EBX(%eax),%eax
-+	call sys_clone
-+	addl $8,%esp
-+	ret
- 
- #ifndef CONFIG_XEN
- .macro FIXUP_ESPFIX_STACK
-@@ -885,6 +940,10 @@ common_interrupt:
- ENDPROC(common_interrupt)
- 	CFI_ENDPROC
- 
-+/*
-+ *  Irq entries should be protected against kprobes
-+ */
-+	.pushsection .kprobes.text, "ax"
- #define BUILD_INTERRUPT3(name, nr, fn)	\
- ENTRY(name)				\
- 	RING0_INT_FRAME;		\
-@@ -906,6 +965,8 @@ ENDPROC(name)
- #else
- #define UNWIND_ESPFIX_STACK
- 
-+	.pushsection .kprobes.text, "ax"
-+
- # A note on the "critical region" in our callback handler.
- # We want to avoid stacking callback handlers due to events occurring
- # during handling of the last event. To do this, we keep events disabled
-@@ -1206,16 +1267,16 @@ ENTRY(fixup_4gb_segment)
- 	jmp error_code
- 	CFI_ENDPROC
- END(fixup_4gb_segment)
-+/*
-+ * End of kprobes section
-+ */
-+	.popsection
- 
- ENTRY(kernel_thread_helper)
- 	pushl $0		# fake return address for unwinder
- 	CFI_STARTPROC
--	movl %edx,%eax
--	push %edx
--	CFI_ADJUST_CFA_OFFSET 4
--	call *%ebx
--	push %eax
--	CFI_ADJUST_CFA_OFFSET 4
-+	movl %edi,%eax
-+	call *%esi
- 	call do_exit
- 	ud2			# padding for call trace
- 	CFI_ENDPROC
-@@ -1316,17 +1377,14 @@ END(ftrace_graph_caller)
- 
- .globl return_to_handler
- return_to_handler:
--	pushl $0
- 	pushl %eax
--	pushl %ecx
- 	pushl %edx
- 	movl %ebp, %eax
- 	call ftrace_return_to_handler
--	movl %eax, 0xc(%esp)
-+	movl %eax, %ecx
- 	popl %edx
--	popl %ecx
- 	popl %eax
--	ret
-+	jmp *%ecx
- #endif
- 
- #ifdef TIF_CSTAR
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:39:43.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:23:51.000000000 +0200
 @@ -160,11 +160,11 @@ GLOBAL(return_to_handler)
@@ -1924,17 +1740,6 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  }
  
  void __init xen_arch_setup(void)
---- sle12.orig/arch/x86/kernel/head32-xen.c	2011-05-09 11:40:41.000000000 +0200
-+++ sle12/arch/x86/kernel/head32-xen.c	2011-02-01 14:55:46.000000000 +0100
-@@ -48,8 +48,6 @@ void __init i386_start_kernel(void)
- 	BUG_ON(pte_index(hypervisor_virt_start));
- #endif
- 
--	reserve_trampoline_memory();
--
- 	reserve_early(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
- 
- #ifndef CONFIG_XEN
 --- sle12.orig/arch/x86/kernel/head64-xen.c	2011-02-01 14:54:13.000000000 +0100
 +++ sle12/arch/x86/kernel/head64-xen.c	2011-02-01 14:55:46.000000000 +0100
 @@ -119,8 +119,6 @@ void __init x86_64_start_reservations(ch
@@ -2643,204 +2448,6 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  /*
   * Idle related variables and functions
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2012-08-01 12:01:07.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2012-08-10 10:46:17.000000000 +0200
-@@ -23,7 +23,6 @@
- #include <linux/vmalloc.h>
- #include <linux/user.h>
- #include <linux/interrupt.h>
--#include <linux/utsname.h>
- #include <linux/delay.h>
- #include <linux/reboot.h>
- #include <linux/init.h>
-@@ -35,7 +34,6 @@
- #include <linux/tick.h>
- #include <linux/percpu.h>
- #include <linux/prctl.h>
--#include <linux/dmi.h>
- #include <linux/ftrace.h>
- #include <linux/uaccess.h>
- #include <linux/io.h>
-@@ -60,6 +58,7 @@
- #include <asm/idle.h>
- #include <asm/syscalls.h>
- #include <asm/ds.h>
-+#include <asm/debugreg.h>
- 
- asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
- asmlinkage void cstar_ret_from_fork(void) __asm__("cstar_ret_from_fork");
-@@ -130,39 +129,29 @@ void __show_regs(struct pt_regs *regs, i
- 	unsigned long d0, d1, d2, d3, d6, d7;
- 	unsigned long sp;
- 	unsigned short ss, gs;
--	const char *board;
- 
- 	if (user_mode_vm(regs)) {
- 		sp = regs->sp;
- 		ss = regs->ss & 0xffff;
- 		gs = get_user_gs(regs);
- 	} else {
--		sp = (unsigned long) (&regs->sp);
-+		sp = kernel_stack_pointer(regs);
- 		savesegment(ss, ss);
- 		savesegment(gs, gs);
- 	}
- 
--	printk("\n");
-+	show_regs_common();
- 
--	board = dmi_get_system_info(DMI_PRODUCT_NAME);
--	if (!board)
--		board = "";
--	printk("Pid: %d, comm: %s %s (%s %.*s) %s\n",
--			task_pid_nr(current), current->comm,
--			print_tainted(), init_utsname()->release,
--			(int)strcspn(init_utsname()->version, " "),
--			init_utsname()->version, board);
--
--	printk("EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
-+	printk(KERN_DEFAULT "EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
- 			(u16)regs->cs, regs->ip, regs->flags,
- 			smp_processor_id());
- 	print_symbol("EIP is at %s\n", regs->ip);
- 
--	printk("EAX: %08lx EBX: %08lx ECX: %08lx EDX: %08lx\n",
-+	printk(KERN_DEFAULT "EAX: %08lx EBX: %08lx ECX: %08lx EDX: %08lx\n",
- 		regs->ax, regs->bx, regs->cx, regs->dx);
--	printk("ESI: %08lx EDI: %08lx EBP: %08lx ESP: %08lx\n",
-+	printk(KERN_DEFAULT "ESI: %08lx EDI: %08lx EBP: %08lx ESP: %08lx\n",
- 		regs->si, regs->di, regs->bp, sp);
--	printk(" DS: %04x ES: %04x FS: %04x GS: %04x SS: %04x\n",
-+	printk(KERN_DEFAULT " DS: %04x ES: %04x FS: %04x GS: %04x SS: %04x\n",
- 	       (u16)regs->ds, (u16)regs->es, (u16)regs->fs, gs, ss);
- 
- 	if (!all)
-@@ -172,61 +161,28 @@ void __show_regs(struct pt_regs *regs, i
- 	cr2 = read_cr2();
- 	cr3 = read_cr3();
- 	cr4 = read_cr4_safe();
--	printk("CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n",
-+	printk(KERN_DEFAULT "CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n",
- 			cr0, cr2, cr3, cr4);
- 
- 	get_debugreg(d0, 0);
- 	get_debugreg(d1, 1);
- 	get_debugreg(d2, 2);
- 	get_debugreg(d3, 3);
--	printk("DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
-+	printk(KERN_DEFAULT "DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
- 			d0, d1, d2, d3);
- 
- 	get_debugreg(d6, 6);
- 	get_debugreg(d7, 7);
--	printk("DR6: %08lx DR7: %08lx\n",
-+	printk(KERN_DEFAULT "DR6: %08lx DR7: %08lx\n",
- 			d6, d7);
- }
- 
- void show_regs(struct pt_regs *regs)
- {
--	__show_regs(regs, 1);
-+	show_registers(regs);
- 	show_trace(NULL, regs, &regs->sp, regs->bp);
- }
- 
--/*
-- * This gets run with %bx containing the
-- * function to call, and %dx containing
-- * the "args".
-- */
--extern void kernel_thread_helper(void);
--
--/*
-- * Create a kernel thread
-- */
--int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
--{
--	struct pt_regs regs;
--
--	memset(&regs, 0, sizeof(regs));
--
--	regs.bx = (unsigned long) fn;
--	regs.dx = (unsigned long) arg;
--
--	regs.ds = __USER_DS;
--	regs.es = __USER_DS;
--	regs.fs = __KERNEL_PERCPU;
--	regs.gs = __KERNEL_STACK_CANARY;
--	regs.orig_ax = -1;
--	regs.ip = (unsigned long) kernel_thread_helper;
--	regs.cs = __KERNEL_CS | get_kernel_rpl();
--	regs.flags = X86_EFLAGS_IF | X86_EFLAGS_SF | X86_EFLAGS_PF | 0x2;
--
--	/* Ok, create the new process.. */
--	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
--}
--EXPORT_SYMBOL(kernel_thread);
--
- void release_thread(struct task_struct *dead_task)
- {
- 	BUG_ON(dead_task->mm);
-@@ -262,7 +218,12 @@ int copy_thread(unsigned long clone_flag
- 
- 	task_user_gs(p) = get_user_gs(regs);
- 
-+	p->thread.io_bitmap_ptr = NULL;
- 	tsk = current;
-+	err = -ENOMEM;
-+
-+	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
-+
- #ifdef TIF_CSTAR
- 	if (test_tsk_thread_flag(tsk, TIF_CSTAR))
- 		p->thread.ip = (unsigned long) cstar_ret_from_fork;
-@@ -505,46 +466,6 @@ __switch_to(struct task_struct *prev_p, 
- 	return prev_p;
- }
- 
--int sys_clone(struct pt_regs *regs)
--{
--	unsigned long clone_flags;
--	unsigned long newsp;
--	int __user *parent_tidptr, *child_tidptr;
--
--	clone_flags = regs->bx;
--	newsp = regs->cx;
--	parent_tidptr = (int __user *)regs->dx;
--	child_tidptr = (int __user *)regs->di;
--	if (!newsp)
--		newsp = regs->sp;
--	return do_fork(clone_flags, newsp, regs, 0, parent_tidptr, child_tidptr);
--}
--
--/*
-- * sys_execve() executes a new program.
-- */
--int sys_execve(struct pt_regs *regs)
--{
--	int error;
--	char *filename;
--
--	filename = getname((char __user *) regs->bx);
--	error = PTR_ERR(filename);
--	if (IS_ERR(filename))
--		goto out;
--	error = do_execve(filename,
--			(char __user * __user *) regs->cx,
--			(char __user * __user *) regs->dx,
--			regs);
--	if (error == 0) {
--		/* Make sure we don't return using sysenter.. */
--		set_thread_flag(TIF_IRET);
--	}
--	putname(filename);
--out:
--	return error;
--}
--
- #define top_esp                (THREAD_SIZE - sizeof(unsigned long))
- #define top_ebp                (THREAD_SIZE - 2*sizeof(unsigned long))
- 
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2012-08-01 12:00:38.000000000 +0200
 +++ sle12/arch/x86/kernel/process_64-xen.c	2012-08-01 12:01:43.000000000 +0200
 @@ -29,7 +29,6 @@
@@ -3552,7 +3159,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	  .child = kernel_table2 },
  	{}
  };
---- sle12.orig/arch/x86/kernel/x8664_ksyms_64.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/arch/x86/kernel/x8664_ksyms_64.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/arch/x86/kernel/x8664_ksyms_64.c	2013-03-21 15:17:09.000000000 +0100
 @@ -63,6 +63,6 @@ EXPORT_SYMBOL(memmove);
  EXPORT_SYMBOL(phys_base);
@@ -3664,56 +3271,6 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	/* Enable PSE if available */
  	if (cpu_has_pse)
  		set_in_cr4(X86_CR4_PSE);
---- sle12.orig/arch/x86/mm/init_32-xen.c	2011-02-01 14:54:13.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2011-02-01 14:55:46.000000000 +0100
-@@ -448,7 +448,7 @@ static void __init permanent_kmaps_init(
- 	pkmap_page_table = pte;
- }
- 
--static void __init add_one_highpage_init(struct page *page, int pfn)
-+static void __init add_one_highpage_init(struct page *page)
- {
- 	ClearPageReserved(page);
- 	init_page_count(page);
-@@ -481,7 +481,7 @@ static int __init add_highpages_work_fn(
- 		if (!pfn_valid(node_pfn))
- 			continue;
- 		page = pfn_to_page(node_pfn);
--		add_one_highpage_init(page, node_pfn);
-+		add_one_highpage_init(page);
- 	}
- 
- 	return 0;
-@@ -705,8 +705,8 @@ void __init find_low_pfn_range(void)
- }
- 
- #ifndef CONFIG_NEED_MULTIPLE_NODES
--void __init initmem_init(unsigned long start_pfn,
--				  unsigned long end_pfn)
-+void __init initmem_init(unsigned long start_pfn, unsigned long end_pfn,
-+				int acpi, int k8)
- {
- #ifdef CONFIG_HIGHMEM
- 	highstart_pfn = highend_pfn = max_pfn;
-@@ -955,8 +955,7 @@ void __init mem_init(void)
- 		reservedpages << (PAGE_SHIFT-10),
- 		datasize >> 10,
- 		initsize >> 10,
--		(unsigned long) (totalhigh_pages << (PAGE_SHIFT-10))
--	       );
-+		totalhigh_pages << (PAGE_SHIFT-10));
- 
- 	printk(KERN_INFO "virtual kernel memory layout:\n"
- 		"    fixmap  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
-@@ -1062,7 +1061,7 @@ static noinline int do_test_wp_bit(void)
- const int rodata_test_data = 0xC3;
- EXPORT_SYMBOL_GPL(rodata_test_data);
- 
--static int kernel_set_to_readonly;
-+int kernel_set_to_readonly __read_mostly;
- 
- void set_kernel_text_rw(void)
- {
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2011-06-30 17:06:27.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2011-06-30 17:10:32.000000000 +0200
 @@ -53,6 +53,7 @@
@@ -4021,7 +3578,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		.procname = "abi",
  		.mode = 0555,
  		.child = abi_table2
---- sle12.orig/drivers/gpu/drm/vmwgfx/Kconfig	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/gpu/drm/vmwgfx/Kconfig	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/gpu/drm/vmwgfx/Kconfig	2011-02-01 14:55:46.000000000 +0100
 @@ -1,6 +1,6 @@
  config DRM_VMWGFX
@@ -4463,7 +4020,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	depends on ACPI
  	default !X86
  
---- sle12.orig/drivers/scsi/Kconfig	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/drivers/scsi/Kconfig	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/drivers/scsi/Kconfig	2013-09-26 12:59:03.000000000 +0200
 @@ -643,7 +643,7 @@ config SCSI_FLASHPOINT
  
@@ -4906,7 +4463,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  /*
   * Use these to access the event channel underlying the IRQ handle returned
   * by bind_*_to_irqhandler().
---- sle12.orig/include/xen/xen.h	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/include/xen/xen.h	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/include/xen/xen.h	2012-10-23 15:29:28.000000000 +0200
 @@ -7,8 +7,10 @@ enum xen_domain_type {
  	XEN_HVM_DOMAIN,		/* running in a Xen hvm domain */
@@ -4947,7 +4504,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  static u32 *append_elf_note(u32 *buf, char *name, unsigned type, void *data,
  			    size_t data_len)
---- sle12.orig/kernel/ksysfs.c	2014-03-12 11:04:53.000000000 +0100
+--- sle12.orig/kernel/ksysfs.c	2014-03-19 11:17:21.000000000 +0100
 +++ sle12/kernel/ksysfs.c	2013-01-08 11:57:32.000000000 +0100
 @@ -106,6 +106,7 @@ static ssize_t kexec_crash_size_show(str
  {

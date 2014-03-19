@@ -216,40 +216,6 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  #ifdef CONFIG_X86_32
  	loadsegment(fs, __KERNEL_PERCPU);
  #else
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2014-01-16 10:49:07.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2014-02-06 15:33:57.000000000 +0100
-@@ -452,6 +452,9 @@ sysenter_exit:
- 	movl PT_EIP(%esp), %edx
- 	movl PT_OLDESP(%esp), %ecx
- 	xorl %ebp,%ebp
-+#ifdef CONFIG_XEN_VCPU_INFO_PLACEMENT
-+	GET_VCPU_INFO
-+#endif
- 	TRACE_IRQS_ON
- 1:	mov  PT_FS(%esp), %fs
- 	PTGS_TO_GS
-@@ -968,7 +971,9 @@ critical_region_fixup:
- 
- .section .rodata,"a"
- critical_fixup_table:
--	.byte -1,-1,-1			# testb $0xff,(%esi) = __TEST_PENDING
-+	.rept __SIZEOF_TEST_PENDING
-+	.byte -1
-+	.endr
- 	.byte -1,-1			# jnz  14f
- 	.byte 0				# pop  %ebx
- 	.byte 1				# pop  %ecx
-@@ -987,7 +992,9 @@ critical_fixup_table:
- 	.byte 10,10,10			# add  $8,%esp
- #endif
- 	.byte 12			# iret
--	.byte -1,-1,-1,-1		# movb $1,1(%esi) = __DISABLE_INTERRUPTS
-+	.rept __SIZEOF_DISABLE_INTERRUPTS
-+	.byte -1
-+	.endr
- .previous
- 
- # Hypervisor uses this for application faults while it executes.
 --- sle12.orig/arch/x86/kernel/head-xen.c	2013-04-05 09:25:29.000000000 +0200
 +++ sle12/arch/x86/kernel/head-xen.c	2013-04-05 09:27:47.000000000 +0200
 @@ -165,6 +165,8 @@ void __init xen_start_kernel(void)

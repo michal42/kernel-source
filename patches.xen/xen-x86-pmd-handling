@@ -99,9 +99,9 @@ Patch-mainline: obsolete
  }
  
  static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr)
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable.h	2014-03-12 11:41:11.000000000 +0100
+--- sle12.orig/arch/x86/include/mach-xen/asm/pgtable.h	2014-03-19 14:13:58.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable.h	2014-02-06 15:32:03.000000000 +0100
-@@ -703,7 +703,7 @@ static inline pmd_t xen_local_pmdp_get_a
+@@ -704,7 +704,7 @@ static inline pmd_t xen_local_pmdp_get_a
  {
  	pmd_t res = *pmdp;
  
@@ -110,44 +110,6 @@ Patch-mainline: obsolete
  	return res;
  }
  
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable-3level.h	2013-08-21 09:43:15.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable-3level.h	2012-07-05 13:55:51.000000000 +0200
-@@ -110,12 +110,15 @@ static inline void __xen_pte_clear(pte_t
- 	ptep->pte_high = 0;
- }
- 
--static inline void xen_pmd_clear(pmd_t *pmd)
--{
--	xen_l2_entry_update(pmd, __pmd(0));
--}
-+#define xen_pmd_clear(pmd)			\
-+({						\
-+	pmd_t *__pmdp = (pmd);			\
-+	PagePinned(virt_to_page(__pmdp))	\
-+	? set_pmd(__pmdp, __pmd(0))		\
-+	: (void)(*__pmdp = __pmd(0));		\
-+})
- 
--static inline void pud_clear(pud_t *pudp)
-+static inline void __xen_pud_clear(pud_t *pudp)
- {
- 	set_pud(pudp, __pud(0));
- 
-@@ -131,6 +134,14 @@ static inline void pud_clear(pud_t *pudp
- 	 */
- }
- 
-+#define xen_pud_clear(pudp)			\
-+({						\
-+	pud_t *__pudp = (pudp);			\
-+	PagePinned(virt_to_page(__pudp))	\
-+	? __xen_pud_clear(__pudp)		\
-+	: (void)(*__pudp = __pud(0));		\
-+})
-+
- #ifdef CONFIG_SMP
- static inline pte_t xen_ptep_get_and_clear(pte_t *ptep, pte_t res)
- {
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2013-03-25 09:13:57.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2012-06-14 14:06:03.000000000 +0200
 @@ -65,10 +65,13 @@ static inline void xen_set_pmd(pmd_t *pm
@@ -318,17 +280,6 @@ Patch-mainline: obsolete
 +	xen_init_pgd_pin();
  }
  
---- sle12.orig/arch/x86/mm/init_32-xen.c	2014-02-06 15:14:14.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2013-08-12 16:18:57.000000000 +0200
-@@ -814,8 +814,6 @@ void __init mem_init(void)
- 
- 	if (boot_cpu_data.wp_works_ok < 0)
- 		test_wp_bit();
--
--	SetPagePinned(virt_to_page(init_mm.pgd));
- }
- 
- #ifdef CONFIG_MEMORY_HOTPLUG
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2014-02-06 15:14:14.000000000 +0100
 +++ sle12/arch/x86/mm/init_64-xen.c	2013-05-27 14:13:52.000000000 +0200
 @@ -304,8 +304,11 @@ static pud_t *fill_pud(pgd_t *pgd, unsig

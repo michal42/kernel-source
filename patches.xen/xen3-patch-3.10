@@ -7,7 +7,7 @@ Patch-mainline: 3.10
 Automatically created from "patch-3.10" by xen-port-patches.py
 Acked-by: jbeulich@suse.com
 
---- sle12.orig/arch/x86/Kconfig	2014-01-23 11:22:48.000000000 +0100
+--- sle12.orig/arch/x86/Kconfig	2014-03-12 12:06:18.000000000 +0100
 +++ sle12/arch/x86/Kconfig	2013-09-26 13:24:56.000000000 +0200
 @@ -121,7 +121,7 @@ config X86
  	select OLD_SIGSUSPEND3 if X86_32 || IA32_EMULATION
@@ -480,17 +480,6 @@ Acked-by: jbeulich@suse.com
  #ifndef CONFIG_XEN
  	} else if (!strcmp(str, "halt")) {
  		/*
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2013-01-09 15:32:33.000000000 +0100
-+++ sle12/arch/x86/kernel/process_32-xen.c	2013-05-24 11:49:51.000000000 +0200
-@@ -87,8 +87,6 @@ void __show_regs(struct pt_regs *regs, i
- 		savesegment(gs, gs);
- 	}
- 
--	show_regs_common();
--
- 	printk(KERN_DEFAULT "EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
- 			(u16)regs->cs, regs->ip, regs->flags,
- 			smp_processor_id());
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2013-03-25 09:13:57.000000000 +0100
 +++ sle12/arch/x86/kernel/process_64-xen.c	2013-05-24 11:49:51.000000000 +0200
 @@ -65,7 +65,6 @@ void __show_regs(struct pt_regs *regs, i
@@ -803,14 +792,6 @@ Acked-by: jbeulich@suse.com
 -	exception_exit(regs);
 +	exception_exit(prev_state);
  }
---- sle12.orig/arch/x86/mm/highmem_32-xen.c	2012-04-13 14:41:11.000000000 +0200
-+++ sle12/arch/x86/mm/highmem_32-xen.c	2013-05-24 11:49:51.000000000 +0200
-@@ -192,5 +192,4 @@ void __init set_highmem_pages_init(void)
- 			init_page_count(pfn_to_page(zone_start_pfn));
- 		}
- 	}
--	totalram_pages += totalhigh_pages;
- }
 --- sle12.orig/arch/x86/mm/init-xen.c	2014-02-28 15:02:27.000000000 +0100
 +++ sle12/arch/x86/mm/init-xen.c	2013-08-15 13:02:54.000000000 +0200
 @@ -294,6 +294,9 @@ static int __meminit split_mem_range(str
@@ -885,32 +866,6 @@ Acked-by: jbeulich@suse.com
  	}
  #endif
  }
---- sle12.orig/arch/x86/mm/init_32-xen.c	2013-03-25 15:59:59.000000000 +0100
-+++ sle12/arch/x86/mm/init_32-xen.c	2013-05-24 11:49:51.000000000 +0200
-@@ -463,14 +463,6 @@ static void __init permanent_kmaps_init(
- 	pkmap_page_table = pte;
- }
- 
--static void __init add_one_highpage_init(struct page *page)
--{
--	ClearPageReserved(page);
--	init_page_count(page);
--	__free_page(page);
--	totalhigh_pages++;
--}
--
- void __init add_highpages_with_active_regions(int nid,
- 			 unsigned long start_pfn, unsigned long end_pfn)
- {
-@@ -484,7 +476,7 @@ void __init add_highpages_with_active_re
- 					      start_pfn, end_pfn);
- 		for ( ; pfn < e_pfn; pfn++)
- 			if (pfn_valid(pfn))
--				add_one_highpage_init(pfn_to_page(pfn));
-+				free_highmem_page(pfn_to_page(pfn));
- 	}
- }
- #else
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2014-02-28 15:00:32.000000000 +0100
 +++ sle12/arch/x86/mm/init_64-xen.c	2013-05-24 11:49:51.000000000 +0200
 @@ -35,6 +35,7 @@
@@ -1133,7 +1088,7 @@ Acked-by: jbeulich@suse.com
  		return -ENODEV;
  	}
  	return 0;
---- sle12.orig/drivers/net/caif/Kconfig	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/drivers/net/caif/Kconfig	2014-03-19 11:17:20.000000000 +0100
 +++ sle12/drivers/net/caif/Kconfig	2013-06-05 14:20:37.000000000 +0200
 @@ -43,7 +43,7 @@ config CAIF_HSI
  
@@ -1424,9 +1379,9 @@ Acked-by: jbeulich@suse.com
 +	if (dev->msix_cap)
 +		msix_set_enable(dev, 0);
  }
---- sle12.orig/drivers/platform/x86/Kconfig	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/drivers/platform/x86/Kconfig	2014-03-19 11:17:20.000000000 +0100
 +++ sle12/drivers/platform/x86/Kconfig	2013-10-29 10:19:44.000000000 +0100
-@@ -813,7 +813,7 @@ config INTEL_SMARTCONNECT
+@@ -811,7 +811,7 @@ config INTEL_SMARTCONNECT
  
  config PVPANIC
  	tristate "pvpanic device support"
@@ -1435,7 +1390,7 @@ Acked-by: jbeulich@suse.com
  	---help---
  	  This driver provides support for the pvpanic device.  pvpanic is
  	  a paravirtualized device provided by QEMU; it lets a virtual machine
---- sle12.orig/drivers/scsi/lpfc/lpfc_init.c	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/drivers/scsi/lpfc/lpfc_init.c	2014-03-19 11:17:20.000000000 +0100
 +++ sle12/drivers/scsi/lpfc/lpfc_init.c	2014-01-23 11:23:22.000000000 +0100
 @@ -8443,9 +8443,6 @@ lpfc_sli4_set_affinity(struct lpfc_hba *
  	int max_phys_id, min_phys_id;

@@ -9,7 +9,7 @@ Acked-by: jbeulich@suse.com
 
 --- sle12.orig/arch/x86/Kconfig	2013-09-26 13:26:51.000000000 +0200
 +++ sle12/arch/x86/Kconfig	2014-01-23 11:23:54.000000000 +0100
-@@ -1788,7 +1788,7 @@ config PHYSICAL_ALIGN
+@@ -1780,7 +1780,7 @@ config PHYSICAL_ALIGN
  	hex "Alignment value to which kernel should be aligned" if !XEN
  	default 0x2000 if XEN
  	default "0x1000000"
@@ -18,7 +18,7 @@ Acked-by: jbeulich@suse.com
  	range 0x200000 0x1000000 if X86_64
  	---help---
  	  This value puts the alignment restrictions on physical address
-@@ -2363,6 +2363,7 @@ source "drivers/rapidio/Kconfig"
+@@ -2347,6 +2347,7 @@ source "drivers/rapidio/Kconfig"
  
  config X86_SYSFB
  	bool "Mark VGA/VBE/EFI FB as generic system framebuffer"
@@ -621,18 +621,6 @@ Acked-by: jbeulich@suse.com
  	printk(KERN_INFO "e820: extended physical RAM map:\n");
  	_e820_print_map(&e820, "extended");
  }
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-08-12 13:00:59.000000000 +0200
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-09-26 15:33:39.000000000 +0200
-@@ -1293,6 +1293,9 @@ ftrace_restore_flags:
- #else /* ! CONFIG_DYNAMIC_FTRACE */
- 
- ENTRY(mcount)
-+	cmpl $__PAGE_OFFSET, %esp
-+	jb ftrace_stub		/* Paging not enabled yet? */
-+
- 	cmpl $0, function_trace_stop
- 	jne  ftrace_stub
- 
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-08-12 13:00:59.000000000 +0200
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2013-09-26 15:33:39.000000000 +0200
 @@ -522,21 +522,6 @@ NMI_MASK = 0x80000000
@@ -657,17 +645,6 @@ Acked-by: jbeulich@suse.com
  #ifndef CONFIG_XEN
  /* save complete stack frame */
  	.pushsection .kprobes.text, "ax"
---- sle12.orig/arch/x86/kernel/head32-xen.c	2013-08-12 14:13:54.000000000 +0200
-+++ sle12/arch/x86/kernel/head32-xen.c	2013-09-26 15:33:39.000000000 +0200
-@@ -28,7 +28,7 @@ static void __init i386_default_early_se
- #endif
- }
- 
--void __init i386_start_kernel(void)
-+asmlinkage void __init i386_start_kernel(void)
- {
- #ifdef CONFIG_XEN
- 	struct xen_platform_parameters pp;
 --- sle12.orig/arch/x86/kernel/head64-xen.c	2013-05-24 11:49:51.000000000 +0200
 +++ sle12/arch/x86/kernel/head64-xen.c	2013-09-26 15:33:39.000000000 +0200
 @@ -153,7 +153,7 @@ static void __init copy_bootdata(char *r
@@ -728,17 +705,6 @@ Acked-by: jbeulich@suse.com
  #endif
  
  #ifdef CONFIG_X86_64
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2013-08-12 13:00:59.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2013-09-26 15:33:39.000000000 +0200
-@@ -255,7 +255,7 @@ EXPORT_SYMBOL_GPL(start_thread);
-  * the task-switch, and shows up in ret_from_fork in entry.S,
-  * for example.
-  */
--__notrace_funcgraph struct task_struct *
-+__visible __notrace_funcgraph struct task_struct *
- __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
- {
- 	struct thread_struct *prev = &prev_p->thread,
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2013-08-12 13:00:59.000000000 +0200
 +++ sle12/arch/x86/kernel/process_64-xen.c	2013-09-26 15:33:39.000000000 +0200
 @@ -282,7 +282,7 @@ void start_thread_ia32(struct pt_regs *r
@@ -825,17 +791,6 @@ Acked-by: jbeulich@suse.com
  	dma_contiguous_reserve(0);
  
  	/*
---- sle12.orig/arch/x86/kernel/syscall_32-xen.c	2012-02-29 14:36:52.000000000 +0100
-+++ sle12/arch/x86/kernel/syscall_32-xen.c	2013-09-26 15:33:39.000000000 +0200
-@@ -9,7 +9,7 @@ extern asmlinkage void cstar_set_tif(voi
- #define	ptregs_clone cstar_set_tif
- #define	ptregs_vfork cstar_set_tif
- 
--const sys_call_ptr_t cstar_call_table[__NR_syscall_max+1] = {
-+__visible const sys_call_ptr_t cstar_call_table[__NR_syscall_max+1] = {
- 	/*
- 	 * Smells like a compiler bug -- it doesn't work
- 	 * when the & below is removed.
 --- sle12.orig/arch/x86/kernel/traps-xen.c	2013-11-07 12:39:32.000000000 +0100
 +++ sle12/arch/x86/kernel/traps-xen.c	2013-09-26 15:33:39.000000000 +0200
 @@ -58,6 +58,7 @@
@@ -1078,7 +1033,7 @@ Acked-by: jbeulich@suse.com
 -obj-$(CONFIG_TCG_XEN) += tpm_xenu.o
 +obj-$(CONFIG_TCG_XEN_V1) += tpm_xenu.o
  tpm_xenu-y = tpm_xen.o tpm_vtpm.o
---- sle12.orig/drivers/char/tpm/xen-tpmfront.c	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/drivers/char/tpm/xen-tpmfront.c	2014-03-19 11:17:19.000000000 +0100
 +++ sle12/drivers/char/tpm/xen-tpmfront.c	2014-02-27 13:47:34.000000000 +0100
 @@ -11,19 +11,26 @@
  #include <linux/err.h>

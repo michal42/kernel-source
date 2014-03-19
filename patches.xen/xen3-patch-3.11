@@ -7,7 +7,7 @@ Patch-mainline: 3.11
 Automatically created from "patch-3.11" by xen-port-patches.py
 Acked-by: jbeulich@suse.com
 
---- sle12.orig/arch/arm64/Kconfig	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/arch/arm64/Kconfig	2014-03-19 11:17:19.000000000 +0100
 +++ sle12/arch/arm64/Kconfig	2013-09-26 13:26:57.000000000 +0200
 @@ -206,9 +206,9 @@ source "mm/Kconfig"
  
@@ -21,7 +21,7 @@ Acked-by: jbeulich@suse.com
  	bool "Xen guest support on ARM64 (EXPERIMENTAL)"
  	depends on ARM64 && OF
  	help
---- sle12.orig/arch/arm64/Makefile	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/arch/arm64/Makefile	2014-03-19 11:17:19.000000000 +0100
 +++ sle12/arch/arm64/Makefile	2013-08-12 14:02:01.000000000 +0200
 @@ -38,7 +38,7 @@ export	TEXT_OFFSET GZFLAGS
  
@@ -52,7 +52,7 @@ Acked-by: jbeulich@suse.com
  	select CLOCKSOURCE_WATCHDOG if !XEN
  	select GENERIC_CLOCKEVENTS if !XEN
  	select ARCH_CLOCKSOURCE_DATA if X86_64
---- sle12.orig/arch/x86/include/asm/trace/irq_vectors.h	2014-03-12 11:04:52.000000000 +0100
+--- sle12.orig/arch/x86/include/asm/trace/irq_vectors.h	2014-03-19 11:17:19.000000000 +0100
 +++ sle12/arch/x86/include/asm/trace/irq_vectors.h	2014-01-09 11:36:02.000000000 +0100
 @@ -1,3 +1,5 @@
 +#ifndef CONFIG_X86_NO_IDT
@@ -346,18 +346,6 @@ Acked-by: jbeulich@suse.com
  /*
   * Mask out unsupported bits in a present pgprot.  Non-present pgprots
   * can use those bits for other purposes, so leave them be.
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable-3level.h	2012-08-20 14:37:06.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable-3level.h	2013-08-21 09:43:15.000000000 +0200
-@@ -178,6 +178,9 @@ static inline pmd_t xen_pmdp_get_and_cle
- /*
-  * Bits 0, 6 and 7 are taken in the low part of the pte,
-  * put the 32 bits of offset into the high part.
-+ *
-+ * For soft-dirty tracking bit 11 is taken from
-+ * the low part of pte as well.
-  */
- #define pte_to_pgoff(pte) ((pte).pte_high)
- #define pgoff_to_pte(off)						\
 --- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_types.h	2013-05-24 11:49:51.000000000 +0200
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable_types.h	2013-08-21 09:43:15.000000000 +0200
 @@ -55,6 +55,33 @@
@@ -963,27 +951,6 @@ Acked-by: jbeulich@suse.com
  /*
   * Returns the effective MTRR type for the region
   * Error returns:
---- sle12.orig/arch/x86/kernel/entry_32-xen.S	2013-03-25 09:13:57.000000000 +0100
-+++ sle12/arch/x86/kernel/entry_32-xen.S	2013-08-12 13:00:59.000000000 +0200
-@@ -865,7 +865,17 @@ ENTRY(name)				\
- 	CFI_ENDPROC;			\
- ENDPROC(name)
- 
--#define BUILD_INTERRUPT(name, nr)	BUILD_INTERRUPT3(name, nr, smp_##name)
-+
-+#ifdef CONFIG_TRACING
-+#define TRACE_BUILD_INTERRUPT(name, nr)		\
-+	BUILD_INTERRUPT3(trace_##name, nr, smp_trace_##name)
-+#else
-+#define TRACE_BUILD_INTERRUPT(name, nr)
-+#endif
-+
-+#define BUILD_INTERRUPT(name, nr) \
-+	BUILD_INTERRUPT3(name, nr, smp_##name); \
-+	TRACE_BUILD_INTERRUPT(name, nr)
- 
- /* The include is where all of the SMP etc. interrupts come from */
- #include <asm/entry_arch.h>
 --- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-03-25 09:13:57.000000000 +0100
 +++ sle12/arch/x86/kernel/entry_64-xen.S	2013-08-12 13:00:59.000000000 +0200
 @@ -356,7 +356,7 @@ NMI_MASK = 0x80000000
@@ -995,17 +962,6 @@ Acked-by: jbeulich@suse.com
  	/*CFI_REL_OFFSET	rflags,0*/
  	pushq_cfi $__KERNEL_CS /* cs */
  	/*CFI_REL_OFFSET	cs,0*/
---- sle12.orig/arch/x86/kernel/head32-xen.c	2013-03-25 09:13:57.000000000 +0100
-+++ sle12/arch/x86/kernel/head32-xen.c	2013-08-12 14:13:54.000000000 +0200
-@@ -44,6 +44,8 @@ void __init i386_start_kernel(void)
- 	}
- 
- 	BUG_ON(pte_index(hypervisor_virt_start));
-+
-+	set_cpu_cap(&new_cpu_data, X86_FEATURE_FPU);
- #endif
- 
- #ifndef CONFIG_XEN
 --- sle12.orig/arch/x86/kernel/irq-xen.c	2013-05-24 11:49:51.000000000 +0200
 +++ sle12/arch/x86/kernel/irq-xen.c	2013-08-14 09:29:01.000000000 +0200
 @@ -18,6 +18,9 @@
@@ -1091,37 +1047,6 @@ Acked-by: jbeulich@suse.com
  {
  #ifndef CONFIG_XEN
  #ifdef CONFIG_SMP
---- sle12.orig/arch/x86/kernel/process_32-xen.c	2013-05-24 11:49:51.000000000 +0200
-+++ sle12/arch/x86/kernel/process_32-xen.c	2013-08-12 13:00:59.000000000 +0200
-@@ -113,11 +113,16 @@ void __show_regs(struct pt_regs *regs, i
- 	get_debugreg(d1, 1);
- 	get_debugreg(d2, 2);
- 	get_debugreg(d3, 3);
--	printk(KERN_DEFAULT "DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
--			d0, d1, d2, d3);
--
- 	get_debugreg(d6, 6);
- 	get_debugreg(d7, 7);
-+
-+	/* Only print out debug registers if they are in their non-default state. */
-+	if ((d0 == 0) && (d1 == 0) && (d2 == 0) && (d3 == 0) &&
-+	    (d6 == DR6_RESERVED) && (d7 == 0x400))
-+		return;
-+
-+	printk(KERN_DEFAULT "DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
-+			d0, d1, d2, d3);
- 	printk(KERN_DEFAULT "DR6: %08lx DR7: %08lx\n",
- 			d6, d7);
- }
-@@ -150,7 +155,7 @@ int copy_thread(unsigned long clone_flag
- 		childregs->bp = arg;
- 		childregs->orig_ax = -1;
- 		childregs->cs = __KERNEL_CS | get_kernel_rpl();
--		childregs->flags = X86_EFLAGS_IF | X86_EFLAGS_BIT1;
-+		childregs->flags = X86_EFLAGS_IF | X86_EFLAGS_FIXED;
- 		p->fpu_counter = 0;
- 		p->thread.io_bitmap_ptr = NULL;
- 		memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
 --- sle12.orig/arch/x86/kernel/process_64-xen.c	2013-05-24 11:49:51.000000000 +0200
 +++ sle12/arch/x86/kernel/process_64-xen.c	2013-08-12 13:00:59.000000000 +0200
 @@ -108,11 +108,18 @@ void __show_regs(struct pt_regs *regs, i
@@ -1329,28 +1254,6 @@ Acked-by: jbeulich@suse.com
  void __init x86_init_uint_noop(unsigned int unused) { }
  int __init iommu_init_noop(void) { return 0; }
  
---- sle12.orig/arch/x86/mm/highmem_32-xen.c	2013-05-24 11:49:51.000000000 +0200
-+++ sle12/arch/x86/mm/highmem_32-xen.c	2013-08-12 13:00:59.000000000 +0200
-@@ -1,6 +1,7 @@
- #include <linux/highmem.h>
- #include <linux/module.h>
- #include <linux/swap.h> /* for totalram_pages */
-+#include <linux/bootmem.h>
- 
- void *kmap(struct page *page)
- {
-@@ -168,6 +169,11 @@ void __init set_highmem_pages_init(void)
- 	struct zone *zone;
- 	int nid;
- 
-+	/*
-+	 * Explicitly reset zone->managed_pages because set_highmem_pages_init()
-+	 * is invoked before free_all_bootmem()
-+	 */
-+	reset_all_zones_managed_pages();
- 	for_each_zone(zone) {
- 		unsigned long zone_start_pfn, zone_end_pfn;
- 
 --- sle12.orig/arch/x86/mm/init-xen.c	2013-08-15 13:02:54.000000000 +0200
 +++ sle12/arch/x86/mm/init-xen.c	2013-09-04 13:03:05.000000000 +0200
 @@ -84,8 +84,8 @@ __ref void *alloc_low_pages(unsigned int
@@ -1428,77 +1331,6 @@ Acked-by: jbeulich@suse.com
  }
  #endif
  
---- sle12.orig/arch/x86/mm/init_32-xen.c	2013-05-24 11:49:51.000000000 +0200
-+++ sle12/arch/x86/mm/init_32-xen.c	2013-08-12 13:00:59.000000000 +0200
-@@ -651,10 +651,8 @@ void __init initmem_init(void)
- 		highstart_pfn = max_low_pfn;
- 	printk(KERN_NOTICE "%ldMB HIGHMEM available.\n",
- 		pages_to_mb(highend_pfn - highstart_pfn));
--	num_physpages = highend_pfn;
- 	high_memory = (void *) __va(highstart_pfn * PAGE_SIZE - 1) + 1;
- #else
--	num_physpages = max_low_pfn;
- 	high_memory = (void *) __va(max_low_pfn * PAGE_SIZE - 1) + 1;
- #endif
- 
-@@ -662,7 +660,7 @@ void __init initmem_init(void)
- 	sparse_memory_present_with_active_regions(0);
- 
- #ifdef CONFIG_FLATMEM
--	max_mapnr = num_physpages;
-+	max_mapnr = IS_ENABLED(CONFIG_HIGHMEM) ? highend_pfn : max_low_pfn;
- #endif
- 	__vmalloc_start_set = true;
- 
-@@ -730,8 +728,6 @@ static void __init test_wp_bit(void)
- 
- void __init mem_init(void)
- {
--	int codesize, reservedpages, datasize, initsize;
--	int tmp;
- 	unsigned long pfn;
- 
- 	pci_iommu_alloc();
-@@ -751,37 +747,16 @@ void __init mem_init(void)
- 	set_highmem_pages_init();
- 
- 	/* this will put all low memory onto the freelists */
--	totalram_pages += free_all_bootmem();
-+	free_all_bootmem();
- 	/* XEN: init low-mem pages outside initial allocation. */
- 	for (pfn = xen_start_info->nr_pages; pfn < max_low_pfn; pfn++) {
- 		ClearPageReserved(pfn_to_page(pfn));
- 		init_page_count(pfn_to_page(pfn));
- 	}
- 
--	reservedpages = 0;
--	for (tmp = 0; tmp < max_low_pfn; tmp++)
--		/*
--		 * Only count reserved RAM pages:
--		 */
--		if (page_is_ram(tmp) && PageReserved(pfn_to_page(tmp)))
--			reservedpages++;
--
- 	after_bootmem = 1;
- 
--	codesize =  (unsigned long) &_etext - (unsigned long) &_text;
--	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;
--	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;
--
--	printk(KERN_INFO "Memory: %luk/%luk available (%dk kernel code, "
--			"%dk reserved, %dk data, %dk init, %ldk highmem)\n",
--		nr_free_pages() << (PAGE_SHIFT-10),
--		num_physpages << (PAGE_SHIFT-10),
--		codesize >> 10,
--		reservedpages << (PAGE_SHIFT-10),
--		datasize >> 10,
--		initsize >> 10,
--		totalhigh_pages << (PAGE_SHIFT-10));
--
-+	mem_init_print_info(NULL);
- 	printk(KERN_INFO "virtual kernel memory layout:\n"
- 		"    fixmap  : 0x%08lx - 0x%08lx   (%4ld kB)\n"
- #ifdef CONFIG_HIGHMEM
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2013-05-24 11:49:51.000000000 +0200
 +++ sle12/arch/x86/mm/init_64-xen.c	2013-08-12 13:00:59.000000000 +0200
 @@ -438,7 +438,7 @@ void __init init_extra_mapping_uc(unsign
@@ -2572,7 +2404,7 @@ Acked-by: jbeulich@suse.com
  #endif
 --- sle12.orig/mm/page_alloc.c	2014-02-06 14:39:42.000000000 +0100
 +++ sle12/mm/page_alloc.c	2014-02-06 14:43:39.000000000 +0100
-@@ -5669,8 +5669,8 @@ static void __setup_per_zone_wmarks(void
+@@ -5672,8 +5672,8 @@ static void __setup_per_zone_wmarks(void
  			high = percpu_pagelist_fraction
  			       ? zone->present_pages / percpu_pagelist_fraction
  			       : 5 * zone_batchsize(zone);
