@@ -1,0 +1,94 @@
+From: Christoph Hellwig <hch@infradead.org>
+Date: Thu, 14 Nov 2013 08:50:34 -0800
+Subject: nfs: page cache invalidation for dio
+Git-commit: a9ab5e840669b19aca2974e2c771a77df2876434
+Patch-mainline: v3.14
+References: bnc#868891
+
+Make sure to properly invalidate the pagecache before performing direct I/O,
+so that no stale pages are left around.  This matches what the generic
+direct I/O code does.  Also take the i_mutex over the direct write submission
+to avoid the lifelock vs truncate waiting for i_dio_count to decrease, and
+to avoid having the pagecache easily repopulated while direct I/O is in
+progrss.  Again matching the generic direct I/O code.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/direct.c |   29 +++++++++++++++++++++++++++--
+ 1 file changed, 27 insertions(+), 2 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/direct.c
++++ linux-3.12-SLE12/fs/nfs/direct.c
+@@ -942,9 +942,12 @@ ssize_t nfs_file_direct_write(struct kio
+ 	struct inode *inode = mapping->host;
+ 	struct nfs_direct_req *dreq;
+ 	struct nfs_lock_context *l_ctx;
++	loff_t end;
+ 	size_t count;
+ 
+ 	count = iov_length(iov, nr_segs);
++	end = (pos + count - 1) >> PAGE_CACHE_SHIFT;
++
+ 	nfs_add_stats(mapping->host, NFSIOS_DIRECTWRITTENBYTES, count);
+ 
+ 	dfprintk(FILE, "NFS: direct write(%s/%s, %zd@%Ld)\n",
+@@ -963,16 +966,25 @@ ssize_t nfs_file_direct_write(struct kio
+ 	if (!count)
+ 		goto out;
+ 
++	mutex_lock(&inode->i_mutex);
++
+ 	result = nfs_sync_mapping(mapping);
+ 	if (result)
+-		goto out;
++		goto out_unlock;
++
++	if (mapping->nrpages) {
++		result = invalidate_inode_pages2_range(mapping,
++					pos >> PAGE_CACHE_SHIFT, end);
++		if (result)
++			goto out_unlock;
++	}
+ 
+ 	task_io_account_write(count);
+ 
+ 	result = -ENOMEM;
+ 	dreq = nfs_direct_req_alloc();
+ 	if (!dreq)
+-		goto out;
++		goto out_unlock;
+ 
+ 	dreq->inode = inode;
+ 	dreq->bytes_left = count;
+@@ -987,6 +999,14 @@ ssize_t nfs_file_direct_write(struct kio
+ 		dreq->iocb = iocb;
+ 
+ 	result = nfs_direct_write_schedule_iovec(dreq, iov, nr_segs, pos, uio);
++
++	if (mapping->nrpages) {
++		invalidate_inode_pages2_range(mapping,
++					      pos >> PAGE_CACHE_SHIFT, end);
++	}
++
++	mutex_unlock(&inode->i_mutex);
++
+ 	if (!result) {
+ 		result = nfs_direct_wait(dreq);
+ 		if (result > 0) {
+@@ -999,8 +1019,13 @@ ssize_t nfs_file_direct_write(struct kio
+ 			spin_unlock(&inode->i_lock);
+ 		}
+ 	}
++	nfs_direct_req_release(dreq);
++	return result;
++
+ out_release:
+ 	nfs_direct_req_release(dreq);
++out_unlock:
++	mutex_unlock(&inode->i_mutex);
+ out:
+ 	return result;
+ }
