@@ -1,0 +1,110 @@
+From: Weston Andros Adamson <dros@netapp.com>
+Date: Fri, 18 Oct 2013 15:15:18 -0400
+Subject: NFS: stop using NFS_MOUNT_SECFLAVOUR server flag
+Git-commit: 5837f6dfcb00f764976ddc178933e612702cbf54
+Patch-mainline: v3.13
+References: bnc#868928
+
+Since the parsed sec= flavor is now stored in nfs_server->auth_info,
+we no longer need an nfs_server flag to determine if a sec= option was
+used.
+
+This flag has not been completely removed because it is still needed for
+the (old but still supported) non-text parsed mount options ABI
+compatability.
+
+Signed-off-by: Weston Andros Adamson <dros@netapp.com>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/nfs4client.c            |    6 ++++--
+ fs/nfs/nfs4namespace.c         |    2 +-
+ fs/nfs/nfs4proc.c              |    4 ++--
+ fs/nfs/super.c                 |    3 +--
+ include/uapi/linux/nfs_mount.h |    2 +-
+ 5 files changed, 9 insertions(+), 8 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/nfs4client.c
++++ linux-3.12-SLE12/fs/nfs/nfs4client.c
+@@ -1060,6 +1060,7 @@ struct nfs_server *nfs4_create_referral_
+ {
+ 	struct nfs_client *parent_client;
+ 	struct nfs_server *server, *parent_server;
++	bool auth_probe;
+ 	int error;
+ 
+ 	dprintk("--> nfs4_create_referral_server()\n");
+@@ -1093,8 +1094,9 @@ struct nfs_server *nfs4_create_referral_
+ 	if (error < 0)
+ 		goto error;
+ 
+-	error = nfs4_server_common_setup(server, mntfh,
+-			!(parent_server->flags & NFS_MOUNT_SECFLAVOUR));
++	auth_probe = parent_server->auth_info.flavor_len < 1;
++
++	error = nfs4_server_common_setup(server, mntfh, auth_probe);
+ 	if (error < 0)
+ 		goto error;
+ 
+--- linux-3.12-SLE12.orig/fs/nfs/nfs4namespace.c
++++ linux-3.12-SLE12/fs/nfs/nfs4namespace.c
+@@ -390,7 +390,7 @@ struct vfsmount *nfs4_submount(struct nf
+ 
+ 	if (client->cl_auth->au_flavor != flavor)
+ 		flavor = client->cl_auth->au_flavor;
+-	else if (!(server->flags & NFS_MOUNT_SECFLAVOUR)) {
++	else if (server->auth_info.flavor_len == 0) {
+ 		rpc_authflavor_t new = nfs4_negotiate_security(dir, name);
+ 		if ((int)new >= 0)
+ 			flavor = new;
+--- linux-3.12-SLE12.orig/fs/nfs/nfs4proc.c
++++ linux-3.12-SLE12/fs/nfs/nfs4proc.c
+@@ -2907,7 +2907,7 @@ int nfs4_proc_get_rootfh(struct nfs_serv
+ 		if (status != -NFS4ERR_WRONGSEC)
+ 			break;
+ 		/* Did user force a 'sec=' mount option? */
+-		if (server->flags & NFS_MOUNT_SECFLAVOUR)
++		if (server->auth_info.flavor_len > 0)
+ 			break;
+ 	default:
+ 		status = nfs4_do_find_root_sec(server, fhandle, info);
+@@ -3162,7 +3162,7 @@ static int nfs4_proc_lookup_common(struc
+ 			if (client != *clnt)
+ 				goto out;
+ 			/* No security negotiation if the user specified 'sec=' */
+-			if (NFS_SERVER(dir)->flags & NFS_MOUNT_SECFLAVOUR)
++			if (NFS_SERVER(dir)->auth_info.flavor_len > 0)
+ 				goto out;
+ 			client = nfs4_create_sec_client(client, dir, name);
+ 			if (IS_ERR(client))
+--- linux-3.12-SLE12.orig/fs/nfs/super.c
++++ linux-3.12-SLE12/fs/nfs/super.c
+@@ -1075,7 +1075,6 @@ static int nfs_parse_security_flavors(ch
+ 		return 0;
+ 	}
+ 
+-	mnt->flags |= NFS_MOUNT_SECFLAVOUR;
+ 	mnt->auth_info.flavors[0] = pseudoflavor;
+ 	mnt->auth_info.flavor_len = 1;
+ 	return 1;
+@@ -2361,7 +2360,7 @@ static int nfs_compare_mount_options(con
+ 		goto Ebusy;
+ 	if (a->acdirmax != b->acdirmax)
+ 		goto Ebusy;
+-	if (b->flags & NFS_MOUNT_SECFLAVOUR &&
++	if (b->auth_info.flavor_len > 0 &&
+ 	   clnt_a->cl_auth->au_flavor != clnt_b->cl_auth->au_flavor)
+ 		goto Ebusy;
+ 	return 1;
+--- linux-3.12-SLE12.orig/include/uapi/linux/nfs_mount.h
++++ linux-3.12-SLE12/include/uapi/linux/nfs_mount.h
+@@ -60,7 +60,7 @@ struct nfs_mount_data {
+ #define NFS_MOUNT_BROKEN_SUID	0x0400	/* 4 */
+ #define NFS_MOUNT_NOACL		0x0800	/* 4 */
+ #define NFS_MOUNT_STRICTLOCK	0x1000	/* reserved for NFSv4 */
+-#define NFS_MOUNT_SECFLAVOUR	0x2000	/* 5 */
++#define NFS_MOUNT_SECFLAVOUR	0x2000	/* 5 non-text parsed mount data only */
+ #define NFS_MOUNT_NORDIRPLUS	0x4000	/* 5 */
+ #define NFS_MOUNT_UNSHARED	0x8000	/* 5 */
+ #define NFS_MOUNT_FLAGMASK	0xFFFF
