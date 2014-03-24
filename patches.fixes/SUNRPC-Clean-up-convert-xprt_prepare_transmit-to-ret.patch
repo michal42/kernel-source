@@ -1,0 +1,85 @@
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date: Wed, 25 Sep 2013 12:17:18 -0400
+Subject: SUNRPC: Clean up - convert xprt_prepare_transmit to return a bool
+Git-commit: 90051ea774613ffc6b8aad3dc665c8505d6205a8
+Patch-mainline: v3.13
+References: bnc#868923
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ include/linux/sunrpc/xprt.h |    2 +-
+ net/sunrpc/clnt.c           |    6 ++----
+ net/sunrpc/xprt.c           |   15 +++++++++------
+ 3 files changed, 12 insertions(+), 11 deletions(-)
+
+--- linux-3.12-SLE12.orig/include/linux/sunrpc/xprt.h
++++ linux-3.12-SLE12/include/linux/sunrpc/xprt.h
+@@ -288,7 +288,7 @@ int			xprt_reserve_xprt(struct rpc_xprt
+ int			xprt_reserve_xprt_cong(struct rpc_xprt *xprt, struct rpc_task *task);
+ void			xprt_alloc_slot(struct rpc_xprt *xprt, struct rpc_task *task);
+ void			xprt_lock_and_alloc_slot(struct rpc_xprt *xprt, struct rpc_task *task);
+-int			xprt_prepare_transmit(struct rpc_task *task);
++bool			xprt_prepare_transmit(struct rpc_task *task);
+ void			xprt_transmit(struct rpc_task *task);
+ void			xprt_end_transmit(struct rpc_task *task);
+ int			xprt_adjust_timeout(struct rpc_rqst *req);
+--- linux-3.12-SLE12.orig/net/sunrpc/clnt.c
++++ linux-3.12-SLE12/net/sunrpc/clnt.c
+@@ -1731,8 +1731,7 @@ call_transmit(struct rpc_task *task)
+ 	task->tk_action = call_status;
+ 	if (task->tk_status < 0)
+ 		return;
+-	task->tk_status = xprt_prepare_transmit(task);
+-	if (task->tk_status != 0)
++	if (!xprt_prepare_transmit(task))
+ 		return;
+ 	task->tk_action = call_transmit_status;
+ 	/* Encode here so that rpcsec_gss can use correct sequence number. */
+@@ -1820,8 +1819,7 @@ call_bc_transmit(struct rpc_task *task)
+ {
+ 	struct rpc_rqst *req = task->tk_rqstp;
+ 
+-	task->tk_status = xprt_prepare_transmit(task);
+-	if (task->tk_status == -EAGAIN) {
++	if (!xprt_prepare_transmit(task)) {
+ 		/*
+ 		 * Could not reserve the transport. Try again after the
+ 		 * transport is released.
+--- linux-3.12-SLE12.orig/net/sunrpc/xprt.c
++++ linux-3.12-SLE12/net/sunrpc/xprt.c
+@@ -864,24 +864,27 @@ static inline int xprt_has_timer(struct
+  * @task: RPC task about to send a request
+  *
+  */
+-int xprt_prepare_transmit(struct rpc_task *task)
++bool xprt_prepare_transmit(struct rpc_task *task)
+ {
+ 	struct rpc_rqst	*req = task->tk_rqstp;
+ 	struct rpc_xprt	*xprt = req->rq_xprt;
+-	int err = 0;
++	bool ret = false;
+ 
+ 	dprintk("RPC: %5u xprt_prepare_transmit\n", task->tk_pid);
+ 
+ 	spin_lock_bh(&xprt->transport_lock);
+ 	if (req->rq_reply_bytes_recvd && !req->rq_bytes_sent) {
+-		err = req->rq_reply_bytes_recvd;
++		task->tk_status = req->rq_reply_bytes_recvd;
+ 		goto out_unlock;
+ 	}
+-	if (!xprt->ops->reserve_xprt(xprt, task))
+-		err = -EAGAIN;
++	if (!xprt->ops->reserve_xprt(xprt, task)) {
++		task->tk_status = -EAGAIN;
++		goto out_unlock;
++	}
++	ret = true;
+ out_unlock:
+ 	spin_unlock_bh(&xprt->transport_lock);
+-	return err;
++	return ret;
+ }
+ 
+ void xprt_end_transmit(struct rpc_task *task)
