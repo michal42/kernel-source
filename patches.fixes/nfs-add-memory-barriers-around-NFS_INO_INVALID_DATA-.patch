@@ -1,0 +1,74 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 28 Jan 2014 13:47:46 -0500
+Subject: nfs: add memory barriers around NFS_INO_INVALID_DATA and
+ NFS_INO_INVALIDATING
+Git-commit: 4db72b40fdbc706f8957e9773ae73b1574b8c694
+Patch-mainline: v3.14
+References: bnc#868897
+
+If the setting of NFS_INO_INVALIDATING gets reordered to before the
+clearing of NFS_INO_INVALID_DATA, then another task may hit a race
+window where both appear to be clear, even though the inode's pages are
+still in need of invalidation. Fix this by adding the appropriate memory
+barriers.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/dir.c   |   14 +++++++++++---
+ fs/nfs/inode.c |    1 +
+ fs/nfs/write.c |    1 +
+ 3 files changed, 13 insertions(+), 3 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/dir.c
++++ linux-3.12-SLE12/fs/nfs/dir.c
+@@ -276,6 +276,15 @@ out_eof:
+ 	return -EBADCOOKIE;
+ }
+ 
++static bool
++nfs_readdir_inode_mapping_valid(struct nfs_inode *nfsi)
++{
++	if (nfsi->cache_validity & (NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA))
++		return false;
++	smp_rmb();
++	return !test_bit(NFS_INO_INVALIDATING, &nfsi->flags);
++}
++
+ static
+ int nfs_readdir_search_for_cookie(struct nfs_cache_array *array, nfs_readdir_descriptor_t *desc)
+ {
+@@ -289,9 +298,8 @@ int nfs_readdir_search_for_cookie(struct
+ 			struct nfs_open_dir_context *ctx = desc->file->private_data;
+ 
+ 			new_pos = desc->current_index + i;
+-			if (ctx->attr_gencount != nfsi->attr_gencount
+-			    || (nfsi->cache_validity & (NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA))
+-			    || test_bit(NFS_INO_INVALIDATING, &nfsi->flags)) {
++			if (ctx->attr_gencount != nfsi->attr_gencount ||
++			    !nfs_readdir_inode_mapping_valid(nfsi)) {
+ 				ctx->duped = 0;
+ 				ctx->attr_gencount = nfsi->attr_gencount;
+ 			} else if (new_pos < desc->ctx->pos) {
+--- linux-3.12-SLE12.orig/fs/nfs/inode.c
++++ linux-3.12-SLE12/fs/nfs/inode.c
+@@ -1060,6 +1060,7 @@ int nfs_revalidate_mapping(struct inode
+ 	}
+ 
+ 	set_bit(NFS_INO_INVALIDATING, bitlock);
++	smp_wmb();
+ 	nfsi->cache_validity &= ~NFS_INO_INVALID_DATA;
+ 	spin_unlock(&inode->i_lock);
+ 	trace_nfs_invalidate_mapping_enter(inode);
+--- linux-3.12-SLE12.orig/fs/nfs/write.c
++++ linux-3.12-SLE12/fs/nfs/write.c
+@@ -925,6 +925,7 @@ static bool nfs_write_pageuptodate(struc
+ 		goto out;
+ 	if (nfsi->cache_validity & (NFS_INO_INVALID_DATA|NFS_INO_REVAL_PAGECACHE))
+ 		return false;
++	smp_rmb();
+ 	if (test_bit(NFS_INO_INVALIDATING, &nfsi->flags))
+ 		return false;
+ out:
