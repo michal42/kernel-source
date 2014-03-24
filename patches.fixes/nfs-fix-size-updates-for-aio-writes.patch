@@ -1,0 +1,86 @@
+Git-commit: 9811cd57f4c6b5b60ec104de68a88303717e3106
+From: Christoph Hellwig <hch@infradead.org>
+Date: Thu, 14 Nov 2013 08:50:28 -0800
+Subject: nfs: fix size updates for aio writes
+Patch-mainline: v3.14
+References: bnc#868891
+
+nfs_file_direct_write only updates the inode size if it succeeded and
+returned the number of bytes written.  But in the AIO case nfs_direct_wait
+turns the return value into -EIOCBQUEUED and we skip the size update.
+
+Instead the aio completion path should updated it, which this patch
+does.  The implementation is a little hacky because there is no obvious
+way to find out we are called for a write in nfs_direct_complete.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/direct.c |   21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/direct.c
++++ linux-3.12-SLE12/fs/nfs/direct.c
+@@ -223,12 +223,23 @@ out:
+  * Synchronous I/O uses a stack-allocated iocb.  Thus we can't trust
+  * the iocb is still valid here if this is a synchronous request.
+  */
+-static void nfs_direct_complete(struct nfs_direct_req *dreq)
++static void nfs_direct_complete(struct nfs_direct_req *dreq, bool write)
+ {
++	struct inode *inode = dreq->inode;
++
+ 	if (dreq->iocb) {
++		loff_t pos = dreq->iocb->ki_pos + dreq->count;
+ 		long res = (long) dreq->error;
+ 		if (!res)
+ 			res = (long) dreq->count;
++
++		if (write) {
++			spin_lock(&inode->i_lock);
++			if (i_size_read(inode) < pos)
++				i_size_write(inode, pos);
++			spin_unlock(&inode->i_lock);
++		}
++
+ 		aio_complete(dreq->iocb, res, 0);
+ 	}
+ 	complete_all(&dreq->completion);
+@@ -273,7 +284,7 @@ static void nfs_direct_read_completion(s
+ 	}
+ out_put:
+ 	if (put_dreq(dreq))
+-		nfs_direct_complete(dreq);
++		nfs_direct_complete(dreq, false);
+ 	hdr->release(hdr);
+ }
+ 
+@@ -435,7 +446,7 @@ static ssize_t nfs_direct_read_schedule_
+ 	}
+ 
+ 	if (put_dreq(dreq))
+-		nfs_direct_complete(dreq);
++		nfs_direct_complete(dreq, false);
+ 	return 0;
+ }
+ 
+@@ -595,7 +606,7 @@ static void nfs_direct_write_schedule_wo
+ 			break;
+ 		default:
+ 			nfs_inode_dio_write_done(dreq->inode);
+-			nfs_direct_complete(dreq);
++			nfs_direct_complete(dreq, true);
+ 	}
+ }
+ 
+@@ -612,7 +623,7 @@ static void nfs_direct_write_schedule_wo
+ static void nfs_direct_write_complete(struct nfs_direct_req *dreq, struct inode *inode)
+ {
+ 	nfs_inode_dio_write_done(inode);
+-	nfs_direct_complete(dreq);
++	nfs_direct_complete(dreq, true);
+ }
+ #endif
+ 
