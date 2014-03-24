@@ -1,0 +1,72 @@
+From: Weston Andros Adamson <dros@netapp.com>
+Date: Fri, 18 Oct 2013 15:15:17 -0400
+Subject: NFS: cache parsed auth_info in nfs_server
+Git-commit: 0f5f49b8b3593309fd3c3a2080a5fd465afdbe16
+Patch-mainline: v3.13
+References: bnc#868928
+
+Cache the auth_info structure in nfs_server and pass these values to submounts.
+
+This lays the groundwork for supporting multiple sec= options.
+
+Signed-off-by: Weston Andros Adamson <dros@netapp.com>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/client.c           |    2 ++
+ fs/nfs/nfs4client.c       |    1 +
+ fs/nfs/super.c            |    3 +--
+ include/linux/nfs_fs_sb.h |    1 +
+ 4 files changed, 5 insertions(+), 2 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/client.c
++++ linux-3.12-SLE12/fs/nfs/client.c
+@@ -796,6 +796,7 @@ static int nfs_init_server(struct nfs_se
+ 		goto error;
+ 
+ 	server->port = data->nfs_server.port;
++	server->auth_info = data->auth_info;
+ 
+ 	error = nfs_init_server_rpcclient(server, &timeparms,
+ 					  data->selected_flavor);
+@@ -939,6 +940,7 @@ void nfs_server_copy_userdata(struct nfs
+ 	target->acdirmax = source->acdirmax;
+ 	target->caps = source->caps;
+ 	target->options = source->options;
++	target->auth_info = source->auth_info;
+ }
+ EXPORT_SYMBOL_GPL(nfs_server_copy_userdata);
+ 
+--- linux-3.12-SLE12.orig/fs/nfs/nfs4client.c
++++ linux-3.12-SLE12/fs/nfs/nfs4client.c
+@@ -970,6 +970,7 @@ static int nfs4_init_server(struct nfs_s
+ 	/* Initialise the client representation from the mount data */
+ 	server->flags = data->flags;
+ 	server->options = data->options;
++	server->auth_info = data->auth_info;
+ 
+ 	if (data->auth_info.flavor_len >= 1)
+ 		data->selected_flavor = data->auth_info.flavors[0];
+--- linux-3.12-SLE12.orig/fs/nfs/super.c
++++ linux-3.12-SLE12/fs/nfs/super.c
+@@ -2216,8 +2216,7 @@ nfs_remount(struct super_block *sb, int
+ 	data->wsize = nfss->wsize;
+ 	data->retrans = nfss->client->cl_timeout->to_retries;
+ 	data->selected_flavor = nfss->client->cl_auth->au_flavor;
+-	data->auth_info.flavors[0] = nfss->client->cl_auth->au_flavor;
+-	data->auth_info.flavor_len = 1;
++	data->auth_info = nfss->auth_info;
+ 	data->acregmin = nfss->acregmin / HZ;
+ 	data->acregmax = nfss->acregmax / HZ;
+ 	data->acdirmin = nfss->acdirmin / HZ;
+--- linux-3.12-SLE12.orig/include/linux/nfs_fs_sb.h
++++ linux-3.12-SLE12/include/linux/nfs_fs_sb.h
+@@ -151,6 +151,7 @@ struct nfs_server {
+ 	struct timespec		time_delta;	/* smallest time granularity */
+ 	unsigned long		mount_time;	/* when this fs was mounted */
+ 	dev_t			s_dev;		/* superblock dev numbers */
++	struct nfs_auth_info	auth_info;	/* parsed auth flavors */
+ 
+ #ifdef CONFIG_NFS_FSCACHE
+ 	struct nfs_fscache_key	*fscache_key;	/* unique key for superblock */
