@@ -1,0 +1,42 @@
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date: Tue, 24 Sep 2013 11:25:22 -0400
+Subject: SUNRPC: Enable the keepalive option for TCP sockets
+Git-commit: 7f260e8575bf53b93b77978c1e39f8e67612759c
+Patch-mainline: v3.13
+References: bnc#868923
+
+For NFSv4 we want to avoid retransmitting RPC calls unless the TCP
+connection breaks. However we still want to detect TCP connection
+breakage as soon as possible. Do this by setting the keepalive option
+with the idle timeout and count set to the 'timeo' and 'retrans' mount
+options.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/xprtsock.c |   13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/xprtsock.c
++++ linux-3.12-SLE12/net/sunrpc/xprtsock.c
+@@ -2132,6 +2132,19 @@ static int xs_tcp_finish_connecting(stru
+ 
+ 	if (!transport->inet) {
+ 		struct sock *sk = sock->sk;
++		unsigned int keepidle = xprt->timeout->to_initval / HZ;
++		unsigned int keepcnt = xprt->timeout->to_retries + 1;
++		unsigned int opt_on = 1;
++
++		/* TCP Keepalive options */
++		kernel_setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE,
++				(char *)&opt_on, sizeof(opt_on));
++		kernel_setsockopt(sock, SOL_TCP, TCP_KEEPIDLE,
++				(char *)&keepidle, sizeof(keepidle));
++		kernel_setsockopt(sock, SOL_TCP, TCP_KEEPINTVL,
++				(char *)&keepidle, sizeof(keepidle));
++		kernel_setsockopt(sock, SOL_TCP, TCP_KEEPCNT,
++				(char *)&keepcnt, sizeof(keepcnt));
+ 
+ 		write_lock_bh(&sk->sk_callback_lock);
+ 
