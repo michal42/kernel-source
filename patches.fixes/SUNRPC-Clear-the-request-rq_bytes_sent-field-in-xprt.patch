@@ -1,0 +1,44 @@
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date: Fri, 27 Sep 2013 11:09:53 -0400
+Subject: SUNRPC: Clear the request rq_bytes_sent field in
+ xprt_release_write
+Git-commit: ee071eff0f1afafa9917254a6e4ee19d28085f1d
+Patch-mainline: v3.13
+References: bnc#868923
+
+Otherwise the tests of req->rq_bytes_sent in xprt_prepare_transmit
+will fail if we're dealing with a resend.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/xprt.c |   10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/xprt.c
++++ linux-3.12-SLE12/net/sunrpc/xprt.c
+@@ -358,6 +358,11 @@ out_unlock:
+ void xprt_release_xprt(struct rpc_xprt *xprt, struct rpc_task *task)
+ {
+ 	if (xprt->snd_task == task) {
++		if (task != NULL) {
++			struct rpc_rqst *req = task->tk_rqstp;
++			if (req != NULL)
++				req->rq_bytes_sent = 0;
++		}
+ 		xprt_clear_locked(xprt);
+ 		__xprt_lock_write_next(xprt);
+ 	}
+@@ -375,6 +380,11 @@ EXPORT_SYMBOL_GPL(xprt_release_xprt);
+ void xprt_release_xprt_cong(struct rpc_xprt *xprt, struct rpc_task *task)
+ {
+ 	if (xprt->snd_task == task) {
++		if (task != NULL) {
++			struct rpc_rqst *req = task->tk_rqstp;
++			if (req != NULL)
++				req->rq_bytes_sent = 0;
++		}
+ 		xprt_clear_locked(xprt);
+ 		__xprt_lock_write_next_cong(xprt);
+ 	}
