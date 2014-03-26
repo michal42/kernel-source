@@ -34,38 +34,34 @@ Link: http://lkml.kernel.org/r/1381141781-10992-40-git-send-email-mgorman@suse.d
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- kernel/sched/core.c  |   4 +
- kernel/sched/fair.c  | 253 ++++++++++++++++++++++++++++++++++++---------------
- kernel/sched/sched.h |  13 +++
- 3 files changed, 199 insertions(+), 71 deletions(-)
+ kernel/sched/core.c  |    4 
+ kernel/sched/fair.c  |  257 ++++++++++++++++++++++++++++++++++++---------------
+ kernel/sched/sched.h |   13 ++
+ 3 files changed, 201 insertions(+), 73 deletions(-)
 
-diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index 3130a39..a97ebd6 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -5240,6 +5240,7 @@ static void destroy_sched_domains(struct sched_domain *sd, int cpu)
+@@ -5275,6 +5275,7 @@ static void destroy_sched_domains(struct
  DEFINE_PER_CPU(struct sched_domain *, sd_llc);
  DEFINE_PER_CPU(int, sd_llc_size);
  DEFINE_PER_CPU(int, sd_llc_id);
 +DEFINE_PER_CPU(struct sched_domain *, sd_numa);
+ DEFINE_PER_CPU(struct sched_domain *, sd_busy);
+ DEFINE_PER_CPU(struct sched_domain *, sd_asym);
  
- static void update_top_cache_domain(int cpu)
- {
-@@ -5256,6 +5257,9 @@ static void update_top_cache_domain(int cpu)
- 	rcu_assign_pointer(per_cpu(sd_llc, cpu), sd);
+@@ -5297,6 +5298,9 @@ static void update_top_cache_domain(int
  	per_cpu(sd_llc_size, cpu) = size;
  	per_cpu(sd_llc_id, cpu) = id;
-+
+ 
 +	sd = lowest_flag_domain(cpu, SD_NUMA);
 +	rcu_assign_pointer(per_cpu(sd_numa, cpu), sd);
++
+ 	sd = highest_flag_domain(cpu, SD_ASYM_PACKING);
+ 	rcu_assign_pointer(per_cpu(sd_asym, cpu), sd);
  }
- 
- /*
-diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index b1e5061..1422765 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
-@@ -681,6 +681,8 @@ static u64 sched_vslice(struct cfs_rq *cfs_rq, struct sched_entity *se)
+@@ -689,6 +689,8 @@ static u64 sched_vslice(struct cfs_rq *c
  }
  
  #ifdef CONFIG_SMP
@@ -74,7 +70,7 @@ index b1e5061..1422765 100644
  static inline void __update_task_entity_contrib(struct sched_entity *se);
  
  /* Give new task start runnable values to heavy its load in infant time */
-@@ -906,12 +908,40 @@ static unsigned long target_load(int cpu, int type);
+@@ -914,12 +916,40 @@ static unsigned long target_load(int cpu
  static unsigned long power_of(int cpu);
  static long effective_load(struct task_group *tg, int cpu, long wl, long wg);
  
@@ -117,7 +113,7 @@ index b1e5061..1422765 100644
  struct task_numa_env {
  	struct task_struct *p;
  
-@@ -920,95 +950,178 @@ struct task_numa_env {
+@@ -928,95 +958,178 @@ struct task_numa_env {
  
  	struct numa_stats src_stats, dst_stats;
  
@@ -304,17 +300,12 @@ index b1e5061..1422765 100644
 -			env.best_cpu = cpu;
 -			goto migrate;
 -		}
-+	/* Find an alternative node with relatively better statistics */
-+	for_each_online_node(nid) {
-+		long imp;
- 
+-
 -		/* Otherwise check the target CPU load */
 -		env.dst_stats.eff_load = 100;
 -		env.dst_stats.eff_load *= power_of(cpu);
 -		env.dst_stats.eff_load *= env.dst_stats.load + effective_load(tg, cpu, weight, weight);
-+		if (nid == env.src_nid)
-+			continue;
- 
+-
 -		/*
 -		 * Destination is considered balanced if the destination CPU is
 -		 * less loaded than the source CPU. Unfortunately there is a
@@ -323,14 +314,21 @@ index b1e5061..1422765 100644
 -		 */
 -		balanced = (env.dst_stats.eff_load <= env.src_stats.eff_load);
 -		if (!balanced)
-+		/* Only consider nodes that recorded more faults */
-+		imp = task_faults(p, nid) - faults;
-+		if (imp < 0)
++	/* Find an alternative node with relatively better statistics */
++	for_each_online_node(nid) {
++		long imp;
++
++		if (nid == env.src_nid)
  			continue;
  
 -		if (env.dst_stats.eff_load < env.best_load) {
 -			env.best_load = env.dst_stats.eff_load;
 -			env.best_cpu = cpu;
++		/* Only consider nodes that recorded more faults */
++		imp = task_faults(p, nid) - faults;
++		if (imp < 0)
++			continue;
++
 +		env.dst_nid = nid;
 +		update_numa_stats(&env.dst_stats, env.dst_nid);
 +		for_each_cpu(cpu, cpumask_of_node(nid)) {
@@ -360,7 +358,7 @@ index b1e5061..1422765 100644
  }
  
  /* Attempt to migrate a task to a CPU on the preferred node. */
-@@ -1050,7 +1163,7 @@ static void task_numa_placement(struct task_struct *p)
+@@ -1058,7 +1171,7 @@ static void task_numa_placement(struct t
  
  	/* Find the node with the highest number of faults */
  	for_each_online_node(nid) {
@@ -369,7 +367,7 @@ index b1e5061..1422765 100644
  		int priv, i;
  
  		for (priv = 0; priv < 2; priv++) {
-@@ -1060,10 +1173,10 @@ static void task_numa_placement(struct task_struct *p)
+@@ -1068,10 +1181,10 @@ static void task_numa_placement(struct t
  			p->numa_faults[i] >>= 1;
  			p->numa_faults[i] += p->numa_faults_buffer[i];
  			p->numa_faults_buffer[i] = 0;
@@ -382,7 +380,7 @@ index b1e5061..1422765 100644
  		if (faults > max_faults) {
  			max_faults = faults;
  			max_nid = nid;
-@@ -4455,8 +4568,6 @@ static int move_one_task(struct lb_env *env)
+@@ -4510,8 +4623,6 @@ static int move_one_task(struct lb_env *
  	return 0;
  }
  
@@ -391,11 +389,9 @@ index b1e5061..1422765 100644
  static const unsigned int sched_nr_migrate_break = 32;
  
  /*
-diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index 4dc92d0..691e969 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
-@@ -610,9 +610,22 @@ static inline struct sched_domain *highest_flag_domain(int cpu, int flag)
+@@ -610,9 +610,22 @@ static inline struct sched_domain *highe
  	return hsd;
  }
  
@@ -415,6 +411,6 @@ index 4dc92d0..691e969 100644
  DECLARE_PER_CPU(int, sd_llc_size);
  DECLARE_PER_CPU(int, sd_llc_id);
 +DECLARE_PER_CPU(struct sched_domain *, sd_numa);
+ DECLARE_PER_CPU(struct sched_domain *, sd_busy);
+ DECLARE_PER_CPU(struct sched_domain *, sd_asym);
  
- struct sched_group_power {
- 	atomic_t ref;
