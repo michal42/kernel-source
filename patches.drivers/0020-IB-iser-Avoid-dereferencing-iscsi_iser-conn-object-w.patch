@@ -1,0 +1,47 @@
+From: Roi Dayan <roid@mellanox.com>
+Date: Tue, 4 Feb 2014 16:54:54 +0200
+Subject: IB/iser: Avoid dereferencing iscsi_iser conn object when not bound to iser connection
+Patch-mainline: 3.14-rc3
+Git-commit: 7d9eacf9457efc6b614665e1095336c11ad83f0d
+References: bnc#868011
+
+Fix a possible NULL pointer dereference in disconnection flow. This
+can happen if the target disconnected/rejected the connection request,
+e.g before the binding stage between iscsi connection to the transport
+connection.
+
+Signed-off-by: Alex Tabachnik <alext@mellanox.com>
+Signed-off-by: Roi Dayan <roid@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/ulp/iser/iser_verbs.c |   10 +++++++---
+ 1 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/infiniband/ulp/iser/iser_verbs.c b/drivers/infiniband/ulp/iser/iser_verbs.c
+index afe9567..ca37ede 100644
+--- a/drivers/infiniband/ulp/iser/iser_verbs.c
++++ b/drivers/infiniband/ulp/iser/iser_verbs.c
+@@ -652,9 +652,13 @@ static int iser_disconnected_handler(struct rdma_cm_id *cma_id)
+ 	/* getting here when the state is UP means that the conn is being *
+ 	 * terminated asynchronously from the iSCSI layer's perspective.  */
+ 	if (iser_conn_state_comp_exch(ib_conn, ISER_CONN_UP,
+-				      ISER_CONN_TERMINATING))
+-		iscsi_conn_failure(ib_conn->iser_conn->iscsi_conn,
+-				   ISCSI_ERR_CONN_FAILED);
++					ISER_CONN_TERMINATING)){
++		if (ib_conn->iser_conn)
++			iscsi_conn_failure(ib_conn->iser_conn->iscsi_conn,
++					   ISCSI_ERR_CONN_FAILED);
++		else
++			iser_err("iscsi_iser connection isn't bound\n");
++	}
+ 
+ 	/* Complete the termination process if no posts are pending */
+ 	if (ib_conn->post_recv_buf_count == 0 &&
+-- 
+1.7.8.2
+
