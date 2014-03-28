@@ -1,0 +1,126 @@
+From: Or Gerlitz <ogerlitz@mellanox.com>
+Date: Thu, 12 Dec 2013 18:03:17 +0200
+Subject: IB/core: Resolve Ethernet L2 addresses when modifying QP
+Patch-mainline: 3.14-rc1
+Git-commit: ed4c54e5b4baf55a7a67a80fa766334855c94854
+References: bnc#868011
+
+Existing user space applications provide only IBoE L3 address
+attributes to the kernel when they issue a modify QP modify.  To work
+with them and let such apps (plus kernel consumers which don't use the
+RDMA-CM) keep working transparently under the IBoE GID IP addressing
+changes, add an Eth L2 address resolution helper.
+
+Signed-off-by: Moni Shoua <monis@mellanox.co.il>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/core/core_priv.h  |    2 +
+ drivers/infiniband/core/uverbs_cmd.c |    4 +++
+ drivers/infiniband/core/verbs.c      |   43 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 49 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/infiniband/core/core_priv.h b/drivers/infiniband/core/core_priv.h
+index a565af5..87d1936 100644
+--- a/drivers/infiniband/core/core_priv.h
++++ b/drivers/infiniband/core/core_priv.h
+@@ -49,4 +49,6 @@ void ib_sysfs_cleanup(void);
+ int  ib_cache_setup(void);
+ void ib_cache_cleanup(void);
+ 
++int ib_resolve_eth_l2_attrs(struct ib_qp *qp,
++			    struct ib_qp_attr *qp_attr, int *qp_attr_mask);
+ #endif /* _CORE_PRIV_H */
+diff --git a/drivers/infiniband/core/uverbs_cmd.c b/drivers/infiniband/core/uverbs_cmd.c
+index b204a59..3b4a0eb 100644
+--- a/drivers/infiniband/core/uverbs_cmd.c
++++ b/drivers/infiniband/core/uverbs_cmd.c
+@@ -40,6 +40,7 @@
+ #include <asm/uaccess.h>
+ 
+ #include "uverbs.h"
++#include "core_priv.h"
+ 
+ struct uverbs_lock_class {
+ 	struct lock_class_key	key;
+@@ -1965,6 +1966,9 @@ ssize_t ib_uverbs_modify_qp(struct ib_uverbs_file *file,
+ 	attr->alt_ah_attr.port_num 	    = cmd.alt_dest.port_num;
+ 
+ 	if (qp->real_qp == qp) {
++		ret = ib_resolve_eth_l2_attrs(qp, attr, &cmd.attr_mask);
++		if (ret)
++			goto out;
+ 		ret = qp->device->modify_qp(qp, attr,
+ 			modify_qp_mask(qp->qp_type, cmd.attr_mask), &udata);
+ 	} else {
+diff --git a/drivers/infiniband/core/verbs.c b/drivers/infiniband/core/verbs.c
+index 699c805..f6d7b83 100644
+--- a/drivers/infiniband/core/verbs.c
++++ b/drivers/infiniband/core/verbs.c
+@@ -46,6 +46,8 @@
+ #include <rdma/ib_cache.h>
+ #include <rdma/ib_addr.h>
+ 
++#include "core_priv.h"
++
+ int ib_rate_to_mult(enum ib_rate rate)
+ {
+ 	switch (rate) {
+@@ -862,10 +864,51 @@ int ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
+ }
+ EXPORT_SYMBOL(ib_modify_qp_is_ok);
+ 
++int ib_resolve_eth_l2_attrs(struct ib_qp *qp,
++			    struct ib_qp_attr *qp_attr, int *qp_attr_mask)
++{
++	int           ret = 0;
++	union ib_gid  sgid;
++
++	if ((*qp_attr_mask & IB_QP_AV)  &&
++	    (rdma_port_get_link_layer(qp->device, qp_attr->ah_attr.port_num) == IB_LINK_LAYER_ETHERNET)) {
++		ret = ib_query_gid(qp->device, qp_attr->ah_attr.port_num,
++				   qp_attr->ah_attr.grh.sgid_index, &sgid);
++		if (ret)
++			goto out;
++		if (rdma_link_local_addr((struct in6_addr *)qp_attr->ah_attr.grh.dgid.raw)) {
++			rdma_get_ll_mac((struct in6_addr *)qp_attr->ah_attr.grh.dgid.raw, qp_attr->ah_attr.dmac);
++			rdma_get_ll_mac((struct in6_addr *)sgid.raw, qp_attr->smac);
++			qp_attr->vlan_id = rdma_get_vlan_id(&sgid);
++		} else {
++			ret = rdma_addr_find_dmac_by_grh(&sgid, &qp_attr->ah_attr.grh.dgid,
++					qp_attr->ah_attr.dmac, &qp_attr->vlan_id);
++			if (ret)
++				goto out;
++			ret = rdma_addr_find_smac_by_sgid(&sgid, qp_attr->smac, NULL);
++			if (ret)
++				goto out;
++		}
++		*qp_attr_mask |= IB_QP_SMAC;
++		if (qp_attr->vlan_id < 0xFFFF)
++			*qp_attr_mask |= IB_QP_VID;
++	}
++out:
++	return ret;
++}
++EXPORT_SYMBOL(ib_resolve_eth_l2_attrs);
++
++
+ int ib_modify_qp(struct ib_qp *qp,
+ 		 struct ib_qp_attr *qp_attr,
+ 		 int qp_attr_mask)
+ {
++	int ret;
++
++	ret = ib_resolve_eth_l2_attrs(qp, qp_attr, &qp_attr_mask);
++	if (ret)
++		return ret;
++
+ 	return qp->device->modify_qp(qp->real_qp, qp_attr, qp_attr_mask, NULL);
+ }
+ EXPORT_SYMBOL(ib_modify_qp);
+-- 
+1.7.8.2
+
