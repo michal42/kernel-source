@@ -1,0 +1,52 @@
+From: Moni Shoua <monis@mellanox.co.il>
+Date: Wed, 5 Feb 2014 15:12:59 +0200
+Subject: IB/mlx4: Move rtnl locking to the right place
+Patch-mainline: 3.14-rc3
+Git-commit: 4ce5a5744a2f5479e58c6788cbe3987b8071b62e
+References: bnc#868011
+
+On the one hand, the invocation of netdev_master_upper_dev_get()
+within mlx4_ib_scan_netdevs() must be done with rtnl lock held.  On
+the other hand, it's wrong to call rtnl_lock() from within this
+function since it's also called by our netdev notifier callback.
+Therefore move the locking to mlx4_ib_add() so that both cases are
+covered.
+
+Signed-off-by: Moni Shoua <monis@mellanox.co.il>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/hw/mlx4/main.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/infiniband/hw/mlx4/main.c b/drivers/infiniband/hw/mlx4/main.c
+index 5001599..409d2ea 100644
+--- a/drivers/infiniband/hw/mlx4/main.c
++++ b/drivers/infiniband/hw/mlx4/main.c
+@@ -1766,10 +1766,8 @@ static void mlx4_ib_scan_netdevs(struct mlx4_ib_dev *ibdev)
+ 						iboe->netdevs[port - 1], port);
+ 		if (iboe->netdevs[port - 1] &&
+ 		    netif_is_bond_slave(iboe->netdevs[port - 1])) {
+-			rtnl_lock();
+ 			iboe->masters[port - 1] = netdev_master_upper_dev_get(
+ 				iboe->netdevs[port - 1]);
+-			rtnl_unlock();
+ 		}
+ 		curr_master = iboe->masters[port - 1];
+ 
+@@ -2167,7 +2165,9 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
+ 			}
+ 		}
+ #endif
++		rtnl_lock();
+ 		mlx4_ib_scan_netdevs(ibdev);
++		rtnl_unlock();
+ 		mlx4_ib_init_gid_table(ibdev);
+ 	}
+ 
+-- 
+1.7.8.2
+
