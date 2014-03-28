@@ -1,0 +1,74 @@
+From: Moni Shoua <monis@mellanox.co.il>
+Date: Wed, 5 Feb 2014 15:13:00 +0200
+Subject: IB/mlx4: Do IBoE locking earlier when initializing the GID table
+Patch-mainline: 3.14-rc3
+Git-commit: ddf8bd349115c2bc85a62e3d94018c9976ac72f7
+References: bnc#868011
+
+Updating the GID table under IBoE requires read/write from/to shared
+data structures.  These data structures are protected with the device
+iboe lock.  The flows that modify the GID table start from
+
+    1. Initializing the GID table
+    2. NETDEV events
+    3. INET or INET6 events
+
+This patch makes sure that the flow of initializing the GID table is
+consistent with the other two flows w.r.t on what step the lock is taken.
+
+Signed-off-by: Moni Shoua <monis@mellanox.co.il>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/hw/mlx4/main.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/infiniband/hw/mlx4/main.c b/drivers/infiniband/hw/mlx4/main.c
+index 409d2ea..96d86ee 100644
+--- a/drivers/infiniband/hw/mlx4/main.c
++++ b/drivers/infiniband/hw/mlx4/main.c
+@@ -1629,7 +1629,6 @@ static u8 mlx4_ib_get_dev_port(struct net_device *dev,
+ 				rdma_vlan_dev_real_dev(dev) : dev;
+ 
+ 	iboe = &ibdev->iboe;
+-	spin_lock(&iboe->lock);
+ 
+ 	for (port = 1; port <= MLX4_MAX_PORTS; ++port)
+ 		if ((netif_is_bond_master(real_dev) &&
+@@ -1638,8 +1637,6 @@ static u8 mlx4_ib_get_dev_port(struct net_device *dev,
+ 		     (real_dev == iboe->netdevs[port - 1])))
+ 			break;
+ 
+-	spin_unlock(&iboe->lock);
+-
+ 	if ((port == 0) || (port > MLX4_MAX_PORTS))
+ 		return 0;
+ 	else
+@@ -1731,11 +1728,13 @@ static void mlx4_ib_set_default_gid(struct mlx4_ib_dev *ibdev,
+ static int mlx4_ib_init_gid_table(struct mlx4_ib_dev *ibdev)
+ {
+ 	struct	net_device *dev;
++	struct mlx4_ib_iboe *iboe = &ibdev->iboe;
+ 
+ 	if (reset_gid_table(ibdev))
+ 		return -1;
+ 
+ 	read_lock(&dev_base_lock);
++	spin_lock(&iboe->lock);
+ 
+ 	for_each_netdev(&init_net, dev) {
+ 		u8 port = mlx4_ib_get_dev_port(dev, ibdev);
+@@ -1743,6 +1742,7 @@ static int mlx4_ib_init_gid_table(struct mlx4_ib_dev *ibdev)
+ 			mlx4_ib_get_dev_addr(dev, ibdev, port);
+ 	}
+ 
++	spin_unlock(&iboe->lock);
+ 	read_unlock(&dev_base_lock);
+ 
+ 	return 0;
+-- 
+1.7.8.2
+
