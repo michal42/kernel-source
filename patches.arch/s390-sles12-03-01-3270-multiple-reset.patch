@@ -1,0 +1,57 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: kernel: crash due to multiple reset requests
+Patch-mainline: not yet
+Git-commit: -
+References: bnc#870658, LTC#107919
+
+Description:  kernel: crash due to multiple reset requests
+Symptom:      The kernel crash due to a list corruption triggered by a
+              call to raw3270_reset_device.
+Problem:      The reset request started after a 3270 device has been set
+              online can stay pending if the 3270 device is not operational.
+              A second reset device call e.g. due to set offline will reuse
+              the same request structure. The list_add call for the second
+              start of the same request will corrupt the request list.
+Solution:     Add a check for an already pending reset request.
+Reproduction: Set a 3270 device online and offline again while the
+              device is not operational.
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/char/raw3270.c |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+--- a/drivers/s390/char/raw3270.c
++++ b/drivers/s390/char/raw3270.c
+@@ -623,6 +623,8 @@ raw3270_reset_device_cb(struct raw3270_r
+ 		raw3270_size_device_done(rp);
+ 	} else
+ 		raw3270_writesf_readpart(rp);
++	memset(&rp->init_reset, 0, sizeof(rp->init_reset));
++	memset(&rp->init_data, 0, sizeof(rp->init_data));
+ }
+ 
+ static int
+@@ -630,9 +632,10 @@ __raw3270_reset_device(struct raw3270 *r
+ {
+ 	int rc;
+ 
++	/* Check if reset is already pending */
++	if (rp->init_reset.view)
++		return -EBUSY;
+ 	/* Store reset data stream to init_data/init_reset */
+-	memset(&rp->init_reset, 0, sizeof(rp->init_reset));
+-	memset(&rp->init_data, 0, sizeof(rp->init_data));
+ 	rp->init_data[0] = TW_KR;
+ 	rp->init_reset.ccw.cmd_code = TC_EWRITEA;
+ 	rp->init_reset.ccw.flags = CCW_FLAG_SLI;
+@@ -826,7 +829,7 @@ raw3270_create_device(struct ccw_device
+ 	char *ascebc;
+ 	int rc;
+ 
+-	rp = kmalloc(sizeof(struct raw3270), GFP_KERNEL | GFP_DMA);
++	rp = kzalloc(sizeof(struct raw3270), GFP_KERNEL | GFP_DMA);
+ 	if (!rp)
+ 		return ERR_PTR(-ENOMEM);
+ 	ascebc = kmalloc(256, GFP_KERNEL);
