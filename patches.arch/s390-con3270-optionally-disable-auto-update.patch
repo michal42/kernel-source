@@ -1,6 +1,6 @@
-From: Hannes Reinecke <hare@suse.de>
-Date: Fri, 14 Mar 2014 12:21:08 +0100
-Subject: [PATCH] con3270: optionally disable auto update
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Date: Fri, 21 Mar 2014 09:25:24 +0100
+Subject: [PATCH] s390/con3270: optionally disable auto update
 References: bnc#868409
 Patch-Mainline: not yet
 
@@ -12,10 +12,16 @@ to switch to the console view whenever new system messages
 are display, which makes working on the 3270 terminal
 awkward.
 
-Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/s390/char/con3270.c | 7 +++++++
+ drivers/s390/char/raw3270.c | 9 +++++++++
+ drivers/s390/char/raw3270.h | 1 +
+ 3 files changed, 17 insertions(+)
 
 diff --git a/drivers/s390/char/con3270.c b/drivers/s390/char/con3270.c
-index 699fd3e..f54ee3f 100644
+index bb6b0df..75ffe99 100644
 --- a/drivers/s390/char/con3270.c
 +++ b/drivers/s390/char/con3270.c
 @@ -7,6 +7,7 @@
@@ -36,13 +42,55 @@ index 699fd3e..f54ee3f 100644
  /*
   * Main 3270 console view data structure.
   */
-@@ -379,6 +383,9 @@ con3270_activate(struct raw3270_view *view)
- {
- 	struct con3270 *cp;
+@@ -204,6 +208,8 @@ con3270_update(struct con3270 *cp)
+ 	struct string *s, *n;
+ 	int rc;
  
-+	if (!auto_update)
-+		return 0;
++	if (!auto_update && !raw3270_view_active(&cp->view))
++		return;
+ 	if (cp->view.dev)
+ 		raw3270_activate_view(&cp->view);
+ 
+@@ -529,6 +535,7 @@ con3270_flush(void)
+ 	if (!cp->view.dev)
+ 		return;
+ 	raw3270_pm_unfreeze(&cp->view);
++	raw3270_activate_view(&cp->view);
+ 	spin_lock_irqsave(&cp->view.lock, flags);
+ 	con3270_wait_write(cp);
+ 	cp->nr_up = 0;
+diff --git a/drivers/s390/char/raw3270.c b/drivers/s390/char/raw3270.c
+index 041c65b..9f849df 100644
+--- a/drivers/s390/char/raw3270.c
++++ b/drivers/s390/char/raw3270.c
+@@ -276,6 +276,15 @@ __raw3270_start(struct raw3270 *rp, struct raw3270_view *view,
+ }
+ 
+ int
++raw3270_view_active(struct raw3270_view *view)
++{
++	struct raw3270 *rp = view->dev;
 +
- 	cp = (struct con3270 *) view;
- 	cp->update_flags = CON_UPDATE_ALL;
- 	con3270_set_timer(cp, 1);
++	return rp && rp->view == view &&
++		!test_bit(RAW3270_FLAGS_FROZEN, &rp->flags);
++}
++
++int
+ raw3270_start(struct raw3270_view *view, struct raw3270_request *rq)
+ {
+ 	unsigned long flags;
+diff --git a/drivers/s390/char/raw3270.h b/drivers/s390/char/raw3270.h
+index 359276a..e1e41c2 100644
+--- a/drivers/s390/char/raw3270.h
++++ b/drivers/s390/char/raw3270.h
+@@ -173,6 +173,7 @@ int raw3270_start_locked(struct raw3270_view *, struct raw3270_request *);
+ int raw3270_start_irq(struct raw3270_view *, struct raw3270_request *);
+ int raw3270_reset(struct raw3270_view *);
+ struct raw3270_view *raw3270_view(struct raw3270_view *);
++int raw3270_view_active(struct raw3270_view *);
+ 
+ /* Reference count inliner for view structures. */
+ static inline void
+-- 
+1.8.5.5
+
