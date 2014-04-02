@@ -1,0 +1,59 @@
+From 5da5535cbff2a925f60549d7d883410cbbd328f0 Mon Sep 17 00:00:00 2001
+From: Shaohua Li <shli@kernel.org>
+Date: Wed, 2 Apr 2014 13:57:45 +0100
+Subject: [PATCH] x86: clearing access bit don't flush tlb
+
+References: VM Performance
+Patch-mainline: No (Expected 3.15)
+
+We use access bit to age a page at page reclaim. When clearing pte access bit,
+we could skip tlb flush in X86. The side effect is if the pte is in tlb and pte
+access bit is unset in page table, when cpu access the page again, cpu will not
+set page table pte's access bit. Next time page reclaim will think this hot
+page is old and reclaim it wrongly, but this doesn't corrupt data.
+
+And according to intel manual, tlb has less than 1k entries, which covers < 4M
+memory. In today's system, several giga byte memory is normal. After page
+reclaim clears pte access bit and before cpu access the page again, it's quite
+unlikely this page's pte is still in TLB. And context swich will flush tlb too.
+The chance skiping tlb flush to impact page reclaim should be very rare.
+
+Originally (in 2.5 kernel maybe), we didn't do tlb flush after clear access bit.
+Hugh added it to fix some ARM and sparc issues. Since I only change this for
+x86, there should be no risk.
+
+And in some workloads, TLB flush overhead is very heavy. In my simple
+multithread app with a lot of swap to several pcie SSD, removing the tlb flush
+gives about 20% ~ 30% swapout speedup.
+
+Signed-off-by: Shaohua Li <shli@fusionio.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/x86/mm/pgtable.c | 13 ++++++-------
+ 1 file changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/arch/x86/mm/pgtable.c b/arch/x86/mm/pgtable.c
+index a7cccb6..3eab144 100644
+--- a/arch/x86/mm/pgtable.c
++++ b/arch/x86/mm/pgtable.c
+@@ -397,13 +397,12 @@ int pmdp_test_and_clear_young(struct vm_area_struct *vma,
+ int ptep_clear_flush_young(struct vm_area_struct *vma,
+ 			   unsigned long address, pte_t *ptep)
+ {
+-	int young;
+-
+-	young = ptep_test_and_clear_young(vma, address, ptep);
+-	if (young)
+-		flush_tlb_page(vma, address);
+-
+-	return young;
++	/*
++	 * In X86, clearing access bit without TLB flush doesn't cause data
++	 * corruption. Doing this could cause wrong page aging and so hot pages
++	 * are reclaimed, but the chance should be very rare.
++	 */
++	return ptep_test_and_clear_young(vma, address, ptep);
+ }
+ 
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE
