@@ -1,0 +1,108 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Fri, 28 Feb 2014 14:14:03 +0100
+Subject: [20/21] bna: fix vlan tag stripping and implement its toggling
+Patch-mainline: v3.14-rc6
+Git-commit: 877767dccf5c35d4ed245701956effb72af77d52
+References: bnc#855232 FATE#315938
+
+The recent commit "fe1624c bna: RX Filter Enhancements" disables
+VLAN tag stripping if the NIC is in promiscuous mode. This causes
+__vlan_hwaccel_put_tag() is called when the stripping is disabled.
+Because of this VLAN over bna does not work and causes BUGs in conjunction
+with openvswitch like this:
+Reviewed-by: Jiri Pirko <jiri@resnulli.us>
+
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/brocade/bna/bnad.c |   40 ++++++++++++++++++++++++--------
+ 1 file changed, 30 insertions(+), 10 deletions(-)
+--- a/drivers/net/ethernet/brocade/bna/bnad.c
++++ b/drivers/net/ethernet/brocade/bna/bnad.c
+@@ -707,7 +707,8 @@ bnad_cq_process(struct bnad *bnad, struc
+ 		else
+ 			skb_checksum_none_assert(skb);
+ 
+-		if (flags & BNA_CQ_EF_VLAN)
++		if ((flags & BNA_CQ_EF_VLAN) &&
++		    (bnad->netdev->features & NETIF_F_HW_VLAN_CTAG_RX))
+ 			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), ntohs(cmpl->vlan_tag));
+ 
+ 		if (BNAD_RXBUF_IS_SK_BUFF(unmap_q->type))
+@@ -2094,7 +2095,9 @@ bnad_init_rx_config(struct bnad *bnad, s
+ 		rx_config->q1_buf_size = BFI_SMALL_RXBUF_SIZE;
+ 	}
+ 
+-	rx_config->vlan_strip_status = BNA_STATUS_T_ENABLED;
++	rx_config->vlan_strip_status =
++		(bnad->netdev->features & NETIF_F_HW_VLAN_CTAG_RX) ?
++		BNA_STATUS_T_ENABLED : BNA_STATUS_T_DISABLED;
+ }
+ 
+ static void
+@@ -3245,11 +3248,6 @@ bnad_set_rx_mode(struct net_device *netd
+ 			BNA_RXMODE_ALLMULTI;
+ 	bna_rx_mode_set(bnad->rx_info[0].rx, new_mode, mode_mask, NULL);
+ 
+-	if (bnad->cfg_flags & BNAD_CF_PROMISC)
+-		bna_rx_vlan_strip_disable(bnad->rx_info[0].rx);
+-	else
+-		bna_rx_vlan_strip_enable(bnad->rx_info[0].rx);
+-
+ 	spin_unlock_irqrestore(&bnad->bna_lock, flags);
+ }
+ 
+@@ -3374,6 +3372,27 @@ bnad_vlan_rx_kill_vid(struct net_device
+ 	return 0;
+ }
+ 
++static int bnad_set_features(struct net_device *dev, netdev_features_t features)
++{
++	struct bnad *bnad = netdev_priv(dev);
++	netdev_features_t changed = features ^ dev->features;
++
++	if ((changed & NETIF_F_HW_VLAN_CTAG_RX) && netif_running(dev)) {
++		unsigned long flags;
++
++		spin_lock_irqsave(&bnad->bna_lock, flags);
++
++		if (features & NETIF_F_HW_VLAN_CTAG_RX)
++			bna_rx_vlan_strip_enable(bnad->rx_info[0].rx);
++		else
++			bna_rx_vlan_strip_disable(bnad->rx_info[0].rx);
++
++		spin_unlock_irqrestore(&bnad->bna_lock, flags);
++	}
++
++	return 0;
++}
++
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ static void
+ bnad_netpoll(struct net_device *netdev)
+@@ -3421,6 +3440,7 @@ static const struct net_device_ops bnad_
+ 	.ndo_change_mtu		= bnad_change_mtu,
+ 	.ndo_vlan_rx_add_vid    = bnad_vlan_rx_add_vid,
+ 	.ndo_vlan_rx_kill_vid   = bnad_vlan_rx_kill_vid,
++	.ndo_set_features	= bnad_set_features,
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	.ndo_poll_controller    = bnad_netpoll
+ #endif
+@@ -3433,14 +3453,14 @@ bnad_netdev_init(struct bnad *bnad, bool
+ 
+ 	netdev->hw_features = NETIF_F_SG | NETIF_F_RXCSUM |
+ 		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+-		NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_HW_VLAN_CTAG_TX;
++		NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_HW_VLAN_CTAG_TX |
++		NETIF_F_HW_VLAN_CTAG_RX;
+ 
+ 	netdev->vlan_features = NETIF_F_SG | NETIF_F_HIGHDMA |
+ 		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+ 		NETIF_F_TSO | NETIF_F_TSO6;
+ 
+-	netdev->features |= netdev->hw_features |
+-		NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_FILTER;
++	netdev->features |= netdev->hw_features | NETIF_F_HW_VLAN_CTAG_FILTER;
+ 
+ 	if (using_dac)
+ 		netdev->features |= NETIF_F_HIGHDMA;
