@@ -1,0 +1,50 @@
+From f0776b8ce03ceb638c51b62f324844c71c446600 Mon Sep 17 00:00:00 2001
+From: Peter Tyser <ptyser@xes-inc.com>
+Date: Mon, 10 Mar 2014 16:34:52 -0500
+Subject: [PATCH] mfd: lpc_ich: Only configure watchdog or GPIO when present
+Git-commit: f0776b8ce03ceb638c51b62f324844c71c446600
+Patch-mainline: to be in 3.15-rc1
+References: bnc#871908
+
+Some chipsets don't currently have GPIO support enabled.  For these
+chipsets don't go through the process of initializing the GPIO region.
+
+Make the same change for the watchdog initialization for chipsets which
+may not enable the WDT in the future.
+
+Signed-off-by: Peter Tyser <ptyser@xes-inc.com>
+Tested-by: Rajat Jain <rajatjain@juniper.net>
+Reviewed-by: Guenter Roeck <linux@roeck-us.net>
+Signed-off-by: Lee Jones <lee.jones@linaro.org>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/mfd/lpc_ich.c |   16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+--- a/drivers/mfd/lpc_ich.c
++++ b/drivers/mfd/lpc_ich.c
+@@ -968,13 +968,17 @@ static int lpc_ich_probe(struct pci_dev
+ 
+ 	pci_set_drvdata(dev, priv);
+ 
+-	ret = lpc_ich_init_wdt(dev);
+-	if (!ret)
+-		cell_added = true;
++	if (lpc_chipset_info[priv->chipset].iTCO_version) {
++		ret = lpc_ich_init_wdt(dev);
++		if (!ret)
++			cell_added = true;
++	}
+ 
+-	ret = lpc_ich_init_gpio(dev);
+-	if (!ret)
+-		cell_added = true;
++	if (lpc_chipset_info[priv->chipset].gpio_version) {
++		ret = lpc_ich_init_gpio(dev);
++		if (!ret)
++			cell_added = true;
++	}
+ 
+ 	/*
+ 	 * We only care if at least one or none of the cells registered
