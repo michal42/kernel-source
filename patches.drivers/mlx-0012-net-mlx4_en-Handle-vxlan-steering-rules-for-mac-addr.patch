@@ -1,0 +1,34 @@
+From: Or Gerlitz <ogerlitz@mellanox.com>
+Date: Wed, 12 Mar 2014 17:16:31 +0200
+Subject: net/mlx4_en: Handle vxlan steering rules for mac address changes
+Patch-mainline: v3.14-rc7
+Git-commit: 2a2083f7f3568c0192daa6ac0e6fa35d953f47bd
+References: bnc#858727 FATE#315946
+
+When the device mac address is changed, we must deregister the vxlan
+steering rule associated with the previous mac, and register a new
+steering rule using the new mac.
+
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/mellanox/mlx4/en_netdev.c |    8 ++++++++
+ 1 file changed, 8 insertions(+)
+--- a/drivers/net/ethernet/mellanox/mlx4/en_netdev.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_netdev.c
+@@ -742,6 +742,14 @@ static int mlx4_en_replace_mac(struct ml
+ 				err = mlx4_en_uc_steer_add(priv, new_mac,
+ 							   &qpn,
+ 							   &entry->reg_id);
++				if (err)
++					return err;
++				if (priv->tunnel_reg_id) {
++					mlx4_flow_detach(priv->mdev->dev, priv->tunnel_reg_id);
++					priv->tunnel_reg_id = 0;
++				}
++				err = mlx4_en_tunnel_steer_add(priv, new_mac, qpn,
++							       &priv->tunnel_reg_id);
+ 				return err;
+ 			}
+ 		}

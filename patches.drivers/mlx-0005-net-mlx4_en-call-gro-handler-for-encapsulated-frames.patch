@@ -1,0 +1,72 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Thu, 9 Jan 2014 10:30:13 -0800
+Subject: net/mlx4_en: call gro handler for encapsulated frames
+Patch-mainline: v3.14-rc1
+Git-commit: e6a767582942d6fd9da0ddea673f5a7017a365c7
+References: bnc#858727 FATE#315946
+
+In order to use the native GRO handling of encapsulated protocols on
+mlx4, we need to call napi_gro_receive() instead of netif_receive_skb()
+unless busy polling is in action.
+
+While we are at it, rename mlx4_en_cq_ll_polling() to
+mlx4_en_cq_busy_polling()
+
+Tested with GRE tunnel : GRO aggregation is now performed on the
+ethernet device instead of being done later on gre device.
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Amir Vadai <amirv@mellanox.com>
+Cc: Jerry Chu <hkchu@google.com>
+Cc: Or Gerlitz <ogerlitz@mellanox.com>
+Acked-By: Amir Vadai <amirv@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/net/ethernet/mellanox/mlx4/en_rx.c   |    8 +++++---
+ drivers/net/ethernet/mellanox/mlx4/mlx4_en.h |    4 ++--
+ 2 files changed, 7 insertions(+), 5 deletions(-)
+--- a/drivers/net/ethernet/mellanox/mlx4/en_rx.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_rx.c
+@@ -724,7 +724,7 @@ int mlx4_en_process_rx_cq(struct net_dev
+ 				 * - not an IP fragment
+ 				 * - no LLS polling in progress
+ 				 */
+-				if (!mlx4_en_cq_ll_polling(cq) &&
++				if (!mlx4_en_cq_busy_polling(cq) &&
+ 				    (dev->features & NETIF_F_GRO)) {
+ 					struct sk_buff *gro_skb = napi_get_frags(&cq->napi);
+ 					if (!gro_skb)
+@@ -816,8 +816,10 @@ int mlx4_en_process_rx_cq(struct net_dev
+ 
+ 		skb_mark_napi_id(skb, &cq->napi);
+ 
+-		/* Push it up the stack */
+-		netif_receive_skb(skb);
++		if (!mlx4_en_cq_busy_polling(cq))
++			napi_gro_receive(&cq->napi, skb);
++		else
++			netif_receive_skb(skb);
+ 
+ next:
+ 		for (nr = 0; nr < priv->num_frags; nr++)
+--- a/drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
++++ b/drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
+@@ -661,7 +661,7 @@ static inline bool mlx4_en_cq_unlock_pol
+ }
+ 
+ /* true if a socket is polling, even if it did not get the lock */
+-static inline bool mlx4_en_cq_ll_polling(struct mlx4_en_cq *cq)
++static inline bool mlx4_en_cq_busy_polling(struct mlx4_en_cq *cq)
+ {
+ 	WARN_ON(!(cq->state & MLX4_CQ_LOCKED));
+ 	return cq->state & CQ_USER_PEND;
+@@ -691,7 +691,7 @@ static inline bool mlx4_en_cq_unlock_pol
+ 	return false;
+ }
+ 
+-static inline bool mlx4_en_cq_ll_polling(struct mlx4_en_cq *cq)
++static inline bool mlx4_en_cq_busy_polling(struct mlx4_en_cq *cq)
+ {
+ 	return false;
+ }
