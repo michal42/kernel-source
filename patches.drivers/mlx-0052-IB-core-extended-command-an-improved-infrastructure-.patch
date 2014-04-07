@@ -160,13 +160,13 @@ Signed-off-by: Roland Dreier <roland@purestorage.com>
 Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
 Acked-by: Benjamin Poirier <bpoirier@suse.de>
 ---
- drivers/infiniband/core/uverbs.h      |   20 ++++-
+ drivers/infiniband/core/uverbs.h      |   19 ++++-
  drivers/infiniband/core/uverbs_cmd.c  |   56 ++++++--------
- drivers/infiniband/core/uverbs_main.c |  127 ++++++++++++++++++++++++++--------
+ drivers/infiniband/core/uverbs_main.c |  129 ++++++++++++++++++++++++++--------
  drivers/infiniband/hw/mlx4/main.c     |    6 -
  include/rdma/ib_verbs.h               |    1 
- include/uapi/rdma/ib_user_verbs.h     |   23 +++---
- 6 files changed, 160 insertions(+), 73 deletions(-)
+ include/uapi/rdma/ib_user_verbs.h     |   25 +++---
+ 6 files changed, 161 insertions(+), 75 deletions(-)
 --- a/drivers/infiniband/core/uverbs.h
 +++ b/drivers/infiniband/core/uverbs.h
 @@ -47,6 +47,14 @@
@@ -184,11 +184,9 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  /*
   * Our lifetime rules for these structs are the following:
   *
-@@ -235,9 +243,17 @@ IB_UVERBS_DECLARE_CMD(destroy_srq);
- IB_UVERBS_DECLARE_CMD(create_xsrq);
- IB_UVERBS_DECLARE_CMD(open_xrcd);
- IB_UVERBS_DECLARE_CMD(close_xrcd);
-+
+@@ -240,8 +248,15 @@ IB_UVERBS_DECLARE_CMD(kwrite_mmio);
+ #endif
+ 
  #ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
 -IB_UVERBS_DECLARE_CMD(create_flow);
 -IB_UVERBS_DECLARE_CMD(destroy_flow);
@@ -221,7 +219,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  /*
   * The ib_uobject locking scheme is as follows:
   *
-@@ -2642,9 +2634,9 @@ static int kern_spec_to_ib_spec(struct i
+@@ -2688,9 +2680,9 @@ static int kern_spec_to_ib_spec(struct i
  	return 0;
  }
  
@@ -234,7 +232,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  {
  	struct ib_uverbs_create_flow	  cmd;
  	struct ib_uverbs_create_flow_resp resp;
-@@ -2658,11 +2650,15 @@ ssize_t ib_uverbs_create_flow(struct ib_
+@@ -2704,11 +2696,15 @@ ssize_t ib_uverbs_create_flow(struct ib_
  	void *ib_spec;
  	int i;
  
@@ -253,7 +251,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	if (cmd.comp_mask)
  		return -EINVAL;
-@@ -2674,7 +2670,7 @@ ssize_t ib_uverbs_create_flow(struct ib_
+@@ -2720,7 +2716,7 @@ ssize_t ib_uverbs_create_flow(struct ib_
  	if (cmd.flow_attr.num_of_specs > IB_FLOW_SPEC_SUPPORT_LAYERS)
  		return -EINVAL;
  
@@ -262,7 +260,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	    cmd.flow_attr.size >
  	    (cmd.flow_attr.num_of_specs * sizeof(struct ib_uverbs_flow_spec)))
  		return -EINVAL;
-@@ -2686,11 +2682,10 @@ ssize_t ib_uverbs_create_flow(struct ib_
+@@ -2732,11 +2728,10 @@ ssize_t ib_uverbs_create_flow(struct ib_
  			return -ENOMEM;
  
  		memcpy(kern_flow_attr, &cmd.flow_attr, sizeof(*kern_flow_attr));
@@ -277,7 +275,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	} else {
  		kern_flow_attr = &cmd.flow_attr;
  	}
-@@ -2758,11 +2753,10 @@ ssize_t ib_uverbs_create_flow(struct ib_
+@@ -2804,11 +2799,10 @@ ssize_t ib_uverbs_create_flow(struct ib_
  	memset(&resp, 0, sizeof(resp));
  	resp.flow_handle = uobj->id;
  
@@ -292,7 +290,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	put_qp_read(qp);
  	mutex_lock(&file->mutex);
-@@ -2775,7 +2769,7 @@ ssize_t ib_uverbs_create_flow(struct ib_
+@@ -2821,7 +2815,7 @@ ssize_t ib_uverbs_create_flow(struct ib_
  	kfree(flow_attr);
  	if (cmd.flow_attr.num_of_specs)
  		kfree(kern_flow_attr);
@@ -301,7 +299,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  err_copy:
  	idr_remove_uobj(&ib_uverbs_rule_idr, uobj);
  destroy_flow:
-@@ -2792,16 +2786,18 @@ err_free_attr:
+@@ -2838,16 +2832,18 @@ err_free_attr:
  	return err;
  }
  
@@ -325,7 +323,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	uobj = idr_write_uobj(&ib_uverbs_rule_idr, cmd.flow_handle,
  			      file->ucontext);
-@@ -2823,7 +2819,7 @@ ssize_t ib_uverbs_destroy_flow(struct ib
+@@ -2869,7 +2865,7 @@ ssize_t ib_uverbs_destroy_flow(struct ib
  
  	put_uobj(uobj);
  
@@ -336,27 +334,32 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
 --- a/drivers/infiniband/core/uverbs_main.c
 +++ b/drivers/infiniband/core/uverbs_main.c
-@@ -115,11 +115,16 @@ static ssize_t (*uverbs_cmd_table[])(str
+@@ -115,15 +115,20 @@ static ssize_t (*uverbs_cmd_table[])(str
  	[IB_USER_VERBS_CMD_CLOSE_XRCD]		= ib_uverbs_close_xrcd,
  	[IB_USER_VERBS_CMD_CREATE_XSRQ]		= ib_uverbs_create_xsrq,
  	[IB_USER_VERBS_CMD_OPEN_QP]		= ib_uverbs_open_qp,
-+};
-+
- #ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
 -	[IB_USER_VERBS_CMD_CREATE_FLOW]		= ib_uverbs_create_flow,
 -	[IB_USER_VERBS_CMD_DESTROY_FLOW]	= ib_uverbs_destroy_flow
 -#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ #ifdef __s390x__
+ 	[IB_USER_VERBS_CMD_KWRITE_MMIO]		= ib_uverbs_kwrite_mmio,
+ #endif
+ };
+ 
++#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
 +static int (*uverbs_ex_cmd_table[])(struct ib_uverbs_file *file,
 +				    struct ib_udata *ucore,
 +				    struct ib_udata *uhw) = {
 +	[IB_USER_VERBS_EX_CMD_CREATE_FLOW]	= ib_uverbs_ex_create_flow,
 +	[IB_USER_VERBS_EX_CMD_DESTROY_FLOW]	= ib_uverbs_ex_destroy_flow
- };
++};
 +#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
- 
++
  static void ib_uverbs_add_one(struct ib_device *device);
  static void ib_uverbs_remove_one(struct ib_device *device);
-@@ -589,6 +594,7 @@ static ssize_t ib_uverbs_write(struct fi
+ 
+@@ -592,6 +597,7 @@ static ssize_t ib_uverbs_write(struct fi
  {
  	struct ib_uverbs_file *file = filp->private_data;
  	struct ib_uverbs_cmd_hdr hdr;
@@ -364,7 +367,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	if (count < sizeof hdr)
  		return -EINVAL;
-@@ -596,45 +602,108 @@ static ssize_t ib_uverbs_write(struct fi
+@@ -599,45 +605,108 @@ static ssize_t ib_uverbs_write(struct fi
  	if (copy_from_user(&hdr, buf, sizeof hdr))
  		return -EFAULT;
  
@@ -501,7 +504,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  static int ib_uverbs_mmap(struct file *filp, struct vm_area_struct *vma)
 --- a/drivers/infiniband/hw/mlx4/main.c
 +++ b/drivers/infiniband/hw/mlx4/main.c
-@@ -1686,9 +1686,9 @@ static void *mlx4_ib_add(struct mlx4_dev
+@@ -1753,9 +1753,9 @@ static void *mlx4_ib_add(struct mlx4_dev
  		ibdev->ib_dev.destroy_flow	= mlx4_ib_destroy_flow;
  
  #ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
@@ -516,7 +519,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
 --- a/include/rdma/ib_verbs.h
 +++ b/include/rdma/ib_verbs.h
-@@ -1436,6 +1436,7 @@ struct ib_device {
+@@ -1444,6 +1444,7 @@ struct ib_device {
  
  	int			     uverbs_abi_ver;
  	u64			     uverbs_cmd_mask;
@@ -526,25 +529,30 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	__be64			     node_guid;
 --- a/include/uapi/rdma/ib_user_verbs.h
 +++ b/include/uapi/rdma/ib_user_verbs.h
-@@ -87,11 +87,14 @@ enum {
+@@ -87,15 +87,18 @@ enum {
  	IB_USER_VERBS_CMD_CLOSE_XRCD,
  	IB_USER_VERBS_CMD_CREATE_XSRQ,
  	IB_USER_VERBS_CMD_OPEN_QP,
-+};
-+
- #ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+-#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
 -	IB_USER_VERBS_CMD_CREATE_FLOW = IB_USER_VERBS_CMD_THRESHOLD,
 -	IB_USER_VERBS_CMD_DESTROY_FLOW
 -#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+ #ifdef __s390x__
+ 	IB_USER_VERBS_CMD_KWRITE_MMIO = 52,
+ #endif
+ };
+ 
++#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
 +enum {
 +	IB_USER_VERBS_EX_CMD_CREATE_FLOW = IB_USER_VERBS_CMD_THRESHOLD,
 +	IB_USER_VERBS_EX_CMD_DESTROY_FLOW
- };
++};
 +#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
- 
++
  /*
   * Make sure that all structs defined in this file remain laid out so
-@@ -122,6 +125,12 @@ struct ib_uverbs_comp_event_desc {
+  * that they pack the same way on 32-bit and 64-bit architectures (to
+@@ -125,6 +128,12 @@ struct ib_uverbs_comp_event_desc {
   * the rest of the command struct based on these value.
   */
  
@@ -557,7 +565,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  struct ib_uverbs_cmd_hdr {
  	__u32 command;
  	__u16 in_words;
-@@ -129,10 +138,8 @@ struct ib_uverbs_cmd_hdr {
+@@ -132,10 +141,8 @@ struct ib_uverbs_cmd_hdr {
  };
  
  #ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
@@ -570,7 +578,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	__u16 provider_in_words;
  	__u16 provider_out_words;
  	__u32 cmd_hdr_reserved;
-@@ -782,8 +789,6 @@ struct ib_uverbs_flow_attr {
+@@ -785,8 +792,6 @@ struct ib_uverbs_flow_attr {
  
  struct ib_uverbs_create_flow  {
  	__u32 comp_mask;
