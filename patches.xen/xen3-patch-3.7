@@ -7,7 +7,7 @@ Patch-mainline: 3.7
 Automatically created from "patch-3.7" by xen-port-patches.py
 Acked-by: jbeulich@suse.com
 
---- sle12.orig/arch/arm/Kconfig	2014-03-19 11:17:21.000000000 +0100
+--- sle12.orig/arch/arm/Kconfig	2014-04-09 13:08:27.000000000 +0200
 +++ sle12/arch/arm/Kconfig	2013-09-26 13:20:12.000000000 +0200
 @@ -1874,9 +1874,9 @@ config CC_STACKPROTECTOR
  
@@ -21,7 +21,7 @@ Acked-by: jbeulich@suse.com
  	bool "Xen guest support on ARM (EXPERIMENTAL)"
  	depends on ARM && AEABI && OF
  	depends on CPU_V7 && !CPU_V6
---- sle12.orig/arch/arm/Makefile	2014-03-19 11:17:21.000000000 +0100
+--- sle12.orig/arch/arm/Makefile	2014-04-09 13:08:27.000000000 +0200
 +++ sle12/arch/arm/Makefile	2013-09-26 13:20:15.000000000 +0200
 @@ -261,7 +261,7 @@ endif
  core-$(CONFIG_FPE_NWFPE)	+= arch/arm/nwfpe/
@@ -32,7 +32,7 @@ Acked-by: jbeulich@suse.com
  core-$(CONFIG_KVM_ARM_HOST) 	+= arch/arm/kvm/
  
  # If we have a machine-specific directory, then include it in the build.
---- sle12.orig/arch/arm/include/asm/xen/interface.h	2014-03-19 11:17:21.000000000 +0100
+--- sle12.orig/arch/arm/include/asm/xen/interface.h	2014-04-09 13:08:27.000000000 +0200
 +++ sle12/arch/arm/include/asm/xen/interface.h	2012-10-31 11:29:25.000000000 +0100
 @@ -11,14 +11,14 @@
  
@@ -2099,7 +2099,7 @@ Acked-by: jbeulich@suse.com
  };
  
  static int adjust_tjmax(struct platform_data *c, u32 id, struct device *dev)
---- sle12.orig/drivers/remoteproc/Kconfig	2014-03-19 11:17:21.000000000 +0100
+--- sle12.orig/drivers/remoteproc/Kconfig	2014-04-09 13:08:27.000000000 +0200
 +++ sle12/drivers/remoteproc/Kconfig	2012-11-02 12:55:30.000000000 +0100
 @@ -1,4 +1,5 @@
  menu "Remoteproc drivers"
@@ -2379,7 +2379,21 @@ Acked-by: jbeulich@suse.com
  
  	return rc;
  }
---- sle12.orig/drivers/xen/fallback.c	2014-03-19 11:17:21.000000000 +0100
+--- sle12.orig/drivers/xen/events.c	2013-11-04 00:41:51.000000000 +0100
++++ sle12/drivers/xen/events.c	2014-04-02 12:38:04.000000000 +0200
+@@ -1247,7 +1247,11 @@ irqreturn_t xen_debug_interrupt(int irq,
+ 		v = per_cpu(xen_vcpu, i);
+ 		pending = (get_irq_regs() && i == cpu)
+ 			? xen_irqs_disabled(get_irq_regs())
++#ifdef XEN_HAVE_PV_UPCALL_MASK
+ 			: v->evtchn_upcall_mask;
++#else
++			: -1;
++#endif
+ 		printk("%d: masked=%d pending=%d event_sel %0*"PRI_xen_ulong"\n  ", i,
+ 		       pending, v->evtchn_upcall_pending,
+ 		       (int)(sizeof(v->evtchn_pending_sel)*2),
+--- sle12.orig/drivers/xen/fallback.c	2014-04-09 13:08:27.000000000 +0200
 +++ sle12/drivers/xen/fallback.c	2013-04-03 10:48:55.000000000 +0200
 @@ -3,7 +3,16 @@
  #include <linux/bug.h>
@@ -3263,7 +3277,7 @@ Acked-by: jbeulich@suse.com
  	err = xenbus_scanf(XBT_NIL, "control",
  			   "platform-feature-xs_reset_watches", "%d",
  			   &supported);
---- sle12.orig/include/uapi/xen/evtchn.h	2014-03-19 11:17:21.000000000 +0100
+--- sle12.orig/include/uapi/xen/evtchn.h	2014-04-09 13:08:27.000000000 +0200
 +++ sle12/include/uapi/xen/evtchn.h	2012-10-31 16:44:01.000000000 +0100
 @@ -1,88 +1 @@
 -/******************************************************************************
@@ -3488,7 +3502,7 @@ Acked-by: jbeulich@suse.com
  #else
      XEN_GUEST_HANDLE(xen_pfn_t) frame_list;
 --- sle12.orig/include/xen/interface/xen.h	2014-02-06 14:22:50.000000000 +0100
-+++ sle12/include/xen/interface/xen.h	2012-10-29 17:13:41.000000000 +0100
++++ sle12/include/xen/interface/xen.h	2014-03-28 12:30:41.000000000 +0100
 @@ -28,9 +28,6 @@
  #define __XEN_PUBLIC_XEN_H__
  
@@ -3499,6 +3513,15 @@ Acked-by: jbeulich@suse.com
  
  #if defined(CONFIG_PARAVIRT_XEN) && !defined(HAVE_XEN_PLATFORM_COMPAT_H)
  #include <asm/xen/interface.h>
+@@ -746,7 +743,7 @@ typedef struct shared_info shared_info_t
+  * 32-bit and runs under a 64-bit hypervisor should _NOT_ use two of the
+  * pages preceding pt_base and mark them as reserved/unused.
+  */
+-#ifdef XEN_HAVE_PV_GUEST_ENTRY
++#if defined(XEN_HAVE_PV_GUEST_ENTRY) || defined(CONFIG_PARAVIRT_XEN)
+ struct start_info {
+ 	/* THE FOLLOWING ARE FILLED IN BOTH ON INITIAL BOOT AND ON RESUME.    */
+ 	char magic[32];             /* "xen-<version>-<platform>".            */
 --- sle12.orig/include/xen/net-util.h	2011-02-09 15:55:10.000000000 +0100
 +++ sle12/include/xen/net-util.h	2013-05-24 14:47:36.000000000 +0200
 @@ -50,10 +50,9 @@ static inline int skb_checksum_setup(str
