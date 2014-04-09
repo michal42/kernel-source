@@ -1,0 +1,50 @@
+From: Michael Ellerman <michael@ellerman.id.au>
+Subject: powerpc/xmon: Don't loop forever in get_output_lock()
+Git-commit: 730efb6193f8568354fd80849612291afa9fa81e
+Patch-mainline: v3.14-rc3
+References: bnc#872696 
+    
+    If we enter with xmon_speaker != 0 we skip the first cmpxchg(), we also
+    skip the while loop because xmon_speaker != last_speaker (0) - meaning we
+    skip the second cmpxchg() also.
+    
+    Following that code path the compiler sees no memory barriers and so is
+    within its rights to never reload xmon_speaker. The end result is we loop
+    forever.
+    
+    This manifests as all cpus being in xmon ('c' command), but they refuse
+    to take control when you switch to them ('c x' for cpu # x).
+    
+    I have seen this deadlock in practice and also checked the generated code to
+    confirm this is what's happening.
+    
+    The simplest fix is just to always try the cmpxchg().
+    
+Signed-off-by: Michael Ellerman <michael@ellerman.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+ arch/powerpc/xmon/xmon.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+diff --git a/arch/powerpc/xmon/xmon.c b/arch/powerpc/xmon/xmon.c
+index a90731b..598cdc7 100644
+--- a/arch/powerpc/xmon/xmon.c
++++ b/arch/powerpc/xmon/xmon.c
+@@ -309,12 +309,12 @@ static void get_output_lock(void)
+ 
+ 	if (xmon_speaker == me)
+ 		return;
++
+ 	for (;;) {
+-		if (xmon_speaker == 0) {
+-			last_speaker = cmpxchg(&xmon_speaker, 0, me);
+-			if (last_speaker == 0)
+-				return;
+-		}
++		last_speaker = cmpxchg(&xmon_speaker, 0, me);
++		if (last_speaker == 0)
++			return;
++
+ 		timeout = 10000000;
+ 		while (xmon_speaker == last_speaker) {
+ 			if (--timeout > 0)
