@@ -1,0 +1,136 @@
+From 922b1807a69bc727304d891d6693450213f33a30 Mon Sep 17 00:00:00 2001
+From: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date: Wed, 9 Apr 2014 11:27:38 +0100
+Subject: [PATCH] hugetlb: ensure hugepage access is denied if hugepages are
+ not supported
+
+References: PowerKVM crash when mounting hugetlbfs without hugepage support (bnc#870498)
+Patch-mainline: No (Expected v3.15)
+
+In KVM guests on Power, in a guest not backed by hugepages, we see the
+following:
+
+AnonHugePages:         0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:         64 kB
+
+HPAGE_SHIFT == 0 in this configuration, which indicates that hugepages
+are not supported at boot-time, but this is only checked in
+hugetlb_init(). Extract the check to a helper function, and use it in a
+few relevant places.
+
+This does make hugetlbfs not supported (not registered at all) in this
+environment. I believe this is fine, as there are no valid hugepages and
+that won't change at runtime.
+
+Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ fs/hugetlbfs/inode.c    |  5 +++++
+ include/linux/hugetlb.h | 10 ++++++++++
+ mm/hugetlb.c            | 19 ++++++++++++++-----
+ 3 files changed, 29 insertions(+), 5 deletions(-)
+
+diff --git a/fs/hugetlbfs/inode.c b/fs/hugetlbfs/inode.c
+index d19b30a..cc8fcc7 100644
+--- a/fs/hugetlbfs/inode.c
++++ b/fs/hugetlbfs/inode.c
+@@ -1017,6 +1017,11 @@ static int __init init_hugetlbfs_fs(void)
+ 	int error;
+ 	int i;
+ 
++	if (!hugepages_supported()) {
++		printk(KERN_ERR "hugetlbfs: Disabling because there are no supported hugepage sizes\n");
++		return -ENOTSUPP;
++	}
++
+ 	error = bdi_init(&hugetlbfs_backing_dev_info);
+ 	if (error)
+ 		return error;
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index 85e0c58..5cec8dc 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -445,4 +445,14 @@ static inline spinlock_t *huge_pte_lock(struct hstate *h,
+ 	return ptl;
+ }
+ 
++static inline bool hugepages_supported(void)
++{
++	/*
++	 * Some platform decide whether they support huge pages at boot
++	 * time. On these, such as powerpc, HPAGE_SHIFT is set to 0 when
++	 * there is no such support
++	 */
++	return HPAGE_SHIFT != 0;
++}
++
+ #endif /* _LINUX_HUGETLB_H */
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 1592bad..e5daf52 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -1950,11 +1950,7 @@ module_exit(hugetlb_exit);
+ 
+ static int __init hugetlb_init(void)
+ {
+-	/* Some platform decide whether they support huge pages at boot
+-	 * time. On these, such as powerpc, HPAGE_SHIFT is set to 0 when
+-	 * there is no such support
+-	 */
+-	if (HPAGE_SHIFT == 0)
++	if (!hugepages_supported())
+ 		return 0;
+ 
+ 	if (!size_to_hstate(default_hstate_size)) {
+@@ -2070,6 +2066,9 @@ static int hugetlb_sysctl_handler_common(bool obey_mempolicy,
+ 	unsigned long tmp;
+ 	int ret;
+ 
++	if (!hugepages_supported())
++		return -ENOTSUPP;
++
+ 	tmp = h->max_huge_pages;
+ 
+ 	if (write && h->order >= MAX_ORDER)
+@@ -2123,6 +2122,9 @@ int hugetlb_overcommit_handler(struct ctl_table *table, int write,
+ 	unsigned long tmp;
+ 	int ret;
+ 
++	if (!hugepages_supported())
++		return -ENOTSUPP;
++
+ 	tmp = h->nr_overcommit_huge_pages;
+ 
+ 	if (write && h->order >= MAX_ORDER)
+@@ -2148,6 +2150,8 @@ out:
+ void hugetlb_report_meminfo(struct seq_file *m)
+ {
+ 	struct hstate *h = &default_hstate;
++	if (!hugepages_supported())
++		return;
+ 	seq_printf(m,
+ 			"HugePages_Total:   %5lu\n"
+ 			"HugePages_Free:    %5lu\n"
+@@ -2164,6 +2168,8 @@ void hugetlb_report_meminfo(struct seq_file *m)
+ int hugetlb_report_node_meminfo(int nid, char *buf)
+ {
+ 	struct hstate *h = &default_hstate;
++	if (!hugepages_supported())
++		return 0;
+ 	return sprintf(buf,
+ 		"Node %d HugePages_Total: %5u\n"
+ 		"Node %d HugePages_Free:  %5u\n"
+@@ -2178,6 +2184,9 @@ void hugetlb_show_meminfo(void)
+ 	struct hstate *h;
+ 	int nid;
+ 
++	if (!hugepages_supported())
++		return;
++
+ 	for_each_node_state(nid, N_MEMORY)
+ 		for_each_hstate(h)
+ 			pr_info("Node %d hugepages_total=%u hugepages_free=%u hugepages_surp=%u hugepages_size=%lukB\n",
