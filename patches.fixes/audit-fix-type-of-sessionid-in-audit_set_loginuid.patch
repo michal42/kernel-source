@@ -1,0 +1,41 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Wed, 6 Nov 2013 10:47:17 -0500
+Subject: audit: fix type of sessionid in audit_set_loginuid()
+Git-commit: 9175c9d2aed528800175ef81c90569d00d23f9be
+Patch-mainline: v3.13-rc1
+References: FATE#316917, bnc#862374
+Signed-off-by: Tony Jones <tonyj@suse.de
+
+sfr pointed out that with CONFIG_UIDGID_STRICT_TYPE_CHECKS set the audit
+tree would not build.  This is because the oldsessionid in
+audit_set_loginuid() was accidentally being declared as a kuid_t.  This
+patch fixes that declaration mistake.
+
+Example of problem:
+kernel/auditsc.c: In function 'audit_set_loginuid':
+kernel/auditsc.c:2003:15: error: incompatible types when assigning to
+type 'kuid_t' from type 'int'
+  oldsessionid = audit_get_sessionid(current);
+
+Reported-by: Stephen Rothwell <sfr@canb.auug.org.au>
+Signed-off-by: Eric Paris <eparis@redhat.com>
+---
+ kernel/auditsc.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index dfc5d67..90594c9 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1995,8 +1995,8 @@ static void audit_log_set_loginuid(kuid_t koldloginuid, kuid_t kloginuid,
+ int audit_set_loginuid(kuid_t loginuid)
+ {
+ 	struct task_struct *task = current;
+-	unsigned int sessionid = -1;
+-	kuid_t oldloginuid, oldsessionid;
++	unsigned int oldsessionid, sessionid = (unsigned int)-1;
++	kuid_t oldloginuid;
+ 	int rc;
+ 
+ 	oldloginuid = audit_get_loginuid(current);
+

@@ -1,0 +1,74 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Fri, 24 May 2013 09:39:29 -0400
+Subject: audit: remove CONFIG_AUDIT_LOGINUID_IMMUTABLE
+Git-commit: 83fa6bbe4c4541ae748b550b4ec391f8a0acfe94
+Patch-mainline: v3.13-rc1
+References: FATE#316917, bnc#862374
+Signed-off-by: Tony Jones <tonyj@suse.de
+
+After trying to use this feature in Fedora we found the hard coding
+policy like this into the kernel was a bad idea.  Surprise surprise.
+We ran into these problems because it was impossible to launch a
+container as a logged in user and run a login daemon inside that container.
+This reverts back to the old behavior before this option was added.  The
+option will be re-added in a userspace selectable manor such that
+userspace can choose when it is and when it is not appropriate.
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+Signed-off-by: Richard Guy Briggs <rgb@redhat.com>
+Signed-off-by: Eric Paris <eparis@redhat.com>
+---
+ init/Kconfig     | 14 --------------
+ kernel/auditsc.c | 10 ++++------
+ 2 files changed, 4 insertions(+), 20 deletions(-)
+
+diff --git a/init/Kconfig b/init/Kconfig
+index fed81b5..18a98c8 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -301,20 +301,6 @@ config AUDIT_TREE
+ 	depends on AUDITSYSCALL
+ 	select FSNOTIFY
+ 
+-config AUDIT_LOGINUID_IMMUTABLE
+-	bool "Make audit loginuid immutable"
+-	depends on AUDIT
+-	help
+-	  The config option toggles if a task setting its loginuid requires
+-	  CAP_SYS_AUDITCONTROL or if that task should require no special permissions
+-	  but should instead only allow setting its loginuid if it was never
+-	  previously set.  On systems which use systemd or a similar central
+-	  process to restart login services this should be set to true.  On older
+-	  systems in which an admin would typically have to directly stop and
+-	  start processes this should be set to false.  Setting this to true allows
+-	  one to drop potentially dangerous capabilites from the login tasks,
+-	  but may not be backwards compatible with older init systems.
+-
+ source "kernel/irq/Kconfig"
+ source "kernel/time/Kconfig"
+ 
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 7268467..b55788b 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1968,15 +1968,13 @@ static atomic_t session_id = ATOMIC_INIT(0);
+ 
+ static int audit_set_loginuid_perm(kuid_t loginuid)
+ {
+-#ifdef CONFIG_AUDIT_LOGINUID_IMMUTABLE
+ 	/* if we are unset, we don't need privs */
+ 	if (!audit_loginuid_set(current))
+ 		return 0;
+-#else	/* CONFIG_AUDIT_LOGINUID_IMMUTABLE */
+-	if (capable(CAP_AUDIT_CONTROL))
+-		return 0;
+-#endif /* CONFIG_AUDIT_LOGINUID_IMMUTABLE */
+-	return -EPERM;
++	/* it is set, you need permission */
++	if (!capable(CAP_AUDIT_CONTROL))
++		return -EPERM;
++	return 0;
+ }
+ 
+ static void audit_log_set_loginuid(kuid_t koldloginuid, kuid_t kloginuid,
+
