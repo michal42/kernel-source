@@ -1,7 +1,8 @@
 From: "K. Y. Srinivasan" <kys@microsoft.com>
-Date: Tue, 21 Jan 2014 17:43:53 -0800
+Date: Sun, 16 Feb 2014 11:34:30 -0800
+Patch-mainline: v3.15-rc1
 Subject: Drivers: hv: Implement the file copy service
-Patch-mainline: submitted (lkml 2014-02-09)
+Git-commit: 01325476d6e46185031be4a9bc6443832dbc807c
 
 Implement the file copy service for Linux guests on Hyper-V. This permits the
 host to copy a file (over VMBUS) into the guest. This facility is part of
@@ -17,19 +18,27 @@ In V2 version of this patch I did some minor cleanup (making some globals
 static). In V4 version of the patch I have addressed all of Olaf's
 most recent set of comments/concerns.
 
-In this version of the patch I have addressed Greg's most recent comments.
+In V5 version of the patch I had addressed Greg's most recent comments.
 I would like to thank Greg for suggesting that I use misc device; it has
 significantly simplified the code.
 
+In V6 version of the patch I have cleaned up error message based on Olaf's
+comments. I have also rebased the patch based on the current tip.
+
+In this version of the patch, I have addressed the latest comments from Greg.
+
 Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Acked-by: <ohering@suse.de>
 ---
- drivers/hv/Makefile        |    2 +-
- drivers/hv/hv_fcopy.c      |  388 ++++++++++++++++++++++++++++++++++++++++++++
- drivers/hv/hv_util.c       |   10 ++
- include/linux/hyperv.h     |   61 +++++++
- tools/hv/hv_fcopy_daemon.c |  195 ++++++++++++++++++++++
- 5 files changed, 655 insertions(+), 1 deletions(-)
+ drivers/hv/Makefile         |   2 +-
+ drivers/hv/hv_fcopy.c       | 414 ++++++++++++++++++++++++++++++++++++++++++++
+ drivers/hv/hv_util.c        |  11 ++
+ drivers/hv/hyperv_vmbus.h   |   4 +
+ include/linux/hyperv.h      |  12 +-
+ include/uapi/linux/hyperv.h |  46 +++++
+ tools/hv/hv_fcopy_daemon.c  | 195 +++++++++++++++++++++
+ 7 files changed, 682 insertions(+), 2 deletions(-)
  create mode 100644 drivers/hv/hv_fcopy.c
  create mode 100644 tools/hv/hv_fcopy_daemon.c
 
@@ -45,10 +54,10 @@ index 0a74b56..5e4dfa4 100644
 +hv_utils-y := hv_util.o hv_kvp.o hv_snapshot.o hv_fcopy.o
 diff --git a/drivers/hv/hv_fcopy.c b/drivers/hv/hv_fcopy.c
 new file mode 100644
-index 0000000..15cf35c
+index 0000000..285b5e2
 --- /dev/null
 +++ b/drivers/hv/hv_fcopy.c
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,414 @@
 +/*
 + * An implementation of file copy service.
 + *
@@ -79,6 +88,8 @@ index 0000000..15cf35c
 +#include <linux/sched.h>
 +#include <linux/uaccess.h>
 +#include <linux/miscdevice.h>
++
++#include "hyperv_vmbus.h"
 +
 +#define WIN8_SRV_MAJOR		1
 +#define WIN8_SRV_MINOR		1
@@ -157,7 +168,7 @@ index 0000000..15cf35c
 +	if (fcopy_transaction.fcopy_context)
 +		hv_fcopy_onchannelcallback(fcopy_transaction.fcopy_context);
 +	in_hand_shake = false;
-+	return sizeof(int);
++	return 0;
 +}
 +
 +static void fcopy_send_data(void)
@@ -209,14 +220,17 @@ index 0000000..15cf35c
 +static void
 +fcopy_respond_to_host(int error)
 +{
-+	struct icmsg_hdr *icmsghdrp;
++	struct icmsg_hdr *icmsghdr;
 +	u32 buf_len;
 +	struct vmbus_channel *channel;
 +	u64 req_id;
 +
 +	/*
 +	 * Copy the global state for completing the transaction. Note that
-+	 * only one transaction can be active at a time.
++	 * only one transaction can be active at a time. This is guaranteed
++	 * by the file copy protocol implemented by the host. Furthermore,
++	 * the "transaction active" state we maintain ensures that there can
++	 * only be one active transaction at a time.
 +	 */
 +
 +	buf_len = fcopy_transaction.recv_len;
@@ -225,7 +239,7 @@ index 0000000..15cf35c
 +
 +	fcopy_transaction.active = false;
 +
-+	icmsghdrp = (struct icmsg_hdr *)
++	icmsghdr = (struct icmsg_hdr *)
 +			&recv_buffer[sizeof(struct vmbuspipe_hdr)];
 +
 +	if (channel->onchannel_callback == NULL)
@@ -235,8 +249,8 @@ index 0000000..15cf35c
 +		 */
 +		return;
 +
-+	icmsghdrp->status = error;
-+	icmsghdrp->icflags = ICMSGHDRFLAG_TRANSACTION | ICMSGHDRFLAG_RESPONSE;
++	icmsghdr->status = error;
++	icmsghdr->icflags = ICMSGHDRFLAG_TRANSACTION | ICMSGHDRFLAG_RESPONSE;
 +	vmbus_sendpacket(channel, recv_buffer, buf_len, req_id,
 +				VM_PKT_DATA_INBAND, 0);
 +}
@@ -247,7 +261,7 @@ index 0000000..15cf35c
 +	u32 recvlen;
 +	u64 requestid;
 +	struct hv_fcopy_hdr *fcopy_msg;
-+	struct icmsg_hdr *icmsghdrp;
++	struct icmsg_hdr *icmsghdr;
 +	struct icmsg_negotiate *negop = NULL;
 +	int util_fw_version;
 +	int fcopy_srv_version;
@@ -266,12 +280,12 @@ index 0000000..15cf35c
 +	if (recvlen <= 0)
 +		return;
 +
-+	icmsghdrp = (struct icmsg_hdr *)&recv_buffer[
++	icmsghdr = (struct icmsg_hdr *)&recv_buffer[
 +			sizeof(struct vmbuspipe_hdr)];
-+	if (icmsghdrp->icmsgtype == ICMSGTYPE_NEGOTIATE) {
++	if (icmsghdr->icmsgtype == ICMSGTYPE_NEGOTIATE) {
 +		util_fw_version = UTIL_FW_VERSION;
 +		fcopy_srv_version = WIN8_SRV_VERSION;
-+		vmbus_prep_negotiate_resp(icmsghdrp, negop, recv_buffer,
++		vmbus_prep_negotiate_resp(icmsghdr, negop, recv_buffer,
 +				util_fw_version, fcopy_srv_version);
 +	} else {
 +		fcopy_msg = (struct hv_fcopy_hdr *)&recv_buffer[
@@ -296,7 +310,7 @@ index 0000000..15cf35c
 +		schedule_delayed_work(&fcopy_work, 5*HZ);
 +		return;
 +	}
-+	icmsghdrp->icflags = ICMSGHDRFLAG_TRANSACTION | ICMSGHDRFLAG_RESPONSE;
++	icmsghdr->icflags = ICMSGHDRFLAG_TRANSACTION | ICMSGHDRFLAG_RESPONSE;
 +	vmbus_sendpacket(channel, recv_buffer, recvlen, requestid,
 +			VM_PKT_DATA_INBAND, 0);
 +}
@@ -318,6 +332,12 @@ index 0000000..15cf35c
 +	 */
 +	if (down_interruptible(&fcopy_transaction.read_sema))
 +		return -EINTR;
++
++	/*
++	 * The channel may be rescinded and in this case, we will wakeup the
++	 * the thread blocked on the semaphore and we will use the opened
++	 * state to correctly handle this case.
++	 */
 +	if (!opened)
 +		return -ENODEV;
 +
@@ -351,8 +371,11 @@ index 0000000..15cf35c
 +	if (copy_from_user(&response, buf, sizeof(int)))
 +		return -EFAULT;
 +
-+	if (in_hand_shake)
-+		return fcopy_handle_handshake(response);
++	if (in_hand_shake) {
++		if (fcopy_handle_handshake(response))
++			return -EINVAL;
++		return sizeof(int);
++	}
 +
 +	/*
 +	 * Complete the transaction by forwarding the result
@@ -366,6 +389,11 @@ index 0000000..15cf35c
 +
 +int fcopy_open(struct inode *inode, struct file *f)
 +{
++	/*
++	 * The user level daemon that will open this device is
++	 * really an extension of this driver. We can have only
++	 * active open at a time.
++	 */
 +	if (opened)
 +		return -EBUSY;
 +
@@ -407,6 +435,13 @@ index 0000000..15cf35c
 +
 +static void fcopy_dev_deinit(void)
 +{
++
++	/*
++	 * The device is going away - perhaps because the
++	 * host has rescinded the channel. Setup state so that
++	 * user level daemon can gracefully exit if it is blocked
++	 * on the read semaphore.
++	 */
 +	opened = false;
 +	/*
 +	 * Signal the semaphore as the device is
@@ -438,10 +473,18 @@ index 0000000..15cf35c
 +	fcopy_dev_deinit();
 +}
 diff --git a/drivers/hv/hv_util.c b/drivers/hv/hv_util.c
-index 62dfd246..efc5e83 100644
+index 62dfd246..dd76180 100644
 --- a/drivers/hv/hv_util.c
 +++ b/drivers/hv/hv_util.c
-@@ -82,6 +82,12 @@ static struct hv_util_service util_vss = {
+@@ -28,6 +28,7 @@
+ #include <linux/reboot.h>
+ #include <linux/hyperv.h>
+ 
++#include "hyperv_vmbus.h"
+ 
+ #define SD_MAJOR	3
+ #define SD_MINOR	0
+@@ -82,6 +83,12 @@ static struct hv_util_service util_vss = {
  	.util_deinit = hv_vss_deinit,
  };
  
@@ -454,7 +497,7 @@ index 62dfd246..efc5e83 100644
  static void perform_shutdown(struct work_struct *dummy)
  {
  	orderly_poweroff(true);
-@@ -401,6 +407,10 @@ static const struct hv_vmbus_device_id id_table[] = {
+@@ -401,6 +408,10 @@ static const struct hv_vmbus_device_id id_table[] = {
  	{ HV_VSS_GUID,
  	  .driver_data = (unsigned long)&util_vss
  	},
@@ -465,19 +508,64 @@ index 62dfd246..efc5e83 100644
  	{ },
  };
  
+diff --git a/drivers/hv/hyperv_vmbus.h b/drivers/hv/hyperv_vmbus.h
+index 1544609..860134d 100644
+--- a/drivers/hv/hyperv_vmbus.h
++++ b/drivers/hv/hyperv_vmbus.h
+@@ -669,5 +669,9 @@ int vmbus_set_event(struct vmbus_channel *channel);
+ 
+ void vmbus_on_event(unsigned long data);
+ 
++int hv_fcopy_init(struct hv_util_service *);
++void hv_fcopy_deinit(void);
++void hv_fcopy_onchannelcallback(void *);
++
+ 
+ #endif /* _HYPERV_VMBUS_H */
 diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
-index 15da677..9d2e168 100644
+index fb66fba..62ea1a0 100644
 --- a/include/linux/hyperv.h
 +++ b/include/linux/hyperv.h
-@@ -26,6 +26,7 @@
- #define _HYPERV_H
- 
+@@ -30,7 +30,6 @@
  #include <linux/types.h>
-+#include <linux/uuid.h>
+ #include <linux/scatterlist.h>
+ #include <linux/list.h>
+-#include <linux/uuid.h>
+ #include <linux/timer.h>
+ #include <linux/workqueue.h>
+ #include <linux/completion.h>
+@@ -1050,6 +1049,17 @@ void vmbus_driver_unregister(struct hv_driver *hv_driver);
+ 		}
  
  /*
++ * Guest File Copy Service
++ * {34D14BE3-DEE4-41c8-9AE7-6B174977C192}
++ */
++
++#define HV_FCOPY_GUID \
++	.guid = { \
++			0xE3, 0x4B, 0xD1, 0x34, 0xE4, 0xDE, 0xC8, 0x41, \
++			0x9A, 0xE7, 0x6B, 0x17, 0x49, 0x77, 0xC1, 0x92 \
++		}
++
++/*
+  * Common header for Hyper-V ICs
+  */
+ 
+diff --git a/include/uapi/linux/hyperv.h b/include/uapi/linux/hyperv.h
+index 1861f8e..9beb7c9 100644
+--- a/include/uapi/linux/hyperv.h
++++ b/include/uapi/linux/hyperv.h
+@@ -25,6 +25,8 @@
+ #ifndef _UAPI_HYPERV_H
+ #define _UAPI_HYPERV_H
+ 
++#include <linux/uuid.h>
++
+ /*
   * Framework version for util services.
-@@ -96,6 +97,51 @@ struct hv_vss_msg {
+  */
+@@ -94,6 +96,50 @@ struct hv_vss_msg {
  } __attribute__((packed));
  
  /*
@@ -524,43 +612,13 @@ index 15da677..9d2e168 100644
 +	__u8	data[DATA_FRAGMENT];
 +};
 +
-+
 +/*
   * An implementation of HyperV key value pair (KVP) functionality for Linux.
   *
   *
-@@ -1352,6 +1398,17 @@ void vmbus_driver_unregister(struct hv_driver *hv_driver);
- 		}
- 
- /*
-+ * Guest File Copy Service
-+ * {34D14BE3-DEE4-41c8-9AE7-6B174977C192}
-+ */
-+
-+#define HV_FCOPY_GUID \
-+	.guid = { \
-+			0xE3, 0x4B, 0xD1, 0x34, 0xE4, 0xDE, 0xC8, 0x41, \
-+			0x9A, 0xE7, 0x6B, 0x17, 0x49, 0x77, 0xC1, 0x92 \
-+		}
-+
-+/*
-  * Common header for Hyper-V ICs
-  */
- 
-@@ -1459,6 +1516,10 @@ int hv_vss_init(struct hv_util_service *);
- void hv_vss_deinit(void);
- void hv_vss_onchannelcallback(void *);
- 
-+int hv_fcopy_init(struct hv_util_service *);
-+void hv_fcopy_deinit(void);
-+void hv_fcopy_onchannelcallback(void *);
-+
- /*
-  * Negotiated version with the Host.
-  */
 diff --git a/tools/hv/hv_fcopy_daemon.c b/tools/hv/hv_fcopy_daemon.c
 new file mode 100644
-index 0000000..c557998
+index 0000000..4ecc4fd
 --- /dev/null
 +++ b/tools/hv/hv_fcopy_daemon.c
 @@ -0,0 +1,195 @@
@@ -708,7 +766,7 @@ index 0000000..c557998
 +	fcopy_fd = open("/dev/vmbus/hv_fcopy", O_RDWR);
 +
 +	if (fcopy_fd < 0) {
-+		syslog(LOG_ERR, "open /dev/hv_fcopy failed; error: %d %s",
++		syslog(LOG_ERR, "open /dev/vmbus/hv_fcopy failed; error: %d %s",
 +			errno, strerror(errno));
 +		exit(EXIT_FAILURE);
 +	}
