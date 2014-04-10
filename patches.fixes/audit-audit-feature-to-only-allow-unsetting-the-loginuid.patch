@@ -1,0 +1,67 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Fri, 24 May 2013 09:18:04 -0400
+Subject: audit: audit feature to only allow unsetting the loginuid
+Git-commit: d040e5af380554c23ffe0a034ae5f3e53da93a1d
+Patch-mainline: v3.13-rc1
+References: FATE#316917, bnc#862374
+Signed-off-by: Tony Jones <tonyj@suse.de
+
+This is a new audit feature which only grants processes with
+CAP_AUDIT_CONTROL the ability to unset their loginuid.  They cannot
+directly set it from a valid uid to another valid uid.  The ability to
+unset the loginuid is nice because a priviledged task, like that of
+container creation, can unset the loginuid and then priv is not needed
+inside the container when a login daemon needs to set the loginuid.
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+Signed-off-by: Richard Guy Briggs <rgb@redhat.com>
+Signed-off-by: Eric Paris <eparis@redhat.com>
+---
+ include/uapi/linux/audit.h | 3 ++-
+ kernel/audit.c             | 3 ++-
+ kernel/auditsc.c           | 3 +++
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/include/uapi/linux/audit.h b/include/uapi/linux/audit.h
+index 9eddf2c..05e5e8f 100644
+--- a/include/uapi/linux/audit.h
++++ b/include/uapi/linux/audit.h
+@@ -386,7 +386,8 @@ struct audit_features {
+ 	__u32	lock;		/* which features to lock */
+ };
+ 
+-#define AUDIT_LAST_FEATURE	-1
++#define AUDIT_FEATURE_ONLY_UNSET_LOGINUID	0
++#define AUDIT_LAST_FEATURE			AUDIT_FEATURE_ONLY_UNSET_LOGINUID
+ 
+ #define audit_feature_valid(x)		((x) >= 0 && (x) <= AUDIT_LAST_FEATURE)
+ #define AUDIT_FEATURE_TO_MASK(x)	(1 << ((x) & 31)) /* mask for __u32 */
+diff --git a/kernel/audit.c b/kernel/audit.c
+index 29ee6a4..fbfa3a7 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -144,7 +144,8 @@ static struct audit_features af = {.vers = AUDIT_FEATURE_VERSION,
+ 				   .features = 0,
+ 				   .lock = 0,};
+ 
+-static char *audit_feature_names[0] = {
++static char *audit_feature_names[1] = {
++	"only_unset_loginuid",
+ };
+ 
+ 
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index c75d781..924c0bf 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1974,6 +1974,9 @@ static int audit_set_loginuid_perm(kuid_t loginuid)
+ 	/* it is set, you need permission */
+ 	if (!capable(CAP_AUDIT_CONTROL))
+ 		return -EPERM;
++	/* reject if this is not an unset and we don't allow that */
++	if (is_audit_feature_set(AUDIT_FEATURE_ONLY_UNSET_LOGINUID) && uid_valid(loginuid))
++		return -EPERM;
+ 	return 0;
+ }
+ 
+

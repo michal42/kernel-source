@@ -1,0 +1,65 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Thu, 23 May 2013 14:26:00 -0400
+Subject: audit: audit feature to set loginuid immutable
+Git-commit: 21b85c31d23f2047d47e1f74bfa5caa8b75c1c77
+Patch-mainline: v3.13-rc1
+References: FATE#316917, bnc#862374
+Signed-off-by: Tony Jones <tonyj@suse.de
+
+This adds a new 'audit_feature' bit which allows userspace to set it
+such that the loginuid is absolutely immutable, even if you have
+CAP_AUDIT_CONTROL.
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+Signed-off-by: Richard Guy Briggs <rgb@redhat.com>
+Signed-off-by: Eric Paris <eparis@redhat.com>
+---
+ include/uapi/linux/audit.h | 3 ++-
+ kernel/audit.c             | 3 ++-
+ kernel/auditsc.c           | 3 +++
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/include/uapi/linux/audit.h b/include/uapi/linux/audit.h
+index 05e5e8f..e2f0d99 100644
+--- a/include/uapi/linux/audit.h
++++ b/include/uapi/linux/audit.h
+@@ -387,7 +387,8 @@ struct audit_features {
+ };
+ 
+ #define AUDIT_FEATURE_ONLY_UNSET_LOGINUID	0
+-#define AUDIT_LAST_FEATURE			AUDIT_FEATURE_ONLY_UNSET_LOGINUID
++#define AUDIT_FEATURE_LOGINUID_IMMUTABLE	1
++#define AUDIT_LAST_FEATURE			AUDIT_FEATURE_LOGINUID_IMMUTABLE
+ 
+ #define audit_feature_valid(x)		((x) >= 0 && (x) <= AUDIT_LAST_FEATURE)
+ #define AUDIT_FEATURE_TO_MASK(x)	(1 << ((x) & 31)) /* mask for __u32 */
+diff --git a/kernel/audit.c b/kernel/audit.c
+index fbfa3a7..f3f36f5 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -144,8 +144,9 @@ static struct audit_features af = {.vers = AUDIT_FEATURE_VERSION,
+ 				   .features = 0,
+ 				   .lock = 0,};
+ 
+-static char *audit_feature_names[1] = {
++static char *audit_feature_names[2] = {
+ 	"only_unset_loginuid",
++	"loginuid_immutable",
+ };
+ 
+ 
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 924c0bf..63223d6 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1971,6 +1971,9 @@ static int audit_set_loginuid_perm(kuid_t loginuid)
+ 	/* if we are unset, we don't need privs */
+ 	if (!audit_loginuid_set(current))
+ 		return 0;
++	/* if AUDIT_FEATURE_LOGINUID_IMMUTABLE means never ever allow a change*/
++	if (is_audit_feature_set(AUDIT_FEATURE_LOGINUID_IMMUTABLE))
++		return -EPERM;
+ 	/* it is set, you need permission */
+ 	if (!capable(CAP_AUDIT_CONTROL))
+ 		return -EPERM;
+
