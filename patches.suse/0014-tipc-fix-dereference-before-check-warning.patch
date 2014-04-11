@@ -1,0 +1,34 @@
+From: Erik Hugne <erik.hugne@ericsson.com>
+Subject: tipc: fix dereference before check warning
+Git-commit: 3db0a197ed86317ab2915bc8bddb91807b0f0e96
+Patch-mainline: v3.13
+References: fate#317088
+Acked-by: Jiri Bohac <jbohac@suse.cz>
+
+This fixes the following Smatch warning:
+net/tipc/link.c:2364 tipc_link_recv_fragment()
+    warn: variable dereferenced before check '*head' (see line 2361)
+
+A null pointer might be passed to skb_try_coalesce if
+a malicious sender injects orphan fragments on a link.
+
+Signed-off-by: Erik Hugne <erik.hugne@ericsson.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/tipc/link.c b/net/tipc/link.c
+index cf465d6..69cd9bf 100644
+--- a/net/tipc/link.c
++++ b/net/tipc/link.c
+@@ -2358,7 +2358,8 @@ int tipc_link_recv_fragment(struct sk_buff **head, struct sk_buff **tail,
+ 		*head = frag;
+ 		skb_frag_list_init(*head);
+ 		return 0;
+-	} else if (skb_try_coalesce(*head, frag, &headstolen, &delta)) {
++	} else if (*head &&
++		   skb_try_coalesce(*head, frag, &headstolen, &delta)) {
+ 		kfree_skb_partial(frag, headstolen);
+ 	} else {
+ 		if (!*head)
+-- 
+1.9.1
+
