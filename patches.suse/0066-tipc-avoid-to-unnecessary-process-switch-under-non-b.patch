@@ -1,0 +1,45 @@
+From: Ying Xue <ying.xue@windriver.com>
+Subject: tipc: avoid to unnecessary process switch under non-block mode
+Git-commit: fe8e4649397915cf3b2ab0b695929a27e543967e
+Patch-mainline: v3.14
+References: fate#317088
+Acked-by: Jiri Bohac <jbohac@suse.cz>
+
+When messages are received via tipc socket under non-block mode,
+schedule_timeout() is called in tipc_wait_for_rcvmsg(), that is,
+the process of receiving messages will be scheduled once although
+timeout value passed to schedule_timeout() is 0. The same issue
+exists in accept()/wait_for_accept(). To avoid this unnecessary
+process switch, we only call schedule_timeout() if the timeout
+value is non-zero.
+
+Signed-off-by: Ying Xue <ying.xue@windriver.com>
+Reviewed-by: Erik Hugne <erik.hugne@ericsson.com>
+Reviewed-by: Jon Maloy <jon.maloy@ericsson.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/tipc/socket.c b/net/tipc/socket.c
+index a4cf274..0ed0eaa 100644
+--- a/net/tipc/socket.c
++++ b/net/tipc/socket.c
+@@ -997,7 +997,7 @@ static int tipc_wait_for_rcvmsg(struct socket *sock, long timeo)
+ 
+ 	for (;;) {
+ 		prepare_to_wait(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
+-		if (skb_queue_empty(&sk->sk_receive_queue)) {
++		if (timeo && skb_queue_empty(&sk->sk_receive_queue)) {
+ 			if (sock->state == SS_DISCONNECTING) {
+ 				err = -ENOTCONN;
+ 				break;
+@@ -1623,7 +1623,7 @@ static int tipc_wait_for_accept(struct socket *sock, long timeo)
+ 	for (;;) {
+ 		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
+ 					  TASK_INTERRUPTIBLE);
+-		if (skb_queue_empty(&sk->sk_receive_queue)) {
++		if (timeo && skb_queue_empty(&sk->sk_receive_queue)) {
+ 			release_sock(sk);
+ 			timeo = schedule_timeout(timeo);
+ 			lock_sock(sk);
+-- 
+1.9.1
+

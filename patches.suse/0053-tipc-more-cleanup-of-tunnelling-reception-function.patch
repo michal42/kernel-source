@@ -1,0 +1,62 @@
+From: Jon Paul Maloy <jon.maloy@ericsson.com>
+Subject: tipc: more cleanup of tunnelling reception function
+Git-commit: 1e9d47a948f44af4bb040e10a3a852b6bc3d6a90
+Patch-mainline: net-next
+References: fate#317088
+Acked-by: Jiri Bohac <jbohac@suse.cz>
+
+We simplify and slim down the code in function tipc_tunnel_rcv()
+No impact on the users of this function.
+
+Signed-off-by: Jon Maloy <jon.maloy@ericsson.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/tipc/link.c b/net/tipc/link.c
+index f9f9068..3136788 100644
+--- a/net/tipc/link.c
++++ b/net/tipc/link.c
+@@ -2180,9 +2180,10 @@ static int tipc_link_tunnel_rcv(struct tipc_node *n_ptr,
+ 	struct sk_buff *tunnel_buf = *buf;
+ 	struct tipc_link *dest_link;
+ 	struct tipc_msg *tunnel_msg = buf_msg(tunnel_buf);
+-	u32 msg_typ = msg_type(tunnel_msg);
+ 	u32 bearer_id = msg_bearer_id(tunnel_msg);
+ 
++	*buf = NULL;
++
+ 	if (bearer_id >= MAX_BEARERS)
+ 		goto exit;
+ 
+@@ -2190,24 +2191,16 @@ static int tipc_link_tunnel_rcv(struct tipc_node *n_ptr,
+ 	if (!dest_link)
+ 		goto exit;
+ 
+-	if (msg_typ == DUPLICATE_MSG) {
++	if (msg_type(tunnel_msg) == DUPLICATE_MSG)
+ 		tipc_link_dup_rcv(dest_link, tunnel_buf);
+-		goto exit;
+-	}
+-
+-	if (msg_type(tunnel_msg) == ORIGINAL_MSG) {
++	else if (msg_type(tunnel_msg) == ORIGINAL_MSG)
+ 		*buf = tipc_link_failover_rcv(dest_link, tunnel_buf);
++	else
++		pr_warn("%sunknown tunnel pkt received\n", link_co_err);
+ 
+-		/* Do we have a buffer/buffer chain to return? */
+-		if (*buf != NULL) {
+-			kfree_skb(tunnel_buf);
+-			return 1;
+-		}
+-	}
+ exit:
+-	*buf = NULL;
+ 	kfree_skb(tunnel_buf);
+-	return 0;
++	return *buf != NULL;
+ }
+ 
+ /*
+-- 
+1.9.1
+
