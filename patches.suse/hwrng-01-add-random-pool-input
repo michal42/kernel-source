@@ -1,20 +1,20 @@
 From: Torsten Duwe <duwe@suse.de>
-Subject: hwrng: provide in-kernel interface for drivers
-Patch-mainline: not yet submitted
+Subject: [Patch 01/03]: provide an injection point for pure hardware randomness
+Patch-mainline: not yet
 References: fate#316346
 
 This patch adds an interface to the random pool for feeding entropy in-kernel.
-This may be considered a kernel equivalent of the user-space entropy daemon which
-works automatically and without the risk of random bits being compromised
-in user space.
+It may serve as a destination for dedicated HWRNGs.
+
+It resembles -- and could be merged with -- the ioctl(RNDADDENTROPY) code, plus 
+a sleep condition for eager writers.
 
 Signed-off-by: Torsten Duwe <duwe@suse.de>
-Acked-by: Torsten Duwe <duwe@suse.de>
 
 ---
  include/linux/hw_random.h |    2 ++
- drivers/char/random.c     |   22 ++++++++++++++++++++++
- 2 files changed, 24 insertions(+)
+ drivers/char/random.c     |   23 +++++++++++++++++++++++
+ 2 files changed, 25 insertions(+)
 
 --- a/include/linux/hw_random.h
 +++ b/include/linux/hw_random.h
@@ -36,7 +36,7 @@ Acked-by: Torsten Duwe <duwe@suse.de>
  #include <linux/percpu.h>
  #include <linux/cryptohash.h>
  #include <linux/fips.h>
-@@ -1347,3 +1347,24 @@ randomize_range(unsigned long start, uns
+@@ -1347,3 +1347,25 @@ randomize_range(unsigned long start, uns
  		return 0;
  	return PAGE_ALIGN(get_random_int() % range + start);
  }
@@ -45,7 +45,8 @@ Acked-by: Torsten Duwe <duwe@suse.de>
 + * Those devices may produce endless random bits and will be throttled
 + * when our pool is full.
 + */
-+void add_hwgenerator_randomness(const char *buffer, size_t count, size_t entropy)
++void add_hwgenerator_randomness(const char *buffer, size_t count,
++				 size_t entropy)
 +{
 +	struct entropy_store *poolp = &input_pool;
 +

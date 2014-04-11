@@ -1,0 +1,53 @@
+From: Erik Hugne <erik.hugne@ericsson.com>
+Subject: tipc: drop subscriber connection id invalidation
+Git-commit: edcc0511b5ee7235282a688cd604e3ae7f9e1fc9
+Patch-mainline: v3.14
+References: fate#317088
+Acked-by: Jiri Bohac <jbohac@suse.cz>
+
+When a topology server subscriber is disconnected, the associated
+connection id is set to zero. A check vs zero is then done in the
+subscription timeout function to see if the subscriber have been
+shut down. This is unnecessary, because all subscription timers
+will be cancelled when a subscriber terminates. Setting the
+connection id to zero is actually harmful because id zero is the
+identity of the topology server listening socket, and can cause a
+race that leads to this socket being closed instead.
+
+Signed-off-by: Erik Hugne <erik.hugne@ericsson.com>
+Acked-by: Ying Xue <ying.xue@windriver.com>
+Reviewed-by: Jon Maloy <jon.maloy@ericsson.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/tipc/subscr.c b/net/tipc/subscr.c
+index a6ce3bb..11c9ae0 100644
+--- a/net/tipc/subscr.c
++++ b/net/tipc/subscr.c
+@@ -149,14 +149,6 @@ static void subscr_timeout(struct tipc_subscription *sub)
+ 	/* The spin lock per subscriber is used to protect its members */
+ 	spin_lock_bh(&subscriber->lock);
+ 
+-	/* Validate if the connection related to the subscriber is
+-	 * closed (in case subscriber is terminating)
+-	 */
+-	if (subscriber->conid == 0) {
+-		spin_unlock_bh(&subscriber->lock);
+-		return;
+-	}
+-
+ 	/* Validate timeout (in case subscription is being cancelled) */
+ 	if (sub->timeout == TIPC_WAIT_FOREVER) {
+ 		spin_unlock_bh(&subscriber->lock);
+@@ -211,9 +203,6 @@ static void subscr_release(struct tipc_subscriber *subscriber)
+ 
+ 	spin_lock_bh(&subscriber->lock);
+ 
+-	/* Invalidate subscriber reference */
+-	subscriber->conid = 0;
+-
+ 	/* Destroy any existing subscriptions for subscriber */
+ 	list_for_each_entry_safe(sub, sub_temp, &subscriber->subscription_list,
+ 				 subscription_list) {
+-- 
+1.9.1
+

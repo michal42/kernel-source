@@ -1,0 +1,78 @@
+From: Ying Xue <ying.xue@windriver.com>
+Subject: tipc: move code for deleting links from bearer.c to link.c
+Git-commit: 8d8439b686f15c23faef4d7d67c4a9f30ce0f2b5
+Patch-mainline: net-next
+References: fate#317088
+Acked-by: Jiri Bohac <jbohac@suse.cz>
+
+We break out the code for deleting attached links in the
+function bearer_disable(), and define a new function named
+tipc_link_delete_list() to do this job.
+
+This commit incurs no functional changes, but makes the code of
+function bearer_disable() cleaner. It is also a preparation
+for a more important change to the bearer code, in a subsequent
+commit in this series.
+
+Signed-off-by: Ying Xue <ying.xue@windriver.com>
+Reviewed-by: Paul Gortmaker <paul.gortmaker@windriver.com>
+Signed-off-by: Jon Maloy <jon.maloy@ericsson.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/tipc/bearer.c b/net/tipc/bearer.c
+index a3bdf5c..a5be053 100644
+--- a/net/tipc/bearer.c
++++ b/net/tipc/bearer.c
+@@ -366,16 +366,12 @@ static int tipc_reset_bearer(struct tipc_bearer *b_ptr)
+  */
+ static void bearer_disable(struct tipc_bearer *b_ptr)
+ {
+-	struct tipc_link *l_ptr;
+-	struct tipc_link *temp_l_ptr;
+ 	struct tipc_link_req *temp_req;
+ 
+ 	pr_info("Disabling bearer <%s>\n", b_ptr->name);
+ 	spin_lock_bh(&b_ptr->lock);
+ 	b_ptr->media->disable_media(b_ptr);
+-	list_for_each_entry_safe(l_ptr, temp_l_ptr, &b_ptr->links, link_list) {
+-		tipc_link_delete(l_ptr);
+-	}
++	tipc_link_delete_list(b_ptr);
+ 	temp_req = b_ptr->link_req;
+ 	b_ptr->link_req = NULL;
+ 	spin_unlock_bh(&b_ptr->lock);
+diff --git a/net/tipc/link.c b/net/tipc/link.c
+index 3ff34e8..424e9f3 100644
+--- a/net/tipc/link.c
++++ b/net/tipc/link.c
+@@ -313,6 +313,15 @@ void tipc_link_delete(struct tipc_link *l_ptr)
+ 	kfree(l_ptr);
+ }
+ 
++void tipc_link_delete_list(struct tipc_bearer *b_ptr)
++{
++	struct tipc_link *l_ptr;
++	struct tipc_link *temp_l_ptr;
++
++	list_for_each_entry_safe(l_ptr, temp_l_ptr, &b_ptr->links, link_list) {
++		tipc_link_delete(l_ptr);
++	}
++}
+ 
+ /**
+  * link_schedule_port - schedule port for deferred sending
+diff --git a/net/tipc/link.h b/net/tipc/link.h
+index 73beecb..994ebd1 100644
+--- a/net/tipc/link.h
++++ b/net/tipc/link.h
+@@ -219,6 +219,7 @@ void tipc_link_delete(struct tipc_link *l_ptr);
+ void tipc_link_failover_send_queue(struct tipc_link *l_ptr);
+ void tipc_link_dup_send_queue(struct tipc_link *l_ptr,
+ 			      struct tipc_link *dest);
++void tipc_link_delete_list(struct tipc_bearer *b_ptr);
+ void tipc_link_reset_fragments(struct tipc_link *l_ptr);
+ int tipc_link_is_up(struct tipc_link *l_ptr);
+ int tipc_link_is_active(struct tipc_link *l_ptr);
+-- 
+1.9.1
+
