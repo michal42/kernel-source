@@ -1,63 +1,53 @@
-From 5082b5c3265332c1175c15995ca1aa1b3a8e7fd1 Mon Sep 17 00:00:00 2001
-From: Michal Hocko <mhocko@suse.cz>
-Date: Mon, 17 Dec 2012 13:42:38 +0100
-Subject: [PATCH 1/2] drop_caches: add some documentation and info message
-Patch-mainline: not yet - in -mm tree
+From 5509a5d27b971a90b940e148ca9ca53312e4fa7a Mon Sep 17 00:00:00 2001
+From: Dave Hansen <dave@linux.vnet.ibm.com>
+Date: Thu, 3 Apr 2014 14:48:19 -0700
+Subject: [PATCH] drop_caches: add some documentation and info message
+Git-commit: 5509a5d27b971a90b940e148ca9ca53312e4fa7a
+Patch-mainline: 3.15-rc1
 References: fate#313766
 
-I would like to resurrect Dave's patch.  The last time it was posted was
-here https://lkml.org/lkml/2010/9/16/250 and there didn't seem to be any
-strong opposition.
+There is plenty of anecdotal evidence and a load of blog posts
+suggesting that using "drop_caches" periodically keeps your system
+running in "tip top shape".  Perhaps adding some kernel documentation
+will increase the amount of accurate data on its use.
 
-Kosaki was worried about possible excessive logging when somebody drops
-caches too often (but then he claimed he didn't have a strong opinion on
-that) but I would say opposite.  If somebody does that then I would really
-like to know that from the log when supporting a system because it almost
-for sure means that there is something fishy going on.  It is also worth
-mentioning that only root can write drop caches so this is not an flooding
-attack vector.
+If we are not shrinking caches effectively, then we have real bugs.
+Using drop_caches will simply mask the bugs and make them harder to
+find, but certainly does not fix them, nor is it an appropriate
+"workaround" to limit the size of the caches.  On the contrary, there
+have been bug reports on issues that turned out to be misguided use of
+cache dropping.
 
-I am bringing that up again because this can be really helpful when
-chasing strange performance issues which (surprise surprise) turn out to
-be related to artificially dropped caches done because the admin thinks
-this would help...
+Dropping caches is a very drastic and disruptive operation that is good
+for debugging and running tests, but if it creates bug reports from
+production use, kernel developers should be aware of its use.
 
-I have just refreshed the original patch on top of the current mm tree
-but I could live with KERN_INFO as well if people think that KERN_NOTICE
-is too hysterical.
+Add a bit more documentation about it, a syslog message to track down
+abusers, and vmstat drop counters to help analyze problem reports.
 
-: From: Dave Hansen <dave@linux.vnet.ibm.com>
-: Date: Fri, 12 Oct 2012 14:30:54 +0200
-: 
-: There is plenty of anecdotal evidence and a load of blog posts
-: suggesting that using "drop_caches" periodically keeps your system
-: running in "tip top shape".  Perhaps adding some kernel
-: documentation will increase the amount of accurate data on its use.
-: If we are not shrinking caches effectively, then we have real bugs.
-: Using drop_caches will simply mask the bugs and make them harder
-: to find, but certainly does not fix them, nor is it an appropriate
-: "workaround" to limit the size of the caches.
-: It's a great debugging tool, and is really handy for doing things
-: like repeatable benchmark runs.  So, add a bit more documentation
-: about it, and add a little KERN_NOTICE.  It should help developers
-: who are chasing down reclaim-related bugs.
-
-[mhocko@suse.cz: refreshed to current -mm tree]
+[akpm@linux-foundation.org: checkpatch fixes]
+[hannes@cmpxchg.org: add runtime suppression control]
 Signed-off-by: Dave Hansen <dave@linux.vnet.ibm.com>
-Reviewed-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
 Signed-off-by: Michal Hocko <mhocko@suse.cz>
 Acked-by: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
 Acked-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
 Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 
 ---
- Documentation/sysctl/vm.txt |   33 +++++++++++++++++++++++++++------
- fs/drop_caches.c            |    2 ++
- 2 files changed, 29 insertions(+), 6 deletions(-)
+ Documentation/sysctl/vm.txt   |   33 +++++++++++++++++++++++++++------
+ fs/drop_caches.c              |   16 ++++++++++++++--
+ include/linux/vm_event_item.h |    1 +
+ kernel/sysctl.c               |    4 ++--
+ mm/vmstat.c                   |    3 +++
+ 5 files changed, 47 insertions(+), 10 deletions(-)
 
+diff --git a/Documentation/sysctl/vm.txt b/Documentation/sysctl/vm.txt
+index d614a9b..dd9d0e3 100644
 --- a/Documentation/sysctl/vm.txt
 +++ b/Documentation/sysctl/vm.txt
-@@ -139,18 +139,39 @@ Setting this to zero disables periodic w
+@@ -175,18 +175,39 @@ Setting this to zero disables periodic writeback altogether.
  
  drop_caches
  
@@ -96,21 +86,90 @@ Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 +You may see informational messages in your kernel log when this file is
 +used:
 +
-+	cat (1234): dropped kernel caches: 3
++	cat (1234): drop_caches: 3
 +
 +These are informational only.  They do not mean that anything is wrong
-+with your system.
++with your system.  To disable them, echo 4 (bit 3) into drop_caches.
  
  ==============================================================
  
+diff --git a/fs/drop_caches.c b/fs/drop_caches.c
+index 9fd702f..9280202 100644
 --- a/fs/drop_caches.c
 +++ b/fs/drop_caches.c
-@@ -58,6 +58,8 @@ int drop_caches_sysctl_handler(ctl_table
+@@ -59,10 +59,22 @@ int drop_caches_sysctl_handler(ctl_table *table, int write,
  	if (ret)
  		return ret;
  	if (write) {
-+		printk(KERN_NOTICE "%s (%d): dropped kernel caches: %d\n",
-+		       current->comm, task_pid_nr(current), sysctl_drop_caches);
- 		if (sysctl_drop_caches & 1)
+-		if (sysctl_drop_caches & 1)
++		static int stfu;
++
++		if (sysctl_drop_caches & 1) {
  			iterate_supers(drop_pagecache_sb, NULL);
- 		if (sysctl_drop_caches & 2)
+-		if (sysctl_drop_caches & 2)
++			count_vm_event(DROP_PAGECACHE);
++		}
++		if (sysctl_drop_caches & 2) {
+ 			drop_slab();
++			count_vm_event(DROP_SLAB);
++		}
++		if (!stfu) {
++			pr_info("%s (%d): drop_caches: %d\n",
++				current->comm, task_pid_nr(current),
++				sysctl_drop_caches);
++		}
++		stfu |= sysctl_drop_caches & 4;
+ 	}
+ 	return 0;
+ }
+diff --git a/include/linux/vm_event_item.h b/include/linux/vm_event_item.h
+index 3a712e2..486c397 100644
+--- a/include/linux/vm_event_item.h
++++ b/include/linux/vm_event_item.h
+@@ -37,6 +37,7 @@ enum vm_event_item { PGPGIN, PGPGOUT, PSWPIN, PSWPOUT,
+ 		PGINODESTEAL, SLABS_SCANNED, KSWAPD_INODESTEAL,
+ 		KSWAPD_LOW_WMARK_HIT_QUICKLY, KSWAPD_HIGH_WMARK_HIT_QUICKLY,
+ 		PAGEOUTRUN, ALLOCSTALL, PGROTATED,
++		DROP_PAGECACHE, DROP_SLAB,
+ #ifdef CONFIG_NUMA_BALANCING
+ 		NUMA_PTE_UPDATES,
+ 		NUMA_HUGE_PTE_UPDATES,
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 09d2e24..5c14b54 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -123,7 +123,7 @@ static int __maybe_unused neg_one = -1;
+ static int zero;
+ static int __maybe_unused one = 1;
+ static int __maybe_unused two = 2;
+-static int __maybe_unused three = 3;
++static int __maybe_unused four = 4;
+ static unsigned long one_ul = 1;
+ static int one_hundred = 100;
+ #ifdef CONFIG_PRINTK
+@@ -1264,7 +1264,7 @@ static struct ctl_table vm_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= drop_caches_sysctl_handler,
+ 		.extra1		= &one,
+-		.extra2		= &three,
++		.extra2		= &four,
+ 	},
+ #ifdef CONFIG_COMPACTION
+ 	{
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index f3155d5..197b4c4 100644
+--- a/mm/vmstat.c
++++ b/mm/vmstat.c
+@@ -813,6 +813,9 @@ const char * const vmstat_text[] = {
+ 
+ 	"pgrotated",
+ 
++	"drop_pagecache",
++	"drop_slab",
++
+ #ifdef CONFIG_NUMA_BALANCING
+ 	"numa_pte_updates",
+ 	"numa_huge_pte_updates",
+-- 
+1.7.8.3
+
