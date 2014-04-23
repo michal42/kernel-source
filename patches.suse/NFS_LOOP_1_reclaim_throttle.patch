@@ -1,0 +1,74 @@
+From: NeilBrown <neilb@suse.de>
+Date: Tue, 22 Apr 2014 11:20:27 +1000
+Subject: [PATCH 1/5] MM: avoid throttling reclaim for loop-back nfsd threads.
+Patch-mainline: not yet
+References: fate#315220
+
+When a loop-back NFS mount is active and the backing device for the
+NFS mount becomes congested, that can impose throttling delays on the
+nfsd threads.
+
+These delays significantly reduce throughput and so the NFS mount
+remains congested.
+
+This results in a live lock and the reduced throughput persists.
+
+This live lock has been found it tested with the 'wait_iff_congested'
+call, and could possibly be caused by the 'congestion_wait' call.
+
+This livelock is similar to the deadlock which justified the
+introduction of PF_LESS_THROTTLE, and the same flag can be used to
+remove this livelock.
+
+To minimise the impact of the change, we still throttle nfsd when the
+filesystem it is writing to is congested, but not when some separate
+filesystem (i.e. the NFS filesystem) is congested.
+
+Signed-off-by: NeilBrown <neilb@suse.de>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ mm/vmscan.c |   18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+--- linux-3.12-SLE12.orig/mm/vmscan.c
++++ linux-3.12-SLE12/mm/vmscan.c
+@@ -1408,6 +1408,18 @@ putback_inactive_pages(struct lruvec *lr
+ 	list_splice(&pages_to_free, page_list);
+ }
+ 
++/* If a kernel thread (such as nfsd for loop-back mounts) services
++ * a backing device by writing to the page cache it sets PF_LESS_THROTTLE.
++ * In that case we should only throttle if the backing device it is
++ * writing to is congested.  In other cases it is safe to throttle.
++ */
++static int current_may_throttle(void)
++{
++	return !(current->flags & PF_LESS_THROTTLE) ||
++		current->backing_dev_info == NULL ||
++		bdi_write_congested(current->backing_dev_info);
++}
++
+ /*
+  * shrink_inactive_list() is a helper for shrink_zone().  It returns the number
+  * of reclaimed pages
+@@ -1536,7 +1548,8 @@ shrink_inactive_list(unsigned long nr_to
+ 		 * implies that pages are cycling through the LRU faster than
+ 		 * they are written so also forcibly stall.
+ 		 */
+-		if (nr_unqueued_dirty == nr_taken || nr_immediate)
++		if ((nr_unqueued_dirty == nr_taken || nr_immediate)
++		    && current_may_throttle())
+ 			congestion_wait(BLK_RW_ASYNC, HZ/10);
+ 	}
+ 
+@@ -1545,7 +1558,8 @@ shrink_inactive_list(unsigned long nr_to
+ 	 * is congested. Allow kswapd to continue until it starts encountering
+ 	 * unqueued dirty pages or cycling through the LRU too quickly.
+ 	 */
+-	if (!sc->hibernation_mode && !current_is_kswapd())
++	if (!sc->hibernation_mode && !current_is_kswapd()
++	    && current_may_throttle())
+ 		wait_iff_congested(zone, BLK_RW_ASYNC, HZ/10);
+ 
+ 	trace_mm_vmscan_lru_shrink_inactive(zone->zone_pgdat->node_id,
