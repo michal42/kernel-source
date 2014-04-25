@@ -1,0 +1,54 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Fri, 25 Apr 2014 10:34:44 +0100
+Subject: [PATCH] mm: numa: add migrated transhuge pages to LRU the same way as
+ base pages
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (Expected v3.16)
+
+Migration of misplaced transhuge pages uses page_add_new_anon_rmap() when
+putting the page back as it avoided an atomic operations and added the new
+page to the correct LRU.  A side-effect is that the page gets marked
+activated as part of the migration meaning that transhuge and base pages
+are treated differently from an aging perspective than base page
+migration.
+
+This patch uses page_add_anon_rmap() and putback_lru_page() on completion
+of a transhuge migration similar to base page migration.  It would require
+fewer atomic operations to use lru_cache_add without taking an additional
+reference to the page.  The downside would be that it's still different to
+base page migration and unevictable pages may be added to the wrong LRU
+for cleaning up later.  Testing of the usual workloads did not show any
+adverse impact to the change.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Acked-by: Hugh Dickins <hughd@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+---
+ mm/migrate.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/mm/migrate.c b/mm/migrate.c
+index 9ac74f8..b20bda8 100644
+--- a/mm/migrate.c
++++ b/mm/migrate.c
+@@ -1826,7 +1826,7 @@ fail_putback:
+ 	 * guarantee the copy is visible before the pagetable update.
+ 	 */
+ 	flush_cache_range(vma, mmun_start, mmun_end);
+-	page_add_new_anon_rmap(new_page, vma, mmun_start);
++	page_add_anon_rmap(new_page, vma, mmun_start);
+ 	pmdp_clear_flush(vma, mmun_start, pmd);
+ 	set_pmd_at(mm, mmun_start, pmd, entry);
+ 	flush_tlb_range(vma, mmun_start, mmun_end);
+@@ -1851,6 +1851,10 @@ fail_putback:
+ 	spin_unlock(ptl);
+ 	mmu_notifier_invalidate_range_end(mm, mmun_start, mmun_end);
+ 
++	/* Take an "isolate" reference and put new page on the LRU. */
++	get_page(new_page);
++	putback_lru_page(new_page);
++
+ 	unlock_page(new_page);
+ 	unlock_page(page);
+ 	put_page(page);			/* Drop the rmap reference */
