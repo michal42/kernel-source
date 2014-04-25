@@ -1,0 +1,51 @@
+From: Gavin Shan <shangw@linux.vnet.ibm.com>
+Subject: powerpc/iommu: Don't detach device without IOMMU group
+Git-commit: 0c4b9e27b09eeb4da84451c038a587b92ce93ff5
+Patch-mainline: v3.14-rc1
+References: bnc#875108 
+
+    Some devices, for example PCI root port, don't have IOMMU table and
+    group. We needn't detach them from their IOMMU group. Otherwise, it
+    potentially incurs kernel crash because of referring NULL IOMMU group
+    as following backtrace indicates:
+    
+      .iommu_group_remove_device+0x74/0x1b0
+      .iommu_bus_notifier+0x94/0xb4
+      .notifier_call_chain+0x78/0xe8
+      .__blocking_notifier_call_chain+0x7c/0xbc
+      .blocking_notifier_call_chain+0x38/0x48
+      .device_del+0x50/0x234
+      .pci_remove_bus_device+0x88/0x138
+      .pci_stop_and_remove_bus_device+0x2c/0x40
+      .pcibios_remove_pci_devices+0xcc/0xfc
+      .pcibios_remove_pci_devices+0x3c/0xfc
+    
+Signed-off-by: Gavin Shan <shangw@linux.vnet.ibm.com>
+    Reviewed-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+ arch/powerpc/kernel/iommu.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+diff --git a/arch/powerpc/kernel/iommu.c b/arch/powerpc/kernel/iommu.c
+index f58d813..d773dd4 100644
+--- a/arch/powerpc/kernel/iommu.c
++++ b/arch/powerpc/kernel/iommu.c
+@@ -1137,6 +1137,17 @@ EXPORT_SYMBOL_GPL(iommu_add_device);
+ 
+ static void iommu_del_device(struct device *dev)
+ {
++	/*
++	 * Some devices might not have IOMMU table and group
++	 * and we needn't detach them from the associated
++	 * IOMMU groups
++	 */
++	if (!dev->iommu_group) {
++		pr_debug("iommu_tce: skipping device %s with no tbl\n",
++			 dev_name(dev));
++		return;
++	}
++
+ 	iommu_group_remove_device(dev);
+ }
+ 
