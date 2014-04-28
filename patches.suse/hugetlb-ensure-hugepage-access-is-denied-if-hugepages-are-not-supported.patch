@@ -1,11 +1,22 @@
-From 922b1807a69bc727304d891d6693450213f33a30 Mon Sep 17 00:00:00 2001
+From a3a8905275b564f55a49156a57a92171c0246f0a Mon Sep 17 00:00:00 2001
 From: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
-Date: Wed, 9 Apr 2014 11:27:38 +0100
+Date: Mon, 28 Apr 2014 09:33:15 +0100
 Subject: [PATCH] hugetlb: ensure hugepage access is denied if hugepages are
  not supported
 
 References: PowerKVM crash when mounting hugetlbfs without hugepage support (bnc#870498)
-Patch-mainline: No (Expected v3.15)
+Patch-mainline: No (Expected v3.16)
+
+Currently, I am seeing the following when I `mount -t hugetlbfs /none
+/dev/hugetlbfs`, and then simply do a `ls /dev/hugetlbfs`.  I think it's
+related to the fact that hugetlbfs is properly not correctly setting
+itself up in this state?:
+
+Unable to handle kernel paging request for data at address 0x00000031
+Faulting instruction address: 0xc000000000245710
+Oops: Kernel access of bad area, sig: 11 [#1]
+SMP NR_CPUS=2048 NUMA pSeries
+....
 
 In KVM guests on Power, in a guest not backed by hugepages, we see the
 following:
@@ -27,15 +38,18 @@ environment. I believe this is fine, as there are no valid hugepages and
 that won't change at runtime.
 
 Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Reviewed-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Acked-by: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
  fs/hugetlbfs/inode.c    |  5 +++++
  include/linux/hugetlb.h | 10 ++++++++++
- mm/hugetlb.c            | 19 ++++++++++++++-----
- 3 files changed, 29 insertions(+), 5 deletions(-)
+ mm/hugetlb.c            | 13 +++++++++++++
+ 3 files changed, 28 insertions(+)
 
 diff --git a/fs/hugetlbfs/inode.c b/fs/hugetlbfs/inode.c
-index d19b30a..cc8fcc7 100644
+index d19b30a..a4a8ed5 100644
 --- a/fs/hugetlbfs/inode.c
 +++ b/fs/hugetlbfs/inode.c
 @@ -1017,6 +1017,11 @@ static int __init init_hugetlbfs_fs(void)
@@ -43,7 +57,7 @@ index d19b30a..cc8fcc7 100644
  	int i;
  
 +	if (!hugepages_supported()) {
-+		printk(KERN_ERR "hugetlbfs: Disabling because there are no supported hugepage sizes\n");
++		pr_info("hugetlbfs: disabling because there are no supported hugepage sizes\n");
 +		return -ENOTSUPP;
 +	}
 +
@@ -51,11 +65,11 @@ index d19b30a..cc8fcc7 100644
  	if (error)
  		return error;
 diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
-index 85e0c58..5cec8dc 100644
+index 85e0c58..fb88c25 100644
 --- a/include/linux/hugetlb.h
 +++ b/include/linux/hugetlb.h
-@@ -445,4 +445,14 @@ static inline spinlock_t *huge_pte_lock(struct hstate *h,
- 	return ptl;
+@@ -397,6 +397,16 @@ static inline spinlock_t *huge_pte_lockptr(struct hstate *h,
+ 	return &mm->page_table_lock;
  }
  
 +static inline bool hugepages_supported(void)
@@ -68,25 +82,14 @@ index 85e0c58..5cec8dc 100644
 +	return HPAGE_SHIFT != 0;
 +}
 +
- #endif /* _LINUX_HUGETLB_H */
+ #else	/* CONFIG_HUGETLB_PAGE */
+ struct hstate {};
+ #define alloc_huge_page_node(h, nid) NULL
 diff --git a/mm/hugetlb.c b/mm/hugetlb.c
-index 1592bad..e5daf52 100644
+index 1592bad..7d9fedb 100644
 --- a/mm/hugetlb.c
 +++ b/mm/hugetlb.c
-@@ -1950,11 +1950,7 @@ module_exit(hugetlb_exit);
- 
- static int __init hugetlb_init(void)
- {
--	/* Some platform decide whether they support huge pages at boot
--	 * time. On these, such as powerpc, HPAGE_SHIFT is set to 0 when
--	 * there is no such support
--	 */
--	if (HPAGE_SHIFT == 0)
-+	if (!hugepages_supported())
- 		return 0;
- 
- 	if (!size_to_hstate(default_hstate_size)) {
-@@ -2070,6 +2066,9 @@ static int hugetlb_sysctl_handler_common(bool obey_mempolicy,
+@@ -2070,6 +2070,9 @@ static int hugetlb_sysctl_handler_common(bool obey_mempolicy,
  	unsigned long tmp;
  	int ret;
  
@@ -96,7 +99,7 @@ index 1592bad..e5daf52 100644
  	tmp = h->max_huge_pages;
  
  	if (write && h->order >= MAX_ORDER)
-@@ -2123,6 +2122,9 @@ int hugetlb_overcommit_handler(struct ctl_table *table, int write,
+@@ -2123,6 +2126,9 @@ int hugetlb_overcommit_handler(struct ctl_table *table, int write,
  	unsigned long tmp;
  	int ret;
  
@@ -106,7 +109,7 @@ index 1592bad..e5daf52 100644
  	tmp = h->nr_overcommit_huge_pages;
  
  	if (write && h->order >= MAX_ORDER)
-@@ -2148,6 +2150,8 @@ out:
+@@ -2148,6 +2154,8 @@ out:
  void hugetlb_report_meminfo(struct seq_file *m)
  {
  	struct hstate *h = &default_hstate;
@@ -115,7 +118,7 @@ index 1592bad..e5daf52 100644
  	seq_printf(m,
  			"HugePages_Total:   %5lu\n"
  			"HugePages_Free:    %5lu\n"
-@@ -2164,6 +2168,8 @@ void hugetlb_report_meminfo(struct seq_file *m)
+@@ -2164,6 +2172,8 @@ void hugetlb_report_meminfo(struct seq_file *m)
  int hugetlb_report_node_meminfo(int nid, char *buf)
  {
  	struct hstate *h = &default_hstate;
@@ -124,7 +127,7 @@ index 1592bad..e5daf52 100644
  	return sprintf(buf,
  		"Node %d HugePages_Total: %5u\n"
  		"Node %d HugePages_Free:  %5u\n"
-@@ -2178,6 +2184,9 @@ void hugetlb_show_meminfo(void)
+@@ -2178,6 +2188,9 @@ void hugetlb_show_meminfo(void)
  	struct hstate *h;
  	int nid;
  
