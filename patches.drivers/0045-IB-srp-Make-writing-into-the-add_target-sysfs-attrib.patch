@@ -1,0 +1,57 @@
+From: Bart Van Assche <bvanassche@acm.org>
+Date: Fri, 14 Mar 2014 13:53:10 +0100
+Subject: IB/srp: Make writing into the "add_target" sysfs attribute
+References: bnc#873901
+Patch-Mainline: v3.15
+Git-commit: a702adceec3eeee23d95a81a0663661e7c25ad9c
+ interruptible
+
+Avoid that stopping srp_daemon takes unusually long due to a cable
+pull by making writing into the "add_target" sysfs attribute
+interruptible.
+
+Signed-off-by: Bart Van Assche <bvanassche@acm.org>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/infiniband/ulp/srp/ib_srp.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/infiniband/ulp/srp/ib_srp.c b/drivers/infiniband/ulp/srp/ib_srp.c
+index 3294f10..481c873 100644
+--- a/drivers/infiniband/ulp/srp/ib_srp.c
++++ b/drivers/infiniband/ulp/srp/ib_srp.c
+@@ -411,6 +411,8 @@ static void srp_path_rec_completion(int status,
+ 
+ static int srp_lookup_path(struct srp_target_port *target)
+ {
++	int ret;
++
+ 	target->path.numb_path = 1;
+ 
+ 	init_completion(&target->done);
+@@ -431,7 +433,9 @@ static int srp_lookup_path(struct srp_target_port *target)
+ 	if (target->path_query_id < 0)
+ 		return target->path_query_id;
+ 
+-	wait_for_completion(&target->done);
++	ret = wait_for_completion_interruptible(&target->done);
++	if (ret < 0)
++		return ret;
+ 
+ 	if (target->status < 0)
+ 		shost_printk(KERN_WARNING, target->scsi_host,
+@@ -710,7 +714,9 @@ static int srp_connect_target(struct srp_target_port *target)
+ 		ret = srp_send_req(target);
+ 		if (ret)
+ 			return ret;
+-		wait_for_completion(&target->done);
++		ret = wait_for_completion_interruptible(&target->done);
++		if (ret < 0)
++			return ret;
+ 
+ 		/*
+ 		 * The CM event handling code will set status to
+-- 
+1.7.12.4
+
