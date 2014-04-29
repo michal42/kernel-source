@@ -1,0 +1,101 @@
+From 6adb8efb024a7e413b93b22848fc13395b1a438a Mon Sep 17 00:00:00 2001
+From: Tomas Winkler <tomas.winkler@intel.com>
+Date: Sun, 12 Jan 2014 00:36:10 +0200
+Subject: [PATCH] mei: limit the number of consecutive resets
+Git-commit: 6adb8efb024a7e413b93b22848fc13395b1a438a
+Patch-mainline: 3.14-rc1
+References: bnc#821619,bnc#852656
+
+give up reseting after 3 unsuccessful tries
+
+Signed-off-by: Tomas Winkler <tomas.winkler@intel.com>
+Signed-off-by: Alexander Usyskin <alexander.usyskin@intel.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/misc/mei/client.c  |    1 +
+ drivers/misc/mei/init.c    |   10 ++++++++++
+ drivers/misc/mei/mei_dev.h |    7 +++++++
+ 3 files changed, 18 insertions(+)
+
+--- a/drivers/misc/mei/client.c
++++ b/drivers/misc/mei/client.c
+@@ -365,6 +365,7 @@ void mei_host_client_init(struct work_st
+ 	}
+ 
+ 	dev->dev_state = MEI_DEV_ENABLED;
++	dev->reset_count = 0;
+ 
+ 	mutex_unlock(&dev->device_lock);
+ }
+--- a/drivers/misc/mei/init.c
++++ b/drivers/misc/mei/init.c
+@@ -89,6 +89,13 @@ int mei_reset(struct mei_device *dev)
+ 	interrupts_enabled = state != MEI_DEV_POWER_DOWN;
+ 	dev->dev_state = MEI_DEV_RESETTING;
+ 
++	dev->reset_count++;
++	if (dev->reset_count > MEI_MAX_CONSEC_RESET) {
++		dev_err(&dev->pdev->dev, "reset: reached maximal consecutive resets: disabling the device\n");
++		dev->dev_state = MEI_DEV_DISABLED;
++		return -ENODEV;
++	}
++
+ 	ret = mei_hw_reset(dev, interrupts_enabled);
+ 	/* fall through and remove the sw state even if hw reset has failed */
+ 
+@@ -174,6 +181,7 @@ int mei_start(struct mei_device *dev)
+ 	dev_dbg(&dev->pdev->dev, "reset in start the mei device.\n");
+ 
+ 	dev->dev_state = MEI_DEV_INITIALIZING;
++	dev->reset_count = 0;
+ 	mei_reset(dev);
+ 
+ 	if (dev->dev_state == MEI_DEV_DISABLED) {
+@@ -229,6 +237,7 @@ int mei_restart(struct mei_device *dev)
+ 	mei_clear_interrupts(dev);
+ 
+ 	dev->dev_state = MEI_DEV_POWER_UP;
++	dev->reset_count = 0;
+ 
+ 	err = mei_reset(dev);
+ 
+@@ -290,6 +299,7 @@ void mei_device_init(struct mei_device *
+ 	init_waitqueue_head(&dev->wait_recvd_msg);
+ 	init_waitqueue_head(&dev->wait_stop_wd);
+ 	dev->dev_state = MEI_DEV_INITIALIZING;
++	dev->reset_count = 0;
+ 
+ 	mei_io_list_init(&dev->read_list);
+ 	mei_io_list_init(&dev->write_list);
+--- a/drivers/misc/mei/mei_dev.h
++++ b/drivers/misc/mei/mei_dev.h
+@@ -61,6 +61,11 @@ extern const uuid_le mei_wd_guid;
+ #define MEI_CLIENTS_MAX 256
+ 
+ /*
++ * maximum number of consecutive resets
++ */
++#define MEI_MAX_CONSEC_RESET  3
++
++/*
+  * Number of File descriptors/handles
+  * that can be opened to the driver.
+  *
+@@ -326,6 +331,7 @@ struct mei_cl_device {
+ /**
+  * struct mei_device -  MEI private device struct
+ 
++ * @reset_count - limits the number of consecutive resets
+  * @hbm_state - state of host bus message protocol
+  * @mem_addr - mem mapped base register address
+ 
+@@ -369,6 +375,7 @@ struct mei_device {
+ 	/*
+ 	 * mei device  states
+ 	 */
++	unsigned long reset_count;
+ 	enum mei_dev_state dev_state;
+ 	enum mei_hbm_state hbm_state;
+ 	u16 init_clients_timer;
