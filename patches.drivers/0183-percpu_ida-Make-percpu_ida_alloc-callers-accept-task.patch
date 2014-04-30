@@ -1,0 +1,80 @@
+From: Kent Overstreet <kmo@daterainc.com>
+Date: Sun, 19 Jan 2014 08:26:37 +0000
+Subject: percpu_ida: Make percpu_ida_alloc + callers accept task state
+References: bnc#873901
+Patch-Mainline: v3.14-rc1
+Git-commit: 6f6b5d1ec56acdeab0503d2b823f6f88a0af493e
+ bitmask
+
+This patch changes percpu_ida_alloc() + callers to accept task state
+bitmask for prepare_to_wait() for code like target/iscsi that needs
+it for interruptible sleep, that is provided in a subsequent patch.
+
+It now expects TASK_UNINTERRUPTIBLE when the caller is able to sleep
+waiting for a new tag, or TASK_RUNNING when the caller cannot sleep,
+and is forced to return a negative value when no tags are available.
+
+v2 changes:
+  - Include blk-mq + tcm_fc + vhost/scsi + target/iscsi changes
+  - Drop signal_pending_state() call
+v3 changes:
+  - Only call prepare_to_wait() + finish_wait() when != TASK_RUNNING
+    (PeterZ)
+
+[hare: backported to SLE12]
+
+Reported-by: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Kent Overstreet <kmo@daterainc.com>
+Cc: <stable@vger.kernel.org> #3.12+
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ block/blk-mq-tag.c              | 6 ++++--
+ drivers/target/tcm_fc/tfc_cmd.c | 2 +-
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/block/blk-mq-tag.c b/block/blk-mq-tag.c
+index 4025050..83ae96c 100644
+--- a/block/blk-mq-tag.c
++++ b/block/blk-mq-tag.c
+@@ -36,7 +36,8 @@ static unsigned int __blk_mq_get_tag(struct blk_mq_tags *tags, gfp_t gfp)
+ {
+ 	int tag;
+ 
+-	tag = percpu_ida_alloc(&tags->free_tags, gfp);
++	tag = percpu_ida_alloc(&tags->free_tags, (gfp & __GFP_WAIT) ?
++			       TASK_UNINTERRUPTIBLE : TASK_RUNNING);
+ 	if (tag < 0)
+ 		return BLK_MQ_TAG_FAIL;
+ 	return tag + tags->nr_reserved_tags;
+@@ -52,7 +53,8 @@ static unsigned int __blk_mq_get_reserved_tag(struct blk_mq_tags *tags,
+ 		return BLK_MQ_TAG_FAIL;
+ 	}
+ 
+-	tag = percpu_ida_alloc(&tags->reserved_tags, gfp);
++	tag = percpu_ida_alloc(&tags->reserved_tags, (gfp & __GFP_WAIT) ?
++			       TASK_UNINTERRUPTIBLE : TASK_RUNNING);
+ 	if (tag < 0)
+ 		return BLK_MQ_TAG_FAIL;
+ 	return tag;
+diff --git a/drivers/target/tcm_fc/tfc_cmd.c b/drivers/target/tcm_fc/tfc_cmd.c
+index cb6cc3d..01cf37f 100644
+--- a/drivers/target/tcm_fc/tfc_cmd.c
++++ b/drivers/target/tcm_fc/tfc_cmd.c
+@@ -443,7 +443,7 @@ static void ft_recv_cmd(struct ft_sess *sess, struct fc_frame *fp)
+ 	struct se_session *se_sess = sess->se_sess;
+ 	int tag;
+ 
+-	tag = percpu_ida_alloc(&se_sess->sess_tag_pool, GFP_ATOMIC);
++	tag = percpu_ida_alloc(&se_sess->sess_tag_pool, TASK_RUNNING);
+ 	if (tag < 0)
+ 		goto busy;
+ 
+-- 
+1.7.12.4
+
