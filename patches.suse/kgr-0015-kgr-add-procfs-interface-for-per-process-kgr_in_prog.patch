@@ -1,0 +1,61 @@
+From: Jiri Kosina <jkosina@suse.cz>
+Date: Fri, 18 Apr 2014 14:01:16 +0200
+Subject: kgr: add procfs interface for per-process 'kgr_in_progress'
+Patch-mainline: submitted for review
+References: fate#313296
+
+Instead of flooding dmesg with data about tasks which haven't yet been
+migrated to the "new universe", create a 'kgr_in_progress' in
+/proc/<pid>/ so that it's possible to easily script the checks/actions
+in userspace.
+
+Signed-off-by: Jiri Kosina <jkosina@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz> [simplification]
+Cc: Steven Rostedt <rostedt@goodmis.org>
+Cc: Frederic Weisbecker <fweisbec@gmail.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ fs/proc/base.c |   10 ++++++++++
+ kernel/kgr.c   |    3 +--
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -2124,6 +2124,13 @@ static const struct file_operations proc
+ };
+ #endif /* CONFIG_CHECKPOINT_RESTORE */
+ 
++#if IS_ENABLED(CONFIG_KGR)
++static int proc_pid_kgr_in_progress(struct task_struct *task, char *buffer)
++{
++	return sprintf(buffer, "%d\n", task_thread_info(task)->kgr_in_progress);
++}
++#endif /* IS_ENABLED(CONFIG_KGR) */
++
+ static int proc_pident_instantiate(struct inode *dir,
+ 	struct dentry *dentry, struct task_struct *task, const void *ptr)
+ {
+@@ -2656,6 +2663,9 @@ static const struct pid_entry tgid_base_
+ #ifdef CONFIG_CHECKPOINT_RESTORE
+ 	REG("timers",	  S_IRUGO, proc_timers_operations),
+ #endif
++#if IS_ENABLED(CONFIG_KGR)
++	INF("kgr_in_progress",	S_IRUSR, proc_pid_kgr_in_progress),
++#endif
+ };
+ 
+ static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
+--- a/kernel/kgr.c
++++ b/kernel/kgr.c
+@@ -45,9 +45,8 @@ static bool kgr_still_patching(void)
+ 	read_lock(&tasklist_lock);
+ 	for_each_process(p) {
+ 		if (task_thread_info(p)->kgr_in_progress) {
+-			pr_info("pid %d (%s) still in kernel after timeout\n",
+-					p->pid, p->comm);
+ 			failed = true;
++			break;
+ 		}
+ 	}
+ 	read_unlock(&tasklist_lock);
