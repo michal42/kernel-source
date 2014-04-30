@@ -1,0 +1,60 @@
+From: Roland Dreier <roland@purestorage.com>
+Date: Sat, 23 Nov 2013 10:35:58 -0800
+Subject: target: Remove write-only stats fields and lock from struct
+References: bnc#873901
+Patch-Mainline: v3.13-rc5
+Git-commit: a51d5229d10dd3a337b674ce8603437d2996c5c3
+ se_node_acl
+
+Commit 04f3b31bff72 ("iscsi-target: Convert iscsi_session statistics to
+atomic_long_t") removed the updating of these fields in iscsi (the only
+fabric driver that ever touched these counters), and the core has no way
+to report or otherwise use the values.  Remove the last remnants of
+these counters.
+
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_tpg.c  | 2 --
+ include/target/target_core_base.h | 4 ----
+ 2 files changed, 6 deletions(-)
+
+diff --git a/drivers/target/target_core_tpg.c b/drivers/target/target_core_tpg.c
+index f697f8b..f755712 100644
+--- a/drivers/target/target_core_tpg.c
++++ b/drivers/target/target_core_tpg.c
+@@ -278,7 +278,6 @@ struct se_node_acl *core_tpg_check_initiator_node_acl(
+ 	snprintf(acl->initiatorname, TRANSPORT_IQN_LEN, "%s", initiatorname);
+ 	acl->se_tpg = tpg;
+ 	acl->acl_index = scsi_get_new_index(SCSI_AUTH_INTR_INDEX);
+-	spin_lock_init(&acl->stats_lock);
+ 	acl->dynamic_node_acl = 1;
+ 
+ 	tpg->se_tpg_tfo->set_default_node_attributes(acl);
+@@ -406,7 +405,6 @@ struct se_node_acl *core_tpg_add_initiator_node_acl(
+ 	snprintf(acl->initiatorname, TRANSPORT_IQN_LEN, "%s", initiatorname);
+ 	acl->se_tpg = tpg;
+ 	acl->acl_index = scsi_get_new_index(SCSI_AUTH_INTR_INDEX);
+-	spin_lock_init(&acl->stats_lock);
+ 
+ 	tpg->se_tpg_tfo->set_default_node_attributes(acl);
+ 
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index d1c4957..321301c 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -517,10 +517,6 @@ struct se_node_acl {
+ 	u32			acl_index;
+ #define MAX_ACL_TAG_SIZE 64
+ 	char			acl_tag[MAX_ACL_TAG_SIZE];
+-	u64			num_cmds;
+-	u64			read_bytes;
+-	u64			write_bytes;
+-	spinlock_t		stats_lock;
+ 	/* Used for PR SPEC_I_PT=1 and REGISTER_AND_MOVE */
+ 	atomic_t		acl_pr_ref_count;
+ 	struct se_dev_entry	**device_list;
+-- 
+1.7.12.4
+
