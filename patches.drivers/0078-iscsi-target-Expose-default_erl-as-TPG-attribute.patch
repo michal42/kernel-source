@@ -1,0 +1,175 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 20 Nov 2013 11:57:18 -0800
+Subject: iscsi-target: Expose default_erl as TPG attribute
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: d1fa7a1d506730a5d1211048c2fdacc42373d4d5
+
+This patch exposes default_erl as a TPG attribute so that it may be
+set TPG wide in demo-mode, but still allow the existing NodeACL
+attribute to be overridden on a per initiator basis.
+
+Reported-by: Arshad Hussain <arshad.hussain@calsoftinc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/iscsi/iscsi_target_configfs.c   | 11 ++++++++++-
+ drivers/target/iscsi/iscsi_target_core.h       |  5 ++---
+ drivers/target/iscsi/iscsi_target_nodeattrib.c |  5 +++--
+ drivers/target/iscsi/iscsi_target_nodeattrib.h |  3 ++-
+ drivers/target/iscsi/iscsi_target_tpg.c        | 18 ++++++++++++++++++
+ drivers/target/iscsi/iscsi_target_tpg.h        |  1 +
+ 6 files changed, 36 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/target/iscsi/iscsi_target_configfs.c b/drivers/target/iscsi/iscsi_target_configfs.c
+index fde3624..e3318ed 100644
+--- a/drivers/target/iscsi/iscsi_target_configfs.c
++++ b/drivers/target/iscsi/iscsi_target_configfs.c
+@@ -1046,6 +1046,11 @@ TPG_ATTR(prod_mode_write_protect, S_IRUGO | S_IWUSR);
+  */
+ DEF_TPG_ATTRIB(demo_mode_discovery);
+ TPG_ATTR(demo_mode_discovery, S_IRUGO | S_IWUSR);
++/*
++ * Define iscsi_tpg_attrib_s_default_erl
++ */
++DEF_TPG_ATTRIB(default_erl);
++TPG_ATTR(default_erl, S_IRUGO | S_IWUSR);
+ 
+ static struct configfs_attribute *lio_target_tpg_attrib_attrs[] = {
+ 	&iscsi_tpg_attrib_authentication.attr,
+@@ -1057,6 +1062,7 @@ static struct configfs_attribute *lio_target_tpg_attrib_attrs[] = {
+ 	&iscsi_tpg_attrib_demo_mode_write_protect.attr,
+ 	&iscsi_tpg_attrib_prod_mode_write_protect.attr,
+ 	&iscsi_tpg_attrib_demo_mode_discovery.attr,
++	&iscsi_tpg_attrib_default_erl.attr,
+ 	NULL,
+ };
+ 
+@@ -1919,9 +1925,12 @@ static void lio_set_default_node_attributes(struct se_node_acl *se_acl)
+ {
+ 	struct iscsi_node_acl *acl = container_of(se_acl, struct iscsi_node_acl,
+ 				se_node_acl);
++	struct se_portal_group *se_tpg = se_acl->se_tpg;
++	struct iscsi_portal_group *tpg = container_of(se_tpg,
++				struct iscsi_portal_group, tpg_se_tpg);
+ 
+ 	acl->node_attrib.nacl = acl;
+-	iscsit_set_default_node_attribues(acl);
++	iscsit_set_default_node_attribues(acl, tpg);
+ }
+ 
+ static int lio_check_stop_free(struct se_cmd *se_cmd)
+diff --git a/drivers/target/iscsi/iscsi_target_core.h b/drivers/target/iscsi/iscsi_target_core.h
+index 8dcb3c1..48f7b3b 100644
+--- a/drivers/target/iscsi/iscsi_target_core.h
++++ b/drivers/target/iscsi/iscsi_target_core.h
+@@ -37,9 +37,6 @@
+ #define NA_RANDOM_DATAIN_PDU_OFFSETS	0
+ #define NA_RANDOM_DATAIN_SEQ_OFFSETS	0
+ #define NA_RANDOM_R2T_OFFSETS		0
+-#define NA_DEFAULT_ERL			0
+-#define NA_DEFAULT_ERL_MAX		2
+-#define NA_DEFAULT_ERL_MIN		0
+ 
+ /* struct iscsi_tpg_attrib sanity values */
+ #define TA_AUTHENTICATION		1
+@@ -59,6 +56,7 @@
+ /* Disabled by default in production mode w/ explict ACLs */
+ #define TA_PROD_MODE_WRITE_PROTECT	0
+ #define TA_DEMO_MODE_DISCOVERY		1
++#define TA_DEFAULT_ERL			0
+ #define TA_CACHE_CORE_NPS		0
+ 
+ 
+@@ -766,6 +764,7 @@ struct iscsi_tpg_attrib {
+ 	u32			demo_mode_write_protect;
+ 	u32			prod_mode_write_protect;
+ 	u32			demo_mode_discovery;
++	u32			default_erl;
+ 	struct iscsi_portal_group *tpg;
+ };
+ 
+diff --git a/drivers/target/iscsi/iscsi_target_nodeattrib.c b/drivers/target/iscsi/iscsi_target_nodeattrib.c
+index 93bdc47..16454a9 100644
+--- a/drivers/target/iscsi/iscsi_target_nodeattrib.c
++++ b/drivers/target/iscsi/iscsi_target_nodeattrib.c
+@@ -33,7 +33,8 @@ static inline char *iscsit_na_get_initiatorname(
+ }
+ 
+ void iscsit_set_default_node_attribues(
+-	struct iscsi_node_acl *acl)
++	struct iscsi_node_acl *acl,
++	struct iscsi_portal_group *tpg)
+ {
+ 	struct iscsi_node_attrib *a = &acl->node_attrib;
+ 
+@@ -44,7 +45,7 @@ void iscsit_set_default_node_attribues(
+ 	a->random_datain_pdu_offsets = NA_RANDOM_DATAIN_PDU_OFFSETS;
+ 	a->random_datain_seq_offsets = NA_RANDOM_DATAIN_SEQ_OFFSETS;
+ 	a->random_r2t_offsets = NA_RANDOM_R2T_OFFSETS;
+-	a->default_erl = NA_DEFAULT_ERL;
++	a->default_erl = tpg->tpg_attrib.default_erl;
+ }
+ 
+ int iscsit_na_dataout_timeout(
+diff --git a/drivers/target/iscsi/iscsi_target_nodeattrib.h b/drivers/target/iscsi/iscsi_target_nodeattrib.h
+index c970b326..0c69a46 100644
+--- a/drivers/target/iscsi/iscsi_target_nodeattrib.h
++++ b/drivers/target/iscsi/iscsi_target_nodeattrib.h
+@@ -1,7 +1,8 @@
+ #ifndef ISCSI_TARGET_NODEATTRIB_H
+ #define ISCSI_TARGET_NODEATTRIB_H
+ 
+-extern void iscsit_set_default_node_attribues(struct iscsi_node_acl *);
++extern void iscsit_set_default_node_attribues(struct iscsi_node_acl *,
++					      struct iscsi_portal_group *);
+ extern int iscsit_na_dataout_timeout(struct iscsi_node_acl *, u32);
+ extern int iscsit_na_dataout_timeout_retries(struct iscsi_node_acl *, u32);
+ extern int iscsit_na_nopin_timeout(struct iscsi_node_acl *, u32);
+diff --git a/drivers/target/iscsi/iscsi_target_tpg.c b/drivers/target/iscsi/iscsi_target_tpg.c
+index 5cb8480..44a5471 100644
+--- a/drivers/target/iscsi/iscsi_target_tpg.c
++++ b/drivers/target/iscsi/iscsi_target_tpg.c
+@@ -224,6 +224,7 @@ static void iscsit_set_default_tpg_attribs(struct iscsi_portal_group *tpg)
+ 	a->demo_mode_write_protect = TA_DEMO_MODE_WRITE_PROTECT;
+ 	a->prod_mode_write_protect = TA_PROD_MODE_WRITE_PROTECT;
+ 	a->demo_mode_discovery = TA_DEMO_MODE_DISCOVERY;
++	a->default_erl = TA_DEFAULT_ERL;
+ }
+ 
+ int iscsit_tpg_add_portal_group(struct iscsi_tiqn *tiqn, struct iscsi_portal_group *tpg)
+@@ -840,3 +841,20 @@ int iscsit_ta_demo_mode_discovery(
+ 
+ 	return 0;
+ }
++
++int iscsit_ta_default_erl(
++	struct iscsi_portal_group *tpg,
++	u32 default_erl)
++{
++	struct iscsi_tpg_attrib *a = &tpg->tpg_attrib;
++
++	if ((default_erl != 0) && (default_erl != 1) && (default_erl != 2)) {
++		pr_err("Illegal value for default_erl: %u\n", default_erl);
++		return -EINVAL;
++	}
++
++	a->default_erl = default_erl;
++	pr_debug("iSCSI_TPG[%hu] - DefaultERL: %u\n", tpg->tpgt, a->default_erl);
++
++	return 0;
++}
+diff --git a/drivers/target/iscsi/iscsi_target_tpg.h b/drivers/target/iscsi/iscsi_target_tpg.h
+index 3e8ce86..213c0fc 100644
+--- a/drivers/target/iscsi/iscsi_target_tpg.h
++++ b/drivers/target/iscsi/iscsi_target_tpg.h
+@@ -38,5 +38,6 @@ extern int iscsit_ta_cache_dynamic_acls(struct iscsi_portal_group *, u32);
+ extern int iscsit_ta_demo_mode_write_protect(struct iscsi_portal_group *, u32);
+ extern int iscsit_ta_prod_mode_write_protect(struct iscsi_portal_group *, u32);
+ extern int iscsit_ta_demo_mode_discovery(struct iscsi_portal_group *, u32);
++extern int iscsit_ta_default_erl(struct iscsi_portal_group *, u32);
+ 
+ #endif /* ISCSI_TARGET_TPG_H */
+-- 
+1.7.12.4
+
