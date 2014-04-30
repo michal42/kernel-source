@@ -1,0 +1,180 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Fri, 8 Nov 2013 13:10:44 -0800
+Subject: target: Add per device xcopy_lun for copy offload I/O
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: 4863e525659abbc903aacc67fd916f12914f6c1d
+
+This patch adds a se_device->xcopy_lun that is used for local
+copy offload I/O, instead of allocating + initializing a pseudo
+se_lun for each received EXTENDED_COPY operation.
+
+Also, move declaration of struct se_lun + struct se_port_stat_grps
+ahead of struct se_device.
+
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_device.c |  9 ++++++
+ drivers/target/target_core_xcopy.c  | 18 +-----------
+ include/target/target_core_base.h   | 57 +++++++++++++++++++------------------
+ 3 files changed, 39 insertions(+), 45 deletions(-)
+
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index 20acf44..674f54b 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -1414,6 +1414,7 @@ static void scsi_dump_inquiry(struct se_device *dev)
+ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
+ {
+ 	struct se_device *dev;
++	struct se_lun *xcopy_lun;
+ 
+ 	dev = hba->transport->alloc_device(hba, name);
+ 	if (!dev)
+@@ -1476,6 +1477,14 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
+ 	dev->dev_attrib.fabric_max_sectors = DA_FABRIC_MAX_SECTORS;
+ 	dev->dev_attrib.optimal_sectors = DA_FABRIC_MAX_SECTORS;
+ 
++	xcopy_lun = &dev->xcopy_lun;
++	xcopy_lun->lun_se_dev = dev;
++	init_completion(&xcopy_lun->lun_shutdown_comp);
++	INIT_LIST_HEAD(&xcopy_lun->lun_acl_list);
++	spin_lock_init(&xcopy_lun->lun_acl_lock);
++	spin_lock_init(&xcopy_lun->lun_sep_lock);
++	init_completion(&xcopy_lun->lun_ref_comp);
++
+ 	return dev;
+ }
+ 
+diff --git a/drivers/target/target_core_xcopy.c b/drivers/target/target_core_xcopy.c
+index 5054b6a..6b88a99 100644
+--- a/drivers/target/target_core_xcopy.c
++++ b/drivers/target/target_core_xcopy.c
+@@ -405,9 +405,6 @@ static void xcopy_pt_release_cmd(struct se_cmd *se_cmd)
+ 	struct xcopy_pt_cmd *xpt_cmd = container_of(se_cmd,
+ 				struct xcopy_pt_cmd, se_cmd);
+ 
+-	if (xpt_cmd->remote_port)
+-		kfree(se_cmd->se_lun);
+-
+ 	kfree(xpt_cmd);
+ }
+ 
+@@ -572,21 +569,10 @@ static int target_xcopy_init_pt_lun(
+ 		return 0;
+ 	}
+ 
+-	pt_cmd->se_lun = kzalloc(sizeof(struct se_lun), GFP_KERNEL);
+-	if (!pt_cmd->se_lun) {
+-		pr_err("Unable to allocate pt_cmd->se_lun\n");
+-		return -ENOMEM;
+-	}
+-	init_completion(&pt_cmd->se_lun->lun_shutdown_comp);
+-	INIT_LIST_HEAD(&pt_cmd->se_lun->lun_acl_list);
+-	spin_lock_init(&pt_cmd->se_lun->lun_acl_lock);
+-	spin_lock_init(&pt_cmd->se_lun->lun_sep_lock);
+-	init_completion(&pt_cmd->se_lun->lun_ref_comp);
+-
++	pt_cmd->se_lun = &se_dev->xcopy_lun;
+ 	pt_cmd->se_dev = se_dev;
+ 
+ 	pr_debug("Setup emulated se_dev: %p from se_dev\n", pt_cmd->se_dev);
+-	pt_cmd->se_lun->lun_se_dev = se_dev;
+ 	pt_cmd->se_cmd_flags |= SCF_SE_LUN_CMD | SCF_CMD_XCOPY_PASSTHROUGH;
+ 
+ 	pr_debug("Setup emulated se_dev: %p to pt_cmd->se_lun->lun_se_dev\n",
+@@ -657,8 +643,6 @@ static int target_xcopy_setup_pt_cmd(
+ 	return 0;
+ 
+ out:
+-	if (remote_port == true)
+-		kfree(cmd->se_lun);
+ 	return ret;
+ }
+ 
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index dd0e441..f2fbd09 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -628,6 +628,34 @@ struct se_dev_attrib {
+ 	struct config_group da_group;
+ };
+ 
++struct se_port_stat_grps {
++	struct config_group stat_group;
++	struct config_group scsi_port_group;
++	struct config_group scsi_tgt_port_group;
++	struct config_group scsi_transport_group;
++};
++
++struct se_lun {
++#define SE_LUN_LINK_MAGIC			0xffff7771
++	u32			lun_link_magic;
++	/* See transport_lun_status_table */
++	enum transport_lun_status_table lun_status;
++	u32			lun_access;
++	u32			lun_flags;
++	u32			unpacked_lun;
++	atomic_t		lun_acl_count;
++	spinlock_t		lun_acl_lock;
++	spinlock_t		lun_sep_lock;
++	struct completion	lun_shutdown_comp;
++	struct list_head	lun_acl_list;
++	struct se_device	*lun_se_dev;
++	struct se_port		*lun_sep;
++	struct config_group	lun_group;
++	struct se_port_stat_grps port_stat_grps;
++	struct completion	lun_ref_comp;
++	struct percpu_ref	lun_ref;
++};
++
+ struct se_dev_stat_grps {
+ 	struct config_group stat_group;
+ 	struct config_group scsi_dev_group;
+@@ -711,6 +739,7 @@ struct se_device {
+ 	struct se_subsystem_api *transport;
+ 	/* Linked list for struct se_hba struct se_device list */
+ 	struct list_head	dev_list;
++	struct se_lun		xcopy_lun;
+ };
+ 
+ struct se_hba {
+@@ -730,34 +759,6 @@ struct se_hba {
+ 	struct se_subsystem_api *transport;
+ };
+ 
+-struct se_port_stat_grps {
+-	struct config_group stat_group;
+-	struct config_group scsi_port_group;
+-	struct config_group scsi_tgt_port_group;
+-	struct config_group scsi_transport_group;
+-};
+-
+-struct se_lun {
+-#define SE_LUN_LINK_MAGIC			0xffff7771
+-	u32			lun_link_magic;
+-	/* See transport_lun_status_table */
+-	enum transport_lun_status_table lun_status;
+-	u32			lun_access;
+-	u32			lun_flags;
+-	u32			unpacked_lun;
+-	atomic_t		lun_acl_count;
+-	spinlock_t		lun_acl_lock;
+-	spinlock_t		lun_sep_lock;
+-	struct completion	lun_shutdown_comp;
+-	struct list_head	lun_acl_list;
+-	struct se_device	*lun_se_dev;
+-	struct se_port		*lun_sep;
+-	struct config_group	lun_group;
+-	struct se_port_stat_grps port_stat_grps;
+-	struct completion	lun_ref_comp;
+-	struct percpu_ref	lun_ref;
+-};
+-
+ struct scsi_port_stats {
+        u64     cmd_pdus;
+        u64     tx_data_octets;
+-- 
+1.7.12.4
+
