@@ -1,0 +1,43 @@
+From: Arshad Hussain <arshad.hussain@calsoftinc.com>
+Date: Fri, 14 Mar 2014 15:28:59 -0700
+Subject: iscsi-target: Add missing NopOUT->flag (LMB) sanity check
+References: bnc#873901
+Patch-Mainline: v3.15-rc1
+Git-commit: a3662605f66473124501e8c12f7ff44999917e23
+
+This patch adds check for NopOUT->flag (LMB) which is a mandatory
+as per RFC 3720 Section 10.18.
+
+(Fix up context changes for v3.14-rc code - nab)
+
+Signed-off-by: Arshad Hussain <arshad.hussain@calsoftinc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/iscsi/iscsi_target.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/target/iscsi/iscsi_target.c b/drivers/target/iscsi/iscsi_target.c
+index b83ec37..df0456a 100644
+--- a/drivers/target/iscsi/iscsi_target.c
++++ b/drivers/target/iscsi/iscsi_target.c
+@@ -1503,6 +1503,16 @@ int iscsit_setup_nop_out(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+ {
+ 	u32 payload_length = ntoh24(hdr->dlength);
+ 
++	if (!(hdr->flags & ISCSI_FLAG_CMD_FINAL)) {
++		pr_err("NopOUT Flag's, Left Most Bit not set, protocol error.\n");
++		if (!cmd)
++			return iscsit_add_reject(conn, ISCSI_REASON_PROTOCOL_ERROR,
++						 (unsigned char *)hdr);
++		
++		return iscsit_reject_cmd(cmd, ISCSI_REASON_PROTOCOL_ERROR,
++					 (unsigned char *)hdr);
++	}
++
+ 	if (hdr->itt == RESERVED_ITT && !(hdr->opcode & ISCSI_OP_IMMEDIATE)) {
+ 		pr_err("NOPOUT ITT is reserved, but Immediate Bit is"
+ 			" not set, protocol error.\n");
+-- 
+1.7.12.4
+
