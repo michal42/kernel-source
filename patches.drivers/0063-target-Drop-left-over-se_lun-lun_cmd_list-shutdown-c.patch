@@ -1,0 +1,446 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 6 Nov 2013 21:05:19 -0800
+Subject: target: Drop left-over se_lun->lun_cmd_list shutdown code
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: 4a9a6c8d538eff6d627fa14409c7c25aff652541
+
+Now with percpu refcounting for se_lun in place, go ahead and drop
+the legacy per se_cmd accounting for se_lun shutdown.
+
+This includes __transport_clear_lun_from_sessions(), the associated
+transport_lun_wait_for_tasks() logic, along with a handful of now
+unused se_cmd structure members and ->transport_state bits.
+
+Cc: Kent Overstreet <kmo@daterainc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/infiniband/ulp/srpt/ib_srpt.c  |  10 --
+ drivers/target/target_core_tpg.c       |  15 +--
+ drivers/target/target_core_transport.c | 219 +--------------------------------
+ drivers/target/target_core_xcopy.c     |   2 -
+ include/target/target_core_base.h      |  13 +-
+ 5 files changed, 7 insertions(+), 252 deletions(-)
+
+diff --git a/drivers/infiniband/ulp/srpt/ib_srpt.c b/drivers/infiniband/ulp/srpt/ib_srpt.c
+index 6c923c7..520a7e5 100644
+--- a/drivers/infiniband/ulp/srpt/ib_srpt.c
++++ b/drivers/infiniband/ulp/srpt/ib_srpt.c
+@@ -1352,11 +1352,8 @@ static int srpt_abort_cmd(struct srpt_send_ioctx *ioctx)
+ 
+ 		/* XXX(hch): this is a horrible layering violation.. */
+ 		spin_lock_irqsave(&ioctx->cmd.t_state_lock, flags);
+-		ioctx->cmd.transport_state |= CMD_T_LUN_STOP;
+ 		ioctx->cmd.transport_state &= ~CMD_T_ACTIVE;
+ 		spin_unlock_irqrestore(&ioctx->cmd.t_state_lock, flags);
+-
+-		complete(&ioctx->cmd.transport_lun_stop_comp);
+ 		break;
+ 	case SRPT_STATE_CMD_RSP_SENT:
+ 		/*
+@@ -1364,9 +1361,6 @@ static int srpt_abort_cmd(struct srpt_send_ioctx *ioctx)
+ 		 * not been received in time.
+ 		 */
+ 		srpt_unmap_sg_to_ib_sge(ioctx->ch, ioctx);
+-		spin_lock_irqsave(&ioctx->cmd.t_state_lock, flags);
+-		ioctx->cmd.transport_state |= CMD_T_LUN_STOP;
+-		spin_unlock_irqrestore(&ioctx->cmd.t_state_lock, flags);
+ 		target_put_sess_cmd(ioctx->ch->sess, &ioctx->cmd);
+ 		break;
+ 	case SRPT_STATE_MGMT_RSP_SENT:
+@@ -1476,7 +1470,6 @@ static void srpt_handle_rdma_err_comp(struct srpt_rdma_ch *ch,
+ {
+ 	struct se_cmd *cmd;
+ 	enum srpt_command_state state;
+-	unsigned long flags;
+ 
+ 	cmd = &ioctx->cmd;
+ 	state = srpt_get_cmd_state(ioctx);
+@@ -1496,9 +1489,6 @@ static void srpt_handle_rdma_err_comp(struct srpt_rdma_ch *ch,
+ 			       __func__, __LINE__, state);
+ 		break;
+ 	case SRPT_RDMA_WRITE_LAST:
+-		spin_lock_irqsave(&ioctx->cmd.t_state_lock, flags);
+-		ioctx->cmd.transport_state |= CMD_T_LUN_STOP;
+-		spin_unlock_irqrestore(&ioctx->cmd.t_state_lock, flags);
+ 		break;
+ 	default:
+ 		printk(KERN_ERR "%s[%d]: opcode = %u\n", __func__,
+diff --git a/drivers/target/target_core_tpg.c b/drivers/target/target_core_tpg.c
+index f321af0..f697f8b 100644
+--- a/drivers/target/target_core_tpg.c
++++ b/drivers/target/target_core_tpg.c
+@@ -654,9 +654,7 @@ static int core_tpg_setup_virtual_lun0(struct se_portal_group *se_tpg)
+ 	atomic_set(&lun->lun_acl_count, 0);
+ 	init_completion(&lun->lun_shutdown_comp);
+ 	INIT_LIST_HEAD(&lun->lun_acl_list);
+-	INIT_LIST_HEAD(&lun->lun_cmd_list);
+ 	spin_lock_init(&lun->lun_acl_lock);
+-	spin_lock_init(&lun->lun_cmd_lock);
+ 	spin_lock_init(&lun->lun_sep_lock);
+ 	init_completion(&lun->lun_ref_comp);
+ 
+@@ -706,9 +704,7 @@ int core_tpg_register(
+ 		atomic_set(&lun->lun_acl_count, 0);
+ 		init_completion(&lun->lun_shutdown_comp);
+ 		INIT_LIST_HEAD(&lun->lun_acl_list);
+-		INIT_LIST_HEAD(&lun->lun_cmd_list);
+ 		spin_lock_init(&lun->lun_acl_lock);
+-		spin_lock_init(&lun->lun_cmd_lock);
+ 		spin_lock_init(&lun->lun_sep_lock);
+ 		init_completion(&lun->lun_ref_comp);
+ 	}
+@@ -849,14 +845,6 @@ int core_tpg_post_addlun(
+ 	return 0;
+ }
+ 
+-static void core_tpg_shutdown_lun(
+-	struct se_portal_group *tpg,
+-	struct se_lun *lun)
+-{
+-	core_clear_lun_from_tpg(lun, tpg);
+-	transport_clear_lun_ref(lun);
+-}
+-
+ struct se_lun *core_tpg_pre_dellun(
+ 	struct se_portal_group *tpg,
+ 	u32 unpacked_lun)
+@@ -891,7 +879,8 @@ int core_tpg_post_dellun(
+ 	struct se_portal_group *tpg,
+ 	struct se_lun *lun)
+ {
+-	core_tpg_shutdown_lun(tpg, lun);
++	core_clear_lun_from_tpg(lun, tpg);
++	transport_clear_lun_ref(lun);
+ 
+ 	core_dev_unexport(lun->lun_se_dev, tpg, lun);
+ 
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index 94a8acc..97f5849 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -515,23 +515,6 @@ static int transport_cmd_check_stop(struct se_cmd *cmd, bool remove_from_lists,
+ 	if (write_pending)
+ 		cmd->t_state = TRANSPORT_WRITE_PENDING;
+ 
+-	/*
+-	 * Determine if IOCTL context caller in requesting the stopping of this
+-	 * command for LUN shutdown purposes.
+-	 */
+-	if (cmd->transport_state & CMD_T_LUN_STOP) {
+-		pr_debug("%s:%d CMD_T_LUN_STOP for ITT: 0x%08x\n",
+-			__func__, __LINE__, cmd->se_tfo->get_task_tag(cmd));
+-
+-		cmd->transport_state &= ~CMD_T_ACTIVE;
+-		if (remove_from_lists)
+-			target_remove_from_state_list(cmd);
+-		spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+-
+-		complete(&cmd->transport_lun_stop_comp);
+-		return 1;
+-	}
+-
+ 	if (remove_from_lists) {
+ 		target_remove_from_state_list(cmd);
+ 
+@@ -1088,13 +1071,10 @@ void transport_init_se_cmd(
+ 	int task_attr,
+ 	unsigned char *sense_buffer)
+ {
+-	INIT_LIST_HEAD(&cmd->se_lun_node);
+ 	INIT_LIST_HEAD(&cmd->se_delayed_node);
+ 	INIT_LIST_HEAD(&cmd->se_qf_node);
+ 	INIT_LIST_HEAD(&cmd->se_cmd_list);
+ 	INIT_LIST_HEAD(&cmd->state_list);
+-	init_completion(&cmd->transport_lun_fe_stop_comp);
+-	init_completion(&cmd->transport_lun_stop_comp);
+ 	init_completion(&cmd->t_transport_stop_comp);
+ 	init_completion(&cmd->cmd_wait_comp);
+ 	init_completion(&cmd->task_stop_comp);
+@@ -1715,29 +1695,14 @@ void target_execute_cmd(struct se_cmd *cmd)
+ 	/*
+ 	 * If the received CDB has aleady been aborted stop processing it here.
+ 	 */
+-	if (transport_check_aborted_status(cmd, 1)) {
+-		complete(&cmd->transport_lun_stop_comp);
++	if (transport_check_aborted_status(cmd, 1))
+ 		return;
+-	}
+ 
+ 	/*
+-	 * Determine if IOCTL context caller in requesting the stopping of this
+-	 * command for LUN shutdown purposes.
+-	 */
+-	spin_lock_irq(&cmd->t_state_lock);
+-	if (cmd->transport_state & CMD_T_LUN_STOP) {
+-		pr_debug("%s:%d CMD_T_LUN_STOP for ITT: 0x%08x\n",
+-			__func__, __LINE__, cmd->se_tfo->get_task_tag(cmd));
+-
+-		cmd->transport_state &= ~CMD_T_ACTIVE;
+-		spin_unlock_irq(&cmd->t_state_lock);
+-		complete(&cmd->transport_lun_stop_comp);
+-		return;
+-	}
+-	/*
+ 	 * Determine if frontend context caller is requesting the stopping of
+ 	 * this command for frontend exceptions.
+ 	 */
++	spin_lock_irq(&cmd->t_state_lock);
+ 	if (cmd->transport_state & CMD_T_STOP) {
+ 		pr_debug("%s:%d CMD_T_STOP for ITT: 0x%08x\n",
+ 			__func__, __LINE__,
+@@ -2400,149 +2365,6 @@ void target_wait_for_sess_cmds(struct se_session *se_sess)
+ }
+ EXPORT_SYMBOL(target_wait_for_sess_cmds);
+ 
+-/*	transport_lun_wait_for_tasks():
+- *
+- *	Called from ConfigFS context to stop the passed struct se_cmd to allow
+- *	an struct se_lun to be successfully shutdown.
+- */
+-static int transport_lun_wait_for_tasks(struct se_cmd *cmd, struct se_lun *lun)
+-{
+-	unsigned long flags;
+-	int ret = 0;
+-
+-	/*
+-	 * If the frontend has already requested this struct se_cmd to
+-	 * be stopped, we can safely ignore this struct se_cmd.
+-	 */
+-	spin_lock_irqsave(&cmd->t_state_lock, flags);
+-	if (cmd->transport_state & CMD_T_STOP) {
+-		cmd->transport_state &= ~CMD_T_LUN_STOP;
+-
+-		pr_debug("ConfigFS ITT[0x%08x] - CMD_T_STOP, skipping\n",
+-			 cmd->se_tfo->get_task_tag(cmd));
+-		spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+-		transport_cmd_check_stop(cmd, false, false);
+-		return -EPERM;
+-	}
+-	cmd->transport_state |= CMD_T_LUN_FE_STOP;
+-	spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+-
+-	// XXX: audit task_flags checks.
+-	spin_lock_irqsave(&cmd->t_state_lock, flags);
+-	if ((cmd->transport_state & CMD_T_BUSY) &&
+-	    (cmd->transport_state & CMD_T_SENT)) {
+-		if (!target_stop_cmd(cmd, &flags))
+-			ret++;
+-	}
+-	spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+-
+-	pr_debug("ConfigFS: cmd: %p stop tasks ret:"
+-			" %d\n", cmd, ret);
+-	if (!ret) {
+-		pr_debug("ConfigFS: ITT[0x%08x] - stopping cmd....\n",
+-				cmd->se_tfo->get_task_tag(cmd));
+-		wait_for_completion(&cmd->transport_lun_stop_comp);
+-		pr_debug("ConfigFS: ITT[0x%08x] - stopped cmd....\n",
+-				cmd->se_tfo->get_task_tag(cmd));
+-	}
+-
+-	return 0;
+-}
+-
+-static void __transport_clear_lun_from_sessions(struct se_lun *lun)
+-{
+-	struct se_cmd *cmd = NULL;
+-	unsigned long lun_flags, cmd_flags;
+-	/*
+-	 * Do exception processing and return CHECK_CONDITION status to the
+-	 * Initiator Port.
+-	 */
+-	spin_lock_irqsave(&lun->lun_cmd_lock, lun_flags);
+-	while (!list_empty(&lun->lun_cmd_list)) {
+-		cmd = list_first_entry(&lun->lun_cmd_list,
+-		       struct se_cmd, se_lun_node);
+-		list_del_init(&cmd->se_lun_node);
+-
+-		spin_lock(&cmd->t_state_lock);
+-		pr_debug("SE_LUN[%d] - Setting cmd->transport"
+-			"_lun_stop for  ITT: 0x%08x\n",
+-			cmd->se_lun->unpacked_lun,
+-			cmd->se_tfo->get_task_tag(cmd));
+-		cmd->transport_state |= CMD_T_LUN_STOP;
+-		spin_unlock(&cmd->t_state_lock);
+-
+-		spin_unlock_irqrestore(&lun->lun_cmd_lock, lun_flags);
+-
+-		if (!cmd->se_lun) {
+-			pr_err("ITT: 0x%08x, [i,t]_state: %u/%u\n",
+-				cmd->se_tfo->get_task_tag(cmd),
+-				cmd->se_tfo->get_cmd_state(cmd), cmd->t_state);
+-			BUG();
+-		}
+-		/*
+-		 * If the Storage engine still owns the iscsi_cmd_t, determine
+-		 * and/or stop its context.
+-		 */
+-		pr_debug("SE_LUN[%d] - ITT: 0x%08x before transport"
+-			"_lun_wait_for_tasks()\n", cmd->se_lun->unpacked_lun,
+-			cmd->se_tfo->get_task_tag(cmd));
+-
+-		if (transport_lun_wait_for_tasks(cmd, cmd->se_lun) < 0) {
+-			spin_lock_irqsave(&lun->lun_cmd_lock, lun_flags);
+-			continue;
+-		}
+-
+-		pr_debug("SE_LUN[%d] - ITT: 0x%08x after transport_lun"
+-			"_wait_for_tasks(): SUCCESS\n",
+-			cmd->se_lun->unpacked_lun,
+-			cmd->se_tfo->get_task_tag(cmd));
+-
+-		spin_lock_irqsave(&cmd->t_state_lock, cmd_flags);
+-		if (!(cmd->transport_state & CMD_T_DEV_ACTIVE)) {
+-			spin_unlock_irqrestore(&cmd->t_state_lock, cmd_flags);
+-			goto check_cond;
+-		}
+-		cmd->transport_state &= ~CMD_T_DEV_ACTIVE;
+-		target_remove_from_state_list(cmd);
+-		spin_unlock_irqrestore(&cmd->t_state_lock, cmd_flags);
+-
+-		/*
+-		 * The Storage engine stopped this struct se_cmd before it was
+-		 * send to the fabric frontend for delivery back to the
+-		 * Initiator Node.  Return this SCSI CDB back with an
+-		 * CHECK_CONDITION status.
+-		 */
+-check_cond:
+-		transport_send_check_condition_and_sense(cmd,
+-				TCM_NON_EXISTENT_LUN, 0);
+-		/*
+-		 *  If the fabric frontend is waiting for this iscsi_cmd_t to
+-		 * be released, notify the waiting thread now that LU has
+-		 * finished accessing it.
+-		 */
+-		spin_lock_irqsave(&cmd->t_state_lock, cmd_flags);
+-		if (cmd->transport_state & CMD_T_LUN_FE_STOP) {
+-			pr_debug("SE_LUN[%d] - Detected FE stop for"
+-				" struct se_cmd: %p ITT: 0x%08x\n",
+-				lun->unpacked_lun,
+-				cmd, cmd->se_tfo->get_task_tag(cmd));
+-
+-			spin_unlock_irqrestore(&cmd->t_state_lock,
+-					cmd_flags);
+-			transport_cmd_check_stop(cmd, false, false);
+-			complete(&cmd->transport_lun_fe_stop_comp);
+-			spin_lock_irqsave(&lun->lun_cmd_lock, lun_flags);
+-			continue;
+-		}
+-		pr_debug("SE_LUN[%d] - ITT: 0x%08x finished processing\n",
+-			lun->unpacked_lun, cmd->se_tfo->get_task_tag(cmd));
+-
+-		spin_unlock_irqrestore(&cmd->t_state_lock, cmd_flags);
+-		spin_lock_irqsave(&lun->lun_cmd_lock, lun_flags);
+-	}
+-	spin_unlock_irqrestore(&lun->lun_cmd_lock, lun_flags);
+-}
+-
+ static int transport_clear_lun_ref_thread(void *p)
+ {
+ 	struct se_lun *lun = p;
+@@ -2593,43 +2415,6 @@ bool transport_wait_for_tasks(struct se_cmd *cmd)
+ 		spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+ 		return false;
+ 	}
+-	/*
+-	 * If we are already stopped due to an external event (ie: LUN shutdown)
+-	 * sleep until the connection can have the passed struct se_cmd back.
+-	 * The cmd->transport_lun_stopped_sem will be upped by
+-	 * transport_clear_lun_from_sessions() once the ConfigFS context caller
+-	 * has completed its operation on the struct se_cmd.
+-	 */
+-	if (cmd->transport_state & CMD_T_LUN_STOP) {
+-		pr_debug("wait_for_tasks: Stopping"
+-			" wait_for_completion(&cmd->t_tasktransport_lun_fe"
+-			"_stop_comp); for ITT: 0x%08x\n",
+-			cmd->se_tfo->get_task_tag(cmd));
+-		/*
+-		 * There is a special case for WRITES where a FE exception +
+-		 * LUN shutdown means ConfigFS context is still sleeping on
+-		 * transport_lun_stop_comp in transport_lun_wait_for_tasks().
+-		 * We go ahead and up transport_lun_stop_comp just to be sure
+-		 * here.
+-		 */
+-		spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+-		complete(&cmd->transport_lun_stop_comp);
+-		wait_for_completion(&cmd->transport_lun_fe_stop_comp);
+-		spin_lock_irqsave(&cmd->t_state_lock, flags);
+-
+-		target_remove_from_state_list(cmd);
+-		/*
+-		 * At this point, the frontend who was the originator of this
+-		 * struct se_cmd, now owns the structure and can be released through
+-		 * normal means below.
+-		 */
+-		pr_debug("wait_for_tasks: Stopped"
+-			" wait_for_completion(&cmd->t_tasktransport_lun_fe_"
+-			"stop_comp); for ITT: 0x%08x\n",
+-			cmd->se_tfo->get_task_tag(cmd));
+-
+-		cmd->transport_state &= ~CMD_T_LUN_STOP;
+-	}
+ 
+ 	if (!(cmd->transport_state & CMD_T_ACTIVE)) {
+ 		spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+diff --git a/drivers/target/target_core_xcopy.c b/drivers/target/target_core_xcopy.c
+index db7cd3d..5054b6a 100644
+--- a/drivers/target/target_core_xcopy.c
++++ b/drivers/target/target_core_xcopy.c
+@@ -578,10 +578,8 @@ static int target_xcopy_init_pt_lun(
+ 		return -ENOMEM;
+ 	}
+ 	init_completion(&pt_cmd->se_lun->lun_shutdown_comp);
+-	INIT_LIST_HEAD(&pt_cmd->se_lun->lun_cmd_list);
+ 	INIT_LIST_HEAD(&pt_cmd->se_lun->lun_acl_list);
+ 	spin_lock_init(&pt_cmd->se_lun->lun_acl_lock);
+-	spin_lock_init(&pt_cmd->se_lun->lun_cmd_lock);
+ 	spin_lock_init(&pt_cmd->se_lun->lun_sep_lock);
+ 	init_completion(&pt_cmd->se_lun->lun_ref_comp);
+ 
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index cb53fa2..dd0e441 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -443,7 +443,6 @@ struct se_cmd {
+ 	/* Used for sense data */
+ 	void			*sense_buffer;
+ 	struct list_head	se_delayed_node;
+-	struct list_head	se_lun_node;
+ 	struct list_head	se_qf_node;
+ 	struct se_device      *se_dev;
+ 	struct se_dev_entry   *se_deve;
+@@ -471,15 +470,11 @@ struct se_cmd {
+ #define CMD_T_SENT		(1 << 4)
+ #define CMD_T_STOP		(1 << 5)
+ #define CMD_T_FAILED		(1 << 6)
+-#define CMD_T_LUN_STOP		(1 << 7)
+-#define CMD_T_LUN_FE_STOP	(1 << 8)
+-#define CMD_T_DEV_ACTIVE	(1 << 9)
+-#define CMD_T_REQUEST_STOP	(1 << 10)
+-#define CMD_T_BUSY		(1 << 11)
++#define CMD_T_DEV_ACTIVE	(1 << 7)
++#define CMD_T_REQUEST_STOP	(1 << 8)
++#define CMD_T_BUSY		(1 << 9)
+ 	spinlock_t		t_state_lock;
+ 	struct completion	t_transport_stop_comp;
+-	struct completion	transport_lun_fe_stop_comp;
+-	struct completion	transport_lun_stop_comp;
+ 
+ 	struct work_struct	work;
+ 
+@@ -752,10 +747,8 @@ struct se_lun {
+ 	u32			unpacked_lun;
+ 	atomic_t		lun_acl_count;
+ 	spinlock_t		lun_acl_lock;
+-	spinlock_t		lun_cmd_lock;
+ 	spinlock_t		lun_sep_lock;
+ 	struct completion	lun_shutdown_comp;
+-	struct list_head	lun_cmd_list;
+ 	struct list_head	lun_acl_list;
+ 	struct se_device	*lun_se_dev;
+ 	struct se_port		*lun_sep;
+-- 
+1.7.12.4
+
