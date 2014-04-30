@@ -1,0 +1,49 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 2 Apr 2014 13:34:04 -0700
+Subject: target/sbc: Only expose PI read_cap16 bits when supported by fabric
+References: bnc#873901
+Patch-Mainline: v3.15-rc1
+Git-commit: 2d3359832513ac62a8bd6d2bffbb2c5bdd29aad3
+
+Only expose the PI protection type bits in READ_CAPACITY_16
+if the session + fabric support DIX PASS operations.
+
+Reviewed-by: Sagi Grimberg <sagig@mellanox.com>
+Cc: Martin K. Petersen <martin.petersen@oracle.com>
+Cc: Or Gerlitz <ogerlitz@mellanox.com>
+Cc: Quinn Tran <quinn.tran@qlogic.com>
+Cc: Giridhar Malavali <giridhar.malavali@qlogic.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_sbc.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/target/target_core_sbc.c b/drivers/target/target_core_sbc.c
+index 62daef5..a364e17 100644
+--- a/drivers/target/target_core_sbc.c
++++ b/drivers/target/target_core_sbc.c
+@@ -89,6 +89,7 @@ static sense_reason_t
+ sbc_emulate_readcapacity_16(struct se_cmd *cmd)
+ {
+ 	struct se_device *dev = cmd->se_dev;
++	struct se_session *sess = cmd->se_sess;
+ 	unsigned char *rbuf;
+ 	unsigned char buf[32];
+ 	unsigned long long blocks = dev->transport->get_blocks(dev);
+@@ -109,8 +110,10 @@ sbc_emulate_readcapacity_16(struct se_cmd *cmd)
+ 	/*
+ 	 * Set P_TYPE and PROT_EN bits for DIF support
+ 	 */
+-	if (dev->dev_attrib.pi_prot_type)
+-		buf[12] = (dev->dev_attrib.pi_prot_type - 1) << 1 | 0x1;
++	if (sess->sup_prot_ops & (TARGET_PROT_DIN_PASS | TARGET_PROT_DOUT_PASS)) {
++		if (dev->dev_attrib.pi_prot_type)
++			buf[12] = (dev->dev_attrib.pi_prot_type - 1) << 1 | 0x1;
++	}
+ 
+ 	if (dev->transport->get_lbppbe)
+ 		buf[13] = dev->transport->get_lbppbe(dev) & 0x0f;
+-- 
+1.7.12.4
+
