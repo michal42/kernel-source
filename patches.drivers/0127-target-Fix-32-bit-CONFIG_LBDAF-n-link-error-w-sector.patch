@@ -1,0 +1,44 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Thu, 30 Jan 2014 14:05:16 -0800
+Subject: target: Fix 32-bit + CONFIG_LBDAF=n link error w/ sector_div
+References: bnc#873901
+Patch-Mainline: v3.14-rc3
+Git-commit: cdf55949c10aed90d081342264d99b2b0ed0bbf3
+
+This patch changes core_alua_state_lba_dependent() to use do_div()
+instead sector_div() to avoid the following link error on 32-bit
+with CONFIG_LBDAF=n as reported by Jim:
+
+buildlog-1391099072.txt-drivers/built-in.o: In function `target_alua_state_check':
+buildlog-1391099072.txt-(.text+0x928d93): undefined reference to `__umoddi3'
+buildlog-1391099072.txt:make: *** [vmlinux] Error 1 --
+buildlog-1391101753.txt-  CC      init/version.o
+buildlog-1391101753.txt-  LD      init/built-in.o
+buildlog-1391101753.txt-drivers/built-in.o: In function `core_alua_state_lba_dependent':
+buildlog-1391101753.txt-/home/jim/linux/drivers/target/target_core_alua.c:503: undefined reference to `__umoddi3'
+buildlog-1391101753.txt:make: *** [vmlinux] Error 1
+
+Reported-by: Jim Davis <jim.epost@gmail.com>
+Cc: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_alua.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/target/target_core_alua.c b/drivers/target/target_core_alua.c
+index 12da9b3..c3d9df6 100644
+--- a/drivers/target/target_core_alua.c
++++ b/drivers/target/target_core_alua.c
+@@ -500,7 +500,7 @@ static inline int core_alua_state_lba_dependent(
+ 
+ 			if (segment_mult) {
+ 				u64 tmp = lba;
+-				start_lba = sector_div(tmp, segment_size * segment_mult);
++				start_lba = do_div(tmp, segment_size * segment_mult);
+ 
+ 				last_lba = first_lba + segment_size - 1;
+ 				if (start_lba >= first_lba &&
+-- 
+1.7.12.4
+
