@@ -1,0 +1,49 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Mon, 23 Dec 2013 21:23:34 +0000
+Subject: target/spc: Expose ATO bit in control mode page
+References: bnc#873901
+Patch-Mainline: v3.14-rc1
+Git-commit: 0c30f421a7dba0a7ca9a3f67dad15d84d4d61e01
+
+This patch updates spc_modesense_control() to set the Application
+Tag Owner (ATO) bit when when DIF emulation is enabled by the
+backend device.
+
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Cc: Christoph Hellwig <hch@lst.de>
+Cc: Hannes Reinecke <hare@suse.de>
+Cc: Sagi Grimberg <sagig@mellanox.com>
+Cc: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_spc.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/target/target_core_spc.c b/drivers/target/target_core_spc.c
+index 73fdff5..43c5ca98 100644
+--- a/drivers/target/target_core_spc.c
++++ b/drivers/target/target_core_spc.c
+@@ -858,6 +858,19 @@ static int spc_modesense_control(struct se_device *dev, u8 pc, u8 *p)
+ 	 * status (see SAM-4).
+ 	 */
+ 	p[5] = (dev->dev_attrib.emulate_tas) ? 0x40 : 0x00;
++	/*
++	 * From spc4r30, section 7.5.7 Control mode page
++	 *
++	 * Application Tag Owner (ATO) bit set to one.
++	 *
++	 * If the ATO bit is set to one the device server shall not modify the
++	 * LOGICAL BLOCK APPLICATION TAG field and, depending on the protection
++	 * type, shall not modify the contents of the LOGICAL BLOCK REFERENCE
++	 * TAG field.
++	 */
++	if (dev->dev_attrib.pi_prot_type)
++		p[5] |= 0x80;
++
+ 	p[8] = 0xff;
+ 	p[9] = 0xff;
+ 	p[11] = 30;
+-- 
+1.7.12.4
+
