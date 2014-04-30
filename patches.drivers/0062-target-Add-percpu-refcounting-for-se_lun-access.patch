@@ -1,0 +1,239 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 6 Nov 2013 21:03:43 -0800
+Subject: target: Add percpu refcounting for se_lun access
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: 5277797dc4ed873d067477d84e910b39d113f649
+
+This patch adds percpu refcounting for se_lun access that allows the
+association of an se_lun + se_cmd in transport_lookup_cmd_lun() to
+occur without an extra list_head for tracking outstanding I/O during
+se_lun shutdown.
+
+This effectively changes se_lun shutdown logic to wait for outstanding
+I/O percpu references to complete in transport_lun_remove_cmd() using
+se_lun->lun_ref_comp, instead of explicitly draining the per se_lun
+command list and waiting for individual se_cmd descriptor processing
+to complete.
+
+Cc: Kent Overstreet <kmo@daterainc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_device.c    | 10 ++++++----
+ drivers/target/target_core_internal.h  |  2 +-
+ drivers/target/target_core_tpg.c       | 27 ++++++++++++++++++++++++---
+ drivers/target/target_core_transport.c | 18 ++++++++----------
+ drivers/target/target_core_xcopy.c     |  1 +
+ include/target/target_core_base.h      |  5 +++++
+ 6 files changed, 45 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index e5e3965..20acf44 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -92,6 +92,9 @@ transport_lookup_cmd_lun(struct se_cmd *se_cmd, u32 unpacked_lun)
+ 		se_cmd->pr_res_key = deve->pr_res_key;
+ 		se_cmd->orig_fe_lun = unpacked_lun;
+ 		se_cmd->se_cmd_flags |= SCF_SE_LUN_CMD;
++
++		percpu_ref_get(&se_lun->lun_ref);
++		se_cmd->lun_ref_active = true;
+ 	}
+ 	spin_unlock_irqrestore(&se_sess->se_node_acl->device_list_lock, flags);
+ 
+@@ -119,6 +122,9 @@ transport_lookup_cmd_lun(struct se_cmd *se_cmd, u32 unpacked_lun)
+ 		se_cmd->se_lun = &se_sess->se_tpg->tpg_virt_lun0;
+ 		se_cmd->orig_fe_lun = 0;
+ 		se_cmd->se_cmd_flags |= SCF_SE_LUN_CMD;
++
++		percpu_ref_get(&se_lun->lun_ref);
++		se_cmd->lun_ref_active = true;
+ 	}
+ 
+ 	/* Directly associate cmd with se_dev */
+@@ -134,10 +140,6 @@ transport_lookup_cmd_lun(struct se_cmd *se_cmd, u32 unpacked_lun)
+ 		dev->read_bytes += se_cmd->data_length;
+ 	spin_unlock_irqrestore(&dev->stats_lock, flags);
+ 
+-	spin_lock_irqsave(&se_lun->lun_cmd_lock, flags);
+-	list_add_tail(&se_cmd->se_lun_node, &se_lun->lun_cmd_list);
+-	spin_unlock_irqrestore(&se_lun->lun_cmd_lock, flags);
+-
+ 	return 0;
+ }
+ EXPORT_SYMBOL(transport_lookup_cmd_lun);
+diff --git a/drivers/target/target_core_internal.h b/drivers/target/target_core_internal.h
+index 889af4d..47b63b0 100644
+--- a/drivers/target/target_core_internal.h
++++ b/drivers/target/target_core_internal.h
+@@ -100,7 +100,7 @@ int	transport_dump_vpd_assoc(struct t10_vpd *, unsigned char *, int);
+ int	transport_dump_vpd_ident_type(struct t10_vpd *, unsigned char *, int);
+ int	transport_dump_vpd_ident(struct t10_vpd *, unsigned char *, int);
+ bool	target_stop_cmd(struct se_cmd *cmd, unsigned long *flags);
+-int	transport_clear_lun_from_sessions(struct se_lun *);
++int	transport_clear_lun_ref(struct se_lun *);
+ void	transport_send_task_abort(struct se_cmd *);
+ sense_reason_t	target_cmd_size_check(struct se_cmd *cmd, unsigned int size);
+ void	target_qf_do_work(struct work_struct *work);
+diff --git a/drivers/target/target_core_tpg.c b/drivers/target/target_core_tpg.c
+index ec99220..f321af0 100644
+--- a/drivers/target/target_core_tpg.c
++++ b/drivers/target/target_core_tpg.c
+@@ -634,6 +634,13 @@ int core_tpg_set_initiator_node_tag(
+ }
+ EXPORT_SYMBOL(core_tpg_set_initiator_node_tag);
+ 
++static void core_tpg_lun_ref_release(struct percpu_ref *ref)
++{
++	struct se_lun *lun = container_of(ref, struct se_lun, lun_ref);
++
++	complete(&lun->lun_ref_comp);
++}
++
+ static int core_tpg_setup_virtual_lun0(struct se_portal_group *se_tpg)
+ {
+ 	/* Set in core_dev_setup_virtual_lun0() */
+@@ -651,11 +658,18 @@ static int core_tpg_setup_virtual_lun0(struct se_portal_group *se_tpg)
+ 	spin_lock_init(&lun->lun_acl_lock);
+ 	spin_lock_init(&lun->lun_cmd_lock);
+ 	spin_lock_init(&lun->lun_sep_lock);
++	init_completion(&lun->lun_ref_comp);
+ 
+-	ret = core_tpg_post_addlun(se_tpg, lun, lun_access, dev);
++	ret = percpu_ref_init(&lun->lun_ref, core_tpg_lun_ref_release);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	ret = core_tpg_post_addlun(se_tpg, lun, lun_access, dev);
++	if (ret < 0) {
++		percpu_ref_cancel_init(&lun->lun_ref);
++		return ret;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -696,6 +710,7 @@ int core_tpg_register(
+ 		spin_lock_init(&lun->lun_acl_lock);
+ 		spin_lock_init(&lun->lun_cmd_lock);
+ 		spin_lock_init(&lun->lun_sep_lock);
++		init_completion(&lun->lun_ref_comp);
+ 	}
+ 
+ 	se_tpg->se_tpg_type = se_tpg_type;
+@@ -816,10 +831,16 @@ int core_tpg_post_addlun(
+ {
+ 	int ret;
+ 
+-	ret = core_dev_export(lun_ptr, tpg, lun);
++	ret = percpu_ref_init(&lun->lun_ref, core_tpg_lun_ref_release);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	ret = core_dev_export(lun_ptr, tpg, lun);
++	if (ret < 0) {
++		percpu_ref_cancel_init(&lun->lun_ref);
++		return ret;
++	}
++
+ 	spin_lock(&tpg->tpg_lun_lock);
+ 	lun->lun_access = lun_access;
+ 	lun->lun_status = TRANSPORT_LUN_STATUS_ACTIVE;
+@@ -833,7 +854,7 @@ static void core_tpg_shutdown_lun(
+ 	struct se_lun *lun)
+ {
+ 	core_clear_lun_from_tpg(lun, tpg);
+-	transport_clear_lun_from_sessions(lun);
++	transport_clear_lun_ref(lun);
+ }
+ 
+ struct se_lun *core_tpg_pre_dellun(
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index 0b0009b..94a8acc 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -585,15 +585,11 @@ static int transport_cmd_check_stop_to_fabric(struct se_cmd *cmd)
+ static void transport_lun_remove_cmd(struct se_cmd *cmd)
+ {
+ 	struct se_lun *lun = cmd->se_lun;
+-	unsigned long flags;
+ 
+-	if (!lun)
++	if (!lun || !cmd->lun_ref_active)
+ 		return;
+ 
+-	spin_lock_irqsave(&lun->lun_cmd_lock, flags);
+-	if (!list_empty(&cmd->se_lun_node))
+-		list_del_init(&cmd->se_lun_node);
+-	spin_unlock_irqrestore(&lun->lun_cmd_lock, flags);
++	percpu_ref_put(&lun->lun_ref);
+ }
+ 
+ void transport_cmd_finish_abort(struct se_cmd *cmd, int remove)
+@@ -2547,21 +2543,23 @@ check_cond:
+ 	spin_unlock_irqrestore(&lun->lun_cmd_lock, lun_flags);
+ }
+ 
+-static int transport_clear_lun_thread(void *p)
++static int transport_clear_lun_ref_thread(void *p)
+ {
+ 	struct se_lun *lun = p;
+ 
+-	__transport_clear_lun_from_sessions(lun);
++	percpu_ref_kill(&lun->lun_ref);
++
++	wait_for_completion(&lun->lun_ref_comp);
+ 	complete(&lun->lun_shutdown_comp);
+ 
+ 	return 0;
+ }
+ 
+-int transport_clear_lun_from_sessions(struct se_lun *lun)
++int transport_clear_lun_ref(struct se_lun *lun)
+ {
+ 	struct task_struct *kt;
+ 
+-	kt = kthread_run(transport_clear_lun_thread, lun,
++	kt = kthread_run(transport_clear_lun_ref_thread, lun,
+ 			"tcm_cl_%u", lun->unpacked_lun);
+ 	if (IS_ERR(kt)) {
+ 		pr_err("Unable to start clear_lun thread\n");
+diff --git a/drivers/target/target_core_xcopy.c b/drivers/target/target_core_xcopy.c
+index 474cd44..db7cd3d 100644
+--- a/drivers/target/target_core_xcopy.c
++++ b/drivers/target/target_core_xcopy.c
+@@ -583,6 +583,7 @@ static int target_xcopy_init_pt_lun(
+ 	spin_lock_init(&pt_cmd->se_lun->lun_acl_lock);
+ 	spin_lock_init(&pt_cmd->se_lun->lun_cmd_lock);
+ 	spin_lock_init(&pt_cmd->se_lun->lun_sep_lock);
++	init_completion(&pt_cmd->se_lun->lun_ref_comp);
+ 
+ 	pt_cmd->se_dev = se_dev;
+ 
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index 5668e61..cb53fa2 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -499,6 +499,9 @@ struct se_cmd {
+ 
+ 	/* backend private data */
+ 	void			*priv;
++
++	/* Used for lun->lun_ref counting */
++	bool			lun_ref_active;
+ };
+ 
+ struct se_ua {
+@@ -758,6 +761,8 @@ struct se_lun {
+ 	struct se_port		*lun_sep;
+ 	struct config_group	lun_group;
+ 	struct se_port_stat_grps port_stat_grps;
++	struct completion	lun_ref_comp;
++	struct percpu_ref	lun_ref;
+ };
+ 
+ struct scsi_port_stats {
+-- 
+1.7.12.4
+
