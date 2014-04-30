@@ -1,0 +1,75 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Tue, 17 Dec 2013 09:18:45 +0100
+Subject: target_core_alua: store old and pending ALUA state
+References: bnc#873901
+Patch-Mainline: v3.14-rc1
+Git-commit: dfbce75ac8b4ed5dc51f8f144ebb274db940388d
+
+During state transition we should be storing both the original
+and the pending state.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_alua.c | 15 ++++++++++-----
+ include/target/target_core_base.h |  2 ++
+ 2 files changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/target/target_core_alua.c b/drivers/target/target_core_alua.c
+index 738244b..4805e97 100644
+--- a/drivers/target/target_core_alua.c
++++ b/drivers/target/target_core_alua.c
+@@ -812,12 +812,15 @@ static int core_alua_do_transition_tg_pt(
+ 	struct se_lun_acl *lacl;
+ 	struct se_port *port;
+ 	struct t10_alua_tg_pt_gp_member *mem;
+-	int old_state = 0;
++
+ 	/*
+ 	 * Save the old primary ALUA access state, and set the current state
+ 	 * to ALUA_ACCESS_STATE_TRANSITION.
+ 	 */
+-	old_state = atomic_read(&tg_pt_gp->tg_pt_gp_alua_access_state);
++	tg_pt_gp->tg_pt_gp_alua_previous_state =
++		atomic_read(&tg_pt_gp->tg_pt_gp_alua_access_state);
++	tg_pt_gp->tg_pt_gp_alua_pending_state = new_state;
++
+ 	atomic_set(&tg_pt_gp->tg_pt_gp_alua_access_state,
+ 			ALUA_ACCESS_STATE_TRANSITION);
+ 	tg_pt_gp->tg_pt_gp_alua_access_status = (explicit) ?
+@@ -898,13 +901,15 @@ static int core_alua_do_transition_tg_pt(
+ 	/*
+ 	 * Set the current primary ALUA access state to the requested new state
+ 	 */
+-	atomic_set(&tg_pt_gp->tg_pt_gp_alua_access_state, new_state);
++	atomic_set(&tg_pt_gp->tg_pt_gp_alua_access_state,
++		   tg_pt_gp->tg_pt_gp_alua_pending_state);
+ 
+ 	pr_debug("Successful %s ALUA transition TG PT Group: %s ID: %hu"
+ 		" from primary access state %s to %s\n", (explicit) ? "explicit" :
+ 		"implicit", config_item_name(&tg_pt_gp->tg_pt_gp_group.cg_item),
+-		tg_pt_gp->tg_pt_gp_id, core_alua_dump_state(old_state),
+-		core_alua_dump_state(new_state));
++		tg_pt_gp->tg_pt_gp_id,
++		core_alua_dump_state(tg_pt_gp->tg_pt_gp_alua_previous_state),
++		core_alua_dump_state(tg_pt_gp->tg_pt_gp_alua_pending_state));
+ 
+ 	return 0;
+ }
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index 5caa9f4..de4c1f6 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -284,6 +284,8 @@ struct t10_alua_tg_pt_gp {
+ 	u16	tg_pt_gp_id;
+ 	int	tg_pt_gp_valid_id;
+ 	int	tg_pt_gp_alua_supported_states;
++	int	tg_pt_gp_alua_pending_state;
++	int	tg_pt_gp_alua_previous_state;
+ 	int	tg_pt_gp_alua_access_status;
+ 	int	tg_pt_gp_alua_access_type;
+ 	int	tg_pt_gp_nonop_delay_msecs;
+-- 
+1.7.12.4
+
