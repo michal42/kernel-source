@@ -1,0 +1,38 @@
+From: Nilesh Javali <nilesh.javali@qlogic.com>
+Date: Tue, 8 Apr 2014 23:19:38 +0530
+Subject: qla4xxx: Fix memory leak for ha->saved_acb
+Patch-mainline: Submitted: 4/11/2014 linux-scsi
+References: FATE#315934 bnc#874282
+
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+
+ drivers/scsi/qla4xxx/ql4_mbx.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+--- a/drivers/scsi/qla4xxx/ql4_mbx.c
++++ b/drivers/scsi/qla4xxx/ql4_mbx.c
+@@ -2395,8 +2395,6 @@ int qla4_84xx_config_acb(struct scsi_qla_host *ha, int acb_config)
+ 		}
+ 
+ 		memcpy(acb, ha->saved_acb, acb_len);
+-		kfree(ha->saved_acb);
+-		ha->saved_acb = NULL;
+ 
+ 		rval = qla4xxx_set_acb(ha, &mbox_cmd[0], &mbox_sts[0], acb_dma);
+ 		if (rval != QLA_SUCCESS)
+@@ -2412,6 +2410,10 @@ exit_free_acb:
+ 	dma_free_coherent(&ha->pdev->dev, sizeof(struct addr_ctrl_blk), acb,
+ 			  acb_dma);
+ exit_config_acb:
++	if ((acb_config == ACB_CONFIG_SET) && ha->saved_acb) {
++		kfree(ha->saved_acb);
++		ha->saved_acb = NULL;
++	}
+ 	DEBUG2(ql4_printk(KERN_INFO, ha,
+ 			  "%s %s\n", __func__,
+ 			  rval == QLA_SUCCESS ? "SUCCEEDED" : "FAILED"));
+
+
+
