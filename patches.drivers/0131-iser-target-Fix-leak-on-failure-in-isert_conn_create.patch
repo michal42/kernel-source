@@ -1,0 +1,52 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Mon, 3 Feb 2014 12:59:56 -0800
+Subject: iser-target: Fix leak on failure in isert_conn_create_fastreg_pool
+References: bnc#873901
+Patch-Mainline: v3.14-rc3
+Git-commit: a80e21b3b2d151d79bb9be42334ab10d40195324
+
+This patch fixes a memory leak for fr_desc upon failure of
+isert_create_fr_desc() in isert_conn_create_fastreg_pool()
+code.
+
+As reported by Coverity 1166659:
+
+*** CID 1166659:  Resource leak  (RESOURCE_LEAK)
+/drivers/infiniband/ulp/isert/ib_isert.c: 470 in isert_conn_create_fastreg_pool()
+464                      isert_conn, isert_conn->conn_fr_pool_size);
+465
+466             return 0;
+467
+468     err:
+469             isert_conn_free_fastreg_pool(isert_conn);
+>>>     CID 1166659:  Resource leak  (RESOURCE_LEAK)
+>>>     Variable "fr_desc" going out of scope leaks the storage it points to.
+470             return ret;
+471     }
+472
+473     static int
+474     isert_connect_request(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
+475     {
+
+Cc: Sagi Grimberg <sagig@mellanox.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/infiniband/ulp/isert/ib_isert.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/infiniband/ulp/isert/ib_isert.c b/drivers/infiniband/ulp/isert/ib_isert.c
+index a8f668f..06cc9ea 100644
+--- a/drivers/infiniband/ulp/isert/ib_isert.c
++++ b/drivers/infiniband/ulp/isert/ib_isert.c
+@@ -453,6 +453,7 @@ isert_conn_create_fastreg_pool(struct isert_conn *isert_conn)
+ 		if (ret) {
+ 			pr_err("Failed to create fastreg descriptor err=%d\n",
+ 			       ret);
++			kfree(fr_desc);
+ 			goto err;
+ 		}
+ 
+-- 
+1.7.12.4
+
