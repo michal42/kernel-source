@@ -1,0 +1,65 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Wed, 16 Oct 2013 09:12:56 +0200
+Subject: tcm_loop: Implement target reset
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: 8f4a1fb0d029feef385986f320c7b4c13d9fce40
+
+Implement target reset by resetting the transport status.
+
+(nab: Remove unused ret in tcm_loop_target_reset)
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/loopback/tcm_loop.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/drivers/target/loopback/tcm_loop.c b/drivers/target/loopback/tcm_loop.c
+index 04811ca..1b41e67 100644
+--- a/drivers/target/loopback/tcm_loop.c
++++ b/drivers/target/loopback/tcm_loop.c
+@@ -392,6 +392,31 @@ static int tcm_loop_device_reset(struct scsi_cmnd *sc)
+ 	return (ret == TMR_FUNCTION_COMPLETE) ? SUCCESS : FAILED;
+ }
+ 
++static int tcm_loop_target_reset(struct scsi_cmnd *sc)
++{
++	struct tcm_loop_hba *tl_hba;
++	struct tcm_loop_tpg *tl_tpg;
++
++	/*
++	 * Locate the tcm_loop_hba_t pointer
++	 */
++	tl_hba = *(struct tcm_loop_hba **)shost_priv(sc->device->host);
++	if (!tl_hba) {
++		pr_err("Unable to perform device reset without"
++				" active I_T Nexus\n");
++		return FAILED;
++	}
++	/*
++	 * Locate the tl_tpg pointer from TargetID in sc->device->id
++	 */
++	tl_tpg = &tl_hba->tl_hba_tpgs[sc->device->id];
++	if (tl_tpg) {
++		tl_tpg->tl_transport_status = TCM_TRANSPORT_ONLINE;
++		return SUCCESS;
++	}
++	return FAILED;
++}
++
+ static int tcm_loop_slave_alloc(struct scsi_device *sd)
+ {
+ 	set_bit(QUEUE_FLAG_BIDI, &sd->request_queue->queue_flags);
+@@ -421,6 +446,7 @@ static struct scsi_host_template tcm_loop_driver_template = {
+ 	.change_queue_type	= tcm_loop_change_queue_type,
+ 	.eh_abort_handler = tcm_loop_abort_task,
+ 	.eh_device_reset_handler = tcm_loop_device_reset,
++	.eh_target_reset_handler = tcm_loop_target_reset,
+ 	.can_queue		= 1024,
+ 	.this_id		= -1,
+ 	.sg_tablesize		= 256,
+-- 
+1.7.12.4
+
