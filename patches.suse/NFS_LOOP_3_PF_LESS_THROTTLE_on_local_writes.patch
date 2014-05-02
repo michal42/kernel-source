@@ -1,0 +1,71 @@
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 9 Apr 2014 12:25:45 +1000
+Subject: [PATCH 3/5] nfsd: Only set PF_LESS_THROTTLE when really needed.
+Patch-mainline: not yet
+References: fate#315220
+
+PF_LESS_THROTTLE has a very specific use case: to avoid deadlocks
+and live-locks while writing to the page cache in a loop-back
+NFS mount situation.
+
+It therefore make sense to *only* set PF_LESS_THROTTLE in this
+situation.
+We now know when a request came from the local-host so it could be a
+loop-back mount.  We already know when we are handling write requests,
+and when we are doing anything else.
+
+So combine those two to allow nfsd to still be throttled (like any
+other process) in every situation except when it is known to be
+problematic.
+
+Signed-off-by: NeilBrown <neilb@suse.de>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfsd/nfssvc.c |    6 ------
+ fs/nfsd/vfs.c    |   12 ++++++++++++
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfsd/nfssvc.c
++++ linux-3.12-SLE12/fs/nfsd/nfssvc.c
+@@ -571,12 +571,6 @@ nfsd(void *vrqstp)
+ 	nfsdstats.th_cnt++;
+ 	mutex_unlock(&nfsd_mutex);
+ 
+-	/*
+-	 * We want less throttling in balance_dirty_pages() so that nfs to
+-	 * localhost doesn't cause nfsd to lock up due to all the client's
+-	 * dirty pages.
+-	 */
+-	current->flags |= PF_LESS_THROTTLE;
+ 	set_freezable();
+ 
+ 	/*
+--- linux-3.12-SLE12.orig/fs/nfsd/vfs.c
++++ linux-3.12-SLE12/fs/nfsd/vfs.c
+@@ -1068,6 +1068,16 @@ nfsd_vfs_write(struct svc_rqst *rqstp, s
+ 	int			stable = *stablep;
+ 	int			use_wgather;
+ 	loff_t			pos = offset;
++	unsigned int		pflags = current->flags;
++
++	if (rqstp->rq_local)
++		/*
++		 * We want less throttling in balance_dirty_pages()
++		 * and shrink_inactive_list() so that nfs to
++		 * localhost doesn't cause nfsd to lock up due to all
++		 * the client's dirty pages or its congested queue.
++		 */
++		current->flags |= PF_LESS_THROTTLE;
+ 
+ 	dentry = file->f_path.dentry;
+ 	inode = dentry->d_inode;
+@@ -1101,6 +1111,8 @@ nfsd_vfs_write(struct svc_rqst *rqstp, s
+ 
+ out_nfserr:
+ 	dprintk("nfsd: write complete host_err=%d\n", host_err);
++	if (rqstp->rq_local)
++		tsk_restore_flags(current, pflags, PF_LESS_THROTTLE);
+ 	if (host_err >= 0)
+ 		err = 0;
+ 	else

@@ -1,0 +1,90 @@
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 26 Nov 2013 12:07:54 -0800
+Subject: target: Rename core_tpg_{pre,post}_addlun for clarity
+References: bnc#873901
+Patch-Mainline: v3.14-rc1
+Git-commit: d344f8a15637e8b57a0d05a6d50182c11de08606
+
+"pre" is really an allocation function. The only time it isn't called is
+for virtual_lun0, which is statically allocated. Renaming that to "alloc"
+lets the other function not need to be "post", and just be called
+core_tpg_add_lun.
+
+(nab: fix minor applying fuzz in core_tpg_setup_virtual_lun0)
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_device.c   | 4 ++--
+ drivers/target/target_core_internal.h | 4 ++--
+ drivers/target/target_core_tpg.c      | 6 +++---
+ 3 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index fae7624..3274fa9 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -1122,11 +1122,11 @@ struct se_lun *core_dev_add_lun(
+ 	struct se_lun *lun;
+ 	int rc;
+ 
+-	lun = core_tpg_pre_addlun(tpg, unpacked_lun);
++	lun = core_tpg_alloc_lun(tpg, unpacked_lun);
+ 	if (IS_ERR(lun))
+ 		return lun;
+ 
+-	rc = core_tpg_post_addlun(tpg, lun,
++	rc = core_tpg_add_lun(tpg, lun,
+ 				TRANSPORT_LUNFLAGS_READ_WRITE, dev);
+ 	if (rc < 0)
+ 		return ERR_PTR(rc);
+diff --git a/drivers/target/target_core_internal.h b/drivers/target/target_core_internal.h
+index 47b63b0..f67e764 100644
+--- a/drivers/target/target_core_internal.h
++++ b/drivers/target/target_core_internal.h
+@@ -77,8 +77,8 @@ struct se_node_acl *__core_tpg_get_initiator_node_acl(struct se_portal_group *tp
+ 		const char *);
+ void	core_tpg_add_node_to_devs(struct se_node_acl *, struct se_portal_group *);
+ void	core_tpg_wait_for_nacl_pr_ref(struct se_node_acl *);
+-struct se_lun *core_tpg_pre_addlun(struct se_portal_group *, u32);
+-int	core_tpg_post_addlun(struct se_portal_group *, struct se_lun *,
++struct se_lun *core_tpg_alloc_lun(struct se_portal_group *, u32);
++int	core_tpg_add_lun(struct se_portal_group *, struct se_lun *,
+ 		u32, void *);
+ struct se_lun *core_tpg_pre_dellun(struct se_portal_group *, u32 unpacked_lun);
+ int	core_tpg_post_dellun(struct se_portal_group *, struct se_lun *);
+diff --git a/drivers/target/target_core_tpg.c b/drivers/target/target_core_tpg.c
+index f755712..cb0e0e0 100644
+--- a/drivers/target/target_core_tpg.c
++++ b/drivers/target/target_core_tpg.c
+@@ -660,7 +660,7 @@ static int core_tpg_setup_virtual_lun0(struct se_portal_group *se_tpg)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	ret = core_tpg_post_addlun(se_tpg, lun, lun_access, dev);
++	ret = core_tpg_add_lun(se_tpg, lun, lun_access, dev);
+ 	if (ret < 0) {
+ 		percpu_ref_cancel_init(&lun->lun_ref);
+ 		return ret;
+@@ -787,7 +787,7 @@ int core_tpg_deregister(struct se_portal_group *se_tpg)
+ }
+ EXPORT_SYMBOL(core_tpg_deregister);
+ 
+-struct se_lun *core_tpg_pre_addlun(
++struct se_lun *core_tpg_alloc_lun(
+ 	struct se_portal_group *tpg,
+ 	u32 unpacked_lun)
+ {
+@@ -817,7 +817,7 @@ struct se_lun *core_tpg_pre_addlun(
+ 	return lun;
+ }
+ 
+-int core_tpg_post_addlun(
++int core_tpg_add_lun(
+ 	struct se_portal_group *tpg,
+ 	struct se_lun *lun,
+ 	u32 lun_access,
+-- 
+1.7.12.4
+

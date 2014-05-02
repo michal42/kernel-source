@@ -1,0 +1,43 @@
+From 113ee87cdc98f95015dd630e25c82525ec0d4bf2 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 11 Apr 2014 13:00:28 -0400
+Subject: [PATCH] sched,numa: retry placement more frequently when misplaced
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (Expected v3.16)
+
+When tasks have not converged on their preferred nodes yet, we want
+to retry fairly often, to make sure we do not migrate a task's memory
+to an undesirable location, only to have to move it again later.
+
+This patch reduces the interval at which migration is retried,
+when the task's numa_scan_period is small.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Tested-by: Vinod Chegu <chegu_vinod@hp.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index f1212b5..5678677 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1373,12 +1373,15 @@ static int task_numa_migrate(struct task_struct *p)
+ /* Attempt to migrate a task to a CPU on the preferred node. */
+ static void numa_migrate_preferred(struct task_struct *p)
+ {
++	unsigned long interval = HZ;
++
+ 	/* This task has no NUMA fault statistics yet */
+ 	if (unlikely(p->numa_preferred_nid == -1 || !p->numa_faults_memory))
+ 		return;
+ 
+ 	/* Periodically retry migrating the task to the preferred node */
+-	p->numa_migrate_retry = jiffies + HZ;
++	interval = min(interval, msecs_to_jiffies(p->numa_scan_period) / 16);
++	p->numa_migrate_retry = jiffies + interval;
+ 
+ 	/* Success if task is already running on preferred CPU */
+ 	if (task_node(p) == p->numa_preferred_nid)

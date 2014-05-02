@@ -1,0 +1,237 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 13 Nov 2013 18:54:45 -0800
+Subject: iscsi-target: Convert iscsi_session statistics to atomic_long_t
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: 04f3b31bff720f01d684100c868c88f67ced8dc8
+
+This patch converts a handful of iscsi_session statistics to type
+atomic_long_t, instead of using iscsi_session->session_stats_lock
+when incrementing these values.
+
+More importantly, go ahead and drop the spinlock usage within
+iscsit_setup_scsi_cmd(), iscsit_check_dataout_hdr(),
+iscsit_send_datain(), and iscsit_build_rsp_pdu() fast-path code.
+
+(Squash in Roland's  target: Remove write-only stats fields and lock
+from struct se_node_acl)
+
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/iscsi/iscsi_target.c       | 35 +++++--------------------------
+ drivers/target/iscsi/iscsi_target_core.h  | 13 ++++++------
+ drivers/target/iscsi/iscsi_target_erl0.c  |  2 +-
+ drivers/target/iscsi/iscsi_target_login.c |  1 -
+ drivers/target/iscsi/iscsi_target_stat.c  | 22 ++++++++++---------
+ drivers/target/iscsi/iscsi_target_util.c  |  2 +-
+ 6 files changed, 25 insertions(+), 50 deletions(-)
+
+diff --git a/drivers/target/iscsi/iscsi_target.c b/drivers/target/iscsi/iscsi_target.c
+index be4452c..b8b7c94 100644
+--- a/drivers/target/iscsi/iscsi_target.c
++++ b/drivers/target/iscsi/iscsi_target.c
+@@ -814,14 +814,7 @@ int iscsit_setup_scsi_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+ 	int iscsi_task_attr;
+ 	int sam_task_attr;
+ 
+-	spin_lock_bh(&conn->sess->session_stats_lock);
+-	conn->sess->cmd_pdus++;
+-	if (conn->sess->se_sess->se_node_acl) {
+-		spin_lock(&conn->sess->se_sess->se_node_acl->stats_lock);
+-		conn->sess->se_sess->se_node_acl->num_cmds++;
+-		spin_unlock(&conn->sess->se_sess->se_node_acl->stats_lock);
+-	}
+-	spin_unlock_bh(&conn->sess->session_stats_lock);
++	atomic_long_inc(&conn->sess->cmd_pdus);
+ 
+ 	hdr			= (struct iscsi_scsi_req *) buf;
+ 	payload_length		= ntoh24(hdr->dlength);
+@@ -1266,14 +1259,7 @@ iscsit_check_dataout_hdr(struct iscsi_conn *conn, unsigned char *buf,
+ 	}
+ 
+ 	/* iSCSI write */
+-	spin_lock_bh(&conn->sess->session_stats_lock);
+-	conn->sess->rx_data_octets += payload_length;
+-	if (conn->sess->se_sess->se_node_acl) {
+-		spin_lock(&conn->sess->se_sess->se_node_acl->stats_lock);
+-		conn->sess->se_sess->se_node_acl->write_bytes += payload_length;
+-		spin_unlock(&conn->sess->se_sess->se_node_acl->stats_lock);
+-	}
+-	spin_unlock_bh(&conn->sess->session_stats_lock);
++	atomic_long_add(payload_length, &conn->sess->rx_data_octets);
+ 
+ 	if (payload_length > conn->conn_ops->MaxXmitDataSegmentLength) {
+ 		pr_err("DataSegmentLength: %u is greater than"
+@@ -2643,14 +2629,7 @@ static int iscsit_send_datain(struct iscsi_cmd *cmd, struct iscsi_conn *conn)
+ 		return -1;
+ 	}
+ 
+-	spin_lock_bh(&conn->sess->session_stats_lock);
+-	conn->sess->tx_data_octets += datain.length;
+-	if (conn->sess->se_sess->se_node_acl) {
+-		spin_lock(&conn->sess->se_sess->se_node_acl->stats_lock);
+-		conn->sess->se_sess->se_node_acl->read_bytes += datain.length;
+-		spin_unlock(&conn->sess->se_sess->se_node_acl->stats_lock);
+-	}
+-	spin_unlock_bh(&conn->sess->session_stats_lock);
++	atomic_long_add(datain.length, &conn->sess->tx_data_octets);
+ 	/*
+ 	 * Special case for successfully execution w/ both DATAIN
+ 	 * and Sense Data.
+@@ -3175,9 +3154,7 @@ void iscsit_build_rsp_pdu(struct iscsi_cmd *cmd, struct iscsi_conn *conn,
+ 	if (inc_stat_sn)
+ 		cmd->stat_sn = conn->stat_sn++;
+ 
+-	spin_lock_bh(&conn->sess->session_stats_lock);
+-	conn->sess->rsp_pdus++;
+-	spin_unlock_bh(&conn->sess->session_stats_lock);
++	atomic_long_inc(&conn->sess->rsp_pdus);
+ 
+ 	memset(hdr, 0, ISCSI_HDR_LEN);
+ 	hdr->opcode		= ISCSI_OP_SCSI_CMD_RSP;
+@@ -4126,9 +4103,7 @@ restart:
+ 				 * hit default in the switch below.
+ 				 */
+ 				memset(buffer, 0xff, ISCSI_HDR_LEN);
+-				spin_lock_bh(&conn->sess->session_stats_lock);
+-				conn->sess->conn_digest_errors++;
+-				spin_unlock_bh(&conn->sess->session_stats_lock);
++				atomic_long_inc(&conn->sess->conn_digest_errors);
+ 			} else {
+ 				pr_debug("Got HeaderDigest CRC32C"
+ 						" 0x%08x\n", checksum);
+diff --git a/drivers/target/iscsi/iscsi_target_core.h b/drivers/target/iscsi/iscsi_target_core.h
+index b03ee2f..f2094d2 100644
+--- a/drivers/target/iscsi/iscsi_target_core.h
++++ b/drivers/target/iscsi/iscsi_target_core.h
+@@ -651,14 +651,13 @@ struct iscsi_session {
+ 	/* Used for session reference counting */
+ 	int			session_usage_count;
+ 	int			session_waiting_on_uc;
+-	u32			cmd_pdus;
+-	u32			rsp_pdus;
+-	u64			tx_data_octets;
+-	u64			rx_data_octets;
+-	u32			conn_digest_errors;
+-	u32			conn_timeout_errors;
++	atomic_long_t		cmd_pdus;
++	atomic_long_t		rsp_pdus;
++	atomic_long_t		tx_data_octets;
++	atomic_long_t		rx_data_octets;
++	atomic_long_t		conn_digest_errors;
++	atomic_long_t		conn_timeout_errors;
+ 	u64			creation_time;
+-	spinlock_t		session_stats_lock;
+ 	/* Number of active connections */
+ 	atomic_t		nconn;
+ 	atomic_t		session_continuation;
+diff --git a/drivers/target/iscsi/iscsi_target_erl0.c b/drivers/target/iscsi/iscsi_target_erl0.c
+index cbea7f1..0d1e6ee 100644
+--- a/drivers/target/iscsi/iscsi_target_erl0.c
++++ b/drivers/target/iscsi/iscsi_target_erl0.c
+@@ -785,7 +785,7 @@ static void iscsit_handle_time2retain_timeout(unsigned long data)
+ 		tiqn->sess_err_stats.last_sess_failure_type =
+ 				ISCSI_SESS_ERR_CXN_TIMEOUT;
+ 		tiqn->sess_err_stats.cxn_timeout_errors++;
+-		sess->conn_timeout_errors++;
++		atomic_long_inc(&sess->conn_timeout_errors);
+ 		spin_unlock(&tiqn->sess_err_stats.lock);
+ 	}
+ 	}
+diff --git a/drivers/target/iscsi/iscsi_target_login.c b/drivers/target/iscsi/iscsi_target_login.c
+index 4663cc4..e29279e 100644
+--- a/drivers/target/iscsi/iscsi_target_login.c
++++ b/drivers/target/iscsi/iscsi_target_login.c
+@@ -305,7 +305,6 @@ static int iscsi_login_zero_tsih_s1(
+ 	}
+ 
+ 	sess->creation_time = get_jiffies_64();
+-	spin_lock_init(&sess->session_stats_lock);
+ 	/*
+ 	 * The FFP CmdSN window values will be allocated from the TPG's
+ 	 * Initiator Node's ACL once the login has been successfully completed.
+diff --git a/drivers/target/iscsi/iscsi_target_stat.c b/drivers/target/iscsi/iscsi_target_stat.c
+index f788e8b..1033955 100644
+--- a/drivers/target/iscsi/iscsi_target_stat.c
++++ b/drivers/target/iscsi/iscsi_target_stat.c
+@@ -792,7 +792,8 @@ static ssize_t iscsi_stat_sess_show_attr_cmd_pdus(
+ 	if (se_sess) {
+ 		sess = se_sess->fabric_sess_ptr;
+ 		if (sess)
+-			ret = snprintf(page, PAGE_SIZE, "%u\n", sess->cmd_pdus);
++			ret = snprintf(page, PAGE_SIZE, "%lu\n",
++				       atomic_long_read(&sess->cmd_pdus));
+ 	}
+ 	spin_unlock_bh(&se_nacl->nacl_sess_lock);
+ 
+@@ -815,7 +816,8 @@ static ssize_t iscsi_stat_sess_show_attr_rsp_pdus(
+ 	if (se_sess) {
+ 		sess = se_sess->fabric_sess_ptr;
+ 		if (sess)
+-			ret = snprintf(page, PAGE_SIZE, "%u\n", sess->rsp_pdus);
++			ret = snprintf(page, PAGE_SIZE, "%lu\n",
++				       atomic_long_read(&sess->rsp_pdus));
+ 	}
+ 	spin_unlock_bh(&se_nacl->nacl_sess_lock);
+ 
+@@ -838,8 +840,8 @@ static ssize_t iscsi_stat_sess_show_attr_txdata_octs(
+ 	if (se_sess) {
+ 		sess = se_sess->fabric_sess_ptr;
+ 		if (sess)
+-			ret = snprintf(page, PAGE_SIZE, "%llu\n",
+-				(unsigned long long)sess->tx_data_octets);
++			ret = snprintf(page, PAGE_SIZE, "%lu\n",
++				       atomic_long_read(&sess->tx_data_octets));
+ 	}
+ 	spin_unlock_bh(&se_nacl->nacl_sess_lock);
+ 
+@@ -862,8 +864,8 @@ static ssize_t iscsi_stat_sess_show_attr_rxdata_octs(
+ 	if (se_sess) {
+ 		sess = se_sess->fabric_sess_ptr;
+ 		if (sess)
+-			ret = snprintf(page, PAGE_SIZE, "%llu\n",
+-				(unsigned long long)sess->rx_data_octets);
++			ret = snprintf(page, PAGE_SIZE, "%lu\n",
++				       atomic_long_read(&sess->rx_data_octets));
+ 	}
+ 	spin_unlock_bh(&se_nacl->nacl_sess_lock);
+ 
+@@ -886,8 +888,8 @@ static ssize_t iscsi_stat_sess_show_attr_conn_digest_errors(
+ 	if (se_sess) {
+ 		sess = se_sess->fabric_sess_ptr;
+ 		if (sess)
+-			ret = snprintf(page, PAGE_SIZE, "%u\n",
+-					sess->conn_digest_errors);
++			ret = snprintf(page, PAGE_SIZE, "%lu\n",
++				       atomic_long_read(&sess->conn_digest_errors));
+ 	}
+ 	spin_unlock_bh(&se_nacl->nacl_sess_lock);
+ 
+@@ -910,8 +912,8 @@ static ssize_t iscsi_stat_sess_show_attr_conn_timeout_errors(
+ 	if (se_sess) {
+ 		sess = se_sess->fabric_sess_ptr;
+ 		if (sess)
+-			ret = snprintf(page, PAGE_SIZE, "%u\n",
+-					sess->conn_timeout_errors);
++			ret = snprintf(page, PAGE_SIZE, "%lu\n",
++				       atomic_long_read(&sess->conn_timeout_errors));
+ 	}
+ 	spin_unlock_bh(&se_nacl->nacl_sess_lock);
+ 
+diff --git a/drivers/target/iscsi/iscsi_target_util.c b/drivers/target/iscsi/iscsi_target_util.c
+index 1039de4..3caba30 100644
+--- a/drivers/target/iscsi/iscsi_target_util.c
++++ b/drivers/target/iscsi/iscsi_target_util.c
+@@ -984,7 +984,7 @@ static void iscsit_handle_nopin_response_timeout(unsigned long data)
+ 		tiqn->sess_err_stats.last_sess_failure_type =
+ 				ISCSI_SESS_ERR_CXN_TIMEOUT;
+ 		tiqn->sess_err_stats.cxn_timeout_errors++;
+-		conn->sess->conn_timeout_errors++;
++		atomic_long_inc(&conn->sess->conn_timeout_errors);
+ 		spin_unlock_bh(&tiqn->sess_err_stats.lock);
+ 	}
+ 	}
+-- 
+1.7.12.4
+

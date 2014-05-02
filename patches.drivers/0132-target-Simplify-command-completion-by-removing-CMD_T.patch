@@ -1,0 +1,58 @@
+From: Roland Dreier <roland@purestorage.com>
+Date: Mon, 3 Feb 2014 14:08:26 -0800
+Subject: target: Simplify command completion by removing CMD_T_FAILED flag
+References: bnc#873901
+Patch-Mainline: v3.14-rc3
+Git-commit: 3dca1471993f9b89f3184468f8bbab2b1e024451
+
+The CMD_T_FAILED flag is set used in one place to record the result of a
+trivial test, and it is only tested once, few lines later.  We might as
+well make the code simpler and easier to read by directly doing the test
+of "success" where we want to use it.
+
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_transport.c | 5 +----
+ include/target/target_core_base.h      | 1 -
+ 2 files changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index c50fd9f..24b4f65d 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -669,9 +669,6 @@ void target_complete_cmd(struct se_cmd *cmd, u8 scsi_status)
+ 		return;
+ 	}
+ 
+-	if (!success)
+-		cmd->transport_state |= CMD_T_FAILED;
+-
+ 	/*
+ 	 * Check for case where an explicit ABORT_TASK has been received
+ 	 * and transport_wait_for_tasks() will be waiting for completion..
+@@ -681,7 +678,7 @@ void target_complete_cmd(struct se_cmd *cmd, u8 scsi_status)
+ 		spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+ 		complete(&cmd->t_transport_stop_comp);
+ 		return;
+-	} else if (cmd->transport_state & CMD_T_FAILED) {
++	} else if (!success) {
+ 		INIT_WORK(&cmd->work, target_complete_failure_work);
+ 	} else {
+ 		INIT_WORK(&cmd->work, target_complete_ok_work);
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index c9c7912..1772fad 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -525,7 +525,6 @@ struct se_cmd {
+ #define CMD_T_COMPLETE		(1 << 2)
+ #define CMD_T_SENT		(1 << 4)
+ #define CMD_T_STOP		(1 << 5)
+-#define CMD_T_FAILED		(1 << 6)
+ #define CMD_T_DEV_ACTIVE	(1 << 7)
+ #define CMD_T_REQUEST_STOP	(1 << 8)
+ #define CMD_T_BUSY		(1 << 9)
+-- 
+1.7.12.4
+

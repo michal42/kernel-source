@@ -1,0 +1,46 @@
+From: Thomas Gleixner <tglx@linutronix.de>
+Date: Sun, 23 Feb 2014 21:40:20 +0000
+Patch-mainline: v3.15-rc1
+Subject: x86: Add proper vector accounting for HYPERVISOR_CALLBACK_VECTOR
+
+HyperV abuses a device interrupt to account for the
+HYPERVISOR_CALLBACK_VECTOR.
+
+Provide proper accounting as we have for the other vectors as well.
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
+Cc: K. Y. Srinivasan <kys@microsoft.com>
+Cc: x86 <x86@kernel.org>
+Link: http://lkml.kernel.org/r/20140223212738.681855582@linutronix.de
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Acked-by: <ohering@suse.de>
+Automatically created from "patches.suse/msft-hv-0600-x86-Add-proper-vector-accounting-for-HYPERVISOR_CALL.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/irq.c	2014-04-24 11:28:54.000000000 +0200
++++ sle12/arch/x86/kernel/irq.c	2014-04-24 11:47:55.000000000 +0200
+@@ -125,7 +125,7 @@ int arch_show_interrupts(struct seq_file
+ 		seq_printf(p, "%10u ", per_cpu(mce_poll_count, j));
+ 	seq_printf(p, "  Machine check polls\n");
+ #endif
+-#if defined(CONFIG_HYPERV) || defined(CONFIG_XEN)
++#if defined(CONFIG_HYPERV) || defined(CONFIG_PARAVIRT_XEN)
+ 	seq_printf(p, "%*s: ", prec, "THR");
+ 	for_each_online_cpu(j)
+ 		seq_printf(p, "%10u ", irq_stats(j)->irq_hv_callback_count);
+--- sle12.orig/arch/x86/kernel/irq-xen.c	2014-01-09 11:36:17.000000000 +0100
++++ sle12/arch/x86/kernel/irq-xen.c	2014-04-24 11:47:55.000000000 +0200
+@@ -139,6 +139,12 @@ int arch_show_interrupts(struct seq_file
+ 		seq_printf(p, "%10u ", per_cpu(mce_poll_count, j));
+ 	seq_printf(p, "  Machine check polls\n");
+ #endif
++#if defined(CONFIG_HYPERV) || defined(CONFIG_PARAVIRT_XEN)
++	seq_printf(p, "%*s: ", prec, "THR");
++	for_each_online_cpu(j)
++		seq_printf(p, "%10u ", irq_stats(j)->irq_hv_callback_count);
++	seq_printf(p, "  Hypervisor callback interrupts\n");
++#endif
+ 	seq_printf(p, "%*s: %10u\n", prec, "ERR", atomic_read(&irq_err_count));
+ #if defined(CONFIG_X86_IO_APIC)
+ 	seq_printf(p, "%*s: %10u\n", prec, "MIS", atomic_read(&irq_mis_count));

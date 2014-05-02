@@ -1,0 +1,39 @@
+From 0db098e44a3f01d5279dc5e0106cb1815718b7a0 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 28 Apr 2014 10:01:26 +0100
+Subject: [PATCH] mm,numa: remove BUG_ON in __handle_mm_fault
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No (Expected v3.16)
+
+Changing PTEs and PMDs to pte_numa & pmd_numa is done with the
+mmap_sem held for reading, which means a pmd can be instantiated
+and turned into a numa one while __handle_mm_fault is examining
+the value of old_pmd.
+
+If that happens, __handle_mm_fault should just return and let
+the page fault retry, instead of throwing an oops. This is
+handled by the test for pmd_trans_huge(*pmd) below.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Reviewed-by: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Reported-by: Sunil Pandey <sunil.k.pandey@intel.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/memory.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/mm/memory.c b/mm/memory.c
+index d0f0bef..9c2dc65 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -3900,9 +3900,6 @@ static int __handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		}
+ 	}
+ 
+-	/* THP should already have been handled */
+-	BUG_ON(pmd_numa(*pmd));
+-
+ 	/*
+ 	 * Use __pte_alloc instead of pte_alloc_map, because we can't
+ 	 * run pte_offset_map on the pmd, if an huge pmd could

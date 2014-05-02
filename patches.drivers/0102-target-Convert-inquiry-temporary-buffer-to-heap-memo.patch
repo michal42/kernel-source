@@ -1,0 +1,70 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Thu, 19 Dec 2013 14:13:28 -0800
+Subject: target: Convert inquiry temporary buffer to heap memory
+References: bnc#873901
+Patch-Mainline: v3.14-rc1
+Git-commit: f82f320edc1e26320bd7e58b347d5616e6a23ff2
+
+This patch converts the temporary buffer in spc_emulate_inquiry() to
+use dynamically allocated memory, instead of local stack memory.
+
+Also bump SE_INQUIRY_BUF up to 1024 bytes to be safe when handling
+multiple large SCSI name descriptors for EVPD=0x83.
+
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_spc.c  | 11 ++++++++---
+ include/target/target_core_base.h |  2 +-
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/target/target_core_spc.c b/drivers/target/target_core_spc.c
+index f9889fd..279d260 100644
+--- a/drivers/target/target_core_spc.c
++++ b/drivers/target/target_core_spc.c
+@@ -697,11 +697,15 @@ spc_emulate_inquiry(struct se_cmd *cmd)
+ 	struct se_portal_group *tpg = cmd->se_lun->lun_sep->sep_tpg;
+ 	unsigned char *rbuf;
+ 	unsigned char *cdb = cmd->t_task_cdb;
+-	unsigned char buf[SE_INQUIRY_BUF];
++	unsigned char *buf;
+ 	sense_reason_t ret;
+ 	int p;
+ 
+-	memset(buf, 0, SE_INQUIRY_BUF);
++	buf = kzalloc(SE_INQUIRY_BUF, GFP_KERNEL);
++	if (!buf) {
++		pr_err("Unable to allocate response buffer for INQUIRY\n");
++		return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
++	}
+ 
+ 	if (dev == tpg->tpg_virt_lun0.lun_se_dev)
+ 		buf[0] = 0x3f; /* Not connected */
+@@ -734,9 +738,10 @@ spc_emulate_inquiry(struct se_cmd *cmd)
+ out:
+ 	rbuf = transport_kmap_data_sg(cmd);
+ 	if (rbuf) {
+-		memcpy(rbuf, buf, min_t(u32, sizeof(buf), cmd->data_length));
++		memcpy(rbuf, buf, min_t(u32, SE_INQUIRY_BUF, cmd->data_length));
+ 		transport_kunmap_data_sg(cmd);
+ 	}
++	kfree(buf);
+ 
+ 	if (!ret)
+ 		target_complete_cmd(cmd, GOOD);
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index debaf37..1ef642f 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -112,7 +112,7 @@
+ /* Queue Algorithm Modifier default for restricted reordering in control mode page */
+ #define DA_EMULATE_REST_REORD			0
+ 
+-#define SE_INQUIRY_BUF				768
++#define SE_INQUIRY_BUF				1024
+ #define SE_MODE_PAGE_BUF			512
+ #define SE_SENSE_BUF				96
+ 
+-- 
+1.7.12.4
+

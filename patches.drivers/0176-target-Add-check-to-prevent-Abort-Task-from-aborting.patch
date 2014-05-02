@@ -1,0 +1,46 @@
+From: Alex Leung <alex.leung@emulex.com>
+Date: Fri, 4 Apr 2014 04:38:19 +0000
+Subject: target: Add check to prevent Abort Task from aborting itself
+References: bnc#873901
+Patch-Mainline: v3.15-rc1
+Git-commit: 47b1584c1c95f0bb4d646c47de1c0455bb5cef54
+
+This patch addresses an issue that occurs when an ABTS is received
+for an se_cmd that completes just before the sess_cmd_list is searched
+in core_tmr_abort_task(). When the sess_cmd_list is searched, since
+the ABTS and the FCP_CMND being aborted (that just completed) both
+have the same OXID, TFO->get_task_tag(TMR) returns a value that
+matches tmr->ref_task_tag (from TFO->get_task_tag(FCP_CMND)), and
+the Abort Task tries to abort itself. When this occurs,
+transport_wait_for_tasks() hangs forever since the TMR is waiting
+for itself to finish.
+
+This patch adds a check to core_tmr_abort_task() to make sure the
+TMR does not attempt to abort itself.
+
+Signed-off-by: Alex Leung <alex.leung@emulex.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_tmr.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/target/target_core_tmr.c b/drivers/target/target_core_tmr.c
+index 3f0338f..f7cd95e 100644
+--- a/drivers/target/target_core_tmr.c
++++ b/drivers/target/target_core_tmr.c
+@@ -130,6 +130,11 @@ void core_tmr_abort_task(
+ 
+ 		if (dev != se_cmd->se_dev)
+ 			continue;
++
++		/* skip se_cmd associated with tmr */
++		if (tmr->task_cmd == se_cmd)
++			continue;
++
+ 		ref_tag = se_cmd->se_tfo->get_task_tag(se_cmd);
+ 		if (tmr->ref_task_tag != ref_tag)
+ 			continue;
+-- 
+1.7.12.4
+

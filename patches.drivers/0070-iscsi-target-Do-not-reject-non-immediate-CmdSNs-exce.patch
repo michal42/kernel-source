@@ -1,0 +1,80 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Mon, 18 Nov 2013 10:55:10 -0800
+Subject: iscsi-target: Do not reject non-immediate CmdSNs exceeding MaxCmdSN
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: ea7e32bec1b9d9e5b159d80ceb563c702e28b02a
+
+This patch changes iscsit_sequence_cmd() logic to no longer reject
+non-immediate CmdSNs that exceed MaxCmdSN with a protocol error,
+but instead silently ignore them.
+
+This is done to correctly follow RFC-3720 Section 3.2.2.1:
+
+   For non-immediate commands, the CmdSN field can take any
+   value from ExpCmdSN to MaxCmdSN inclusive.  The target MUST silently
+   ignore any non-immediate command outside of this range or non-
+   immediate duplicates within the range.
+
+Reported-by: Santosh Kulkarni <santosh.kulkarni@calsoftinc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/iscsi/iscsi_target_core.h |  1 +
+ drivers/target/iscsi/iscsi_target_util.c | 18 ++++++++++--------
+ 2 files changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/target/iscsi/iscsi_target_core.h b/drivers/target/iscsi/iscsi_target_core.h
+index f2094d2..8dcb3c1 100644
+--- a/drivers/target/iscsi/iscsi_target_core.h
++++ b/drivers/target/iscsi/iscsi_target_core.h
+@@ -193,6 +193,7 @@ enum recover_cmdsn_ret_table {
+ 	CMDSN_NORMAL_OPERATION		= 0,
+ 	CMDSN_LOWER_THAN_EXP		= 1,
+ 	CMDSN_HIGHER_THAN_EXP		= 2,
++	CMDSN_MAXCMDSN_OVERRUN		= 3,
+ };
+ 
+ /* Used for iscsi_handle_immediate_data() return values */
+diff --git a/drivers/target/iscsi/iscsi_target_util.c b/drivers/target/iscsi/iscsi_target_util.c
+index 3caba30..5477eca 100644
+--- a/drivers/target/iscsi/iscsi_target_util.c
++++ b/drivers/target/iscsi/iscsi_target_util.c
+@@ -246,9 +246,9 @@ static inline int iscsit_check_received_cmdsn(struct iscsi_session *sess, u32 cm
+ 	 */
+ 	if (iscsi_sna_gt(cmdsn, sess->max_cmd_sn)) {
+ 		pr_err("Received CmdSN: 0x%08x is greater than"
+-		       " MaxCmdSN: 0x%08x, protocol error.\n", cmdsn,
++		       " MaxCmdSN: 0x%08x, ignoring.\n", cmdsn,
+ 		       sess->max_cmd_sn);
+-		ret = CMDSN_ERROR_CANNOT_RECOVER;
++		ret = CMDSN_MAXCMDSN_OVERRUN;
+ 
+ 	} else if (cmdsn == sess->exp_cmd_sn) {
+ 		sess->exp_cmd_sn++;
+@@ -307,14 +307,16 @@ int iscsit_sequence_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+ 		ret = CMDSN_HIGHER_THAN_EXP;
+ 		break;
+ 	case CMDSN_LOWER_THAN_EXP:
++	case CMDSN_MAXCMDSN_OVERRUN:
++	default:
+ 		cmd->i_state = ISTATE_REMOVE;
+ 		iscsit_add_cmd_to_immediate_queue(cmd, conn, cmd->i_state);
+-		ret = cmdsn_ret;
+-		break;
+-	default:
+-		reason = ISCSI_REASON_PROTOCOL_ERROR;
+-		reject = true;
+-		ret = cmdsn_ret;
++		/*
++		 * Existing callers for iscsit_sequence_cmd() will silently
++		 * ignore commands with CMDSN_LOWER_THAN_EXP, so force this
++		 * return for CMDSN_MAXCMDSN_OVERRUN as well..
++		 */
++		ret = CMDSN_LOWER_THAN_EXP;
+ 		break;
+ 	}
+ 	mutex_unlock(&conn->sess->cmdsn_mutex);
+-- 
+1.7.12.4
+

@@ -1,0 +1,50 @@
+From: Sagi Grimberg <sagig@mellanox.com>
+Date: Wed, 19 Feb 2014 17:50:14 +0200
+Subject: Target/transport: Allocate protection sg if needed
+References: bnc#873901
+Patch-Mainline: v3.15-rc1
+Git-commit: acb2bde3e32100f1ab50e38f0db03660a1cb0a06
+
+In case protection information is involved, allocate
+protection SG-list for transport.
+
+Signed-off-by: Sagi Grimberg <sagig@mellanox.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_transport.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index 2956250..6ddd4cf 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -2039,6 +2039,10 @@ static inline void transport_free_pages(struct se_cmd *cmd)
+ 	transport_free_sgl(cmd->t_bidi_data_sg, cmd->t_bidi_data_nents);
+ 	cmd->t_bidi_data_sg = NULL;
+ 	cmd->t_bidi_data_nents = 0;
++
++	transport_free_sgl(cmd->t_prot_sg, cmd->t_prot_nents);
++	cmd->t_prot_sg = NULL;
++	cmd->t_prot_nents = 0;
+ }
+ 
+ /**
+@@ -2202,6 +2206,14 @@ transport_generic_new_cmd(struct se_cmd *cmd)
+ 				return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
+ 		}
+ 
++		if (cmd->prot_type != TARGET_PROT_NORMAL) {
++			ret = target_alloc_sgl(&cmd->t_prot_sg,
++					       &cmd->t_prot_nents,
++					       cmd->prot_length, true);
++			if (ret < 0)
++				return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
++		}
++
+ 		ret = target_alloc_sgl(&cmd->t_data_sg, &cmd->t_data_nents,
+ 				       cmd->data_length, zero_flag);
+ 		if (ret < 0)
+-- 
+1.7.12.4
+

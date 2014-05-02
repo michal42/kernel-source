@@ -1,0 +1,146 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 13 Nov 2013 18:34:55 -0800
+Subject: target: Convert se_device statistics to atomic_long_t
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: ee480683d975973e3ff679850871e00e011c4a96
+
+This patch converts the handful of se_device statistics to type
+atomic_long_t, instead of using se_device->stats_lock when
+incrementing these values.
+
+More importantly, go ahead and drop the spinlock usage within
+transport_lookup_cmd_lun() fast-path code.
+
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_device.c | 10 +++-------
+ drivers/target/target_core_stat.c   | 15 +++++++++------
+ drivers/target/target_core_tmr.c    |  4 +---
+ include/target/target_core_base.h   |  9 ++++-----
+ 4 files changed, 17 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index 674f54b..42b9fec 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -130,15 +130,12 @@ transport_lookup_cmd_lun(struct se_cmd *se_cmd, u32 unpacked_lun)
+ 	/* Directly associate cmd with se_dev */
+ 	se_cmd->se_dev = se_lun->lun_se_dev;
+ 
+-	/* TODO: get rid of this and use atomics for stats */
+ 	dev = se_lun->lun_se_dev;
+-	spin_lock_irqsave(&dev->stats_lock, flags);
+-	dev->num_cmds++;
++	atomic_long_inc(&dev->num_cmds);
+ 	if (se_cmd->data_direction == DMA_TO_DEVICE)
+-		dev->write_bytes += se_cmd->data_length;
++		atomic_long_add(se_cmd->data_length, &dev->write_bytes);
+ 	else if (se_cmd->data_direction == DMA_FROM_DEVICE)
+-		dev->read_bytes += se_cmd->data_length;
+-	spin_unlock_irqrestore(&dev->stats_lock, flags);
++		atomic_long_add(se_cmd->data_length, &dev->read_bytes);
+ 
+ 	return 0;
+ }
+@@ -1431,7 +1428,6 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
+ 	INIT_LIST_HEAD(&dev->state_list);
+ 	INIT_LIST_HEAD(&dev->qf_cmd_list);
+ 	INIT_LIST_HEAD(&dev->g_dev_node);
+-	spin_lock_init(&dev->stats_lock);
+ 	spin_lock_init(&dev->execute_task_lock);
+ 	spin_lock_init(&dev->delayed_cmd_lock);
+ 	spin_lock_init(&dev->dev_reservation_lock);
+diff --git a/drivers/target/target_core_stat.c b/drivers/target/target_core_stat.c
+index 632665c..0353899 100644
+--- a/drivers/target/target_core_stat.c
++++ b/drivers/target/target_core_stat.c
+@@ -213,7 +213,8 @@ static ssize_t target_stat_scsi_tgt_dev_show_attr_resets(
+ 	struct se_device *dev =
+ 		container_of(sgrps, struct se_device, dev_stat_grps);
+ 
+-	return snprintf(page, PAGE_SIZE, "%u\n", dev->num_resets);
++	return snprintf(page, PAGE_SIZE, "%lu\n",
++			atomic_long_read(&dev->num_resets));
+ }
+ DEV_STAT_SCSI_TGT_DEV_ATTR_RO(resets);
+ 
+@@ -396,8 +397,8 @@ static ssize_t target_stat_scsi_lu_show_attr_num_cmds(
+ 		container_of(sgrps, struct se_device, dev_stat_grps);
+ 
+ 	/* scsiLuNumCommands */
+-	return snprintf(page, PAGE_SIZE, "%llu\n",
+-			(unsigned long long)dev->num_cmds);
++	return snprintf(page, PAGE_SIZE, "%lu\n",
++			atomic_long_read(&dev->num_cmds));
+ }
+ DEV_STAT_SCSI_LU_ATTR_RO(num_cmds);
+ 
+@@ -408,7 +409,8 @@ static ssize_t target_stat_scsi_lu_show_attr_read_mbytes(
+ 		container_of(sgrps, struct se_device, dev_stat_grps);
+ 
+ 	/* scsiLuReadMegaBytes */
+-	return snprintf(page, PAGE_SIZE, "%u\n", (u32)(dev->read_bytes >> 20));
++	return snprintf(page, PAGE_SIZE, "%lu\n",
++			atomic_long_read(&dev->read_bytes) >> 20);
+ }
+ DEV_STAT_SCSI_LU_ATTR_RO(read_mbytes);
+ 
+@@ -419,7 +421,8 @@ static ssize_t target_stat_scsi_lu_show_attr_write_mbytes(
+ 		container_of(sgrps, struct se_device, dev_stat_grps);
+ 
+ 	/* scsiLuWrittenMegaBytes */
+-	return snprintf(page, PAGE_SIZE, "%u\n", (u32)(dev->write_bytes >> 20));
++	return snprintf(page, PAGE_SIZE, "%lu\n",
++			atomic_long_read(&dev->write_bytes) >> 20);
+ }
+ DEV_STAT_SCSI_LU_ATTR_RO(write_mbytes);
+ 
+@@ -430,7 +433,7 @@ static ssize_t target_stat_scsi_lu_show_attr_resets(
+ 		container_of(sgrps, struct se_device, dev_stat_grps);
+ 
+ 	/* scsiLuInResets */
+-	return snprintf(page, PAGE_SIZE, "%u\n", dev->num_resets);
++	return snprintf(page, PAGE_SIZE, "%lu\n", atomic_long_read(&dev->num_resets));
+ }
+ DEV_STAT_SCSI_LU_ATTR_RO(resets);
+ 
+diff --git a/drivers/target/target_core_tmr.c b/drivers/target/target_core_tmr.c
+index 2500099..70c638f 100644
+--- a/drivers/target/target_core_tmr.c
++++ b/drivers/target/target_core_tmr.c
+@@ -386,9 +386,7 @@ int core_tmr_lun_reset(
+ 		pr_debug("LUN_RESET: SCSI-2 Released reservation\n");
+ 	}
+ 
+-	spin_lock_irq(&dev->stats_lock);
+-	dev->num_resets++;
+-	spin_unlock_irq(&dev->stats_lock);
++	atomic_long_inc(&dev->num_resets);
+ 
+ 	pr_debug("LUN_RESET: %s for [%s] Complete\n",
+ 			(preempt_and_abort_list) ? "Preempt" : "TMR",
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index f2fbd09..55bf2c1 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -684,11 +684,10 @@ struct se_device {
+ 	/* Pointer to transport specific device structure */
+ 	u32			dev_index;
+ 	u64			creation_time;
+-	u32			num_resets;
+-	u64			num_cmds;
+-	u64			read_bytes;
+-	u64			write_bytes;
+-	spinlock_t		stats_lock;
++	atomic_long_t		num_resets;
++	atomic_long_t		num_cmds;
++	atomic_long_t		read_bytes;
++	atomic_long_t		write_bytes;
+ 	/* Active commands on this virtual SE device */
+ 	atomic_t		simple_cmds;
+ 	atomic_t		dev_ordered_id;
+-- 
+1.7.12.4
+

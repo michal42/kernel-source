@@ -1,0 +1,43 @@
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 26 Nov 2013 11:49:24 -0800
+Subject: target: Remove extra percpu_ref_init
+References: bnc#873901
+Patch-Mainline: v3.13-rc5
+Git-commit: de06875f089678f4f9f1e8d5e1421fb0ceab12d0
+
+lun->lun_ref is also initialized in core_tpg_post_addlun, so it doesn't
+need to be done in core_tpg_setup_virtual_lun0.
+
+(nab: Drop left-over percpu_ref_cancel_init in failure path)
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_tpg.c | 8 +-------
+ 1 file changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/drivers/target/target_core_tpg.c b/drivers/target/target_core_tpg.c
+index 5885950..c036595 100644
+--- a/drivers/target/target_core_tpg.c
++++ b/drivers/target/target_core_tpg.c
+@@ -656,15 +656,9 @@ static int core_tpg_setup_virtual_lun0(struct se_portal_group *se_tpg)
+ 	spin_lock_init(&lun->lun_sep_lock);
+ 	init_completion(&lun->lun_ref_comp);
+ 
+-	ret = percpu_ref_init(&lun->lun_ref, core_tpg_lun_ref_release);
+-	if (ret < 0)
+-		return ret;
+-
+ 	ret = core_tpg_add_lun(se_tpg, lun, lun_access, dev);
+-	if (ret < 0) {
+-		percpu_ref_cancel_init(&lun->lun_ref);
++	if (ret < 0)
+ 		return ret;
+-	}
+ 
+ 	return 0;
+ }
+-- 
+1.7.12.4
+

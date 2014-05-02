@@ -1,0 +1,65 @@
+From: Atzm Watanabe <atzm@stratosphere.co.jp>
+Date: Tue, 17 Dec 2013 22:53:36 +0900
+Subject: packet: fill the gap of TPACKET_ALIGNMENT with zeros
+Patch-mainline: v3.14-rc1
+Git-commit: e4d26f4b080f55e9577b45e6b51a04971eb459e9
+References: bnc#874131
+
+struct tpacket{2,3}_hdr is aligned to a multiple of TPACKET_ALIGNMENT.
+Explicitly defining and zeroing the gap of this makes additional changes
+easier.
+
+Signed-off-by: Atzm Watanabe <atzm@stratosphere.co.jp>
+Acked-by: Daniel Borkmann <dborkman@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+---
+ include/uapi/linux/if_packet.h | 3 ++-
+ net/packet/af_packet.c         | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/include/uapi/linux/if_packet.h b/include/uapi/linux/if_packet.h
+index dbf0666..854d4e3 100644
+--- a/include/uapi/linux/if_packet.h
++++ b/include/uapi/linux/if_packet.h
+@@ -132,7 +132,7 @@ struct tpacket2_hdr {
+ 	__u32		tp_sec;
+ 	__u32		tp_nsec;
+ 	__u16		tp_vlan_tci;
+-	__u16		tp_padding;
++	__u8		tp_padding[6];
+ };
+ 
+ struct tpacket_hdr_variant1 {
+@@ -153,6 +153,7 @@ struct tpacket3_hdr {
+ 	union {
+ 		struct tpacket_hdr_variant1 hv1;
+ 	};
++	__u8		tp_padding[12];
+ };
+ 
+ struct tpacket_bd_ts {
+diff --git a/net/packet/af_packet.c b/net/packet/af_packet.c
+index 88cfbc1..e119bd4 100644
+--- a/net/packet/af_packet.c
++++ b/net/packet/af_packet.c
+@@ -1868,7 +1868,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
+ 		} else {
+ 			h.h2->tp_vlan_tci = 0;
+ 		}
+-		h.h2->tp_padding = 0;
++		memset(h.h2->tp_padding, 0, sizeof(h.h2->tp_padding));
+ 		hdrlen = sizeof(*h.h2);
+ 		break;
+ 	case TPACKET_V3:
+@@ -1882,6 +1882,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
+ 		h.h3->tp_net = netoff;
+ 		h.h3->tp_sec  = ts.tv_sec;
+ 		h.h3->tp_nsec = ts.tv_nsec;
++		memset(h.h3->tp_padding, 0, sizeof(h.h3->tp_padding));
+ 		hdrlen = sizeof(*h.h3);
+ 		break;
+ 	default:
+-- 
+1.8.1.4
+

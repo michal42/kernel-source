@@ -1,0 +1,52 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Wed, 6 Nov 2013 20:55:39 -0800
+Subject: iscsi-target: Do not generate REJECTs for zero-length DataOUT
+References: bnc#873901
+Patch-Mainline: v3.13-rc1
+Git-commit: dbcbc95cd85854588ac80c0a6d98586fa2129418
+
+This patch changes iscsit_check_dataout_hdr() to no longer generate
+REJECTs for zero-length DataOUTs, and instead simply ignore these
+requests.
+
+This follows RFC-3720, Section 10.7.7.  DataSegmentLength
+
+  "This is the data payload length of a SCSI Data-In or SCSI Data-Out PDU.
+   The sending of 0 length data segments should be avoided, but initiators
+   and targets MUST be able to properly receive 0 length data segments."
+
+Reported-by: Santosh Kulkarni <santosh.kulkarni@calsoftinc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/iscsi/iscsi_target.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/target/iscsi/iscsi_target.c b/drivers/target/iscsi/iscsi_target.c
+index d7630b6..90ffa60 100644
+--- a/drivers/target/iscsi/iscsi_target.c
++++ b/drivers/target/iscsi/iscsi_target.c
+@@ -1261,9 +1261,8 @@ iscsit_check_dataout_hdr(struct iscsi_conn *conn, unsigned char *buf,
+ 	int rc;
+ 
+ 	if (!payload_length) {
+-		pr_err("DataOUT payload is ZERO, protocol error.\n");
+-		return iscsit_add_reject(conn, ISCSI_REASON_PROTOCOL_ERROR,
+-					 buf);
++		pr_warn("DataOUT payload is ZERO, ignoring.\n");
++		return 0;
+ 	}
+ 
+ 	/* iSCSI write */
+@@ -1493,7 +1492,7 @@ EXPORT_SYMBOL(iscsit_check_dataout_payload);
+ 
+ static int iscsit_handle_data_out(struct iscsi_conn *conn, unsigned char *buf)
+ {
+-	struct iscsi_cmd *cmd;
++	struct iscsi_cmd *cmd = NULL;
+ 	struct iscsi_data *hdr = (struct iscsi_data *)buf;
+ 	int rc;
+ 	bool data_crc_failed = false;
+-- 
+1.7.12.4
+

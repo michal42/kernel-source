@@ -1,0 +1,37 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Mon, 3 Feb 2014 12:55:42 -0800
+Subject: iscsi-target: Fix SNACK Type 1 + BegRun=0 handling
+References: bnc#873901
+Patch-Mainline: v3.14-rc3
+Git-commit: 752d86805b18e58c56c6f3c7004c2dffd4430c17
+
+This patch fixes Status SNACK handling of BegRun=0 to allow
+for all unacknowledged respones to be resent, instead of
+always assuming that BegRun would be an explicit value less
+than the current ExpStatSN.
+
+Reported-by: santosh kulkarni <santosh.kulkarni@calsoftinc.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/iscsi/iscsi_target_erl1.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/target/iscsi/iscsi_target_erl1.c b/drivers/target/iscsi/iscsi_target_erl1.c
+index e048d64..cda4d80 100644
+--- a/drivers/target/iscsi/iscsi_target_erl1.c
++++ b/drivers/target/iscsi/iscsi_target_erl1.c
+@@ -507,7 +507,9 @@ int iscsit_handle_status_snack(
+ 	u32 last_statsn;
+ 	int found_cmd;
+ 
+-	if (conn->exp_statsn > begrun) {
++	if (!begrun) {
++		begrun = conn->exp_statsn;
++	} else if (conn->exp_statsn > begrun) {
+ 		pr_err("Got Status SNACK Begrun: 0x%08x, RunLength:"
+ 			" 0x%08x but already got ExpStatSN: 0x%08x on CID:"
+ 			" %hu.\n", begrun, runlength, conn->exp_statsn,
+-- 
+1.7.12.4
+

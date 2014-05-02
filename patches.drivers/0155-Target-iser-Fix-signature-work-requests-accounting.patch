@@ -1,0 +1,42 @@
+From: Sagi Grimberg <sagig@mellanox.com>
+Date: Mon, 17 Mar 2014 12:52:16 +0200
+Subject: Target/iser: Fix signature work requests accounting
+References: bnc#873901
+Patch-Mainline: v3.15-rc1
+Git-commit: c2caa207774683bddaa628d4c848ca48cc172e0a
+
+As REG_SIG_MR work request and it's LOCAL_INVALIDATE are
+not accounted in post_send_buf_count we must color these
+with ISER_FASTREG_LI_WRID in order to process their error
+completions when the QP flushes.
+
+Signed-off-by: Sagi Grimberg <sagig@mellanox.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/infiniband/ulp/isert/ib_isert.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/infiniband/ulp/isert/ib_isert.c b/drivers/infiniband/ulp/isert/ib_isert.c
+index 3b9d5bc..52b8583 100644
+--- a/drivers/infiniband/ulp/isert/ib_isert.c
++++ b/drivers/infiniband/ulp/isert/ib_isert.c
+@@ -2609,6 +2609,7 @@ isert_reg_sig_mr(struct isert_conn *isert_conn, struct se_cmd *se_cmd,
+ 	if (!(fr_desc->ind & ISERT_SIG_KEY_VALID)) {
+ 		memset(&inv_wr, 0, sizeof(inv_wr));
+ 		inv_wr.opcode = IB_WR_LOCAL_INV;
++		inv_wr.wr_id = ISER_FASTREG_LI_WRID;
+ 		inv_wr.ex.invalidate_rkey = pi_ctx->sig_mr->rkey;
+ 		wr = &inv_wr;
+ 		/* Bump the key */
+@@ -2618,6 +2619,7 @@ isert_reg_sig_mr(struct isert_conn *isert_conn, struct se_cmd *se_cmd,
+ 
+ 	memset(&sig_wr, 0, sizeof(sig_wr));
+ 	sig_wr.opcode = IB_WR_REG_SIG_MR;
++	sig_wr.wr_id = ISER_FASTREG_LI_WRID;
+ 	sig_wr.sg_list = data_sge;
+ 	sig_wr.num_sge = 1;
+ 	sig_wr.wr.sig_handover.access_flags = IB_ACCESS_LOCAL_WRITE;
+-- 
+1.7.12.4
+

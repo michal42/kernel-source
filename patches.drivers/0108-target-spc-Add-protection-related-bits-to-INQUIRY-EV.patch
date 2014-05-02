@@ -1,0 +1,45 @@
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Mon, 23 Dec 2013 20:33:21 +0000
+Subject: target/spc: Add protection related bits to INQUIRY EVPD=0x86
+References: bnc#873901
+Patch-Mainline: v3.14-rc1
+Git-commit: 43bb95c7c06de358de7ab525d28bb89b470c1892
+
+This patch updates spc_emulate_evpd_86() (extended INQUIRY) to
+report GRD_CHK (Guard Check) and REF_CHK (Reference Check) bits
+when DIF emulation is enabled by the backend device.
+
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Cc: Christoph Hellwig <hch@lst.de>
+Cc: Hannes Reinecke <hare@suse.de>
+Cc: Sagi Grimberg <sagig@mellanox.com>
+Cc: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/target/target_core_spc.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/target/target_core_spc.c b/drivers/target/target_core_spc.c
+index 4178c2a..73fdff5 100644
+--- a/drivers/target/target_core_spc.c
++++ b/drivers/target/target_core_spc.c
+@@ -475,6 +475,15 @@ spc_emulate_evpd_86(struct se_cmd *cmd, unsigned char *buf)
+ 	struct se_device *dev = cmd->se_dev;
+ 
+ 	buf[3] = 0x3c;
++	/*
++	 * Set GRD_CHK + REF_CHK for TYPE1 protection, or GRD_CHK
++	 * only for TYPE3 protection.
++	 */
++	if (dev->dev_attrib.pi_prot_type == TARGET_DIF_TYPE1_PROT)
++		buf[4] = 0x5;
++	else if (dev->dev_attrib.pi_prot_type == TARGET_DIF_TYPE3_PROT)
++		buf[4] = 0x4;
++
+ 	/* Set HEADSUP, ORDSUP, SIMPSUP */
+ 	buf[5] = 0x07;
+ 
+-- 
+1.7.12.4
+
