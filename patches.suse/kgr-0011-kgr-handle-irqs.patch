@@ -18,17 +18,15 @@ Cc: Frederic Weisbecker <fweisbec@gmail.com>
 Cc: Ingo Molnar <mingo@redhat.com>
 Cc: Thomas Gleixner <tglx@linutronix.de>
 ---
- arch/x86/include/asm/kgr.h |  4 +++-
- include/linux/kgr.h        |  5 +++--
- kernel/kgr.c               | 38 ++++++++++++++++++++++++++++++++------
- samples/kgr/kgr_patcher.c  |  2 +-
- 4 files changed, 39 insertions(+), 10 deletions(-)
+ arch/x86/include/asm/kgr.h |    4 +++-
+ include/linux/kgr.h        |    6 ++++--
+ kernel/kgr.c               |   38 ++++++++++++++++++++++++++++++++------
+ samples/kgr/kgr_patcher.c  |    2 +-
+ 4 files changed, 40 insertions(+), 10 deletions(-)
 
-diff --git a/arch/x86/include/asm/kgr.h b/arch/x86/include/asm/kgr.h
-index 49daa46243fc..f36661681b33 100644
 --- a/arch/x86/include/asm/kgr.h
 +++ b/arch/x86/include/asm/kgr.h
-@@ -12,8 +12,10 @@ static void _new_function ##_stub_slow (unsigned long ip, unsigned long parent_i
+@@ -12,8 +12,10 @@ static void _new_function ##_stub_slow (
  		struct ftrace_ops *ops, struct pt_regs *regs)		\
  {									\
  	struct kgr_loc_caches *c = ops->private;			\
@@ -40,11 +38,17 @@ index 49daa46243fc..f36661681b33 100644
  		pr_info("kgr: slow stub: calling old code at %lx\n",	\
  				c->old);				\
  		regs->ip = c->old + MCOUNT_INSN_SIZE;			\
-diff --git a/include/linux/kgr.h b/include/linux/kgr.h
-index 4f223a1a4486..0df26558fffe 100644
 --- a/include/linux/kgr.h
 +++ b/include/linux/kgr.h
-@@ -11,7 +11,7 @@
+@@ -1,6 +1,7 @@
+ #ifndef LINUX_KGR_H
+ #define LINUX_KGR_H
+ 
++#include <linux/hardirq.h> /* for in_interrupt() */
+ #include <linux/init.h>
+ #include <linux/ftrace.h>
+ 
+@@ -11,7 +12,7 @@
  #define KGR_TIMEOUT 30
  
  struct kgr_patch {
@@ -53,7 +57,7 @@ index 4f223a1a4486..0df26558fffe 100644
  	const struct kgr_patch_fun {
  		const char *name;
  		const char *new_name;
-@@ -29,6 +29,7 @@ struct kgr_patch {
+@@ -29,6 +30,7 @@ struct kgr_patch {
  struct kgr_loc_caches {
  	unsigned long old;
  	unsigned long new;
@@ -61,7 +65,7 @@ index 4f223a1a4486..0df26558fffe 100644
  };
  
  #define KGR_PATCHED_FUNCTION(patch, _name, _new_function)			\
-@@ -57,7 +58,7 @@ struct kgr_loc_caches {
+@@ -57,7 +59,7 @@ struct kgr_loc_caches {
  #define KGR_PATCH(name)		&__kgr_patch_ ## name
  #define KGR_PATCH_END		NULL
  
@@ -70,8 +74,6 @@ index 4f223a1a4486..0df26558fffe 100644
  #endif /* IS_ENABLED(CONFIG_KGR) */
  
  #endif /* LINUX_KGR_H */
-diff --git a/kernel/kgr.c b/kernel/kgr.c
-index 9f42749633e6..74aaefe928f9 100644
 --- a/kernel/kgr.c
 +++ b/kernel/kgr.c
 @@ -18,6 +18,7 @@
@@ -109,7 +111,7 @@ index 9f42749633e6..74aaefe928f9 100644
  }
  
  static void kgr_work_fn(struct work_struct *work)
-@@ -139,6 +142,20 @@ static unsigned long kgr_get_fentry_loc(const char *f_name)
+@@ -139,6 +142,20 @@ static unsigned long kgr_get_fentry_loc(
  	return fentry_loc;
  }
  
@@ -130,7 +132,7 @@ index 9f42749633e6..74aaefe928f9 100644
  static int kgr_init_ftrace_ops(const struct kgr_patch_fun *patch_fun)
  {
  	struct kgr_loc_caches *caches;
-@@ -184,7 +201,8 @@ static int kgr_init_ftrace_ops(const struct kgr_patch_fun *patch_fun)
+@@ -184,7 +201,8 @@ static int kgr_init_ftrace_ops(const str
  	return 0;
  }
  
@@ -140,7 +142,7 @@ index 9f42749633e6..74aaefe928f9 100644
  {
  	struct ftrace_ops *new_ops;
  	struct kgr_loc_caches *caches;
-@@ -205,6 +223,7 @@ static int kgr_patch_code(const struct kgr_patch_fun *patch_fun, bool final)
+@@ -205,6 +223,7 @@ static int kgr_patch_code(const struct k
  
  	/* Flip the switch */
  	caches = new_ops->private;
@@ -148,7 +150,7 @@ index 9f42749633e6..74aaefe928f9 100644
  	fentry_loc = caches->old;
  	err = ftrace_set_filter_ip(new_ops, fentry_loc, 0, 0);
  	if (err) {
-@@ -243,9 +262,9 @@ static int kgr_patch_code(const struct kgr_patch_fun *patch_fun, bool final)
+@@ -243,9 +262,9 @@ static int kgr_patch_code(const struct k
   * kgr_start_patching -- the entry for a kgraft patch
   * @patch: patch to be applied
   *
@@ -160,7 +162,7 @@ index 9f42749633e6..74aaefe928f9 100644
  {
  	const struct kgr_patch_fun *const *patch_fun;
  
-@@ -254,6 +273,12 @@ int kgr_start_patching(const struct kgr_patch *patch)
+@@ -254,6 +273,12 @@ int kgr_start_patching(const struct kgr_
  		return -EINVAL;
  	}
  
@@ -173,7 +175,7 @@ index 9f42749633e6..74aaefe928f9 100644
  	mutex_lock(&kgr_in_progress_lock);
  	if (kgr_in_progress) {
  		pr_err("kgr: can't patch, another patching not yet finalized\n");
-@@ -264,7 +289,7 @@ int kgr_start_patching(const struct kgr_patch *patch)
+@@ -264,7 +289,7 @@ int kgr_start_patching(const struct kgr_
  	for (patch_fun = patch->patches; *patch_fun; patch_fun++) {
  		int ret;
  
@@ -182,7 +184,7 @@ index 9f42749633e6..74aaefe928f9 100644
  		/*
  		 * In case any of the symbol resolutions in the set
  		 * has failed, patch all the previously replaced fentry
-@@ -281,6 +306,7 @@ int kgr_start_patching(const struct kgr_patch *patch)
+@@ -281,6 +306,7 @@ int kgr_start_patching(const struct kgr_
  	kgr_patch = patch;
  	mutex_unlock(&kgr_in_progress_lock);
  
@@ -190,8 +192,6 @@ index 9f42749633e6..74aaefe928f9 100644
  	kgr_handle_processes();
  
  	/*
-diff --git a/samples/kgr/kgr_patcher.c b/samples/kgr/kgr_patcher.c
-index 828543e36f3f..b1465cff8d5b 100644
 --- a/samples/kgr/kgr_patcher.c
 +++ b/samples/kgr/kgr_patcher.c
 @@ -68,7 +68,7 @@ static bool new_capable(int cap)
@@ -203,6 +203,3 @@ index 828543e36f3f..b1465cff8d5b 100644
  	.patches = {
  		KGR_PATCH(SyS_iopl),
  		KGR_PATCH(capable),
--- 
-1.9.2
-
