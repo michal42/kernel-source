@@ -1,0 +1,144 @@
+From: Jiang Liu <jiang.liu@linux.intel.com>
+Date: Mon, 6 Jan 2014 14:18:08 +0800
+Subject: iommu/vt-d: use dedicated bitmap to track remapping entry allocation
+ status
+Git-commit: 360eb3c5687e2df23e29e97878238765bfe6a756
+Patch-mainline: v3.14-rc1
+References: fate#317112
+
+Currently Intel interrupt remapping drivers uses the "present" flag bit
+in remapping entry to track whether an entry is allocated or not.
+It works as follow:
+1) allocate a remapping entry and set its "present" flag bit to 1
+2) compose other fields for the entry
+3) update the remapping entry with the composed value
+
+The remapping hardware may access the entry between step 1 and step 3,
+which then observers an entry with the "present" flag set but random
+values in all other fields.
+
+This patch introduces a dedicated bitmap to track remapping entry
+allocation status instead of sharing the "present" flag with hardware,
+thus eliminate the race window. It also simplifies the implementation.
+
+Tested-and-reviewed-by: Yijing Wang <wangyijing@huawei.com>
+Signed-off-by: Jiang Liu <jiang.liu@linux.intel.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/iommu/intel_irq_remapping.c | 55 ++++++++++++++++++-------------------
+ include/linux/intel-iommu.h         |  1 +
+ 2 files changed, 27 insertions(+), 29 deletions(-)
+
+diff --git a/drivers/iommu/intel_irq_remapping.c b/drivers/iommu/intel_irq_remapping.c
+index c988b8d85df8..3aa9b5c347e4 100644
+--- a/drivers/iommu/intel_irq_remapping.c
++++ b/drivers/iommu/intel_irq_remapping.c
+@@ -72,7 +72,6 @@ static int alloc_irte(struct intel_iommu *iommu, int irq, u16 count)
+ 	u16 index, start_index;
+ 	unsigned int mask = 0;
+ 	unsigned long flags;
+-	int i;
+ 
+ 	if (!count || !irq_iommu)
+ 		return -1;
+@@ -96,32 +95,17 @@ static int alloc_irte(struct intel_iommu *iommu, int irq, u16 count)
+ 	}
+ 
+ 	raw_spin_lock_irqsave(&irq_2_ir_lock, flags);
+-	do {
+-		for (i = index; i < index + count; i++)
+-			if  (table->base[i].present)
+-				break;
+-		/* empty index found */
+-		if (i == index + count)
+-			break;
+-
+-		index = (index + count) % INTR_REMAP_TABLE_ENTRIES;
+-
+-		if (index == start_index) {
+-			raw_spin_unlock_irqrestore(&irq_2_ir_lock, flags);
+-			printk(KERN_ERR "can't allocate an IRTE\n");
+-			return -1;
+-		}
+-	} while (1);
+-
+-	for (i = index; i < index + count; i++)
+-		table->base[i].present = 1;
+-
+-	cfg->remapped = 1;
+-	irq_iommu->iommu = iommu;
+-	irq_iommu->irte_index =  index;
+-	irq_iommu->sub_handle = 0;
+-	irq_iommu->irte_mask = mask;
+-
++	index = bitmap_find_free_region(table->bitmap,
++					INTR_REMAP_TABLE_ENTRIES, mask);
++	if (index < 0) {
++		pr_warn("IR%d: can't allocate an IRTE\n", iommu->seq_id);
++	} else {
++		cfg->remapped = 1;
++		irq_iommu->iommu = iommu;
++		irq_iommu->irte_index =  index;
++		irq_iommu->sub_handle = 0;
++		irq_iommu->irte_mask = mask;
++	}
+ 	raw_spin_unlock_irqrestore(&irq_2_ir_lock, flags);
+ 
+ 	return index;
+@@ -254,6 +238,8 @@ static int clear_entries(struct irq_2_iommu *irq_iommu)
+ 		set_64bit(&entry->low, 0);
+ 		set_64bit(&entry->high, 0);
+ 	}
++	bitmap_release_region(iommu->ir_table->bitmap, index,
++			      irq_iommu->irte_mask);
+ 
+ 	return qi_flush_iec(iommu, index, irq_iommu->irte_mask);
+ }
+@@ -453,6 +439,7 @@ static int intel_setup_irq_remapping(struct intel_iommu *iommu, int mode)
+ {
+ 	struct ir_table *ir_table;
+ 	struct page *pages;
++	unsigned long *bitmap;
+ 
+ 	ir_table = iommu->ir_table = kzalloc(sizeof(struct ir_table),
+ 					     GFP_ATOMIC);
+@@ -464,13 +451,23 @@ static int intel_setup_irq_remapping(struct intel_iommu *iommu, int mode)
+ 				 INTR_REMAP_PAGE_ORDER);
+ 
+ 	if (!pages) {
+-		printk(KERN_ERR "failed to allocate pages of order %d\n",
+-		       INTR_REMAP_PAGE_ORDER);
++		pr_err("IR%d: failed to allocate pages of order %d\n",
++		       iommu->seq_id, INTR_REMAP_PAGE_ORDER);
+ 		kfree(iommu->ir_table);
+ 		return -ENOMEM;
+ 	}
+ 
++	bitmap = kcalloc(BITS_TO_LONGS(INTR_REMAP_TABLE_ENTRIES),
++			 sizeof(long), GFP_ATOMIC);
++	if (bitmap == NULL) {
++		pr_err("IR%d: failed to allocate bitmap\n", iommu->seq_id);
++		__free_pages(pages, INTR_REMAP_PAGE_ORDER);
++		kfree(ir_table);
++		return -ENOMEM;
++	}
++
+ 	ir_table->base = page_address(pages);
++	ir_table->bitmap = bitmap;
+ 
+ 	iommu_set_irq_remapping(iommu, mode);
+ 	return 0;
+diff --git a/include/linux/intel-iommu.h b/include/linux/intel-iommu.h
+index d380c5e68008..de1e5e936420 100644
+--- a/include/linux/intel-iommu.h
++++ b/include/linux/intel-iommu.h
+@@ -288,6 +288,7 @@ struct q_inval {
+ 
+ struct ir_table {
+ 	struct irte *base;
++	unsigned long *bitmap;
+ };
+ #endif
+ 
+
