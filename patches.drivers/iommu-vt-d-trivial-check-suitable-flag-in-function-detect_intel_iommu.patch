@@ -1,0 +1,55 @@
+From: Jiang Liu <jiang.liu@linux.intel.com>
+Date: Mon, 6 Jan 2014 14:18:14 +0800
+Subject: iommu/vt-d, trivial: check suitable flag in function
+ detect_intel_iommu()
+Git-commit: b977e73a837963ad73d24db4ca7b71040791868c
+Patch-mainline: v3.14-rc1
+References: fate#317112
+
+Flag irq_remapping_enabled is only set by intel_enable_irq_remapping(),
+which is called after detect_intel_iommu(). So moving pr_info() from
+detect_intel_iommu() to intel_enable_irq_remapping(), which also
+slightly simplifies implementation.
+
+Reviewed-by: Yijing Wang <wangyijing@huawei.com>
+Signed-off-by: Jiang Liu <jiang.liu@linux.intel.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/iommu/dmar.c                | 8 --------
+ drivers/iommu/intel_irq_remapping.c | 2 ++
+ 2 files changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/iommu/dmar.c b/drivers/iommu/dmar.c
+index 28d93b68ff02..e4c3ea022428 100644
+--- a/drivers/iommu/dmar.c
++++ b/drivers/iommu/dmar.c
+@@ -556,14 +556,6 @@ int __init detect_intel_iommu(void)
+ 	if (ret)
+ 		ret = check_zero_address();
+ 	{
+-		struct acpi_table_dmar *dmar;
+-
+-		dmar = (struct acpi_table_dmar *) dmar_tbl;
+-
+-		if (ret && irq_remapping_enabled && cpu_has_x2apic &&
+-		    dmar->flags & 0x1)
+-			pr_info("Queued invalidation will be enabled to support x2apic and Intr-remapping.\n");
+-
+ 		if (ret && !no_iommu && !iommu_detected && !dmar_disabled) {
+ 			iommu_detected = 1;
+ 			/* Make sure ACS will be enabled */
+diff --git a/drivers/iommu/intel_irq_remapping.c b/drivers/iommu/intel_irq_remapping.c
+index 3aa9b5c347e4..b9256a4f946d 100644
+--- a/drivers/iommu/intel_irq_remapping.c
++++ b/drivers/iommu/intel_irq_remapping.c
+@@ -561,6 +561,8 @@ static int __init intel_enable_irq_remapping(void)
+ 	}
+ 
+ 	if (x2apic_present) {
++		pr_info("Queued invalidation will be enabled to support x2apic and Intr-remapping.\n");
++
+ 		eim = !dmar_x2apic_optout();
+ 		if (!eim)
+ 			printk(KERN_WARNING
+
