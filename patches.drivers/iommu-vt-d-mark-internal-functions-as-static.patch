@@ -1,0 +1,107 @@
+From: Jiang Liu <jiang.liu@linux.intel.com>
+Date: Mon, 6 Jan 2014 14:18:16 +0800
+Subject: iommu/vt-d: mark internal functions as static
+Git-commit: 694835dc227ad203886457aa447025d09b2f7523
+Patch-mainline: v3.14-rc1
+References: fate#317112
+
+Functions alloc_iommu() and parse_ioapics_under_ir()
+are only used internally, so mark them as static.
+
+[Joerg: Made detect_intel_iommu() non-static again for IA64]
+
+Signed-off-by: Jiang Liu <jiang.liu@linux.intel.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/iommu/dmar.c                | 5 ++++-
+ drivers/iommu/intel_irq_remapping.c | 4 +++-
+ include/linux/dmar.h                | 4 +---
+ include/linux/intel-iommu.h         | 1 -
+ 4 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/iommu/dmar.c b/drivers/iommu/dmar.c
+index 5a4e9afad3af..e3c03bb7c374 100644
+--- a/drivers/iommu/dmar.c
++++ b/drivers/iommu/dmar.c
+@@ -52,6 +52,8 @@ LIST_HEAD(dmar_drhd_units);
+ struct acpi_table_header * __initdata dmar_tbl;
+ static acpi_size dmar_tbl_size;
+ 
++static int alloc_iommu(struct dmar_drhd_unit *drhd);
++
+ static void __init dmar_register_drhd_unit(struct dmar_drhd_unit *drhd)
+ {
+ 	/*
+@@ -649,7 +651,7 @@ out:
+ 	return err;
+ }
+ 
+-int alloc_iommu(struct dmar_drhd_unit *drhd)
++static int alloc_iommu(struct dmar_drhd_unit *drhd)
+ {
+ 	struct intel_iommu *iommu;
+ 	u32 ver, sts;
+@@ -1366,4 +1368,5 @@ int __init dmar_ir_support(void)
+ 		return 0;
+ 	return dmar->flags & 0x1;
+ }
++
+ IOMMU_INIT_POST(detect_intel_iommu);
+diff --git a/drivers/iommu/intel_irq_remapping.c b/drivers/iommu/intel_irq_remapping.c
+index b9256a4f946d..10d3187e5fa0 100644
+--- a/drivers/iommu/intel_irq_remapping.c
++++ b/drivers/iommu/intel_irq_remapping.c
+@@ -40,6 +40,8 @@ static int ir_ioapic_num, ir_hpet_num;
+ 
+ static DEFINE_RAW_SPINLOCK(irq_2_ir_lock);
+ 
++static int __init parse_ioapics_under_ir(void);
++
+ static struct irq_2_iommu *irq_2_iommu(unsigned int irq)
+ {
+ 	struct irq_cfg *cfg = irq_get_chip_data(irq);
+@@ -773,7 +775,7 @@ static int ir_parse_ioapic_hpet_scope(struct acpi_dmar_header *header,
+  * Finds the assocaition between IOAPIC's and its Interrupt-remapping
+  * hardware unit.
+  */
+-int __init parse_ioapics_under_ir(void)
++static int __init parse_ioapics_under_ir(void)
+ {
+ 	struct dmar_drhd_unit *drhd;
+ 	int ir_supported = 0;
+diff --git a/include/linux/dmar.h b/include/linux/dmar.h
+index 205ee37eed73..1a60dd630bb4 100644
+--- a/include/linux/dmar.h
++++ b/include/linux/dmar.h
+@@ -33,6 +33,7 @@ struct acpi_dmar_header;
+ #define DMAR_X2APIC_OPT_OUT	0x2
+ 
+ struct intel_iommu;
++
+ #ifdef CONFIG_DMAR_TABLE
+ extern struct acpi_table_header *dmar_tbl;
+ struct dmar_drhd_unit {
+@@ -69,9 +70,6 @@ extern void dmar_free_dev_scope(struct pci_dev ***devices, int *cnt);
+ /* Intel IOMMU detection */
+ extern int detect_intel_iommu(void);
+ extern int enable_drhd_fault_handling(void);
+-
+-extern int parse_ioapics_under_ir(void);
+-extern int alloc_iommu(struct dmar_drhd_unit *);
+ #else
+ static inline int detect_intel_iommu(void)
+ {
+diff --git a/include/linux/intel-iommu.h b/include/linux/intel-iommu.h
+index de1e5e936420..f2c4114b8665 100644
+--- a/include/linux/intel-iommu.h
++++ b/include/linux/intel-iommu.h
+@@ -348,7 +348,6 @@ static inline void __iommu_flush_cache(
+ extern struct dmar_drhd_unit * dmar_find_matched_drhd_unit(struct pci_dev *dev);
+ extern int dmar_find_matched_atsr_unit(struct pci_dev *dev);
+ 
+-extern int alloc_iommu(struct dmar_drhd_unit *drhd);
+ extern void free_iommu(struct intel_iommu *iommu);
+ extern int dmar_enable_qi(struct intel_iommu *iommu);
+ extern void dmar_disable_qi(struct intel_iommu *iommu);
+
