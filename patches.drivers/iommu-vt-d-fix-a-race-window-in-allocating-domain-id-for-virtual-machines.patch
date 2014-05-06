@@ -1,0 +1,43 @@
+From: Jiang Liu <jiang.liu@linux.intel.com>
+Date: Mon, 6 Jan 2014 14:18:10 +0800
+Subject: iommu/vt-d: fix a race window in allocating domain ID for virtual
+ machines
+Git-commit: 18d99165d3ebe5e365de57bcc673901d754c7142
+Patch-mainline: v3.14-rc1
+References: fate#317112
+
+Function intel_iommu_domain_init() may be concurrently called by upper
+layer without serialization, so use atomic_t to protect domain id
+allocation.
+
+Signed-off-by: Jiang Liu <jiang.liu@linux.intel.com>
+Cc: Alex Williamson <alex.williamson@redhat.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index 64d8942d6d14..e2d2cb3119b3 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -3877,7 +3877,7 @@ static void vm_domain_remove_all_dev_info(struct dmar_domain *domain)
+ }
+ 
+ /* domain id for virtual machine, it won't be set in context */
+-static unsigned long vm_domid;
++static atomic_t vm_domid = ATOMIC_INIT(0);
+ 
+ static struct dmar_domain *iommu_alloc_vm_domain(void)
+ {
+@@ -3887,7 +3887,7 @@ static struct dmar_domain *iommu_alloc_vm_domain(void)
+ 	if (!domain)
+ 		return NULL;
+ 
+-	domain->id = vm_domid++;
++	domain->id = atomic_inc_return(&vm_domid);
+ 	domain->nid = -1;
+ 	memset(domain->iommu_bmp, 0, sizeof(domain->iommu_bmp));
+ 	domain->flags = DOMAIN_FLAG_VIRTUAL_MACHINE;
+
