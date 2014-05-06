@@ -1,0 +1,65 @@
+From c32fa99f0b4252633aa464e28d1cb925bd2a79df Mon Sep 17 00:00:00 2001
+From: Paul Walmsley <pwalmsley@nvidia.com>
+Date: Wed, 18 Dec 2013 05:02:14 -0800
+Subject: [PATCH] bitops: Fix signedness of compile-time hweight implementations
+Git-commit: c32fa99f0b4252633aa464e28d1cb925bd2a79df
+Patch-mainline: 3.15-rc1
+References: bnc#876357
+
+Enabling '-Wsign-compare' compiler warnings on code that includes
+include/linux/bitops.h can generate the following warning:
+
+  In file included from include/linux/kernel.h:10:0,
+                    from <random filename>:48:
+  include/linux/bitops.h: In function 'hweight_long':
+  include/linux/bitops.h:77:26: error: signed and unsigned type in conditional expression [-Werror=sign-compare]
+
+(converted to an error with -Werror)
+
+This is due to the use of the logical negation operator '!' in the
+__const_hweight8 macro in include/asm-generic/bitops/const_hweight.h.
+The use of that operator here results in a signed value.
+
+Fix by explicitly casting the __const_hweight8 macro expansion to
+'unsigned int'.  While here, clean up several checkpatch.pl warnings.
+
+Signed-off-by: Paul Walmsley <pwalmsley@nvidia.com>
+Cc: Arnd Bergmann <arnd@arndb.de>
+Cc: H. Peter Anvin <hpa@zytor.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/alpine.DEB.2.02.1312180459580.30198@tamien
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ include/asm-generic/bitops/const_hweight.h |   17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+--- a/include/asm-generic/bitops/const_hweight.h
++++ b/include/asm-generic/bitops/const_hweight.h
+@@ -5,14 +5,15 @@
+  * Compile time versions of __arch_hweightN()
+  */
+ #define __const_hweight8(w)		\
+-      (	(!!((w) & (1ULL << 0))) +	\
+-	(!!((w) & (1ULL << 1))) +	\
+-	(!!((w) & (1ULL << 2))) +	\
+-	(!!((w) & (1ULL << 3))) +	\
+-	(!!((w) & (1ULL << 4))) +	\
+-	(!!((w) & (1ULL << 5))) +	\
+-	(!!((w) & (1ULL << 6))) +	\
+-	(!!((w) & (1ULL << 7)))	)
++	((unsigned int)			\
++	 ((!!((w) & (1ULL << 0))) +	\
++	  (!!((w) & (1ULL << 1))) +	\
++	  (!!((w) & (1ULL << 2))) +	\
++	  (!!((w) & (1ULL << 3))) +	\
++	  (!!((w) & (1ULL << 4))) +	\
++	  (!!((w) & (1ULL << 5))) +	\
++	  (!!((w) & (1ULL << 6))) +	\
++	  (!!((w) & (1ULL << 7)))))
+ 
+ #define __const_hweight16(w) (__const_hweight8(w)  + __const_hweight8((w)  >> 8 ))
+ #define __const_hweight32(w) (__const_hweight16(w) + __const_hweight16((w) >> 16))
