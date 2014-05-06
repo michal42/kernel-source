@@ -1,0 +1,46 @@
+From: Yijing Wang <wangyijing@huawei.com>
+Date: Thu, 31 Oct 2013 17:26:04 +0800
+Subject: iommu/vt-d: Use list_for_each_entry_safe() for dmar_domain->devices
+ traversal
+Git-commit: bca2b916f3d5c5bcb3d9d38fc1e4cb4d83b1d8a8
+Patch-mainline: v3.13-rc1
+References: fate#317112
+
+Replace list_for_each_safe() + list_entry() with the simpler
+list_for_each_entry_safe().
+
+Signed-off-by: Yijing Wang <wangyijing@huawei.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index 40203ada635e..43b9bfea48fa 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -3781,11 +3781,10 @@ static void iommu_detach_dependent_devices(struct intel_iommu *iommu,
+ static void domain_remove_one_dev_info(struct dmar_domain *domain,
+ 					  struct pci_dev *pdev)
+ {
+-	struct device_domain_info *info;
++	struct device_domain_info *info, *tmp;
+ 	struct intel_iommu *iommu;
+ 	unsigned long flags;
+ 	int found = 0;
+-	struct list_head *entry, *tmp;
+ 
+ 	iommu = device_to_iommu(pci_domain_nr(pdev->bus), pdev->bus->number,
+ 				pdev->devfn);
+@@ -3793,8 +3792,7 @@ static void domain_remove_one_dev_info(struct dmar_domain *domain,
+ 		return;
+ 
+ 	spin_lock_irqsave(&device_domain_lock, flags);
+-	list_for_each_safe(entry, tmp, &domain->devices) {
+-		info = list_entry(entry, struct device_domain_info, link);
++	list_for_each_entry_safe(info, tmp, &domain->devices, link) {
+ 		if (info->segment == pci_domain_nr(pdev->bus) &&
+ 		    info->bus == pdev->bus->number &&
+ 		    info->devfn == pdev->devfn) {
+
