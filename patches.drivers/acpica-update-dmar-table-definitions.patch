@@ -1,0 +1,101 @@
+From: Lv Zheng <lv.zheng@intel.com>
+Date: Thu, 31 Oct 2013 09:30:22 +0800
+Subject: ACPICA: Update DMAR table definitions.
+Git-commit: fa5f508f942faaf73ae5020db7a4189d5ca88d2a
+Patch-mainline: v3.13-rc2
+References: fate#317112
+
+This patch updates DMAR table header definitions as such enhancement
+has been made in ACPICA upstream already.  It ports that change to
+the Linux source to reduce source code differences between Linux and
+ACPICA upstream.
+
+Build test done on x86-64 machine with the following configs enabled:
+  CONFIG_DMAR_TABLE
+  CONFIG_IRQ_REMAP
+  CONFIG_INTEL_IOMMU
+
+This patch does not affect the generation of the Linux kernel binary.
+
+[rjw: Changelog]
+Signed-off-by: Lv Zheng <lv.zheng@intel.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/iommu/dmar.c                | 4 ++--
+ drivers/iommu/intel_irq_remapping.c | 8 ++++----
+ include/acpi/actbl2.h               | 4 ++--
+ 3 files changed, 8 insertions(+), 8 deletions(-)
+
+Index: kernel/drivers/iommu/dmar.c
+===================================================================
+--- kernel.orig/drivers/iommu/dmar.c	2014-04-25 21:05:54.696287067 +0200
++++ kernel/drivers/iommu/dmar.c	2014-04-30 10:10:17.984366071 +0200
+@@ -88,7 +88,7 @@
+ 			pr_warn("Device scope bus [%d] not found\n", scope->bus);
+ 			break;
+ 		}
+-		pdev = pci_get_slot(bus, PCI_DEVFN(path->dev, path->fn));
++		pdev = pci_get_slot(bus, PCI_DEVFN(path->device, path->function));
+ 		if (!pdev) {
+ 			/* warning will be printed below */
+ 			break;
+@@ -99,7 +99,7 @@
+ 	}
+ 	if (!pdev) {
+ 		pr_warn("Device scope device [%04x:%02x:%02x.%02x] not found\n",
+-			segment, scope->bus, path->dev, path->fn);
++			segment, scope->bus, path->device, path->function);
+ 		*dev = NULL;
+ 		return 0;
+ 	}
+Index: kernel/drivers/iommu/intel_irq_remapping.c
+===================================================================
+--- kernel.orig/drivers/iommu/intel_irq_remapping.c	2014-04-25 20:04:18.816293608 +0200
++++ kernel/drivers/iommu/intel_irq_remapping.c	2014-04-30 10:10:17.984366071 +0200
+@@ -687,12 +687,12 @@
+ 		 * Access PCI directly due to the PCI
+ 		 * subsystem isn't initialized yet.
+ 		 */
+-		bus = read_pci_config_byte(bus, path->dev, path->fn,
++		bus = read_pci_config_byte(bus, path->device, path->function,
+ 					   PCI_SECONDARY_BUS);
+ 		path++;
+ 	}
+ 	ir_hpet[ir_hpet_num].bus   = bus;
+-	ir_hpet[ir_hpet_num].devfn = PCI_DEVFN(path->dev, path->fn);
++	ir_hpet[ir_hpet_num].devfn = PCI_DEVFN(path->device, path->function);
+ 	ir_hpet[ir_hpet_num].iommu = iommu;
+ 	ir_hpet[ir_hpet_num].id    = scope->enumeration_id;
+ 	ir_hpet_num++;
+@@ -715,13 +715,13 @@
+ 		 * Access PCI directly due to the PCI
+ 		 * subsystem isn't initialized yet.
+ 		 */
+-		bus = read_pci_config_byte(bus, path->dev, path->fn,
++		bus = read_pci_config_byte(bus, path->device, path->function,
+ 					   PCI_SECONDARY_BUS);
+ 		path++;
+ 	}
+ 
+ 	ir_ioapic[ir_ioapic_num].bus   = bus;
+-	ir_ioapic[ir_ioapic_num].devfn = PCI_DEVFN(path->dev, path->fn);
++	ir_ioapic[ir_ioapic_num].devfn = PCI_DEVFN(path->device, path->function);
+ 	ir_ioapic[ir_ioapic_num].iommu = iommu;
+ 	ir_ioapic[ir_ioapic_num].id    = scope->enumeration_id;
+ 	ir_ioapic_num++;
+Index: kernel/include/acpi/actbl2.h
+===================================================================
+--- kernel.orig/include/acpi/actbl2.h	2014-04-25 20:04:31.940293585 +0200
++++ kernel/include/acpi/actbl2.h	2014-04-30 10:10:17.984366071 +0200
+@@ -444,8 +444,8 @@
+ };
+ 
+ struct acpi_dmar_pci_path {
+-	u8 dev;
+-	u8 fn;
++	u8 device;
++	u8 function;
+ };
+ 
+ /*
