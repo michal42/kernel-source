@@ -1,0 +1,89 @@
+From: Laurent Dufour <ldufour@linux.vnet.ibm.com>
+Subject: [PATCH 3/9] KVM: PPC: Book3S: Introduce hypervisor call H_GET_TCE
+Git-commit: 69e9fbb278af8de3059f1d1017b52a32b5f9f0bd
+Patch-mainline: 3.15-rc1
+References: bnc#875242 
+
+This introduces the H_GET_TCE hypervisor call, which is basically the
+reverse of H_PUT_TCE, as defined in the Power Architecture Platform
+Requirements (PAPR).
+
+The hcall H_GET_TCE is required by the kdump kernel, which uses it to
+retrieve TCEs set up by the previous (panicked) kernel.
+
+Signed-off-by: Laurent Dufour <ldufour@linux.vnet.ibm.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/include/asm/kvm_ppc.h      |  2 ++
+ arch/powerpc/kvm/book3s_64_vio_hv.c     | 29 +++++++++++++++++++++++++++++
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S |  2 +-
+ 3 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/include/asm/kvm_ppc.h b/arch/powerpc/include/asm/kvm_ppc.h
+index 573d053..f968234 100644
+--- a/arch/powerpc/include/asm/kvm_ppc.h
++++ b/arch/powerpc/include/asm/kvm_ppc.h
+@@ -136,6 +136,8 @@ extern long kvm_vm_ioctl_create_spapr_tce(struct kvm *kvm,
+ 				struct kvm_create_spapr_tce *args);
+ extern long kvmppc_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
+ 			     unsigned long ioba, unsigned long tce);
++extern long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
++			     unsigned long ioba);
+ extern long kvm_vm_ioctl_allocate_rma(struct kvm *kvm,
+ 				struct kvm_allocate_rma *rma);
+ extern struct kvm_rma_info *kvm_alloc_rma(void);
+diff --git a/arch/powerpc/kvm/book3s_64_vio_hv.c b/arch/powerpc/kvm/book3s_64_vio_hv.c
+index 30c2f3b..be60ffd 100644
+--- a/arch/powerpc/kvm/book3s_64_vio_hv.c
++++ b/arch/powerpc/kvm/book3s_64_vio_hv.c
+@@ -74,3 +74,32 @@ long kvmppc_h_put_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
+ 	/* Didn't find the liobn, punt it to userspace */
+ 	return H_TOO_HARD;
+ }
++
++
++long kvmppc_h_get_tce(struct kvm_vcpu *vcpu, unsigned long liobn,
++		      unsigned long ioba)
++{
++	struct kvm *kvm = vcpu->kvm;
++	struct kvmppc_spapr_tce_table *stt;
++
++	list_for_each_entry(stt, &kvm->arch.spapr_tce_tables, list) {
++		if (stt->liobn == liobn) {
++			unsigned long idx = ioba >> SPAPR_TCE_SHIFT;
++			struct page *page;
++			u64 *tbl;
++
++			if (ioba >= stt->window_size)
++				return H_PARAMETER;
++
++			page = stt->pages[idx / TCES_PER_PAGE];
++			tbl = (u64 *)page_address(page);
++
++			vcpu->arch.gpr[4] = tbl[idx % TCES_PER_PAGE];
++			return H_SUCCESS;
++		}
++	}
++
++	/* Didn't find the liobn, punt it to userspace */
++	return H_TOO_HARD;
++}
++EXPORT_SYMBOL_GPL(kvmppc_h_get_tce);
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index c71103b..5c76a78 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -1427,7 +1427,7 @@ hcall_real_table:
+ 	.long	0		/* 0x10 - H_CLEAR_MOD */
+ 	.long	0		/* 0x14 - H_CLEAR_REF */
+ 	.long	.kvmppc_h_protect - hcall_real_table
+-	.long	0		/* 0x1c - H_GET_TCE */
++	.long	.kvmppc_h_get_tce - hcall_real_table
+ 	.long	.kvmppc_h_put_tce - hcall_real_table
+ 	.long	0		/* 0x24 - H_SET_SPRG0 */
+ 	.long	.kvmppc_h_set_dabr - hcall_real_table
+-- 
+1.8.5.2
+
