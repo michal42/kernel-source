@@ -1,0 +1,45 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: [25/33] powerpc: module: handle MODVERSION for .TOC.
+Git-commit: 71ec7c55ed91e2352c00d51d171fccaa7cef5a00
+Patch-mainline: git.kernel.org/cgit/linux/kernel/git/benh/powerpc.git
+References: bnc#863764 fate#315275, LTC#103998
+X-Patchwork-Id: 333423
+
+Summary: Novell863764 - SLES 12 - Enable POWER LE kernel build with ELFv2
+Description: Enable POWER LE kernel build with ELFv2
+
+Upstream-Description:
+
+    For the ELFv2 ABI, powerpc introduces a magic symbol ".TOC.".  If we
+    don't create a CRC for it (minus the leading ".", since we strip that)
+    we get a modpost warning about missing CRC and the CRC array seems to
+    be displaced by 1 so other CRCs mismatch too.
+    
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/kernel/misc_64.S | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/powerpc/kernel/misc_64.S b/arch/powerpc/kernel/misc_64.S
+index b80fafb..4e314b9 100644
+--- a/arch/powerpc/kernel/misc_64.S
++++ b/arch/powerpc/kernel/misc_64.S
+@@ -637,6 +637,15 @@ _GLOBAL(kexec_sequence)
+ 
+ #ifdef CONFIG_MODULES
+ #if defined(_CALL_ELF) && _CALL_ELF == 2
++
++#ifdef CONFIG_MODVERSIONS
++.weak __crc_TOC.
++.section "___kcrctab+TOC.","a"
++.globl __kcrctab_TOC.
++__kcrctab_TOC.:
++	.llong	__crc_TOC.
++#endif
++
+ /*
+  * Export a fake .TOC. since both modpost and depmod will complain otherwise.
+  * Both modpost and depmod strip the leading . so we do the same here.
