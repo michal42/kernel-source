@@ -1,0 +1,62 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: scripts/mod/modpost.c: handle non ABS crc symbols
+Git-commit: b5064654c538ad9a2eb1195d80e7593b2e1c1452
+Patch-mainline: v3.13-rc1
+References: bnc#863764 fate#315275, LTC#103998
+
+Summary: Novell863764 - SLES 12 - Enable POWER LE kernel build with ELFv2
+Description: Enable POWER LE kernel build with ELFv2
+
+Upstream-Description:
+
+    For some reason I managed to trick gcc into create CRC symbols that are
+    not absolute anymore, but weak.
+    
+    Make modpost handle this case.
+    
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+    Cc: Al Viro <viro@ZenIV.linux.org.uk>
+    Cc: Geert Uytterhoeven <geert@linux-m68k.org>
+    Cc: Tetsuo Handa <penguin-kernel@i-love.sakura.ne.jp>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ scripts/mod/modpost.c |   15 +++++++--------
+ 1 file changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/scripts/mod/modpost.c b/scripts/mod/modpost.c
+index 8247979..bfcea5d 100644
+--- a/scripts/mod/modpost.c
++++ b/scripts/mod/modpost.c
+@@ -599,18 +599,17 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
+ 	else
+ 		export = export_from_sec(info, get_secindex(info, sym));
+ 
++	/* CRC'd symbol */
++	if (strncmp(symname, CRC_PFX, strlen(CRC_PFX)) == 0) {
++		crc = (unsigned int) sym->st_value;
++		sym_update_crc(symname + strlen(CRC_PFX), mod, crc,
++				export);
++	}
++
+ 	switch (sym->st_shndx) {
+ 	case SHN_COMMON:
+ 		warn("\"%s\" [%s] is COMMON symbol\n", symname, mod->name);
+ 		break;
+-	case SHN_ABS:
+-		/* CRC'd symbol */
+-		if (strncmp(symname, CRC_PFX, strlen(CRC_PFX)) == 0) {
+-			crc = (unsigned int) sym->st_value;
+-			sym_update_crc(symname + strlen(CRC_PFX), mod, crc,
+-					export);
+-		}
+-		break;
+ 	case SHN_UNDEF:
+ 		/* undefined symbol */
+ 		if (ELF_ST_BIND(sym->st_info) != STB_GLOBAL &&
+-- 
+1.7.10.4
+
