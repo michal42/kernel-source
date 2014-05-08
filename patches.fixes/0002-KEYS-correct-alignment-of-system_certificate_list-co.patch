@@ -1,0 +1,82 @@
+From 62226983da070f7e51068ec2e3a4da34672964c7 Mon Sep 17 00:00:00 2001
+From: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Date: Thu, 5 Dec 2013 14:48:22 +0100
+Subject: [PATCH] KEYS: correct alignment of system_certificate_list content in
+ assembly file
+
+Git-commit: 62226983da070f7e51068ec2e3a4da34672964c7
+Patch-mainline: v3.13-rc4
+Reference: bnc#876705
+Target: sle12
+
+Apart from data-type specific alignment constraints, there are also
+architecture-specific alignment requirements.
+For example, on s390 symbols must be on even addresses implying a 2-byte
+alignment.  If the system_certificate_list_end symbol is on an odd address
+and if this address is loaded, the least-significant bit is ignored.  As a
+result, the load_system_certificate_list() fails to load the certificates
+because of a wrong certificate length calculation.
+
+To be safe, align system_certificate_list on an 8-byte boundary.  Also improve
+the length calculation of the system_certificate_list content.  Introduce a
+system_certificate_list_size (8-byte aligned because of unsigned long) variable
+that stores the length.  Let the linker calculate this size by introducing
+a start and end label for the certificate content.
+
+Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Signed-off-by: David Howells <dhowells@redhat.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ kernel/system_certificates.S | 14 ++++++++++++--
+ kernel/system_keyring.c      |  4 ++--
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+Index: linux-3.12-SLE12/kernel/system_certificates.S
+===================================================================
+--- linux-3.12-SLE12.orig/kernel/system_certificates.S
++++ linux-3.12-SLE12/kernel/system_certificates.S
+@@ -3,8 +3,18 @@
+ 
+ 	__INITRODATA
+ 
++	.align 8
+ 	.globl VMLINUX_SYMBOL(system_certificate_list)
+ VMLINUX_SYMBOL(system_certificate_list):
++__cert_list_start:
+ 	.incbin "kernel/x509_certificate_list"
+-	.globl VMLINUX_SYMBOL(system_certificate_list_end)
+-VMLINUX_SYMBOL(system_certificate_list_end):
++__cert_list_end:
++
++	.align 8
++	.globl VMLINUX_SYMBOL(system_certificate_list_size)
++VMLINUX_SYMBOL(system_certificate_list_size):
++#ifdef CONFIG_64BIT
++	.quad __cert_list_end - __cert_list_start
++#else
++	.long __cert_list_end - __cert_list_start
++#endif
+Index: linux-3.12-SLE12/kernel/system_keyring.c
+===================================================================
+--- linux-3.12-SLE12.orig/kernel/system_keyring.c
++++ linux-3.12-SLE12/kernel/system_keyring.c
+@@ -25,7 +25,7 @@ struct key *system_blacklist_keyring;
+ #endif
+ 
+ extern __initconst const u8 system_certificate_list[];
+-extern __initconst const u8 system_certificate_list_end[];
++extern __initconst const unsigned long system_certificate_list_size;
+ 
+ /*
+  * Load the compiled-in keys
+@@ -77,8 +77,8 @@ static __init int load_system_certificat
+ 
+ 	pr_notice("Loading compiled-in X.509 certificates\n");
+ 
+-	end = system_certificate_list_end;
+ 	p = system_certificate_list;
++	end = p + system_certificate_list_size;
+ 	while (p < end) {
+ 		/* Each cert begins with an ASN.1 SEQUENCE tag and must be more
+ 		 * than 256 bytes in size.
