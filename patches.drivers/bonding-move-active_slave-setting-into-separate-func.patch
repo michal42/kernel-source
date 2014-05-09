@@ -1,27 +1,25 @@
 From: Jiri Pirko <jiri@resnulli.us>
 Date: Fri, 18 Oct 2013 17:43:35 +0200
-Subject: [PATCH 08/52] bonding: move active_slave setting into separate
+Subject: [PATCH 041/181] bonding: move active_slave setting into separate
  function
-Git-commit: d9e32b21cb394c0816f206539b8c7e9c023db332
 Patch-mainline: v3.13-rc1
-References: fate#316924
+Git-commit: d9e32b21cb394c0816f206539b8c7e9c023db332
+References: fate#316924 bnc#875631 bnc#876145
 
 Do a bit of refactoring on the way.
 
 Signed-off-by: Jiri Pirko <jiri@resnulli.us>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bond_sysfs.c
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/bond_options.c | 69 +++++++++++++++++++++++++++++++++++
- drivers/net/bonding/bond_sysfs.c   | 73 +++++++-------------------------------
+ drivers/net/bonding/bond_sysfs.c   | 74 +++++++-------------------------------
  drivers/net/bonding/bonding.h      |  1 +
- 3 files changed, 83 insertions(+), 60 deletions(-)
+ 3 files changed, 83 insertions(+), 61 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
-index 4663936..49aeac3 100644
+index 294b766..09af5d1 100644
 --- a/drivers/net/bonding/bond_options.c
 +++ b/drivers/net/bonding/bond_options.c
 @@ -12,6 +12,9 @@
@@ -34,8 +32,8 @@ index 4663936..49aeac3 100644
  #include "bonding.h"
  
  static bool bond_mode_is_valid(int mode)
-@@ -54,3 +57,69 @@ int bond_option_mode_set(struct bonding *bond, int mode)
- 	bond_set_mode_ops(bond, bond->params.mode);
+@@ -53,3 +56,69 @@ int bond_option_mode_set(struct bonding *bond, int mode)
+ 	bond->params.mode = mode;
  	return 0;
  }
 +
@@ -105,16 +103,17 @@ index 4663936..49aeac3 100644
 +	return ret;
 +}
 diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
-index 48c3c44..ce6d23c 100644
+index 707e8eb..9fd4fdc 100644
 --- a/drivers/net/bonding/bond_sysfs.c
 +++ b/drivers/net/bonding/bond_sysfs.c
-@@ -1267,80 +1267,33 @@ static ssize_t bonding_store_active_slave(struct device *d,
+@@ -1233,81 +1233,33 @@ static ssize_t bonding_store_active_slave(struct device *d,
  					  struct device_attribute *attr,
  					  const char *buf, size_t count)
  {
 -	struct slave *slave, *old_active, *new_active;
 +	int ret;
  	struct bonding *bond = to_bond(d);
+-	struct list_head *iter;
  	char ifname[IFNAMSIZ];
 +	struct net_device *dev;
  
@@ -143,7 +142,7 @@ index 48c3c44..ce6d23c 100644
 -		goto out;
 -	}
 -
--	bond_for_each_slave(bond, slave) {
+-	bond_for_each_slave(bond, slave, iter) {
 -		if (strncmp(slave->dev->name, ifname, IFNAMSIZ) == 0) {
 -			old_active = bond->curr_active_slave;
 -			new_active = slave;
@@ -203,10 +202,10 @@ index 48c3c44..ce6d23c 100644
  }
  static DEVICE_ATTR(active_slave, S_IRUGO | S_IWUSR,
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 4908b2d..c17ed82 100644
+index 7446849..686759d 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -467,6 +467,7 @@ unsigned int bond_get_num_tx_queues(void);
+@@ -427,6 +427,7 @@ unsigned int bond_get_num_tx_queues(void);
  int bond_netlink_init(void);
  void bond_netlink_fini(void);
  int bond_option_mode_set(struct bonding *bond, int mode);

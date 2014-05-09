@@ -1,0 +1,60 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Wed, 25 Sep 2013 09:20:24 +0200
+Subject: [PATCH 013/181] bonding: convert first/last slave logic to use
+ neighbours
+Patch-mainline: v3.13-rc1
+Git-commit: 5a52405a30abf70a60312ad4231385699f09cb85
+References: fate#316924 bnc#875631 bnc#876145
+
+For that, use netdev_adjacent_get_private(list_head) on bond's lower
+neighbour list members. Also, add a small macro - bond_slave_list(bond),
+which returns the bond list via neighbour list.
+
+CC: Jay Vosburgh <fubar@us.ibm.com>
+CC: Andy Gospodarek <andy@greyhouse.net>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bonding.h | 17 +++++++++++------
+ 1 file changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 170c7fc..3eb464c 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -72,19 +72,24 @@
+ 	res; })
+ 
+ /* slave list primitives */
+-#define bond_has_slaves(bond) !list_empty(&(bond)->dev->adj_list.lower)
++#define bond_slave_list(bond) (&(bond)->dev->adj_list.lower)
++
++#define bond_has_slaves(bond) !list_empty(bond_slave_list(bond))
+ 
+ #define bond_to_slave(ptr) list_entry(ptr, struct slave, list)
+ 
+ /* IMPORTANT: bond_first/last_slave can return NULL in case of an empty list */
+ #define bond_first_slave(bond) \
+-	list_first_entry_or_null(&(bond)->slave_list, struct slave, list)
++	(bond_has_slaves(bond) ? \
++		netdev_adjacent_get_private(bond_slave_list(bond)->next) : \
++		NULL)
+ #define bond_last_slave(bond) \
+-	(list_empty(&(bond)->slave_list) ? NULL : \
+-					   bond_to_slave((bond)->slave_list.prev))
++	(bond_has_slaves(bond) ? \
++		netdev_adjacent_get_private(bond_slave_list(bond)->prev) : \
++		NULL)
+ 
+-#define bond_is_first_slave(bond, pos) ((pos)->list.prev == &(bond)->slave_list)
+-#define bond_is_last_slave(bond, pos) ((pos)->list.next == &(bond)->slave_list)
++#define bond_is_first_slave(bond, pos) (pos == bond_first_slave(bond))
++#define bond_is_last_slave(bond, pos) (pos == bond_last_slave(bond))
+ 
+ /* Since bond_first/last_slave can return NULL, these can return NULL too */
+ #define bond_next_slave(bond, pos) \
+-- 
+1.8.1.4
+

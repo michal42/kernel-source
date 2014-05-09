@@ -1,0 +1,77 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Fri, 10 Jan 2014 11:59:43 +0100
+Subject: [PATCH 122/181] bonding: fix bond_3ad_set_carrier() RCU usage
+Patch-mainline: v3.14-rc1
+Git-commit: c1bc9644ecd1f663f918d42b33b41a508683b0ee
+References: fate#316924 bnc#875631 bnc#876145
+
+Currently, its usage is just plainly wrong. It first gets a slave under
+RCU, and, after releasing the RCU lock, continues to use it - whilst it can
+be freed.
+
+Fix this by ensuring that bond_3ad_set_carrier() holds RCU till it uses its
+slave (or its agg).
+
+Fixes: be79bd048ab ("bonding: add RCU for bond_3ad_state_machine_handler()")
+CC: dingtianhong@huawei.com
+CC: Jay Vosburgh <fubar@us.ibm.com>
+CC: Andy Gospodarek <andy@greyhouse.net>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_3ad.c | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 69de269..e1ecbe4 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2325,32 +2325,32 @@ int bond_3ad_set_carrier(struct bonding *bond)
+ {
+ 	struct aggregator *active;
+ 	struct slave *first_slave;
++	int ret = 1;
+ 
+ 	rcu_read_lock();
+ 	first_slave = bond_first_slave_rcu(bond);
+-	rcu_read_unlock();
+-	if (!first_slave)
+-		return 0;
++	if (!first_slave) {
++		ret = 0;
++		goto out;
++	}
+ 	active = __get_active_agg(&(SLAVE_AD_INFO(first_slave).aggregator));
+ 	if (active) {
+ 		/* are enough slaves available to consider link up? */
+ 		if (active->num_of_ports < bond->params.min_links) {
+ 			if (netif_carrier_ok(bond->dev)) {
+ 				netif_carrier_off(bond->dev);
+-				return 1;
++				goto out;
+ 			}
+ 		} else if (!netif_carrier_ok(bond->dev)) {
+ 			netif_carrier_on(bond->dev);
+-			return 1;
++			goto out;
+ 		}
+-		return 0;
+-	}
+-
+-	if (netif_carrier_ok(bond->dev)) {
++	} else if (netif_carrier_ok(bond->dev)) {
+ 		netif_carrier_off(bond->dev);
+-		return 1;
+ 	}
+-	return 0;
++out:
++	rcu_read_unlock();
++	return ret;
+ }
+ 
+ /**
+-- 
+1.8.1.4
+

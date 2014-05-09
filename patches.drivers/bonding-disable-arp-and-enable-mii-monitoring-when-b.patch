@@ -1,10 +1,10 @@
 From: dingtianhong <dingtianhong@huawei.com>
 Date: Fri, 22 Nov 2013 22:28:43 +0800
-Subject: [PATCH 18/52] bonding: disable arp and enable mii monitoring when
+Subject: [PATCH 061/181] bonding: disable arp and enable mii monitoring when
  bond change to no uses arp mode
-Git-commit: fe9d04afe9bee0ec37a9724937443b2c0e39ce4b
 Patch-mainline: v3.13-rc3
-References: fate#316924
+Git-commit: fe9d04afe9bee0ec37a9724937443b2c0e39ce4b
+References: fate#316924 bnc#875631 bnc#876145
 
 Because the ARP monitoring is not support for 802.3ad, but I still
 could change the mode to 802.3ad from ab mode while ARP monitoring
@@ -13,14 +13,14 @@ is running, it is incorrect.
 So add a check for 802.3ad in bonding_store_mode to fix the problem,
 and make a new macro BOND_NO_USES_ARP() to simplify the code.
 
-V2: according to the Dan Williams's suggestion, bond mode is the most
+v2: according to the Dan Williams's suggestion, bond mode is the most
     important bond option, it should override any of the other sub-options.
     So when the mode is changed, the conficting values should be cleared
     or reset, otherwise the user has to duplicate more operations to modify
     the logic. I disable the arp and enable mii monitoring when the bond mode
     is changed to AB, TB and 8023AD if the arp interval is true.
 
-V3: according to the Nik's suggestion, the default value of miimon should need
+v3: according to the Nik's suggestion, the default value of miimon should need
     a name, there is several place to use it, and the bond_store_arp_interval()
     could use micro BOND_NO_USES_ARP to make the code more simpify.
 
@@ -39,10 +39,10 @@ Acked-by: Michal Kubecek <mkubecek@suse.cz>
  4 files changed, 19 insertions(+), 9 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
-index 686150c..95e3655 100644
+index 51ca129..85b90a0 100644
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -4194,7 +4194,7 @@ static int bond_check_params(struct bond_params *params)
+@@ -4111,7 +4111,7 @@ static int bond_check_params(struct bond_params *params)
  		if (!miimon) {
  			pr_warning("Warning: miimon must be specified, otherwise bonding will not detect link failure, speed and duplex which are essential for 802.3ad operation\n");
  			pr_warning("Forcing miimon to 100msec\n");
@@ -51,7 +51,7 @@ index 686150c..95e3655 100644
  		}
  	}
  
-@@ -4231,7 +4231,7 @@ static int bond_check_params(struct bond_params *params)
+@@ -4148,7 +4148,7 @@ static int bond_check_params(struct bond_params *params)
  		if (!miimon) {
  			pr_warning("Warning: miimon must be specified, otherwise bonding will not detect link failure and link speed which are essential for TLB/ALB load balancing\n");
  			pr_warning("Forcing miimon to 100msec\n");
@@ -61,7 +61,7 @@ index 686150c..95e3655 100644
  	}
  
 diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
-index 85a8848..4affc37 100644
+index 9a5223c..ea6f640 100644
 --- a/drivers/net/bonding/bond_options.c
 +++ b/drivers/net/bonding/bond_options.c
 @@ -45,10 +45,15 @@ int bond_option_mode_set(struct bonding *bond, int mode)
@@ -85,10 +85,10 @@ index 85a8848..4affc37 100644
  
  	/* don't cache arp_validate between modes */
 diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
-index f5ff144..fd8c8c2 100644
+index 0ec2a7e..abf5e10 100644
 --- a/drivers/net/bonding/bond_sysfs.c
 +++ b/drivers/net/bonding/bond_sysfs.c
-@@ -563,9 +563,7 @@ static ssize_t bonding_store_arp_interval(struct device *d,
+@@ -523,9 +523,7 @@ static ssize_t bonding_store_arp_interval(struct device *d,
  		ret = -EINVAL;
  		goto out;
  	}
@@ -100,7 +100,7 @@ index f5ff144..fd8c8c2 100644
  			bond->dev->name, bond->dev->name);
  		ret = -EINVAL;
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index a2357b5..117690c 100644
+index ca31286..a9f4f9f 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
 @@ -35,6 +35,8 @@

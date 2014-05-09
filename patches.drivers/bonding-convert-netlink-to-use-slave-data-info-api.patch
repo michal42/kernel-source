@@ -1,15 +1,13 @@
 From: Jiri Pirko <jiri@resnulli.us>
 Date: Wed, 22 Jan 2014 09:05:56 +0100
-Subject: [PATCH 48/52] bonding: convert netlink to use slave data info api
-Git-commit: 3bad540ed8285fb53f6365420bba0320d8cd2066
+Subject: [PATCH 162/181] bonding: convert netlink to use slave data info api
 Patch-mainline: v3.14-rc1
-References: fate#316924
+Git-commit: 3bad540ed8285fb53f6365420bba0320d8cd2066
+References: fate#316924 bnc#875631 bnc#876145
 
 Signed-off-by: Jiri Pirko <jiri@resnulli.us>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bonding.h
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/bond_main.c    |  1 -
@@ -19,10 +17,10 @@ Conflicts: drivers/net/bonding/bonding.h
  4 files changed, 19 insertions(+), 55 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
-index 2d92bd9..c6bef91 100644
+index 2a8b76f..fdd8f10 100644
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -3989,7 +3989,6 @@ static const struct net_device_ops bond_netdev_ops = {
+@@ -3824,7 +3824,6 @@ static const struct net_device_ops bond_netdev_ops = {
  #endif
  	.ndo_add_slave		= bond_enslave,
  	.ndo_del_slave		= bond_release,
@@ -31,11 +29,11 @@ index 2d92bd9..c6bef91 100644
  };
  
 diff --git a/drivers/net/bonding/bond_netlink.c b/drivers/net/bonding/bond_netlink.c
-index 356b24d..ff4d0c8 100644
+index 549eb87..70651f8 100644
 --- a/drivers/net/bonding/bond_netlink.c
 +++ b/drivers/net/bonding/bond_netlink.c
-@@ -22,10 +22,23 @@
- #include <linux/reciprocal_div.h>
+@@ -21,10 +21,23 @@
+ #include <net/rtnetlink.h>
  #include "bonding.h"
  
 -int bond_get_slave(struct net_device *slave_dev, struct sk_buff *skb)
@@ -60,7 +58,7 @@ index 356b24d..ff4d0c8 100644
  
  	if (nla_put_u8(skb, IFLA_BOND_SLAVE_STATE, bond_slave_state(slave)))
  		goto nla_put_failure;
-@@ -45,6 +58,8 @@ int bond_get_slave(struct net_device *slave_dev, struct sk_buff *skb)
+@@ -44,6 +57,8 @@ int bond_get_slave(struct net_device *slave_dev, struct sk_buff *skb)
  		goto nla_put_failure;
  
  	if (slave->bond->params.mode == BOND_MODE_8023AD) {
@@ -69,7 +67,7 @@ index 356b24d..ff4d0c8 100644
  		agg = SLAVE_AD_INFO(slave).port.aggregator;
  		if (agg)
  			if (nla_put_u16(skb, IFLA_BOND_SLAVE_AD_AGGREGATOR_ID,
-@@ -518,6 +533,8 @@ struct rtnl_link_ops bond_link_ops __read_mostly = {
+@@ -541,6 +556,8 @@ struct rtnl_link_ops bond_link_ops __read_mostly = {
  	.get_num_tx_queues	= bond_get_num_tx_queues,
  	.get_num_rx_queues	= bond_get_num_tx_queues, /* Use the same number
  							     as for TX queues */
@@ -79,19 +77,19 @@ index 356b24d..ff4d0c8 100644
  
  int __init bond_netlink_init(void)
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index a6853eb..e8a73c2 100644
+index 8032e07..1a9062f 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -473,7 +473,6 @@ void bond_mii_monitor(struct work_struct *);
- void bond_loadbalance_arp_mon(struct work_struct *);
- void bond_activebackup_arp_mon(struct work_struct *);
- void bond_set_mode_ops(struct bonding *bond, int mode);
+@@ -436,7 +436,6 @@ int bond_sysfs_slave_add(struct slave *slave);
+ void bond_sysfs_slave_del(struct slave *slave);
+ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev);
+ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev);
 -int bond_get_slave(struct net_device *slave_dev, struct sk_buff *skb);
+ int bond_xmit_hash(struct bonding *bond, struct sk_buff *skb, int count);
  int bond_parse_parm(const char *mode_arg, const struct bond_parm_tbl *tbl);
  int bond_parm_tbl_lookup(int mode, const struct bond_parm_tbl *tbl);
- void bond_select_active_slave(struct bonding *bond);
 diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
-index ca1c520..520ced5 100644
+index e9fd079..fd01150 100644
 --- a/net/core/rtnetlink.c
 +++ b/net/core/rtnetlink.c
 @@ -818,28 +818,6 @@ static size_t rtnl_port_size(const struct net_device *dev)

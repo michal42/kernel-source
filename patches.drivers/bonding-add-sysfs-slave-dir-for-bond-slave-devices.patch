@@ -1,12 +1,12 @@
 From: "sfeldma@cumulusnetworks.com" <sfeldma@cumulusnetworks.com>
 Date: Thu, 16 Jan 2014 22:57:49 -0800
-Subject: [PATCH 43/52] bonding: add sysfs /slave dir for bond slave devices.
-Mime-version: 1.0
-Content-type: text/plain; charset=UTF-8
-Content-transfer-encoding: 8bit
-Git-commit: 07699f9a7c8d1002e07011d5aa382cd63241eea8
+Subject: [PATCH 127/181] bonding: add sysfs /slave dir for bond slave devices.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 Patch-mainline: v3.14-rc1
-References: fate#316924
+Git-commit: 07699f9a7c8d1002e07011d5aa382cd63241eea8
+References: fate#316924 bnc#875631 bnc#876145
 
 Add sub-directory under /sys/class/net/<interface>/slave with
 read-only attributes for slave.  Directory only appears when
@@ -31,18 +31,15 @@ active
 
 Signed-off-by: Scott Feldman <sfeldma@cumulusnetworks.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bond_main.c
-	drivers/net/bonding/bonding.h
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/Makefile           |   2 +-
- drivers/net/bonding/bond_main.c        |  26 ++++++
+ drivers/net/bonding/bond_main.c        |  27 +++++++
  drivers/net/bonding/bond_procfs.c      |  12 ---
  drivers/net/bonding/bond_sysfs_slave.c | 144 +++++++++++++++++++++++++++++++++
  drivers/net/bonding/bonding.h          |   4 +
- 5 files changed, 175 insertions(+), 13 deletions(-)
+ 5 files changed, 176 insertions(+), 13 deletions(-)
  create mode 100644 drivers/net/bonding/bond_sysfs_slave.c
 
 diff --git a/drivers/net/bonding/Makefile b/drivers/net/bonding/Makefile
@@ -59,10 +56,10 @@ index 5a5d720..6f4e808 100644
  proc-$(CONFIG_PROC_FS) += bond_procfs.o
  bonding-objs += $(proc-y)
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
-index cefa70d..c6bef91 100644
+index 4827d7d..6b53c1c 100644
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -452,6 +452,22 @@ static void bond_update_speed_duplex(struct slave *slave)
+@@ -466,6 +466,22 @@ static void bond_update_speed_duplex(struct slave *slave)
  	return;
  }
  
@@ -85,7 +82,7 @@ index cefa70d..c6bef91 100644
  /*
   * if <dev> supports MII link status reporting, check its link status.
   *
-@@ -1642,6 +1658,11 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+@@ -1576,6 +1592,12 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
  		goto err_unregister;
  	}
  
@@ -94,10 +91,11 @@ index cefa70d..c6bef91 100644
 +		pr_debug("Error %d calling bond_sysfs_slave_add\n", res);
 +		goto err_upper_unlink;
 +	}
- 
- 	pr_info("%s: enslaving %s as a%s interface with a%s link.\n",
- 		bond_dev->name, slave_dev->name,
-@@ -1652,6 +1673,9 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
++
+ 	bond->slave_cnt++;
+ 	bond_compute_features(bond);
+ 	bond_set_carrier(bond);
+@@ -1595,6 +1617,9 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
  	return 0;
  
  /* Undo stages on error */
@@ -107,9 +105,9 @@ index cefa70d..c6bef91 100644
  err_unregister:
  	netdev_rx_handler_unregister(slave_dev);
  
-@@ -1756,6 +1780,8 @@ static int __bond_release_one(struct net_device *bond_dev,
- 
- 	write_unlock_bh(&bond->lock);
+@@ -1687,6 +1712,8 @@ static int __bond_release_one(struct net_device *bond_dev,
+ 	/* release the slave from its bond */
+ 	bond->slave_cnt--;
  
 +	bond_sysfs_slave_del(slave);
 +
@@ -117,10 +115,10 @@ index cefa70d..c6bef91 100644
  	/* unregister rx_handler early so bond_handle_frame wouldn't be called
  	 * for this slave anymore.
 diff --git a/drivers/net/bonding/bond_procfs.c b/drivers/net/bonding/bond_procfs.c
-index 20a6ee2..2908fb1 100644
+index fb868d6..8515b344 100644
 --- a/drivers/net/bonding/bond_procfs.c
 +++ b/drivers/net/bonding/bond_procfs.c
-@@ -150,18 +150,6 @@ static void bond_info_show_master(struct seq_file *seq)
+@@ -159,18 +159,6 @@ static void bond_info_show_master(struct seq_file *seq)
  	}
  }
  
@@ -290,10 +288,10 @@ index 0000000..7cb97de
 +	kobject_del(&slave->kobj);
 +}
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 2c353ae..19c33c7 100644
+index 955dc483..309757d 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -228,6 +228,7 @@ struct slave {
+@@ -203,6 +203,7 @@ struct slave {
  #ifdef CONFIG_NET_POLL_CONTROLLER
  	struct netpoll *np;
  #endif
@@ -301,16 +299,16 @@ index 2c353ae..19c33c7 100644
  };
  
  /*
-@@ -458,6 +459,8 @@ void bond_destroy_sysfs(struct bond_net *net);
+@@ -421,6 +422,8 @@ int bond_create(struct net *net, const char *name);
+ int bond_create_sysfs(struct bond_net *net);
+ void bond_destroy_sysfs(struct bond_net *net);
  void bond_prepare_sysfs_group(struct bonding *bond);
- int bond_create_slave_symlinks(struct net_device *master, struct net_device *slave);
- void bond_destroy_slave_symlinks(struct net_device *master, struct net_device *slave);
 +int bond_sysfs_slave_add(struct slave *slave);
 +void bond_sysfs_slave_del(struct slave *slave);
  int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev);
  int bond_release(struct net_device *bond_dev, struct net_device *slave_dev);
- void bond_mii_monitor(struct work_struct *);
-@@ -509,6 +512,7 @@ int bond_option_lacp_rate_set(struct bonding *bond, int lacp_rate);
+ int bond_xmit_hash(struct bonding *bond, struct sk_buff *skb, int count);
+@@ -469,6 +472,7 @@ int bond_option_lacp_rate_set(struct bonding *bond, int lacp_rate);
  int bond_option_ad_select_set(struct bonding *bond, int ad_select);
  struct net_device *bond_option_active_slave_get_rcu(struct bonding *bond);
  struct net_device *bond_option_active_slave_get(struct bonding *bond);

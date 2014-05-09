@@ -1,0 +1,46 @@
+From: dingtianhong <dingtianhong@huawei.com>
+Date: Wed, 4 Dec 2013 18:59:31 +0800
+Subject: [PATCH 062/181] bonding: add arp_ip_target checks when install the
+ module
+Patch-mainline: v3.13-rc4
+Git-commit: 89015c18ff34a39e4679ddd9b058e74d7dde28e7
+References: fate#316924 bnc#875631 bnc#876145
+
+When I install the bonding with the wrong arp_ip_target,
+just like arp_ip_target=500.500.500.500, the arp_ip_target
+was transfored to 245.245.245.244 and stored in the ip
+target success, it is uncorrect, so I add checks to avoid
+adding wrong address.
+
+The in4_pton() will set wrong ip address to 0.0.0.0 and
+return 0, also use the micro IS_IP_TARGET_UNUSABLE_ADDRESS
+to simplify the code.
+
+Signed-off-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 85b90a0..4b8c58b 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -4200,9 +4200,9 @@ static int bond_check_params(struct bond_params *params)
+ 	     (arp_ip_count < BOND_MAX_ARP_TARGETS) && arp_ip_target[i]; i++) {
+ 		/* not complete check, but should be good enough to
+ 		   catch mistakes */
+-		__be32 ip = in_aton(arp_ip_target[i]);
+-		if (!isdigit(arp_ip_target[i][0]) || ip == 0 ||
+-		    ip == htonl(INADDR_BROADCAST)) {
++		__be32 ip;
++		if (!in4_pton(arp_ip_target[i], -1, (u8 *)&ip, -1, NULL) ||
++		    IS_IP_TARGET_UNUSABLE_ADDRESS(ip)) {
+ 			pr_warning("Warning: bad arp_ip_target module parameter (%s), ARP monitoring will not be performed\n",
+ 				   arp_ip_target[i]);
+ 			arp_interval = 0;
+-- 
+1.8.1.4
+

@@ -1,9 +1,10 @@
 From: Nikolay Aleksandrov <nikolay@redhat.com>
 Date: Tue, 5 Nov 2013 13:51:41 +0100
-Subject: [PATCH 16/52] bonding: extend round-robin mode with packets_per_slave
-Git-commit: 73958329ea1fe0dc149b51e5d8703015f65a03e0
+Subject: [PATCH 059/181] bonding: extend round-robin mode with
+ packets_per_slave
 Patch-mainline: v3.13-rc1
-References: fate#316924
+Git-commit: 73958329ea1fe0dc149b51e5d8703015f65a03e0
+References: fate#316924 bnc#875631 bnc#876145
 
 This patch aims to extend round-robin mode with a new option called
 packets_per_slave which can have the following values and effects:
@@ -16,10 +17,7 @@ This patch also fixes the comment style in bond_xmit_roundrobin().
 Signed-off-by: Nikolay Aleksandrov <nikolay@redhat.com>
 Acked-by: Veaceslav Falico <vfalico@redhat.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bond_main.c
-	drivers/net/bonding/bonding.h
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/bond_main.c  | 55 ++++++++++++++++++++++++++++++++++++----
@@ -28,18 +26,18 @@ Conflicts: drivers/net/bonding/bond_main.c
  3 files changed, 101 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
-index 4c591a4..686150c 100644
+index a311071..51ca129 100644
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -78,6 +78,7 @@
- #include <net/netns/generic.h>
+@@ -79,6 +79,7 @@
  #include <net/pkt_sched.h>
  #include <linux/rculist.h>
+ #include <net/flow_keys.h>
 +#include <linux/reciprocal_div.h>
  #include "bonding.h"
  #include "bond_3ad.h"
  #include "bond_alb.h"
-@@ -110,6 +111,7 @@ static char *fail_over_mac;
+@@ -111,6 +112,7 @@ static char *fail_over_mac;
  static int all_slaves_active;
  static struct bond_params bonding_defaults;
  static int resend_igmp = BOND_DEFAULT_RESEND_IGMP;
@@ -47,7 +45,7 @@ index 4c591a4..686150c 100644
  
  module_param(max_bonds, int, 0);
  MODULE_PARM_DESC(max_bonds, "Max number of bonded devices");
-@@ -181,6 +183,10 @@ MODULE_PARM_DESC(all_slaves_active, "Keep all frames received on an interface"
+@@ -183,6 +185,10 @@ MODULE_PARM_DESC(all_slaves_active, "Keep all frames received on an interface"
  module_param(resend_igmp, int, 0);
  MODULE_PARM_DESC(resend_igmp, "Number of IGMP membership reports to send on "
  			      "link failure");
@@ -58,7 +56,7 @@ index 4c591a4..686150c 100644
  
  /*----------------------------- Global variables ----------------------------*/
  
-@@ -3609,14 +3615,44 @@ void bond_xmit_slave_id(struct bonding *bond, struct sk_buff *skb, int slave_id)
+@@ -3574,14 +3580,44 @@ void bond_xmit_slave_id(struct bonding *bond, struct sk_buff *skb, int slave_id)
  	kfree_skb(skb);
  }
  
@@ -105,7 +103,7 @@ index 4c591a4..686150c 100644
  	 * default for sending IGMP traffic.  For failover purposes one
  	 * needs to maintain some consistency for the interface that will
  	 * send the join/membership reports.  The curr_active_slave found
-@@ -3629,8 +3665,8 @@ static int bond_xmit_roundrobin(struct sk_buff *skb, struct net_device *bond_dev
+@@ -3594,8 +3630,8 @@ static int bond_xmit_roundrobin(struct sk_buff *skb, struct net_device *bond_dev
  		else
  			bond_xmit_slave_id(bond, skb, 0);
  	} else {
@@ -116,7 +114,7 @@ index 4c591a4..686150c 100644
  	}
  
  	return NETDEV_TX_OK;
-@@ -4183,6 +4219,12 @@ static int bond_check_params(struct bond_params *params)
+@@ -4100,6 +4136,12 @@ static int bond_check_params(struct bond_params *params)
  		resend_igmp = BOND_DEFAULT_RESEND_IGMP;
  	}
  
@@ -129,7 +127,7 @@ index 4c591a4..686150c 100644
  	/* reset values for TLB/ALB */
  	if ((bond_mode == BOND_MODE_TLB) ||
  	    (bond_mode == BOND_MODE_ALB)) {
-@@ -4372,7 +4414,10 @@ static int bond_check_params(struct bond_params *params)
+@@ -4289,7 +4331,10 @@ static int bond_check_params(struct bond_params *params)
  	params->resend_igmp = resend_igmp;
  	params->min_links = min_links;
  	params->lp_interval = BOND_ALB_DEFAULT_LP_INTERVAL;
@@ -142,7 +140,7 @@ index 4c591a4..686150c 100644
  		strncpy(params->primary, primary, IFNAMSIZ);
  		params->primary[IFNAMSIZ - 1] = 0;
 diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
-index 6dcf637..1635f22 100644
+index 28809e3..9f32e23 100644
 --- a/drivers/net/bonding/bond_sysfs.c
 +++ b/drivers/net/bonding/bond_sysfs.c
 @@ -40,6 +40,7 @@
@@ -153,7 +151,7 @@ index 6dcf637..1635f22 100644
  
  #include "bonding.h"
  
-@@ -1673,6 +1674,53 @@ out:
+@@ -1638,6 +1639,53 @@ out:
  static DEVICE_ATTR(lp_interval, S_IRUGO | S_IWUSR,
  		   bonding_show_lp_interval, bonding_store_lp_interval);
  
@@ -207,7 +205,7 @@ index 6dcf637..1635f22 100644
  static struct attribute *per_bond_attrs[] = {
  	&dev_attr_slaves.attr,
  	&dev_attr_mode.attr,
-@@ -1704,6 +1752,7 @@ static struct attribute *per_bond_attrs[] = {
+@@ -1669,6 +1717,7 @@ static struct attribute *per_bond_attrs[] = {
  	&dev_attr_resend_igmp.attr,
  	&dev_attr_min_links.attr,
  	&dev_attr_lp_interval.attr,
@@ -216,10 +214,10 @@ index 6dcf637..1635f22 100644
  };
  
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 5bbfe7d..574986f 100644
+index 046a605..77a07a1 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -184,6 +184,7 @@ struct bond_params {
+@@ -156,6 +156,7 @@ struct bond_params {
  	int all_slaves_active;
  	int resend_igmp;
  	int lp_interval;
@@ -227,10 +225,10 @@ index 5bbfe7d..574986f 100644
  };
  
  struct bond_parm_tbl {
-@@ -253,7 +254,7 @@ struct bonding {
+@@ -222,7 +223,7 @@ struct bonding {
+ 	char     proc_file_name[IFNAMSIZ];
  #endif /* CONFIG_PROC_FS */
  	struct   list_head bond_list;
- 	int      (*xmit_hash_policy)(struct sk_buff *, int);
 -	u16      rr_tx_counter;
 +	u32      rr_tx_counter;
  	struct   ad_bond_info ad_info;

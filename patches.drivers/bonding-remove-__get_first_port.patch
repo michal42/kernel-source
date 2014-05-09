@@ -1,0 +1,63 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Fri, 27 Sep 2013 16:11:58 +0200
+Subject: [PATCH 024/181] bonding: remove __get_first_port()
+Patch-mainline: v3.13-rc1
+Git-commit: fe9323dae5a05eb3d582d5546219c601862dd082
+References: fate#316924 bnc#875631 bnc#876145
+
+Currently we have only one user of it, so it's kind of useless and just
+obfusicates things.
+
+Remove it and move the logic to the only user -
+bond_3ad_state_machine_handler().
+
+CC: Jay Vosburgh <fubar@us.ibm.com>
+CC: Andy Gospodarek <andy@greyhouse.net>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_3ad.c | 18 ++++--------------
+ 1 file changed, 4 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 9e75542..abd7695 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -136,19 +136,6 @@ static inline struct bonding *__get_bond_by_port(struct port *port)
+ }
+ 
+ /**
+- * __get_first_port - get the first port in the bond
+- * @bond: the bond we're looking at
+- *
+- * Return the port of the first slave in @bond, or %NULL if it can't be found.
+- */
+-static inline struct port *__get_first_port(struct bonding *bond)
+-{
+-	struct slave *first_slave = bond_first_slave(bond);
+-
+-	return first_slave ? &(SLAVE_AD_INFO(first_slave).port) : NULL;
+-}
+-
+-/**
+  * __get_first_agg - get the first aggregator in the bond
+  * @bond: the bond we're looking at
+  *
+@@ -2102,8 +2089,11 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
+ 
+ 	// check if agg_select_timer timer after initialize is timed out
+ 	if (BOND_AD_INFO(bond).agg_select_timer && !(--BOND_AD_INFO(bond).agg_select_timer)) {
++		slave = bond_first_slave(bond);
++		port = slave ? &(SLAVE_AD_INFO(slave).port) : NULL;
++
+ 		// select the active aggregator for the bond
+-		if ((port = __get_first_port(bond))) {
++		if (port) {
+ 			if (!port->slave) {
+ 				pr_warning("%s: Warning: bond's first port is uninitialized\n",
+ 					   bond->dev->name);
+-- 
+1.8.1.4
+

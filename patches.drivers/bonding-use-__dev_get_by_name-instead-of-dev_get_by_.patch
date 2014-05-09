@@ -1,0 +1,101 @@
+From: Ying Xue <ying.xue@windriver.com>
+Date: Wed, 15 Jan 2014 10:23:37 +0800
+Subject: [PATCH 125/181] bonding: use __dev_get_by_name instead of
+ dev_get_by_name to find interface
+Patch-mainline: v3.14-rc1
+Git-commit: 0917b9334b1cc130e91a53b2e3bbaae760fc50ee
+References: fate#316924 bnc#875631 bnc#876145
+
+The following call chain indicates that bond_do_ioctl() is protected
+under rtnl_lock. If we use __dev_get_by_name() instead of
+dev_get_by_name() to find interface handler in it, this would
+help us avoid to change reference counter of interface once.
+
+dev_ioctl()
+  rtnl_lock()
+  dev_ifsioc()
+    bond_do_ioctl()
+  rtnl_unlock()
+
+Additionally we also change the coding style in bond_do_ioctl(),
+letting it more readable for us.
+
+Cc: Jay Vosburgh <fubar@us.ibm.com>
+Cc: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: Ying Xue <ying.xue@windriver.com>
+Acked-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c | 49 +++++++++++++++++++----------------------
+ 1 file changed, 23 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 5866378..2b1a5aa 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -3213,37 +3213,34 @@ static int bond_do_ioctl(struct net_device *bond_dev, struct ifreq *ifr, int cmd
+ 	if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
+ 		return -EPERM;
+ 
+-	slave_dev = dev_get_by_name(net, ifr->ifr_slave);
++	slave_dev = __dev_get_by_name(net, ifr->ifr_slave);
+ 
+ 	pr_debug("slave_dev=%p:\n", slave_dev);
+ 
+ 	if (!slave_dev)
+-		res = -ENODEV;
+-	else {
+-		pr_debug("slave_dev->name=%s:\n", slave_dev->name);
+-		switch (cmd) {
+-		case BOND_ENSLAVE_OLD:
+-		case SIOCBONDENSLAVE:
+-			res = bond_enslave(bond_dev, slave_dev);
+-			break;
+-		case BOND_RELEASE_OLD:
+-		case SIOCBONDRELEASE:
+-			res = bond_release(bond_dev, slave_dev);
+-			break;
+-		case BOND_SETHWADDR_OLD:
+-		case SIOCBONDSETHWADDR:
+-			bond_set_dev_addr(bond_dev, slave_dev);
+-			res = 0;
+-			break;
+-		case BOND_CHANGE_ACTIVE_OLD:
+-		case SIOCBONDCHANGEACTIVE:
+-			res = bond_option_active_slave_set(bond, slave_dev);
+-			break;
+-		default:
+-			res = -EOPNOTSUPP;
+-		}
++		return -ENODEV;
+ 
+-		dev_put(slave_dev);
++	pr_debug("slave_dev->name=%s:\n", slave_dev->name);
++	switch (cmd) {
++	case BOND_ENSLAVE_OLD:
++	case SIOCBONDENSLAVE:
++		res = bond_enslave(bond_dev, slave_dev);
++		break;
++	case BOND_RELEASE_OLD:
++	case SIOCBONDRELEASE:
++		res = bond_release(bond_dev, slave_dev);
++		break;
++	case BOND_SETHWADDR_OLD:
++	case SIOCBONDSETHWADDR:
++		bond_set_dev_addr(bond_dev, slave_dev);
++		res = 0;
++		break;
++	case BOND_CHANGE_ACTIVE_OLD:
++	case SIOCBONDCHANGEACTIVE:
++		res = bond_option_active_slave_set(bond, slave_dev);
++		break;
++	default:
++		res = -EOPNOTSUPP;
+ 	}
+ 
+ 	return res;
+-- 
+1.8.1.4
+

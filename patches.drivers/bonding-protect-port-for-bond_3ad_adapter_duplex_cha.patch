@@ -1,0 +1,65 @@
+From: dingtianhong <dingtianhong@huawei.com>
+Date: Fri, 13 Dec 2013 17:29:24 +0800
+Subject: [PATCH 095/181] bonding: protect port for
+ bond_3ad_adapter_duplex_changed()
+Patch-mainline: v3.13-rc7
+Git-commit: bca44a7341924ec92ee7a1ba085c8f0745aeb74e
+References: fate#316924 bnc#875631 bnc#876145
+
+Jay Vosburgh said that the bond_3ad_adapter_duplex_changed is
+called with RTNL only, and the function will modify the port's
+information with no further locking, it will not mutex against
+bond state machine and incoming LACPDU which do not hold RTNL,
+So I add __get_state_machine_lock to protect the port.
+
+But it is not a critical bug, it exist since day one, and till
+now it has never been hit and reported, because changes to
+speed is very rare, and will not occur critical problem.
+
+The comments in the function is very old, cleanup it.
+
+Suggested-by: Jay Vosburgh <fubar@us.ibm.com>
+Signed-off-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_3ad.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 524ec03..0b596c6 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2242,20 +2242,25 @@ void bond_3ad_adapter_duplex_changed(struct slave *slave)
+ 
+ 	port = &(SLAVE_AD_INFO(slave).port);
+ 
+-	// if slave is null, the whole port is not initialized
++	/* if slave is null, the whole port is not initialized */
+ 	if (!port->slave) {
+ 		pr_warning("%s: Warning: duplex changed for uninitialized port on %s\n",
+ 			   slave->bond->dev->name, slave->dev->name);
+ 		return;
+ 	}
+ 
++	__get_state_machine_lock(port);
++
+ 	port->actor_admin_port_key &= ~AD_DUPLEX_KEY_BITS;
+ 	port->actor_oper_port_key = port->actor_admin_port_key |=
+ 		__get_duplex(port);
+ 	pr_debug("Port %d changed duplex\n", port->actor_port_number);
+-	// there is no need to reselect a new aggregator, just signal the
+-	// state machines to reinitialize
++	/* there is no need to reselect a new aggregator, just signal the
++	 * state machines to reinitialize
++	 */
+ 	port->sm_vars |= AD_PORT_BEGIN;
++
++	__release_state_machine_lock(port);
+ }
+ 
+ /**
+-- 
+1.8.1.4
+

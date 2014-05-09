@@ -1,22 +1,20 @@
 From: Jiri Pirko <jiri@resnulli.us>
 Date: Fri, 18 Oct 2013 17:43:34 +0200
-Subject: [PATCH 07/52] bonding: move mode setting into separate function
-Git-commit: 72be35fee6eda2fad7122f7f0c959effa3b2b791
+Subject: [PATCH 040/181] bonding: move mode setting into separate function
 Patch-mainline: v3.13-rc1
-References: fate#316924
+Git-commit: 72be35fee6eda2fad7122f7f0c959effa3b2b791
+References: fate#316924 bnc#875631 bnc#876145
 
 Signed-off-by: Jiri Pirko <jiri@resnulli.us>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bond_sysfs.c
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/Makefile       |  2 +-
- drivers/net/bonding/bond_options.c | 56 ++++++++++++++++++++++++++++++++++++++
- drivers/net/bonding/bond_sysfs.c   | 46 ++++++++-----------------------
- drivers/net/bonding/bonding.h      |  9 ++++--
- 4 files changed, 75 insertions(+), 38 deletions(-)
+ drivers/net/bonding/bond_options.c | 55 ++++++++++++++++++++++++++++++++++++++
+ drivers/net/bonding/bond_sysfs.c   | 45 ++++++++-----------------------
+ drivers/net/bonding/bonding.h      |  9 +++++--
+ 4 files changed, 74 insertions(+), 37 deletions(-)
  create mode 100644 drivers/net/bonding/bond_options.c
 
 diff --git a/drivers/net/bonding/Makefile b/drivers/net/bonding/Makefile
@@ -34,10 +32,10 @@ index 09e8b2c..5a5d720 100644
  bonding-objs += $(proc-y)
 diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
 new file mode 100644
-index 0000000..4663936
+index 0000000..294b766
 --- /dev/null
 +++ b/drivers/net/bonding/bond_options.c
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,55 @@
 +/*
 + * drivers/net/bond/bond_options.c - bonding options
 + * Copyright (c) 2013 Jiri Pirko <jiri@resnulli.us>
@@ -91,14 +89,13 @@ index 0000000..4663936
 +	/* don't cache arp_validate between modes */
 +	bond->params.arp_validate = BOND_ARP_VALIDATE_NONE;
 +	bond->params.mode = mode;
-+	bond_set_mode_ops(bond, bond->params.mode);
 +	return 0;
 +}
 diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
-index cdef425..48c3c44 100644
+index 0b989b0..707e8eb 100644
 --- a/drivers/net/bonding/bond_sysfs.c
 +++ b/drivers/net/bonding/bond_sysfs.c
-@@ -313,50 +313,26 @@ static ssize_t bonding_store_mode(struct device *d,
+@@ -274,49 +274,26 @@ static ssize_t bonding_store_mode(struct device *d,
  				  struct device_attribute *attr,
  				  const char *buf, size_t count)
  {
@@ -152,7 +149,6 @@ index cdef425..48c3c44 100644
 -	/* don't cache arp_validate between modes */
 -	bond->params.arp_validate = BOND_ARP_VALIDATE_NONE;
 -	bond->params.mode = new_value;
--	bond_set_mode_ops(bond, bond->params.mode);
 -	pr_info("%s: setting mode to %s (%d).\n",
 -		bond->dev->name, bond_mode_tbl[new_value].modename,
 -		new_value);
@@ -161,7 +157,7 @@ index cdef425..48c3c44 100644
  	return ret;
  }
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 19f9f19..4908b2d 100644
+index a2a353b..7446849 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
 @@ -58,6 +58,11 @@
@@ -176,7 +172,7 @@ index 19f9f19..4908b2d 100644
  /*
   * Less bad way to call ioctl from within the kernel; this needs to be
   * done some other way to get the call out of interrupt context.
-@@ -296,8 +301,7 @@ static inline struct bonding *bond_get_bond_by_slave(struct slave *slave)
+@@ -259,8 +264,7 @@ static inline struct bonding *bond_get_bond_by_slave(struct slave *slave)
  
  static inline bool bond_is_lb(const struct bonding *bond)
  {
@@ -186,7 +182,7 @@ index 19f9f19..4908b2d 100644
  }
  
  static inline void bond_set_active_slave(struct slave *slave)
-@@ -462,6 +466,7 @@ void bond_setup(struct net_device *bond_dev);
+@@ -422,6 +426,7 @@ void bond_setup(struct net_device *bond_dev);
  unsigned int bond_get_num_tx_queues(void);
  int bond_netlink_init(void);
  void bond_netlink_fini(void);
