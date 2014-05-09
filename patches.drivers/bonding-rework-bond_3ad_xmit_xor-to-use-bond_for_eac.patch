@@ -1,0 +1,119 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Wed, 25 Sep 2013 09:20:16 +0200
+Subject: [PATCH 006/181] bonding: rework bond_3ad_xmit_xor() to use
+ bond_for_each_slave() only
+Patch-mainline: v3.13-rc1
+Git-commit: c33d78874eeb6c28909158719043fa2a5fd18f0a
+References: fate#316924 bnc#875631 bnc#876145
+
+Currently, there are two loops - first we find the first slave in an
+aggregator after the xmit_hash_policy() returned number, and after that we
+loop from that slave, over bonding head, and till that slave to find any
+suitable slave to send the packet through.
+
+Replace it by just one bond_for_each_slave() loop, which first loops
+through the requested number of slaves, saving the first suitable one, and
+after that we've hit the requested number of slaves to skip - search for
+any up slave to send the packet through. If we don't find such kind of
+slave - then just send the packet through the first suitable slave found.
+
+Logic remains unchainged, and we skip two loops. Also, refactor it a bit
+for readability.
+
+CC: Jay Vosburgh <fubar@us.ibm.com>
+CC: Andy Gospodarek <andy@greyhouse.net>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_3ad.c | 46 ++++++++++++++++++++----------------------
+ 1 file changed, 22 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 2f34196..0f9a9c5 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2415,15 +2415,15 @@ int bond_3ad_get_active_agg_info(struct bonding *bond, struct ad_info *ad_info)
+ 
+ int bond_3ad_xmit_xor(struct sk_buff *skb, struct net_device *dev)
+ {
+-	struct slave *slave, *start_at;
+ 	struct bonding *bond = netdev_priv(dev);
++	struct slave *slave, *first_ok_slave;
++	struct aggregator *agg;
++	struct ad_info ad_info;
+ 	struct list_head *iter;
+-	int slave_agg_no;
+ 	int slaves_in_agg;
+-	int agg_id;
+-	int i;
+-	struct ad_info ad_info;
++	int slave_agg_no;
+ 	int res = 1;
++	int agg_id;
+ 
+ 	read_lock(&bond->lock);
+ 	if (__bond_3ad_get_active_agg_info(bond, &ad_info)) {
+@@ -2436,20 +2436,28 @@ int bond_3ad_xmit_xor(struct sk_buff *skb, struct net_device *dev)
+ 	agg_id = ad_info.aggregator_id;
+ 
+ 	if (slaves_in_agg == 0) {
+-		/*the aggregator is empty*/
+ 		pr_debug("%s: Error: active aggregator is empty\n", dev->name);
+ 		goto out;
+ 	}
+ 
+ 	slave_agg_no = bond->xmit_hash_policy(skb, slaves_in_agg);
++	first_ok_slave = NULL;
+ 
+ 	bond_for_each_slave(bond, slave, iter) {
+-		struct aggregator *agg = SLAVE_AD_INFO(slave).port.aggregator;
++		agg = SLAVE_AD_INFO(slave).port.aggregator;
++		if (!agg || agg->aggregator_identifier != agg_id)
++			continue;
+ 
+-		if (agg && (agg->aggregator_identifier == agg_id)) {
++		if (slave_agg_no >= 0) {
++			if (!first_ok_slave && SLAVE_IS_OK(slave))
++				first_ok_slave = slave;
+ 			slave_agg_no--;
+-			if (slave_agg_no < 0)
+-				break;
++			continue;
++		}
++
++		if (SLAVE_IS_OK(slave)) {
++			res = bond_dev_queue_xmit(bond, skb, slave->dev);
++			goto out;
+ 		}
+ 	}
+ 
+@@ -2459,20 +2467,10 @@ int bond_3ad_xmit_xor(struct sk_buff *skb, struct net_device *dev)
+ 		goto out;
+ 	}
+ 
+-	start_at = slave;
+-
+-	bond_for_each_slave_from(bond, slave, i, start_at) {
+-		int slave_agg_id = 0;
+-		struct aggregator *agg = SLAVE_AD_INFO(slave).port.aggregator;
+-
+-		if (agg)
+-			slave_agg_id = agg->aggregator_identifier;
+-
+-		if (SLAVE_IS_OK(slave) && agg && (slave_agg_id == agg_id)) {
+-			res = bond_dev_queue_xmit(bond, skb, slave->dev);
+-			break;
+-		}
+-	}
++	/* we couldn't find any suitable slave after the agg_no, so use the
++	 * first suitable found, if found. */
++	if (first_ok_slave)
++		res = bond_dev_queue_xmit(bond, skb, first_ok_slave->dev);
+ 
+ out:
+ 	read_unlock(&bond->lock);
+-- 
+1.8.1.4
+
