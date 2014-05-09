@@ -1,0 +1,114 @@
+From: Hiral Shah <hishah@cisco.com>
+Date: Fri, 2 May 2014 18:43:47 -0700
+Subject: fnic: Assign FIP_ALL_FCF_MACS to fcoe_all_fcfs
+Patch-Mainline: Not yet
+References: bnc#876870
+
+1) Assgning FIP_ALL_FCF_MACS to fcoe_all_fcfs allows VLAN request to be sent
+to correct Mac address for VLAN Discovery otherwise VLAN request will be
+sent to invalid address hence FLOGI never happens.
+
+2) Correcting errors given by Smatch and Sparse tool
+
+3) Increment Fnic driver version
+
+Signed-off-by: Hiral Shah <hishah@cisco.com>
+Signed-off-by: Shirish Pargaonkar <spargaonkar@suse.com>
+---
+ drivers/scsi/fnic/fnic.h         | 2 +-
+ drivers/scsi/fnic/fnic_debugfs.c | 4 ++--
+ drivers/scsi/fnic/fnic_fcs.c     | 2 +-
+ drivers/scsi/fnic/fnic_trace.c   | 8 ++++----
+ 4 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/scsi/fnic/fnic.h b/drivers/scsi/fnic/fnic.h
+index 1d3521e..bf8d34c 100644
+--- a/drivers/scsi/fnic/fnic.h
++++ b/drivers/scsi/fnic/fnic.h
+@@ -39,7 +39,7 @@
+ 
+ #define DRV_NAME		"fnic"
+ #define DRV_DESCRIPTION		"Cisco FCoE HBA Driver"
+-#define DRV_VERSION		"1.6.0.10"
++#define DRV_VERSION		"1.6.0.11"
+ #define PFX			DRV_NAME ": "
+ #define DFX                     DRV_NAME "%d: "
+ 
+diff --git a/drivers/scsi/fnic/fnic_debugfs.c b/drivers/scsi/fnic/fnic_debugfs.c
+index c85e607..d2781bc 100644
+--- a/drivers/scsi/fnic/fnic_debugfs.c
++++ b/drivers/scsi/fnic/fnic_debugfs.c
+@@ -150,7 +150,7 @@ static ssize_t fnic_trace_ctrl_read(struct file *filp,
+ {
+ 	char buf[64];
+ 	int len;
+-	u8 * trace_type;
++	u8 *trace_type;
+ 	len = 0;
+ 	trace_type = (u8 *)filp->private_data;
+ 	if (*trace_type == fc_trc_flag->fnic_trace) {
+@@ -190,7 +190,7 @@ static ssize_t fnic_trace_ctrl_write(struct file *filp,
+ 	char buf[64];
+ 	unsigned long val;
+ 	int ret;
+-	u8 * trace_type;
++	u8 *trace_type;
+ 	trace_type = (u8 *)filp->private_data;
+ 
+ 	if (cnt >= sizeof(buf))
+diff --git a/drivers/scsi/fnic/fnic_fcs.c b/drivers/scsi/fnic/fnic_fcs.c
+index 84f464e..3949bbc 100644
+--- a/drivers/scsi/fnic/fnic_fcs.c
++++ b/drivers/scsi/fnic/fnic_fcs.c
+@@ -35,7 +35,7 @@
+ #include "cq_enet_desc.h"
+ #include "cq_exch_desc.h"
+ 
+-static u8 fcoe_all_fcfs[ETH_ALEN];
++static u8 fcoe_all_fcfs[ETH_ALEN] = FIP_ALL_FCF_MACS;
+ struct workqueue_struct *fnic_fip_queue;
+ struct workqueue_struct *fnic_event_queue;
+ 
+diff --git a/drivers/scsi/fnic/fnic_trace.c b/drivers/scsi/fnic/fnic_trace.c
+index 7f70bf1..b166ebd 100644
+--- a/drivers/scsi/fnic/fnic_trace.c
++++ b/drivers/scsi/fnic/fnic_trace.c
+@@ -39,7 +39,7 @@ static int fc_trace_max_entries;
+ static unsigned long fnic_fc_ctlr_trace_buf_p;
+ static fnic_trace_dbg_t fc_trace_entries;
+ int fnic_fc_tracing_enabled = 1;
+-int fnic_fc_trace_cleared = 0; // default it is off
++int fnic_fc_trace_cleared = 1;
+ static DEFINE_SPINLOCK(fnic_fc_trace_lock);
+ 
+ 
+@@ -587,7 +587,7 @@ int fnic_fc_trace_set_data(u32 host_no, u8 frame_type,
+ 	unsigned long flags;
+ 	fc_trace_hdr_t *fc_buf;
+ 	unsigned long eth_fcoe_hdr_len;
+-	char * fc_trace;
++	char *fc_trace;
+ 
+ 	if (fnic_fc_tracing_enabled == 0) {
+ 		return 0;
+@@ -667,7 +667,7 @@ int fnic_fc_trace_get_data(fnic_dbgfs_t *fnic_dbgfs_prt, u8 rdata_flag) {
+ 	unsigned long flags;
+ 	int len = 0, j;
+ 	fc_trace_hdr_t *tdata;
+-	char * fc_trace;
++	char *fc_trace;
+ 
+ 	spin_lock_irqsave(&fnic_fc_trace_lock, flags);
+ 	if (fc_trace_entries.wr_idx == fc_trace_entries.rd_idx) {
+@@ -732,7 +732,7 @@ void copy_and_format_trace_data(fc_trace_hdr_t *tdata,
+ {
+         struct tm tm;
+         int j, i = 1, len;
+-        char * fc_trace;
++        char *fc_trace;
+ 	int ethhdr_len = sizeof (struct ethhdr) - 1;
+ 	int fcoehdr_len = sizeof (struct fcoe_hdr);
+ 	int fchdr_len = sizeof (struct fc_frame_header);
+-- 
+1.8.5.4
+
