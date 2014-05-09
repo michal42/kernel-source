@@ -1,0 +1,93 @@
+From: dingtianhong <dingtianhong@huawei.com>
+Date: Thu, 24 Oct 2013 11:09:03 +0800
+Subject: [PATCH 052/181] bonding: remove bond read lock for bond_mii_monitor()
+Patch-mainline: v3.13-rc1
+Git-commit: 6b6c526147bb00b5788a2f48463481dd30c29b71
+References: fate#316924 bnc#875631 bnc#876145
+
+The bond slave list may change when the monitor is running, the slave list is no longer
+protected by bond->lock, only protected by rtnl lock(), so we have 3 ways to modify it:
+1.add bond_master_upper_dev_link() and bond_upper_dev_unlink() in bond->lock, but it is unsafe
+to call call_netdevice_notifiers() in write lock.
+2.remove unused bond->lock for monitor function, only use the existing rtnl lock().
+3.use rcu_read_lock() to protect it, of course, it will transform bond_for_each_slave to
+bond_for_each_slave_rcu() and performance is better, but in slow path, it is ignored.
+so I remove the bond->lock and move the rtnl lock to protect the whole monitor function.
+
+Signed-off-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c | 44 +++++++++++------------------------------
+ 1 file changed, 12 insertions(+), 32 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index a311071..7fb05a6 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -2118,49 +2118,29 @@ void bond_mii_monitor(struct work_struct *work)
+ 	struct bonding *bond = container_of(work, struct bonding,
+ 					    mii_work.work);
+ 	bool should_notify_peers = false;
+-	unsigned long delay;
+ 
+-	read_lock(&bond->lock);
+-
+-	delay = msecs_to_jiffies(bond->params.miimon);
++	if (!rtnl_trylock())
++		goto re_arm;
+ 
+-	if (!bond_has_slaves(bond))
++	if (!bond_has_slaves(bond)) {
++		rtnl_unlock();
+ 		goto re_arm;
++	}
+ 
+ 	should_notify_peers = bond_should_notify_peers(bond);
+ 
+-	if (bond_miimon_inspect(bond)) {
+-		read_unlock(&bond->lock);
+-
+-		/* Race avoidance with bond_close cancel of workqueue */
+-		if (!rtnl_trylock()) {
+-			read_lock(&bond->lock);
+-			delay = 1;
+-			should_notify_peers = false;
+-			goto re_arm;
+-		}
+-
+-		read_lock(&bond->lock);
+-
++	if (bond_miimon_inspect(bond))
+ 		bond_miimon_commit(bond);
+ 
+-		read_unlock(&bond->lock);
+-		rtnl_unlock();	/* might sleep, hold no other locks */
+-		read_lock(&bond->lock);
+-	}
++	if (should_notify_peers)
++		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
++
++	rtnl_unlock();
+ 
+ re_arm:
+ 	if (bond->params.miimon)
+-		queue_delayed_work(bond->wq, &bond->mii_work, delay);
+-
+-	read_unlock(&bond->lock);
+-
+-	if (should_notify_peers) {
+-		if (!rtnl_trylock())
+-			return;
+-		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
+-		rtnl_unlock();
+-	}
++		queue_delayed_work(bond->wq, &bond->mii_work,
++				msecs_to_jiffies(bond->params.miimon));
+ }
+ 
+ static bool bond_has_this_ip(struct bonding *bond, __be32 ip)
+-- 
+1.8.1.4
+
