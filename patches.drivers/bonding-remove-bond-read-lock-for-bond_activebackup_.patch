@@ -1,0 +1,97 @@
+From: dingtianhong <dingtianhong@huawei.com>
+Date: Thu, 24 Oct 2013 11:09:25 +0800
+Subject: [PATCH 055/181] bonding: remove bond read lock for
+ bond_activebackup_arp_mon()
+Patch-mainline: v3.13-rc1
+Git-commit: 80b9d236ec56ecc18da4a43bd79e8ec9ac5036ff
+References: fate#316924 bnc#875631 bnc#876145
+
+The bond slave list may change when the monitor is running, the slave list is no longer
+protected by bond->lock, only protected by rtnl lock(), so we have 3 ways to modify it:
+1.add bond_master_upper_dev_link() and bond_upper_dev_unlink() in bond->lock, but it is unsafe
+to call call_netdevice_notifiers() in write lock.
+2.remove unused bond->lock for monitor function, only use the existing rtnl lock().
+3.use rcu_read_lock() to protect it, of course, it will transform bond_for_each_slave to
+bond_for_each_slave_rcu() and performance is better, but in slow path, it is ignored.
+so I remove the bond->lock and move the rtnl lock to protect the whole monitor function.
+
+Signed-off-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c | 46 ++++++++++++-----------------------------
+ 1 file changed, 13 insertions(+), 33 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 92c7ca9..9c4b649 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -2726,51 +2726,31 @@ void bond_activebackup_arp_mon(struct work_struct *work)
+ 	struct bonding *bond = container_of(work, struct bonding,
+ 					    arp_work.work);
+ 	bool should_notify_peers = false;
+-	int delta_in_ticks;
+ 
+-	read_lock(&bond->lock);
+-
+-	delta_in_ticks = msecs_to_jiffies(bond->params.arp_interval);
++	if (!rtnl_trylock())
++		goto re_arm;
+ 
+-	if (!bond_has_slaves(bond))
++	if (!bond_has_slaves(bond)) {
++		rtnl_unlock();
+ 		goto re_arm;
++	}
+ 
+ 	should_notify_peers = bond_should_notify_peers(bond);
+ 
+-	if (bond_ab_arp_inspect(bond)) {
+-		read_unlock(&bond->lock);
+-
+-		/* Race avoidance with bond_close flush of workqueue */
+-		if (!rtnl_trylock()) {
+-			read_lock(&bond->lock);
+-			delta_in_ticks = 1;
+-			should_notify_peers = false;
+-			goto re_arm;
+-		}
+-
+-		read_lock(&bond->lock);
+-
++	if (bond_ab_arp_inspect(bond))
+ 		bond_ab_arp_commit(bond);
+ 
+-		read_unlock(&bond->lock);
+-		rtnl_unlock();
+-		read_lock(&bond->lock);
+-	}
+-
+ 	bond_ab_arp_probe(bond);
+ 
+-re_arm:
+-	if (bond->params.arp_interval)
+-		queue_delayed_work(bond->wq, &bond->arp_work, delta_in_ticks);
++	if (should_notify_peers)
++		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
+ 
+-	read_unlock(&bond->lock);
++	rtnl_unlock();
+ 
+-	if (should_notify_peers) {
+-		if (!rtnl_trylock())
+-			return;
+-		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
+-		rtnl_unlock();
+-	}
++re_arm:
++	if (bond->params.arp_interval)
++		queue_delayed_work(bond->wq, &bond->arp_work,
++				msecs_to_jiffies(bond->params.arp_interval));
+ }
+ 
+ /*-------------------------- netdev event handling --------------------------*/
+-- 
+1.8.1.4
+
