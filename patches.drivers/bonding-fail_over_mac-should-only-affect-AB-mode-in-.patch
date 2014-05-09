@@ -1,0 +1,43 @@
+From: dingtianhong <dingtianhong@huawei.com>
+Date: Sat, 25 Jan 2014 13:00:57 +0800
+Subject: [PATCH 172/181] bonding: fail_over_mac should only affect AB mode in
+ bond_set_mac_address()
+Patch-mainline: v3.14-rc3
+Git-commit: cc689aaa7abf33b2ccb02482e5e17885ea8903d1
+References: fate#316924 bnc#875631 bnc#876145
+
+The fail_over_mac could be set to active or follow in any time for all modes,
+so if the fail_over_mac is not none and the current mode is not active-backup,
+the bond_set_mac_address() could not change the master and slave's MAC address.
+
+In bond_set_mac_address(), the fail_over_mac should only affect AB mode, so modify
+to check the mode in addition to fail_over_mac when setting bond's MAC address.
+
+Cc: Jay Vosburgh <fubar@us.ibm.com>
+Cc: Veaceslav Falico <vfalico@redhat.com>
+Cc: Andy Gospodarek <andy@greyhouse.net>
+Signed-off-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 8e6dd13..35f7e90 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -3439,7 +3439,8 @@ static int bond_set_mac_address(struct net_device *bond_dev, void *addr)
+ 	/* If fail_over_mac is enabled, do nothing and return success.
+ 	 * Returning an error causes ifenslave to fail.
+ 	 */
+-	if (bond->params.fail_over_mac)
++	if (bond->params.fail_over_mac &&
++	    bond->params.mode == BOND_MODE_ACTIVEBACKUP)
+ 		return 0;
+ 
+ 	if (!is_valid_ether_addr(sa->sa_data))
+-- 
+1.8.1.4
+
