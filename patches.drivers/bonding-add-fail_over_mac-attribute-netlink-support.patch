@@ -1,0 +1,165 @@
+From: "sfeldma@cumulusnetworks.com" <sfeldma@cumulusnetworks.com>
+Date: Sun, 15 Dec 2013 16:42:05 -0800
+Subject: [PATCH 091/181] bonding: add fail_over_mac attribute netlink support
+Patch-mainline: v3.14-rc1
+Git-commit: 89901972de4c00e74e56529804493734d77ee3d3
+References: fate#316924 bnc#875631 bnc#876145
+
+Add IFLA_BOND_FAIL_OVER_MAC to allow get/set of bonding parameter
+fail_over_mac via netlink.
+
+Signed-off-by: Scott Feldman <sfeldma@cumulusnetworks.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_netlink.c | 14 ++++++++++++++
+ drivers/net/bonding/bond_options.c | 16 ++++++++++++++++
+ drivers/net/bonding/bond_sysfs.c   | 26 ++++++++------------------
+ drivers/net/bonding/bonding.h      |  1 +
+ include/uapi/linux/if_link.h       |  1 +
+ 5 files changed, 40 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_netlink.c b/drivers/net/bonding/bond_netlink.c
+index b361c67..dc465ad 100644
+--- a/drivers/net/bonding/bond_netlink.c
++++ b/drivers/net/bonding/bond_netlink.c
+@@ -34,6 +34,7 @@ static const struct nla_policy bond_policy[IFLA_BOND_MAX + 1] = {
+ 	[IFLA_BOND_ARP_ALL_TARGETS]	= { .type = NLA_U32 },
+ 	[IFLA_BOND_PRIMARY]		= { .type = NLA_U32 },
+ 	[IFLA_BOND_PRIMARY_RESELECT]	= { .type = NLA_U8 },
++	[IFLA_BOND_FAIL_OVER_MAC]	= { .type = NLA_U8 },
+ };
+ 
+ static int bond_validate(struct nlattr *tb[], struct nlattr *data[])
+@@ -177,6 +178,14 @@ static int bond_changelink(struct net_device *bond_dev,
+ 		if (err)
+ 			return err;
+ 	}
++	if (data[IFLA_BOND_FAIL_OVER_MAC]) {
++		int fail_over_mac =
++			nla_get_u8(data[IFLA_BOND_FAIL_OVER_MAC]);
++
++		err = bond_option_fail_over_mac_set(bond, fail_over_mac);
++		if (err)
++			return err;
++	}
+ 	return 0;
+ }
+ 
+@@ -207,6 +216,7 @@ static size_t bond_get_size(const struct net_device *bond_dev)
+ 		nla_total_size(sizeof(u32)) +	/* IFLA_BOND_ARP_ALL_TARGETS */
+ 		nla_total_size(sizeof(u32)) +	/* IFLA_BOND_PRIMARY */
+ 		nla_total_size(sizeof(u8)) +	/* IFLA_BOND_PRIMARY_RESELECT */
++		nla_total_size(sizeof(u8)) +	/* IFLA_BOND_FAIL_OVER_MAC */
+ 		0;
+ }
+ 
+@@ -275,6 +285,10 @@ static int bond_fill_info(struct sk_buff *skb,
+ 		       bond->params.primary_reselect))
+ 		goto nla_put_failure;
+ 
++	if (nla_put_u8(skb, IFLA_BOND_FAIL_OVER_MAC,
++		       bond->params.fail_over_mac))
++		goto nla_put_failure;
++
+ 	return 0;
+ 
+ nla_put_failure:
+diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
+index 80a9df4..86f4620 100644
+--- a/drivers/net/bonding/bond_options.c
++++ b/drivers/net/bonding/bond_options.c
+@@ -535,3 +535,19 @@ int bond_option_primary_reselect_set(struct bonding *bond, int primary_reselect)
+ 
+ 	return 0;
+ }
++
++int bond_option_fail_over_mac_set(struct bonding *bond, int fail_over_mac)
++{
++	if (bond_has_slaves(bond)) {
++		pr_err("%s: Can't alter fail_over_mac with slaves in bond.\n",
++		       bond->dev->name);
++		return -EPERM;
++	}
++
++	bond->params.fail_over_mac = fail_over_mac;
++	pr_info("%s: Setting fail_over_mac to %s (%d).\n",
++		bond->dev->name, fail_over_mac_tbl[fail_over_mac].modename,
++		fail_over_mac);
++
++	return 0;
++}
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index 324afa5..c84a90f 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -442,33 +442,23 @@ static ssize_t bonding_store_fail_over_mac(struct device *d,
+ 					   struct device_attribute *attr,
+ 					   const char *buf, size_t count)
+ {
+-	int new_value, ret = count;
++	int new_value, ret;
+ 	struct bonding *bond = to_bond(d);
+ 
+-	if (!rtnl_trylock())
+-		return restart_syscall();
+-
+-	if (bond_has_slaves(bond)) {
+-		pr_err("%s: Can't alter fail_over_mac with slaves in bond.\n",
+-		       bond->dev->name);
+-		ret = -EPERM;
+-		goto out;
+-	}
+-
+ 	new_value = bond_parse_parm(buf, fail_over_mac_tbl);
+ 	if (new_value < 0) {
+ 		pr_err("%s: Ignoring invalid fail_over_mac value %s.\n",
+ 		       bond->dev->name, buf);
+-		ret = -EINVAL;
+-		goto out;
++		return -EINVAL;
+ 	}
+ 
+-	bond->params.fail_over_mac = new_value;
+-	pr_info("%s: Setting fail_over_mac to %s (%d).\n",
+-		bond->dev->name, fail_over_mac_tbl[new_value].modename,
+-		new_value);
++	if (!rtnl_trylock())
++		return restart_syscall();
++
++	ret = bond_option_fail_over_mac_set(bond, new_value);
++	if (!ret)
++		ret = count;
+ 
+-out:
+ 	rtnl_unlock();
+ 	return ret;
+ }
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 4e89d04..b69059b 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -457,6 +457,7 @@ int bond_option_arp_all_targets_set(struct bonding *bond, int arp_all_targets);
+ int bond_option_primary_set(struct bonding *bond, const char *primary);
+ int bond_option_primary_reselect_set(struct bonding *bond,
+ 				     int primary_reselect);
++int bond_option_fail_over_mac_set(struct bonding *bond, int fail_over_mac);
+ struct net_device *bond_option_active_slave_get_rcu(struct bonding *bond);
+ struct net_device *bond_option_active_slave_get(struct bonding *bond);
+ 
+diff --git a/include/uapi/linux/if_link.h b/include/uapi/linux/if_link.h
+index f245ed2..6caa08b 100644
+--- a/include/uapi/linux/if_link.h
++++ b/include/uapi/linux/if_link.h
+@@ -341,6 +341,7 @@ enum {
+ 	IFLA_BOND_ARP_ALL_TARGETS,
+ 	IFLA_BOND_PRIMARY,
+ 	IFLA_BOND_PRIMARY_RESELECT,
++	IFLA_BOND_FAIL_OVER_MAC,
+ 	__IFLA_BOND_MAX,
+ };
+ 
+-- 
+1.8.1.4
+
