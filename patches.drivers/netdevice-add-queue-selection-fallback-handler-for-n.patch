@@ -18,6 +18,9 @@ This also has the nice side-effect that __netdev_pick_tx() is
 then only invoked from netdev_pick_tx() and export of that
 function to modules can be undone.
 
+SLE12: fix also callbacks in virtio_net (removed in 3.13-rc1)
+and hyperv/netvsc_drv.c (added by a non-mainline patch).
+
 Suggested-by: David S. Miller <davem@davemloft.net>
 Signed-off-by: Daniel Borkmann <dborkman@redhat.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
@@ -35,8 +38,10 @@ Conflicts:
  drivers/net/ethernet/mellanox/mlx4/en_tx.c      | 4 ++--
  drivers/net/ethernet/mellanox/mlx4/mlx4_en.h    | 2 +-
  drivers/net/ethernet/tile/tilegx.c              | 2 +-
+ drivers/net/hyperv/netvsc_drv.c                 | 3 ++-
  drivers/net/team/team.c                         | 2 +-
  drivers/net/tun.c                               | 2 +-
+ drivers/net/virtio_net.c                        | 3 ++-
  drivers/net/wireless/mwifiex/main.c             | 2 +-
  drivers/staging/bcm/Bcmnet.c                    | 2 +-
  drivers/staging/netlogic/xlr_net.c              | 2 +-
@@ -44,7 +49,7 @@ Conflicts:
  include/linux/netdevice.h                       | 9 ++++++---
  net/core/flow_dissector.c                       | 7 +++----
  net/mac80211/iface.c                            | 6 ++++--
- 17 files changed, 31 insertions(+), 27 deletions(-)
+ 19 files changed, 35 insertions(+), 29 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
 index 8676649..1c6104d 100644
@@ -186,6 +191,20 @@ index fb0af27..2b74065 100644
  {
  	return smp_processor_id();
  }
+diff --git a/drivers/net/hyperv/netvsc_drv.c b/drivers/net/hyperv/netvsc_drv.c
+index f40f3d0..f13bd56 100644
+--- a/drivers/net/hyperv/netvsc_drv.c
++++ b/drivers/net/hyperv/netvsc_drv.c
+@@ -214,7 +214,8 @@ static bool netvsc_set_hash(u32 *hash, struct sk_buff *skb)
+ }
+ 
+ static u16 netvsc_select_queue(struct net_device *ndev, struct sk_buff *skb,
+-			void *accel_priv /*, select_queue_fallback_t fallback*/)
++			       void *accel_priv,
++			       select_queue_fallback_t fallback)
+ {
+ 	struct net_device_context *net_device_ctx = netdev_priv(ndev);
+ 	struct hv_device *hdev =  net_device_ctx->device_ctx;
 diff --git a/drivers/net/team/team.c b/drivers/net/team/team.c
 index a3c66f4..a0390f6 100644
 --- a/drivers/net/team/team.c
@@ -212,6 +231,20 @@ index 55c9238..1a609a7 100644
  {
  	struct tun_struct *tun = netdev_priv(dev);
  	struct tun_flow_entry *e;
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index 03ea10f..cb11819 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -1267,7 +1267,8 @@ static int virtnet_change_mtu(struct net_device *dev, int new_mtu)
+  * txq based on the processor id.
+  */
+ static u16 virtnet_select_queue(struct net_device *dev, struct sk_buff *skb,
+-				void *accel_priv)
++				void *accel_priv,
++				select_queue_fallback_t fallback)
+ {
+ 	int txq;
+ 	struct virtnet_info *vi = netdev_priv(dev);
 diff --git a/drivers/net/wireless/mwifiex/main.c b/drivers/net/wireless/mwifiex/main.c
 index de86f81..0a4f313 100644
 --- a/drivers/net/wireless/mwifiex/main.c
