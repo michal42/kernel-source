@@ -1,0 +1,198 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Wed, 25 Sep 2013 09:20:32 +0200
+Subject: [PATCH 019/181] net: create sysfs symlinks for neighbour devices
+Patch-mainline: v3.13-rc1
+Git-commit: 5831d66e8097aedfa3bc35941cf265ada2352317
+References: fate#316924 bnc#875631 bnc#876145
+
+Also, remove the same functionality from bonding - it will be already done
+for any device that links to its lower/upper neighbour.
+
+The links will be created for dev's kobject, and will look like
+lower_eth0 for lower device eth0 and upper_bridge0 for upper device
+bridge0.
+
+CC: Jay Vosburgh <fubar@us.ibm.com>
+CC: Andy Gospodarek <andy@greyhouse.net>
+CC: "David S. Miller" <davem@davemloft.net>
+CC: Eric Dumazet <edumazet@google.com>
+CC: Jiri Pirko <jiri@resnulli.us>
+CC: Alexander Duyck <alexander.h.duyck@intel.com>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c  | 11 +----------
+ drivers/net/bonding/bond_sysfs.c | 21 ---------------------
+ drivers/net/bonding/bonding.h    |  2 --
+ net/core/dev.c                   | 35 ++++++++++++++++++++++++++++++++++-
+ 4 files changed, 35 insertions(+), 34 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index ff32369..d1d773b 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -1612,15 +1612,11 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+ 
+ 	read_unlock(&bond->lock);
+ 
+-	res = bond_create_slave_symlinks(bond_dev, slave_dev);
+-	if (res)
+-		goto err_detach;
+-
+ 	res = netdev_rx_handler_register(slave_dev, bond_handle_frame,
+ 					 new_slave);
+ 	if (res) {
+ 		pr_debug("Error %d calling netdev_rx_handler_register\n", res);
+-		goto err_dest_symlinks;
++		goto err_detach;
+ 	}
+ 
+ 	res = bond_master_upper_dev_link(bond_dev, slave_dev, new_slave);
+@@ -1642,9 +1638,6 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+ err_unregister:
+ 	netdev_rx_handler_unregister(slave_dev);
+ 
+-err_dest_symlinks:
+-	bond_destroy_slave_symlinks(bond_dev, slave_dev);
+-
+ err_detach:
+ 	if (!USES_PRIMARY(bond->params.mode))
+ 		bond_hw_addr_flush(bond_dev, slave_dev);
+@@ -1843,8 +1836,6 @@ static int __bond_release_one(struct net_device *bond_dev,
+ 			bond_dev->name, slave_dev->name, bond_dev->name);
+ 
+ 	/* must do this from outside any spinlocks */
+-	bond_destroy_slave_symlinks(bond_dev, slave_dev);
+-
+ 	vlan_vids_del_by_dev(slave_dev, bond_dev);
+ 
+ 	/* If the mode USES_PRIMARY, then this cases was handled above by
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index 66411cb..7b060cc 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -168,27 +168,6 @@ static const struct class_attribute class_attr_bonding_masters = {
+ 	.namespace = bonding_namespace,
+ };
+ 
+-int bond_create_slave_symlinks(struct net_device *master,
+-			       struct net_device *slave)
+-{
+-	char linkname[IFNAMSIZ+7];
+-
+-	/* create a link from the master to the slave */
+-	sprintf(linkname, "slave_%s", slave->name);
+-	return sysfs_create_link(&(master->dev.kobj), &(slave->dev.kobj),
+-				 linkname);
+-}
+-
+-void bond_destroy_slave_symlinks(struct net_device *master,
+-				 struct net_device *slave)
+-{
+-	char linkname[IFNAMSIZ+7];
+-
+-	sprintf(linkname, "slave_%s", slave->name);
+-	sysfs_remove_link(&(master->dev.kobj), linkname);
+-}
+-
+-
+ /*
+  * Show the slaves in the current bond.
+  */
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index e5c32a6..5b71601 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -436,8 +436,6 @@ int bond_create(struct net *net, const char *name);
+ int bond_create_sysfs(struct bond_net *net);
+ void bond_destroy_sysfs(struct bond_net *net);
+ void bond_prepare_sysfs_group(struct bonding *bond);
+-int bond_create_slave_symlinks(struct net_device *master, struct net_device *slave);
+-void bond_destroy_slave_symlinks(struct net_device *master, struct net_device *slave);
+ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev);
+ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev);
+ void bond_mii_monitor(struct work_struct *);
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 2f99cb4..b96d596 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4522,6 +4522,7 @@ static int __netdev_adjacent_dev_insert(struct net_device *dev,
+ 					void *private, bool master)
+ {
+ 	struct netdev_adjacent *adj;
++	char linkname[IFNAMSIZ+7];
+ 	int ret;
+ 
+ 	adj = __netdev_find_adj(dev, adj_dev, dev_list);
+@@ -4544,12 +4545,26 @@ static int __netdev_adjacent_dev_insert(struct net_device *dev,
+ 	pr_debug("dev_hold for %s, because of link added from %s to %s\n",
+ 		 adj_dev->name, dev->name, adj_dev->name);
+ 
++	if (dev_list == &dev->adj_list.lower) {
++		sprintf(linkname, "lower_%s", adj_dev->name);
++		ret = sysfs_create_link(&(dev->dev.kobj),
++					&(adj_dev->dev.kobj), linkname);
++		if (ret)
++			goto free_adj;
++	} else if (dev_list == &dev->adj_list.upper) {
++		sprintf(linkname, "upper_%s", adj_dev->name);
++		ret = sysfs_create_link(&(dev->dev.kobj),
++					&(adj_dev->dev.kobj), linkname);
++		if (ret)
++			goto free_adj;
++	}
++
+ 	/* Ensure that master link is always the first item in list. */
+ 	if (master) {
+ 		ret = sysfs_create_link(&(dev->dev.kobj),
+ 					&(adj_dev->dev.kobj), "master");
+ 		if (ret)
+-			goto free_adj;
++			goto remove_symlinks;
+ 
+ 		list_add_rcu(&adj->list, dev_list);
+ 	} else {
+@@ -4558,6 +4573,15 @@ static int __netdev_adjacent_dev_insert(struct net_device *dev,
+ 
+ 	return 0;
+ 
++remove_symlinks:
++	if (dev_list == &dev->adj_list.lower) {
++		sprintf(linkname, "lower_%s", adj_dev->name);
++		sysfs_remove_link(&(dev->dev.kobj), linkname);
++	} else if (dev_list == &dev->adj_list.upper) {
++		sprintf(linkname, "upper_%s", adj_dev->name);
++		sysfs_remove_link(&(dev->dev.kobj), linkname);
++	}
++
+ free_adj:
+ 	kfree(adj);
+ 
+@@ -4569,6 +4593,7 @@ void __netdev_adjacent_dev_remove(struct net_device *dev,
+ 				  struct list_head *dev_list)
+ {
+ 	struct netdev_adjacent *adj;
++	char linkname[IFNAMSIZ+7];
+ 
+ 	adj = __netdev_find_adj(dev, adj_dev, dev_list);
+ 
+@@ -4588,6 +4613,14 @@ void __netdev_adjacent_dev_remove(struct net_device *dev,
+ 	if (adj->master)
+ 		sysfs_remove_link(&(dev->dev.kobj), "master");
+ 
++	if (dev_list == &dev->adj_list.lower) {
++		sprintf(linkname, "lower_%s", adj_dev->name);
++		sysfs_remove_link(&(dev->dev.kobj), linkname);
++	} else if (dev_list == &dev->adj_list.upper) {
++		sprintf(linkname, "upper_%s", adj_dev->name);
++		sysfs_remove_link(&(dev->dev.kobj), linkname);
++	}
++
+ 	list_del_rcu(&adj->list);
+ 	pr_debug("dev_put for %s, because link removed from %s to %s\n",
+ 		 adj_dev->name, dev->name, adj_dev->name);
+-- 
+1.8.1.4
+

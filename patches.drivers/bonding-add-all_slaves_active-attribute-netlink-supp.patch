@@ -1,10 +1,10 @@
 From: "sfeldma@cumulusnetworks.com" <sfeldma@cumulusnetworks.com>
 Date: Tue, 17 Dec 2013 21:30:16 -0800
-Subject: [PATCH 34/52] bonding: add all_slaves_active attribute netlink
+Subject: [PATCH 098/181] bonding: add all_slaves_active attribute netlink
  support
-Git-commit: 1cc0b1e30c662d84a89690f42826cf49e2278b97
 Patch-mainline: v3.14-rc1
-References: fate#316924
+Git-commit: 1cc0b1e30c662d84a89690f42826cf49e2278b97
+References: fate#316924 bnc#875631 bnc#876145
 
 Add IFLA_BOND_ALL_SLAVES_ACTIVE to allow get/set of bonding parameter
 all_slaves_active via netlink.
@@ -12,20 +12,18 @@ all_slaves_active via netlink.
 Signed-off-by: Scott Feldman <sfeldma@cumulusnetworks.com>
 Signed-off-by: Jiri Pirko <jiri@resnulli.us>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bond_sysfs.c
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/bond_netlink.c | 15 +++++++++++++++
- drivers/net/bonding/bond_options.c | 30 ++++++++++++++++++++++++++++++
- drivers/net/bonding/bond_sysfs.c   | 33 ++++++++-------------------------
+ drivers/net/bonding/bond_options.c | 29 +++++++++++++++++++++++++++++
+ drivers/net/bonding/bond_sysfs.c   | 34 +++++++---------------------------
  drivers/net/bonding/bonding.h      |  2 ++
  include/uapi/linux/if_link.h       |  1 +
- 5 files changed, 56 insertions(+), 25 deletions(-)
+ 5 files changed, 54 insertions(+), 27 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_netlink.c b/drivers/net/bonding/bond_netlink.c
-index 492f000..371693b 100644
+index 07123a0..5175215 100644
 --- a/drivers/net/bonding/bond_netlink.c
 +++ b/drivers/net/bonding/bond_netlink.c
 @@ -38,6 +38,7 @@ static const struct nla_policy bond_policy[IFLA_BOND_MAX + 1] = {
@@ -72,10 +70,10 @@ index 492f000..371693b 100644
  
  nla_put_failure:
 diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
-index d1e9755..0c21fc6 100644
+index 01a9669..cbd8322 100644
 --- a/drivers/net/bonding/bond_options.c
 +++ b/drivers/net/bonding/bond_options.c
-@@ -585,3 +585,33 @@ int bond_option_num_peer_notif_set(struct bonding *bond, int num_peer_notif)
+@@ -582,3 +582,32 @@ int bond_option_num_peer_notif_set(struct bonding *bond, int num_peer_notif)
  	bond->params.num_peer_notif = num_peer_notif;
  	return 0;
  }
@@ -83,6 +81,7 @@ index d1e9755..0c21fc6 100644
 +int bond_option_all_slaves_active_set(struct bonding *bond,
 +				      int all_slaves_active)
 +{
++	struct list_head *iter;
 +	struct slave *slave;
 +
 +	if (all_slaves_active == bond->params.all_slaves_active)
@@ -96,8 +95,7 @@ index d1e9755..0c21fc6 100644
 +		return -EINVAL;
 +	}
 +
-+	read_lock(&bond->lock);
-+	bond_for_each_slave(bond, slave) {
++	bond_for_each_slave(bond, slave, iter) {
 +		if (!bond_is_active_slave(slave)) {
 +			if (all_slaves_active)
 +				slave->inactive = 0;
@@ -105,20 +103,23 @@ index d1e9755..0c21fc6 100644
 +				slave->inactive = 1;
 +		}
 +	}
-+	read_unlock(&bond->lock);
 +
 +	return 0;
 +}
 diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
-index 4b0c74e..6ee8ee8 100644
+index 7efa33a..9a37125 100644
 --- a/drivers/net/bonding/bond_sysfs.c
 +++ b/drivers/net/bonding/bond_sysfs.c
-@@ -1334,39 +1334,22 @@ static ssize_t bonding_store_slaves_active(struct device *d,
+@@ -1290,41 +1290,21 @@ static ssize_t bonding_store_slaves_active(struct device *d,
  					   const char *buf, size_t count)
  {
  	struct bonding *bond = to_bond(d);
 -	int new_value, ret = count;
+-	struct list_head *iter;
 -	struct slave *slave;
+-
+-	if (!rtnl_trylock())
+-		return restart_syscall();
 +	int new_value, ret;
  
  	if (sscanf(buf, "%d", &new_value) != 1) {
@@ -146,8 +147,7 @@ index 4b0c74e..6ee8ee8 100644
 +	if (!ret)
 +		ret = count;
  
--	read_lock(&bond->lock);
--	bond_for_each_slave(bond, slave) {
+-	bond_for_each_slave(bond, slave, iter) {
 -		if (!bond_is_active_slave(slave)) {
 -			if (new_value)
 -				slave->inactive = 0;
@@ -155,17 +155,15 @@ index 4b0c74e..6ee8ee8 100644
 -				slave->inactive = 1;
 -		}
 -	}
--	read_unlock(&bond->lock);
 -out:
-+	rtnl_unlock();
+ 	rtnl_unlock();
  	return ret;
  }
- static DEVICE_ATTR(all_slaves_active, S_IRUGO | S_IWUSR,
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 2a20021..c55cb81 100644
+index 73538b7..3701e7d 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -498,6 +498,8 @@ int bond_option_xmit_hash_policy_set(struct bonding *bond,
+@@ -462,6 +462,8 @@ int bond_option_xmit_hash_policy_set(struct bonding *bond,
  				     int xmit_hash_policy);
  int bond_option_resend_igmp_set(struct bonding *bond, int resend_igmp);
  int bond_option_num_peer_notif_set(struct bonding *bond, int num_peer_notif);

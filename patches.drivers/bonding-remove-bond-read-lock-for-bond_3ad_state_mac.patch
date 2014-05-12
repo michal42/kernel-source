@@ -1,0 +1,56 @@
+From: dingtianhong <dingtianhong@huawei.com>
+Date: Thu, 24 Oct 2013 11:09:31 +0800
+Subject: [PATCH 056/181] bonding: remove bond read lock for
+ bond_3ad_state_machine_handler()
+Patch-mainline: v3.13-rc1
+Git-commit: 5cc172c6de80cd9bf2a1228cb928b1fb42e30deb
+References: fate#316924 bnc#875631 bnc#876145
+
+The bond slave list may change when the monitor is running, the slave list is no longer
+protected by bond->lock, only protected by rtnl lock(), so we have 3 ways to modify it:
+1.add bond_master_upper_dev_link() and bond_upper_dev_unlink() in bond->lock, but it is unsafe
+to call call_netdevice_notifiers() in write lock.
+2.remove unused bond->lock for monitor function, only use the existing rtnl lock().
+3.use rcu_read_lock() to protect it, of course, it will transform bond_for_each_slave to
+bond_for_each_slave_rcu() and performance is better, but in slow path, it is ignored.
+so I remove the bond->lock and move the rtnl lock to protect the whole monitor function.
+
+Signed-off-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_3ad.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 617cc9f..09a783f 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2066,8 +2066,10 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
+ 	struct slave *slave;
+ 	struct port *port;
+ 
+-	read_lock(&bond->lock);
+-
++	if (!rtnl_trylock()) {
++		queue_delayed_work(bond->wq, &bond->ad_work, ad_delta_in_ticks);
++		return;
++	}
+ 	//check if there are any slaves
+ 	if (!bond_has_slaves(bond))
+ 		goto re_arm;
+@@ -2120,9 +2122,8 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
+ 	}
+ 
+ re_arm:
++	rtnl_unlock();
+ 	queue_delayed_work(bond->wq, &bond->ad_work, ad_delta_in_ticks);
+-
+-	read_unlock(&bond->lock);
+ }
+ 
+ /**
+-- 
+1.8.1.4
+

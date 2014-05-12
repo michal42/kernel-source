@@ -1,29 +1,27 @@
 From: "sfeldma@cumulusnetworks.com" <sfeldma@cumulusnetworks.com>
 Date: Sun, 15 Dec 2013 16:41:51 -0800
-Subject: [PATCH 28/52] bonding: add primary attribute netlink support
-Git-commit: 0a98a0d12c40f9354b942325045cae123d594341
+Subject: [PATCH 089/181] bonding: add primary attribute netlink support
 Patch-mainline: v3.14-rc1
-References: fate#316924
+Git-commit: 0a98a0d12c40f9354b942325045cae123d594341
+References: fate#316924 bnc#875631 bnc#876145
 
 Add IFLA_BOND_PRIMARY to allow get/set of bonding parameter
 primary via netlink.
 
 Signed-off-by: Scott Feldman <sfeldma@cumulusnetworks.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bond_sysfs.c
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
- drivers/net/bonding/bond_netlink.c | 20 ++++++++++++++
- drivers/net/bonding/bond_options.c | 51 ++++++++++++++++++++++++++++++++++++
- drivers/net/bonding/bond_sysfs.c   | 53 +++++++-------------------------------
+ drivers/net/bonding/bond_netlink.c | 20 +++++++++++++++
+ drivers/net/bonding/bond_options.c | 52 ++++++++++++++++++++++++++++++++++++++
+ drivers/net/bonding/bond_sysfs.c   | 52 +++++++-------------------------------
  drivers/net/bonding/bonding.h      |  1 +
  include/uapi/linux/if_link.h       |  1 +
- 5 files changed, 82 insertions(+), 44 deletions(-)
+ 5 files changed, 83 insertions(+), 43 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_netlink.c b/drivers/net/bonding/bond_netlink.c
-index d7d84db..4715b5f 100644
+index 990793d..9445243 100644
 --- a/drivers/net/bonding/bond_netlink.c
 +++ b/drivers/net/bonding/bond_netlink.c
 @@ -32,6 +32,7 @@ static const struct nla_policy bond_policy[IFLA_BOND_MAX + 1] = {
@@ -75,16 +73,17 @@ index d7d84db..4715b5f 100644
  
  nla_put_failure:
 diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
-index 04ab425..13dae3f 100644
+index 600779e..c410d2d 100644
 --- a/drivers/net/bonding/bond_options.c
 +++ b/drivers/net/bonding/bond_options.c
-@@ -468,3 +468,54 @@ int bond_option_arp_all_targets_set(struct bonding *bond, int arp_all_targets)
+@@ -467,3 +467,55 @@ int bond_option_arp_all_targets_set(struct bonding *bond, int arp_all_targets)
  
  	return 0;
  }
 +
 +int bond_option_primary_set(struct bonding *bond, const char *primary)
 +{
++	struct list_head *iter;
 +	struct slave *slave;
 +	int err = 0;
 +
@@ -109,7 +108,7 @@ index 04ab425..13dae3f 100644
 +		goto out;
 +	}
 +
-+	bond_for_each_slave(bond, slave) {
++	bond_for_each_slave(bond, slave, iter) {
 +		if (strncmp(slave->dev->name, primary, IFNAMSIZ) == 0) {
 +			pr_info("%s: Setting %s as primary slave.\n",
 +				bond->dev->name, slave->dev->name);
@@ -134,19 +133,20 @@ index 04ab425..13dae3f 100644
 +	return err;
 +}
 diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
-index 3b3008f..e7575ef 100644
+index 6368d29..7304c2b 100644
 --- a/drivers/net/bonding/bond_sysfs.c
 +++ b/drivers/net/bonding/bond_sysfs.c
-@@ -913,56 +913,21 @@ static ssize_t bonding_store_primary(struct device *d,
+@@ -871,56 +871,22 @@ static ssize_t bonding_store_primary(struct device *d,
+ 				     const char *buf, size_t count)
  {
  	struct bonding *bond = to_bond(d);
+-	struct list_head *iter;
  	char ifname[IFNAMSIZ];
 -	struct slave *slave;
 -
 -	if (!rtnl_trylock())
 -		return restart_syscall();
 -	block_netpoll_tx();
--	read_lock(&bond->lock);
 -	write_lock_bh(&bond->curr_slave_lock);
 -
 -	if (!USES_PRIMARY(bond->params.mode)) {
@@ -170,7 +170,7 @@ index 3b3008f..e7575ef 100644
 -		goto out;
 -	}
 -
--	bond_for_each_slave(bond, slave) {
+-	bond_for_each_slave(bond, slave, iter) {
 -		if (strncmp(slave->dev->name, ifname, IFNAMSIZ) == 0) {
 -			pr_info("%s: Setting %s as primary slave.\n",
 -				bond->dev->name, slave->dev->name);
@@ -194,7 +194,6 @@ index 3b3008f..e7575ef 100644
 -		bond->dev->name, ifname, bond->dev->name);
 -out:
 -	write_unlock_bh(&bond->curr_slave_lock);
--	read_unlock(&bond->lock);
 -	unblock_netpoll_tx();
  	rtnl_unlock();
 -
@@ -204,10 +203,10 @@ index 3b3008f..e7575ef 100644
  static DEVICE_ATTR(primary, S_IRUGO | S_IWUSR,
  		   bonding_show_primary, bonding_store_primary);
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 548a234..747968a 100644
+index 8f0d6d0..ec35802 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -490,6 +490,7 @@ int bond_option_arp_ip_target_add(struct bonding *bond, __be32 target);
+@@ -454,6 +454,7 @@ int bond_option_arp_ip_target_add(struct bonding *bond, __be32 target);
  int bond_option_arp_ip_target_rem(struct bonding *bond, __be32 target);
  int bond_option_arp_validate_set(struct bonding *bond, int arp_validate);
  int bond_option_arp_all_targets_set(struct bonding *bond, int arp_all_targets);

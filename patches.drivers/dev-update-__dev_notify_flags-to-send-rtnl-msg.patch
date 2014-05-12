@@ -1,0 +1,86 @@
+From: Nicolas Dichtel <nicolas.dichtel@6wind.com>
+Date: Wed, 25 Sep 2013 12:02:44 +0200
+Subject: [PATCH 049/181] dev: update __dev_notify_flags() to send rtnl msg
+Patch-mainline: v3.13-rc1
+Git-commit: a528c219df2e865e178c538c7178961dfed5a13c
+References: fate#316924 bnc#875631 bnc#876145
+
+This patch only prepares the next one, there is no functional change.
+Now, __dev_notify_flags() can also be used to notify flags changes via
+rtnetlink.
+
+Signed-off-by: Nicolas Dichtel <nicolas.dichtel@6wind.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ include/linux/netdevice.h |  4 +++-
+ net/core/dev.c            | 11 ++++++-----
+ net/core/rtnetlink.c      |  3 +--
+ 3 files changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 339b55a..5a6f118 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -2422,7 +2422,9 @@ extern int		dev_ethtool(struct net *net, struct ifreq *);
+ extern unsigned int	dev_get_flags(const struct net_device *);
+ extern int		__dev_change_flags(struct net_device *, unsigned int flags);
+ extern int		dev_change_flags(struct net_device *, unsigned int);
+-extern void		__dev_notify_flags(struct net_device *, unsigned int old_flags);
++void			__dev_notify_flags(struct net_device *,
++					   unsigned int old_flags,
++					   unsigned int gchanges);
+ extern int		dev_change_name(struct net_device *, const char *);
+ extern int		dev_set_alias(struct net_device *, const char *, size_t);
+ extern int		dev_change_net_namespace(struct net_device *,
+diff --git a/net/core/dev.c b/net/core/dev.c
+index d804edf..1ee2ca5 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -5157,10 +5157,14 @@ int __dev_change_flags(struct net_device *dev, unsigned int flags)
+ 	return ret;
+ }
+ 
+-void __dev_notify_flags(struct net_device *dev, unsigned int old_flags)
++void __dev_notify_flags(struct net_device *dev, unsigned int old_flags,
++			unsigned int gchanges)
+ {
+ 	unsigned int changes = dev->flags ^ old_flags;
+ 
++	if (gchanges)
++		rtmsg_ifinfo(RTM_NEWLINK, dev, gchanges);
++
+ 	if (changes & IFF_UP) {
+ 		if (dev->flags & IFF_UP)
+ 			call_netdevice_notifiers(NETDEV_UP, dev);
+@@ -5196,10 +5200,7 @@ int dev_change_flags(struct net_device *dev, unsigned int flags)
+ 		return ret;
+ 
+ 	changes = old_flags ^ dev->flags;
+-	if (changes)
+-		rtmsg_ifinfo(RTM_NEWLINK, dev, changes);
+-
+-	__dev_notify_flags(dev, old_flags);
++	__dev_notify_flags(dev, old_flags, changes);
+ 	return ret;
+ }
+ EXPORT_SYMBOL(dev_change_flags);
+diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
+index 37b492e..5874a47 100644
+--- a/net/core/rtnetlink.c
++++ b/net/core/rtnetlink.c
+@@ -1647,9 +1647,8 @@ int rtnl_configure_link(struct net_device *dev, const struct ifinfomsg *ifm)
+ 	}
+ 
+ 	dev->rtnl_link_state = RTNL_LINK_INITIALIZED;
+-	rtmsg_ifinfo(RTM_NEWLINK, dev, ~0U);
+ 
+-	__dev_notify_flags(dev, old_flags);
++	__dev_notify_flags(dev, old_flags, ~0U);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(rtnl_configure_link);
+-- 
+1.8.1.4
+

@@ -1,0 +1,273 @@
+From: "David S. Miller" <davem@davemloft.net>
+Date: Mon, 28 Oct 2013 00:11:22 -0400
+Subject: [PATCH 057/181] Revert "Merge branch 'bonding_monitor_locking'"
+Patch-mainline: v3.13-rc1
+Git-commit: 1f2cd845d3827412e82bf26dde0abca332ede402
+References: fate#316924 bnc#875631 bnc#876145
+
+This reverts commit 4d961a101e032b4bf223b279b4b35bc77576f5a8, reversing
+changes made to a00f6fcc7d0c62a91768d9c4ccba4c7d64fbbce3.
+
+Revert bond locking changes, they cause regressions and Veaceslav Falico
+doesn't like how the commit messages were done at all.
+
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_3ad.c  |   9 ++--
+ drivers/net/bonding/bond_alb.c  |  20 ++++++--
+ drivers/net/bonding/bond_main.c | 100 +++++++++++++++++++++++++++-------------
+ 3 files changed, 89 insertions(+), 40 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 09a783f..617cc9f 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2066,10 +2066,8 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
+ 	struct slave *slave;
+ 	struct port *port;
+ 
+-	if (!rtnl_trylock()) {
+-		queue_delayed_work(bond->wq, &bond->ad_work, ad_delta_in_ticks);
+-		return;
+-	}
++	read_lock(&bond->lock);
++
+ 	//check if there are any slaves
+ 	if (!bond_has_slaves(bond))
+ 		goto re_arm;
+@@ -2122,8 +2120,9 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
+ 	}
+ 
+ re_arm:
+-	rtnl_unlock();
+ 	queue_delayed_work(bond->wq, &bond->ad_work, ad_delta_in_ticks);
++
++	read_unlock(&bond->lock);
+ }
+ 
+ /**
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index 94fda0c..b215df1 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -1495,13 +1495,11 @@ void bond_alb_monitor(struct work_struct *work)
+ 	struct list_head *iter;
+ 	struct slave *slave;
+ 
+-	if (!rtnl_trylock())
+-		goto re_arm;
++	read_lock(&bond->lock);
+ 
+ 	if (!bond_has_slaves(bond)) {
+ 		bond_info->tx_rebalance_counter = 0;
+ 		bond_info->lp_counter = 0;
+-		rtnl_unlock();
+ 		goto re_arm;
+ 	}
+ 
+@@ -1550,6 +1548,16 @@ void bond_alb_monitor(struct work_struct *work)
+ 		if (bond_info->primary_is_promisc &&
+ 		    (++bond_info->rlb_promisc_timeout_counter >= RLB_PROMISC_TIMEOUT)) {
+ 
++			/*
++			 * dev_set_promiscuity requires rtnl and
++			 * nothing else.  Avoid race with bond_close.
++			 */
++			read_unlock(&bond->lock);
++			if (!rtnl_trylock()) {
++				read_lock(&bond->lock);
++				goto re_arm;
++			}
++
+ 			bond_info->rlb_promisc_timeout_counter = 0;
+ 
+ 			/* If the primary was set to promiscuous mode
+@@ -1558,6 +1566,9 @@ void bond_alb_monitor(struct work_struct *work)
+ 			 */
+ 			dev_set_promiscuity(bond->curr_active_slave->dev, -1);
+ 			bond_info->primary_is_promisc = 0;
++
++			rtnl_unlock();
++			read_lock(&bond->lock);
+ 		}
+ 
+ 		if (bond_info->rlb_rebalance) {
+@@ -1580,9 +1591,10 @@ void bond_alb_monitor(struct work_struct *work)
+ 		}
+ 	}
+ 
+-	rtnl_unlock();
+ re_arm:
+ 	queue_delayed_work(bond->wq, &bond->alb_work, alb_delta_in_ticks);
++
++	read_unlock(&bond->lock);
+ }
+ 
+ /* assumption: called before the slave is attached to the bond
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 9c4b649..a311071 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -2118,29 +2118,49 @@ void bond_mii_monitor(struct work_struct *work)
+ 	struct bonding *bond = container_of(work, struct bonding,
+ 					    mii_work.work);
+ 	bool should_notify_peers = false;
++	unsigned long delay;
+ 
+-	if (!rtnl_trylock())
+-		goto re_arm;
++	read_lock(&bond->lock);
+ 
+-	if (!bond_has_slaves(bond)) {
+-		rtnl_unlock();
++	delay = msecs_to_jiffies(bond->params.miimon);
++
++	if (!bond_has_slaves(bond))
+ 		goto re_arm;
+-	}
+ 
+ 	should_notify_peers = bond_should_notify_peers(bond);
+ 
+-	if (bond_miimon_inspect(bond))
+-		bond_miimon_commit(bond);
++	if (bond_miimon_inspect(bond)) {
++		read_unlock(&bond->lock);
+ 
+-	if (should_notify_peers)
+-		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
++		/* Race avoidance with bond_close cancel of workqueue */
++		if (!rtnl_trylock()) {
++			read_lock(&bond->lock);
++			delay = 1;
++			should_notify_peers = false;
++			goto re_arm;
++		}
+ 
+-	rtnl_unlock();
++		read_lock(&bond->lock);
++
++		bond_miimon_commit(bond);
++
++		read_unlock(&bond->lock);
++		rtnl_unlock();	/* might sleep, hold no other locks */
++		read_lock(&bond->lock);
++	}
+ 
+ re_arm:
+ 	if (bond->params.miimon)
+-		queue_delayed_work(bond->wq, &bond->mii_work,
+-				msecs_to_jiffies(bond->params.miimon));
++		queue_delayed_work(bond->wq, &bond->mii_work, delay);
++
++	read_unlock(&bond->lock);
++
++	if (should_notify_peers) {
++		if (!rtnl_trylock())
++			return;
++		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
++		rtnl_unlock();
++	}
+ }
+ 
+ static bool bond_has_this_ip(struct bonding *bond, __be32 ip)
+@@ -2396,13 +2416,10 @@ void bond_loadbalance_arp_mon(struct work_struct *work)
+ 	struct list_head *iter;
+ 	int do_failover = 0;
+ 
+-	if (!rtnl_trylock())
+-		goto re_arm;
++	read_lock(&bond->lock);
+ 
+-	if (!bond_has_slaves(bond)) {
+-		rtnl_unlock();
++	if (!bond_has_slaves(bond))
+ 		goto re_arm;
+-	}
+ 
+ 	oldcurrent = bond->curr_active_slave;
+ 	/* see if any of the previous devices are up now (i.e. they have
+@@ -2484,12 +2501,13 @@ void bond_loadbalance_arp_mon(struct work_struct *work)
+ 		write_unlock_bh(&bond->curr_slave_lock);
+ 		unblock_netpoll_tx();
+ 	}
+-	rtnl_unlock();
+ 
+ re_arm:
+ 	if (bond->params.arp_interval)
+ 		queue_delayed_work(bond->wq, &bond->arp_work,
+ 				   msecs_to_jiffies(bond->params.arp_interval));
++
++	read_unlock(&bond->lock);
+ }
+ 
+ /*
+@@ -2726,31 +2744,51 @@ void bond_activebackup_arp_mon(struct work_struct *work)
+ 	struct bonding *bond = container_of(work, struct bonding,
+ 					    arp_work.work);
+ 	bool should_notify_peers = false;
++	int delta_in_ticks;
+ 
+-	if (!rtnl_trylock())
+-		goto re_arm;
++	read_lock(&bond->lock);
+ 
+-	if (!bond_has_slaves(bond)) {
+-		rtnl_unlock();
++	delta_in_ticks = msecs_to_jiffies(bond->params.arp_interval);
++
++	if (!bond_has_slaves(bond))
+ 		goto re_arm;
+-	}
+ 
+ 	should_notify_peers = bond_should_notify_peers(bond);
+ 
+-	if (bond_ab_arp_inspect(bond))
+-		bond_ab_arp_commit(bond);
++	if (bond_ab_arp_inspect(bond)) {
++		read_unlock(&bond->lock);
+ 
+-	bond_ab_arp_probe(bond);
++		/* Race avoidance with bond_close flush of workqueue */
++		if (!rtnl_trylock()) {
++			read_lock(&bond->lock);
++			delta_in_ticks = 1;
++			should_notify_peers = false;
++			goto re_arm;
++		}
+ 
+-	if (should_notify_peers)
+-		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
++		read_lock(&bond->lock);
+ 
+-	rtnl_unlock();
++		bond_ab_arp_commit(bond);
++
++		read_unlock(&bond->lock);
++		rtnl_unlock();
++		read_lock(&bond->lock);
++	}
++
++	bond_ab_arp_probe(bond);
+ 
+ re_arm:
+ 	if (bond->params.arp_interval)
+-		queue_delayed_work(bond->wq, &bond->arp_work,
+-				msecs_to_jiffies(bond->params.arp_interval));
++		queue_delayed_work(bond->wq, &bond->arp_work, delta_in_ticks);
++
++	read_unlock(&bond->lock);
++
++	if (should_notify_peers) {
++		if (!rtnl_trylock())
++			return;
++		call_netdevice_notifiers(NETDEV_NOTIFY_PEERS, bond->dev);
++		rtnl_unlock();
++	}
+ }
+ 
+ /*-------------------------- netdev event handling --------------------------*/
+-- 
+1.8.1.4
+

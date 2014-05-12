@@ -1,0 +1,84 @@
+From: Nikolay Aleksandrov <nikolay@redhat.com>
+Date: Thu, 23 Jan 2014 23:43:43 +0100
+Subject: [PATCH 166/181] bonding: fix u64 division
+Patch-mainline: v3.14-rc1
+Git-commit: 0681a28264dcf948e0236adb7bf505a638c4dec1
+References: fate#316924 bnc#875631 bnc#876145
+
+After the option conversion downdelay and updelay divide a u64
+and on a 32 bit this causes the following errors:
+ERROR: "__udivdi3" [drivers/net/bonding/bonding.ko] undefined!
+ERROR: "__umoddi3" [drivers/net/bonding/bonding.ko] undefined!
+
+Fix it by using a normal int instead because newval->value is capped
+at INT_MAX by the way the option is defined.
+
+Signed-off-by: Nikolay Aleksandrov <nikolay@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_options.c | 24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
+index 4cee04a..11cb943 100644
+--- a/drivers/net/bonding/bond_options.c
++++ b/drivers/net/bonding/bond_options.c
+@@ -727,19 +727,21 @@ int bond_option_miimon_set(struct bonding *bond, struct bond_opt_value *newval)
+ 
+ int bond_option_updelay_set(struct bonding *bond, struct bond_opt_value *newval)
+ {
++	int value = newval->value;
++
+ 	if (!bond->params.miimon) {
+ 		pr_err("%s: Unable to set up delay as MII monitoring is disabled\n",
+ 		       bond->dev->name);
+ 		return -EPERM;
+ 	}
+-	if ((newval->value % bond->params.miimon) != 0) {
+-		pr_warn("%s: Warning: up delay (%llu) is not a multiple of miimon (%d), updelay rounded to %llu ms\n",
+-			bond->dev->name, newval->value,
++	if ((value % bond->params.miimon) != 0) {
++		pr_warn("%s: Warning: up delay (%d) is not a multiple of miimon (%d), updelay rounded to %d ms\n",
++			bond->dev->name, value,
+ 			bond->params.miimon,
+-			(newval->value / bond->params.miimon) *
++			(value / bond->params.miimon) *
+ 			bond->params.miimon);
+ 	}
+-	bond->params.updelay = newval->value / bond->params.miimon;
++	bond->params.updelay = value / bond->params.miimon;
+ 	pr_info("%s: Setting up delay to %d.\n",
+ 		bond->dev->name,
+ 		bond->params.updelay * bond->params.miimon);
+@@ -750,19 +752,21 @@ int bond_option_updelay_set(struct bonding *bond, struct bond_opt_value *newval)
+ int bond_option_downdelay_set(struct bonding *bond,
+ 			      struct bond_opt_value *newval)
+ {
++	int value = newval->value;
++
+ 	if (!bond->params.miimon) {
+ 		pr_err("%s: Unable to set down delay as MII monitoring is disabled\n",
+ 		       bond->dev->name);
+ 		return -EPERM;
+ 	}
+-	if ((newval->value % bond->params.miimon) != 0) {
+-		pr_warn("%s: Warning: down delay (%llu) is not a multiple of miimon (%d), delay rounded to %llu ms\n",
+-			bond->dev->name, newval->value,
++	if ((value % bond->params.miimon) != 0) {
++		pr_warn("%s: Warning: down delay (%d) is not a multiple of miimon (%d), delay rounded to %d ms\n",
++			bond->dev->name, value,
+ 			bond->params.miimon,
+-			(newval->value / bond->params.miimon) *
++			(value / bond->params.miimon) *
+ 			bond->params.miimon);
+ 	}
+-	bond->params.downdelay = newval->value / bond->params.miimon;
++	bond->params.downdelay = value / bond->params.miimon;
+ 	pr_info("%s: Setting down delay to %d.\n",
+ 		bond->dev->name,
+ 		bond->params.downdelay * bond->params.miimon);
+-- 
+1.8.1.4
+

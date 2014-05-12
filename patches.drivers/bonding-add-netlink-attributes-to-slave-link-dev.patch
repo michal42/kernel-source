@@ -1,9 +1,9 @@
 From: "sfeldma@cumulusnetworks.com" <sfeldma@cumulusnetworks.com>
 Date: Thu, 16 Jan 2014 22:57:56 -0800
-Subject: [PATCH 44/52] bonding: add netlink attributes to slave link dev
-Git-commit: 1d3ee88ae0d605629bf369ab0b868dae8ca62a48
+Subject: [PATCH 128/181] bonding: add netlink attributes to slave link dev
 Patch-mainline: v3.14-rc1
-References: fate#316924
+Git-commit: 1d3ee88ae0d605629bf369ab0b868dae8ca62a48
+References: fate#316924 bnc#875631 bnc#876145
 
 If link is IFF_SLAVE, extend link dev netlink attributes to include
 slave attributes with new IFLA_SLAVE nest.  Add netlink notification
@@ -14,15 +14,9 @@ Adds new ndo_get_slave op to net_device_ops to fill skb with IFLA_SLAVE
 attributes.  Currently only used by bonding driver, but could be
 used by other aggregating devices with slaves.
 
-SLE12: in bond_set_{active,backup}_slave(), use GFP_ATOMIC as
-unlike in mainline, in SLE12 these can be called while holding
-a spinlock.
-
 Signed-off-by: Scott Feldman <sfeldma@cumulusnetworks.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: drivers/net/bonding/bonding.h
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/bond_main.c    |  1 +
@@ -34,10 +28,10 @@ Conflicts: drivers/net/bonding/bonding.h
  6 files changed, 118 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
-index c6bef91..2d92bd9 100644
+index 6b53c1c..0e0f7e6 100644
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -3989,6 +3989,7 @@ static const struct net_device_ops bond_netdev_ops = {
+@@ -3883,6 +3883,7 @@ static const struct net_device_ops bond_netdev_ops = {
  #endif
  	.ndo_add_slave		= bond_enslave,
  	.ndo_del_slave		= bond_release,
@@ -46,7 +40,7 @@ index c6bef91..2d92bd9 100644
  };
  
 diff --git a/drivers/net/bonding/bond_netlink.c b/drivers/net/bonding/bond_netlink.c
-index c205d83..dbeb3df 100644
+index 555c783..21c6488 100644
 --- a/drivers/net/bonding/bond_netlink.c
 +++ b/drivers/net/bonding/bond_netlink.c
 @@ -22,6 +22,42 @@
@@ -93,17 +87,17 @@ index c205d83..dbeb3df 100644
  	[IFLA_BOND_MODE]		= { .type = NLA_U8 },
  	[IFLA_BOND_ACTIVE_SLAVE]	= { .type = NLA_U32 },
 diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
-index 19c33c7..a6853eb 100644
+index 309757d..8a935f8 100644
 --- a/drivers/net/bonding/bonding.h
 +++ b/drivers/net/bonding/bonding.h
-@@ -318,12 +318,18 @@ static inline bool bond_is_lb(const struct bonding *bond)
+@@ -285,12 +285,18 @@ static inline bool bond_is_lb(const struct bonding *bond)
  
  static inline void bond_set_active_slave(struct slave *slave)
  {
 -	slave->backup = 0;
 +	if (slave->backup) {
 +		slave->backup = 0;
-+		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_ATOMIC);
++		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_KERNEL);
 +	}
  }
  
@@ -112,21 +106,21 @@ index 19c33c7..a6853eb 100644
 -	slave->backup = 1;
 +	if (!slave->backup) {
 +		slave->backup = 1;
-+		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_ATOMIC);
++		rtmsg_ifinfo(RTM_NEWLINK, slave->dev, 0, GFP_KERNEL);
 +	}
  }
  
  static inline int bond_slave_state(struct slave *slave)
-@@ -467,6 +473,7 @@ void bond_mii_monitor(struct work_struct *);
- void bond_loadbalance_arp_mon(struct work_struct *);
- void bond_activebackup_arp_mon(struct work_struct *);
- void bond_set_mode_ops(struct bonding *bond, int mode);
+@@ -426,6 +432,7 @@ int bond_sysfs_slave_add(struct slave *slave);
+ void bond_sysfs_slave_del(struct slave *slave);
+ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev);
+ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev);
 +int bond_get_slave(struct net_device *slave_dev, struct sk_buff *skb);
+ int bond_xmit_hash(struct bonding *bond, struct sk_buff *skb, int count);
  int bond_parse_parm(const char *mode_arg, const struct bond_parm_tbl *tbl);
  int bond_parm_tbl_lookup(int mode, const struct bond_parm_tbl *tbl);
- void bond_select_active_slave(struct bonding *bond);
 diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
-index b304c0e..98b1420 100644
+index 02599ec..5fc92d9 100644
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
 @@ -907,6 +907,9 @@ struct netdev_phys_port_id {
@@ -180,7 +174,7 @@ index 9dfef06..9a6c2fa 100644
  
  enum {
 diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
-index 7f7df28..3afaf70 100644
+index cc706c9..4dbff9e 100644
 --- a/net/core/rtnetlink.c
 +++ b/net/core/rtnetlink.c
 @@ -739,6 +739,28 @@ static size_t rtnl_port_size(const struct net_device *dev)

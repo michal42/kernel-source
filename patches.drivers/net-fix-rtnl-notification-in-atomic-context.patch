@@ -1,9 +1,9 @@
 From: Alexei Starovoitov <ast@plumgrid.com>
 Date: Wed, 23 Oct 2013 16:02:42 -0700
-Subject: [PATCH 14/52] net: fix rtnl notification in atomic context
-Git-commit: 7f29405403d7c17f539c099987972b862e7e5255
+Subject: [PATCH 051/181] net: fix rtnl notification in atomic context
 Patch-mainline: v3.13-rc1
-References: fate#316924
+Git-commit: 7f29405403d7c17f539c099987972b862e7e5255
+References: fate#316924 bnc#875631 bnc#876145
 
 commit 991fb3f74c "dev: always advertise rx_flags changes via netlink"
 introduced rtnl notification from __dev_set_promiscuity(),
@@ -52,29 +52,23 @@ ip tuntap del dev tap1 mode tap
 [  272.208230]  [<ffffffff81547ca0>] __tun_detach+0x140/0x340
 [  272.220686]  [<ffffffff81547ed6>] tun_chr_close+0x36/0x60
 
-SLE12: we don't actually have 991fb3f74c in SLE12 but in bonding driver,
-rtmsg_ifinfo() will be called in atomic context so that we will need the
-third parameter to it.
-
 Signed-off-by: Alexei Starovoitov <ast@plumgrid.com>
 Acked-by: Nicolas Dichtel <nicolas.dichtel@6wind.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
-Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
-
-Conflicts: net/core/dev.c
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
  drivers/net/bonding/bond_main.c |  4 ++--
  include/linux/rtnetlink.h       |  2 +-
  net/core/dev.c                  | 16 ++++++++--------
- net/core/rtnetlink.c            | 11 ++++++-----
- 4 files changed, 17 insertions(+), 16 deletions(-)
+ net/core/rtnetlink.c            |  9 +++++----
+ 4 files changed, 16 insertions(+), 15 deletions(-)
 
 diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
-index 2defbd1..4c591a4 100644
+index 7ebde7b..a311071 100644
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -1242,7 +1242,7 @@ static int bond_master_upper_dev_link(struct net_device *bond_dev,
+@@ -1213,7 +1213,7 @@ static int bond_master_upper_dev_link(struct net_device *bond_dev,
  	if (err)
  		return err;
  	slave_dev->flags |= IFF_SLAVE;
@@ -83,7 +77,7 @@ index 2defbd1..4c591a4 100644
  	return 0;
  }
  
-@@ -1251,7 +1251,7 @@ static void bond_upper_dev_unlink(struct net_device *bond_dev,
+@@ -1222,7 +1222,7 @@ static void bond_upper_dev_unlink(struct net_device *bond_dev,
  {
  	netdev_upper_dev_unlink(slave_dev, bond_dev);
  	slave_dev->flags &= ~IFF_SLAVE;
@@ -106,7 +100,7 @@ index f28544b..939428a 100644
  /* RTNL is used as a global lock for all changes to network configuration  */
  extern void rtnl_lock(void);
 diff --git a/net/core/dev.c b/net/core/dev.c
-index fc5a4e7..7e8499b 100644
+index 0e20f13..82626c6 100644
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
 @@ -1204,7 +1204,7 @@ void netdev_state_change(struct net_device *dev)
@@ -130,22 +124,22 @@ index fc5a4e7..7e8499b 100644
 @@ -1372,7 +1372,7 @@ static int dev_close_many(struct list_head *head)
  	__dev_close_many(head);
  
- 	list_for_each_entry(dev, head, unreg_list) {
+ 	list_for_each_entry_safe(dev, tmp, head, close_list) {
 -		rtmsg_ifinfo(RTM_NEWLINK, dev, IFF_UP|IFF_RUNNING);
 +		rtmsg_ifinfo(RTM_NEWLINK, dev, IFF_UP|IFF_RUNNING, GFP_KERNEL);
  		call_netdevice_notifiers(NETDEV_DOWN, dev);
+ 		list_del_init(&dev->close_list);
  	}
+@@ -5177,7 +5177,7 @@ void __dev_notify_flags(struct net_device *dev, unsigned int old_flags,
+ 	unsigned int changes = dev->flags ^ old_flags;
  
-@@ -5146,7 +5146,7 @@ int dev_change_flags(struct net_device *dev, unsigned int flags)
+ 	if (gchanges)
+-		rtmsg_ifinfo(RTM_NEWLINK, dev, gchanges);
++		rtmsg_ifinfo(RTM_NEWLINK, dev, gchanges, GFP_ATOMIC);
  
- 	changes = old_flags ^ dev->flags;
- 	if (changes)
--		rtmsg_ifinfo(RTM_NEWLINK, dev, changes);
-+		rtmsg_ifinfo(RTM_NEWLINK, dev, changes, GFP_KERNEL);
- 
- 	__dev_notify_flags(dev, old_flags);
- 	return ret;
-@@ -5340,7 +5340,7 @@ static void rollback_registered_many(struct list_head *head)
+ 	if (changes & IFF_UP) {
+ 		if (dev->flags & IFF_UP)
+@@ -5409,7 +5409,7 @@ static void rollback_registered_many(struct list_head *head)
  
  		if (!dev->rtnl_link_ops ||
  		    dev->rtnl_link_state == RTNL_LINK_INITIALIZED)
@@ -154,7 +148,7 @@ index fc5a4e7..7e8499b 100644
  
  		/*
  		 *	Flush the unicast and multicast chains
-@@ -5734,7 +5734,7 @@ int register_netdevice(struct net_device *dev)
+@@ -5803,7 +5803,7 @@ int register_netdevice(struct net_device *dev)
  	 */
  	if (!dev->rtnl_link_ops ||
  	    dev->rtnl_link_state == RTNL_LINK_INITIALIZED)
@@ -163,7 +157,7 @@ index fc5a4e7..7e8499b 100644
  
  out:
  	return ret;
-@@ -6345,7 +6345,7 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
+@@ -6415,7 +6415,7 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
  	call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
  	rcu_barrier();
  	call_netdevice_notifiers(NETDEV_UNREGISTER_FINAL, dev);
@@ -172,7 +166,7 @@ index fc5a4e7..7e8499b 100644
  
  	/*
  	 *	Flush the unicast and multicast chains
-@@ -6384,7 +6384,7 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
+@@ -6454,7 +6454,7 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
  	 *	Prevent userspace races by waiting until the network
  	 *	device is fully setup before sending notifications.
  	 */
@@ -182,19 +176,10 @@ index fc5a4e7..7e8499b 100644
  	synchronize_net();
  	err = 0;
 diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
-index 2a0e21d..7f7df28 100644
+index 5874a47..cc706c9 100644
 --- a/net/core/rtnetlink.c
 +++ b/net/core/rtnetlink.c
-@@ -1647,7 +1647,7 @@ int rtnl_configure_link(struct net_device *dev, const struct ifinfomsg *ifm)
- 	}
- 
- 	dev->rtnl_link_state = RTNL_LINK_INITIALIZED;
--	rtmsg_ifinfo(RTM_NEWLINK, dev, ~0U);
-+	rtmsg_ifinfo(RTM_NEWLINK, dev, ~0U, GFP_KERNEL);
- 
- 	__dev_notify_flags(dev, old_flags);
- 	return 0;
-@@ -1985,14 +1985,15 @@ static int rtnl_dump_all(struct sk_buff *skb, struct netlink_callback *cb)
+@@ -1984,14 +1984,15 @@ static int rtnl_dump_all(struct sk_buff *skb, struct netlink_callback *cb)
  	return skb->len;
  }
  
@@ -212,7 +197,7 @@ index 2a0e21d..7f7df28 100644
  	if (skb == NULL)
  		goto errout;
  
-@@ -2003,7 +2004,7 @@ void rtmsg_ifinfo(int type, struct net_device *dev, unsigned int change)
+@@ -2002,7 +2003,7 @@ void rtmsg_ifinfo(int type, struct net_device *dev, unsigned int change)
  		kfree_skb(skb);
  		goto errout;
  	}
@@ -221,7 +206,7 @@ index 2a0e21d..7f7df28 100644
  	return;
  errout:
  	if (err < 0)
-@@ -2717,7 +2718,7 @@ static int rtnetlink_event(struct notifier_block *this, unsigned long event, voi
+@@ -2718,7 +2719,7 @@ static int rtnetlink_event(struct notifier_block *this, unsigned long event, voi
  	case NETDEV_JOIN:
  		break;
  	default:
