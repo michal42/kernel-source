@@ -11,7 +11,7 @@ Acked-by: jbeulich@suse.com
 
 --- sle12.orig/arch/x86/Kconfig	2014-01-23 11:22:48.000000000 +0100
 +++ sle12/arch/x86/Kconfig	2014-03-12 12:06:18.000000000 +0100
-@@ -1122,7 +1122,7 @@ config MICROCODE_AMD_EARLY
+@@ -1124,7 +1124,7 @@ config MICROCODE_AMD_EARLY
  
  config MICROCODE_EARLY
  	bool "Early load microcode"
@@ -46,7 +46,7 @@ Acked-by: jbeulich@suse.com
  
  	ALIGN
  GLOBAL(stub32_clone)
---- sle12.orig/arch/x86/include/asm/efi.h	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/arch/x86/include/asm/efi.h	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/arch/x86/include/asm/efi.h	2014-01-09 11:35:29.000000000 +0100
 @@ -153,7 +153,11 @@ extern void parse_efi_setup(u64 phys_add
  
@@ -77,7 +77,7 @@ Acked-by: jbeulich@suse.com
  
  static inline unsigned long __phys_addr_nodebug(unsigned long x)
  {
---- sle12.orig/arch/x86/include/asm/processor.h	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/arch/x86/include/asm/processor.h	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/arch/x86/include/asm/processor.h	2013-09-26 13:24:19.000000000 +0200
 @@ -961,7 +961,7 @@ extern unsigned long arch_align_stack(un
  extern void free_init_pages(char *what, unsigned long begin, unsigned long end);
@@ -88,6 +88,17 @@ Acked-by: jbeulich@suse.com
  bool xen_set_default_idle(void);
  #else
  #define xen_set_default_idle 0
+--- sle12.orig/arch/x86/include/mach-xen/asm/io.h	2011-07-01 15:19:34.000000000 +0200
++++ sle12/arch/x86/include/mach-xen/asm/io.h	2014-05-02 13:47:34.000000000 +0200
+@@ -332,8 +332,6 @@ extern void __iomem *early_ioremap(resou
+ 				   unsigned long size);
+ extern void __iomem *early_memremap(resource_size_t phys_addr,
+ 				    unsigned long size);
+-extern void __iomem *early_memremap_ro(resource_size_t phys_addr,
+-				       unsigned long size);
+ extern void early_iounmap(void __iomem *addr, unsigned long size);
+ extern void fixup_early_ioremap(void);
+ extern bool is_early_ioremap_ptep(pte_t *ptep);
 --- sle12.orig/arch/x86/include/mach-xen/asm/pci.h	2013-01-09 15:32:33.000000000 +0100
 +++ sle12/arch/x86/include/mach-xen/asm/pci.h	2014-02-13 12:47:14.000000000 +0100
 @@ -14,6 +14,9 @@
@@ -1525,7 +1536,7 @@ Acked-by: jbeulich@suse.com
 -
  	start_kernel();
  }
---- sle12.orig/arch/x86/kernel/head_64.S	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/arch/x86/kernel/head_64.S	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/arch/x86/kernel/head_64.S	2013-06-04 13:59:45.000000000 +0200
 @@ -469,7 +469,7 @@ NEXT_PAGE(early_dynamic_pgts)
  
@@ -1575,7 +1586,7 @@ Acked-by: jbeulich@suse.com
  {
  	struct thread_struct *t = &current->thread;
  	unsigned int old = t->iopl >> 12;
---- sle12.orig/arch/x86/kernel/process.c	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/arch/x86/kernel/process.c	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/arch/x86/kernel/process.c	2013-07-02 09:49:24.000000000 +0200
 @@ -317,7 +317,7 @@ void default_idle(void)
  EXPORT_SYMBOL(default_idle);
@@ -4183,7 +4194,22 @@ Acked-by: jbeulich@suse.com
  void __meminit vmemmap_populate_print_last(void)
  {
  	if (p_start) {
---- sle12.orig/arch/x86/mm/mm_internal.h	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/arch/x86/mm/ioremap-xen.c	2012-12-06 16:18:40.000000000 +0100
++++ sle12/arch/x86/mm/ioremap-xen.c	2014-05-02 13:47:44.000000000 +0200
+@@ -757,12 +757,6 @@ early_memremap(resource_size_t phys_addr
+ 	return __early_ioremap(phys_to_machine(phys_addr), size, PAGE_KERNEL);
+ }
+ 
+-void __init __iomem *
+-early_memremap_ro(resource_size_t phys_addr, unsigned long size)
+-{
+-	return __early_ioremap(phys_to_machine(phys_addr), size, PAGE_KERNEL_RO);
+-}
+-
+ void __init early_iounmap(void __iomem *addr, unsigned long size)
+ {
+ 	unsigned long virt_addr;
+--- sle12.orig/arch/x86/mm/mm_internal.h	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/arch/x86/mm/mm_internal.h	2014-02-28 15:02:10.000000000 +0100
 @@ -12,8 +12,15 @@ void early_ioremap_page_table_range_init
  unsigned long kernel_physical_mapping_init(unsigned long start,
@@ -4656,7 +4682,7 @@ Acked-by: jbeulich@suse.com
  	{ 0x36, ANY, 100000 },	/* Atom Cedar Trail/Cedarview (N2xxx, D2xxx) */
  };
  
---- sle12.orig/drivers/misc/vmw_vmci/Kconfig	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/drivers/misc/vmw_vmci/Kconfig	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/drivers/misc/vmw_vmci/Kconfig	2013-06-04 13:59:32.000000000 +0200
 @@ -4,7 +4,7 @@
  
@@ -4937,7 +4963,7 @@ Acked-by: jbeulich@suse.com
  }
  
  /**
---- sle12.orig/drivers/thermal/Kconfig	2014-04-24 11:36:30.000000000 +0200
+--- sle12.orig/drivers/thermal/Kconfig	2014-05-09 14:09:11.000000000 +0200
 +++ sle12/drivers/thermal/Kconfig	2013-09-26 13:24:10.000000000 +0200
 @@ -174,7 +174,7 @@ config DB8500_CPUFREQ_COOLING
  config INTEL_POWERCLAMP
