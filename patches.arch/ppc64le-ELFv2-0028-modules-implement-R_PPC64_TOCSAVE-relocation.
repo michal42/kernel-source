@@ -1,0 +1,58 @@
+From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Subject: [23/33] powerpc: modules implement R_PPC64_TOCSAVE relocation.
+Git-commit: d247da0a8ebcc4ebb4c766487de6af5df560adac
+Patch-mainline: git.kernel.org/cgit/linux/kernel/git/benh/powerpc.git
+References: bnc#863764 fate#315275, LTC#103998
+X-Patchwork-Id: 333420
+
+Summary: Novell863764 - SLES 12 - Enable POWER LE kernel build with ELFv2
+Description: Enable POWER LE kernel build with ELFv2
+
+Upstream-Description:
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+
+Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+ arch/powerpc/include/uapi/asm/elf.h | 5 ++++-
+ arch/powerpc/kernel/module_64.c     | 8 ++++++++
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/include/uapi/asm/elf.h b/arch/powerpc/include/uapi/asm/elf.h
+index 7e39c91..0341109 100644
+--- a/arch/powerpc/include/uapi/asm/elf.h
++++ b/arch/powerpc/include/uapi/asm/elf.h
+@@ -291,9 +291,12 @@ do {									\
+ #define R_PPC64_DTPREL16_HIGHERA 104 /* half16	(sym+add)@dtprel@highera */
+ #define R_PPC64_DTPREL16_HIGHEST 105 /* half16	(sym+add)@dtprel@highest */
+ #define R_PPC64_DTPREL16_HIGHESTA 106 /* half16	(sym+add)@dtprel@highesta */
++#define R_PPC64_TLSGD		107
++#define R_PPC64_TLSLD		108
++#define R_PPC64_TOCSAVE		109
+ 
+ /* Keep this the last entry.  */
+-#define R_PPC64_NUM		107
++#define R_PPC64_NUM		110
+ 
+ /* There's actually a third entry here, but it's unused */
+ struct ppc64_opd_entry
+diff --git a/arch/powerpc/kernel/module_64.c b/arch/powerpc/kernel/module_64.c
+index 7c16b2e..a8694d4 100644
+--- a/arch/powerpc/kernel/module_64.c
++++ b/arch/powerpc/kernel/module_64.c
+@@ -454,6 +454,14 @@ int apply_relocate_add(Elf64_Shdr *sechdrs,
+ 			*location = value - (unsigned long)location;
+ 			break;
+ 
++		case R_PPC64_TOCSAVE:
++			/*
++			 * Marker reloc indicates we don't have to save r2.
++			 * That would only save us one instruction, so ignore
++			 * it.
++			 */
++			break;
++
+ 		default:
+ 			printk("%s: Unknown ADD relocation: %lu\n",
+ 			       me->name,
