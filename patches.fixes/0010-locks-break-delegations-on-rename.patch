@@ -1,0 +1,197 @@
+From: "J. Bruce Fields" <bfields@redhat.com>
+Date: Tue, 20 Sep 2011 16:59:58 -0400
+Subject: [PATCH 10/12] locks: break delegations on rename
+Git-commit: 8e6d782cab50884ba94324632700e6233a252f6a
+Patch-mainline: v3.13
+References: bnc#876463
+
+Cc: David Howells <dhowells@redhat.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: J. Bruce Fields <bfields@redhat.com>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ drivers/staging/lustre/lustre/include/linux/lustre_compat25.h |    4 
+ drivers/staging/lustre/lustre/lvfs/lvfs_linux.c               |    2 
+ fs/cachefiles/namei.c                                         |    2 
+ fs/ecryptfs/inode.c                                           |    3 
+ fs/namei.c                                                    |   47 +++++++++-
+ fs/nfsd/vfs.c                                                 |    2 
+ include/linux/fs.h                                            |    2 
+ 7 files changed, 51 insertions(+), 11 deletions(-)
+
+--- linux-3.12-SLE12.orig/drivers/staging/lustre/lustre/include/linux/lustre_compat25.h
++++ linux-3.12-SLE12/drivers/staging/lustre/lustre/include/linux/lustre_compat25.h
+@@ -105,8 +105,8 @@ static inline void ll_set_fs_pwd(struct
+ #define ll_vfs_unlink(inode,entry,mnt)	  vfs_unlink(inode,entry)
+ #define ll_vfs_mknod(dir,entry,mnt,mode,dev)    vfs_mknod(dir,entry,mode,dev)
+ #define ll_security_inode_unlink(dir,entry,mnt) security_inode_unlink(dir,entry)
+-#define ll_vfs_rename(old,old_dir,mnt,new,new_dir,mnt1) \
+-		vfs_rename(old,old_dir,new,new_dir)
++#define ll_vfs_rename(old,old_dir,mnt,new,new_dir,mnt1,delegated_inode) \
++		vfs_rename(old,old_dir,new,new_dir,delegated_inode)
+ 
+ #define cfs_bio_io_error(a,b)   bio_io_error((a))
+ #define cfs_bio_endio(a,b,c)    bio_endio((a),(c))
+--- linux-3.12-SLE12.orig/drivers/staging/lustre/lustre/lvfs/lvfs_linux.c
++++ linux-3.12-SLE12/drivers/staging/lustre/lustre/lvfs/lvfs_linux.c
+@@ -220,7 +220,7 @@ int lustre_rename(struct dentry *dir, st
+ 		GOTO(put_old, err = PTR_ERR(dchild_new));
+ 
+ 	err = ll_vfs_rename(dir->d_inode, dchild_old, mnt,
+-			    dir->d_inode, dchild_new, mnt);
++			    dir->d_inode, dchild_new, mnt, NULL);
+ 
+ 	dput(dchild_new);
+ put_old:
+--- linux-3.12-SLE12.orig/fs/cachefiles/namei.c
++++ linux-3.12-SLE12/fs/cachefiles/namei.c
+@@ -396,7 +396,7 @@ try_again:
+ 		cachefiles_io_error(cache, "Rename security error %d", ret);
+ 	} else {
+ 		ret = vfs_rename(dir->d_inode, rep,
+-				 cache->graveyard->d_inode, grave);
++				 cache->graveyard->d_inode, grave, NULL);
+ 		if (ret != 0 && ret != -ENOMEM)
+ 			cachefiles_io_error(cache,
+ 					    "Rename failed with error %d", ret);
+--- linux-3.12-SLE12.orig/fs/ecryptfs/inode.c
++++ linux-3.12-SLE12/fs/ecryptfs/inode.c
+@@ -640,7 +640,8 @@ ecryptfs_rename(struct inode *old_dir, s
+ 		goto out_lock;
+ 	}
+ 	rc = vfs_rename(lower_old_dir_dentry->d_inode, lower_old_dentry,
+-			lower_new_dir_dentry->d_inode, lower_new_dentry);
++			lower_new_dir_dentry->d_inode, lower_new_dentry,
++			NULL);
+ 	if (rc)
+ 		goto out_lock;
+ 	if (target_inode)
+--- linux-3.12-SLE12.orig/fs/namei.c
++++ linux-3.12-SLE12/fs/namei.c
+@@ -4052,7 +4052,8 @@ out:
+ }
+ 
+ static int vfs_rename_other(struct inode *old_dir, struct dentry *old_dentry,
+-			    struct inode *new_dir, struct dentry *new_dentry)
++			    struct inode *new_dir, struct dentry *new_dentry,
++			    struct inode **delegated_inode)
+ {
+ 	struct inode *target = new_dentry->d_inode;
+ 	struct inode *source = old_dentry->d_inode;
+@@ -4069,6 +4070,14 @@ static int vfs_rename_other(struct inode
+ 	if (d_mountpoint(old_dentry)||d_mountpoint(new_dentry))
+ 		goto out;
+ 
++	error = try_break_deleg(source, delegated_inode);
++	if (error)
++		goto out;
++	if (target) {
++		error = try_break_deleg(target, delegated_inode);
++		if (error)
++			goto out;
++	}
+ 	error = old_dir->i_op->rename(old_dir, old_dentry, new_dir, new_dentry);
+ 	if (error)
+ 		goto out;
+@@ -4083,8 +4092,30 @@ out:
+ 	return error;
+ }
+ 
++/**
++ * vfs_rename - rename a filesystem object
++ * @old_dir:	parent of source
++ * @old_dentry:	source
++ * @new_dir:	parent of destination
++ * @new_dentry:	destination
++ * @delegated_inode: returns an inode needing a delegation break
++ *
++ * The caller must hold multiple mutexes--see lock_rename()).
++ *
++ * If vfs_rename discovers a delegation in need of breaking at either
++ * the source or destination, it will return -EWOULDBLOCK and return a
++ * reference to the inode in delegated_inode.  The caller should then
++ * break the delegation and retry.  Because breaking a delegation may
++ * take a long time, the caller should drop all locks before doing
++ * so.
++ *
++ * Alternatively, a caller may pass NULL for delegated_inode.  This may
++ * be appropriate for callers that expect the underlying filesystem not
++ * to be NFS exported.
++ */
+ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+-	       struct inode *new_dir, struct dentry *new_dentry)
++	       struct inode *new_dir, struct dentry *new_dentry,
++	       struct inode **delegated_inode)
+ {
+ 	int error;
+ 	int is_dir = S_ISDIR(old_dentry->d_inode->i_mode);
+@@ -4112,7 +4143,7 @@ int vfs_rename(struct inode *old_dir, st
+ 	if (is_dir)
+ 		error = vfs_rename_dir(old_dir,old_dentry,new_dir,new_dentry);
+ 	else
+-		error = vfs_rename_other(old_dir,old_dentry,new_dir,new_dentry);
++		error = vfs_rename_other(old_dir,old_dentry,new_dir,new_dentry,delegated_inode);
+ 	if (!error)
+ 		fsnotify_move(old_dir, new_dir, old_name, is_dir,
+ 			      new_dentry->d_inode, old_dentry);
+@@ -4128,6 +4159,7 @@ SYSCALL_DEFINE4(renameat, int, olddfd, c
+ 	struct dentry *old_dentry, *new_dentry;
+ 	struct dentry *trap;
+ 	struct nameidata oldnd, newnd;
++	struct inode *delegated_inode = NULL;
+ 	struct filename *from;
+ 	struct filename *to;
+ 	unsigned int lookup_flags = 0;
+@@ -4167,6 +4199,7 @@ retry:
+ 	newnd.flags &= ~LOOKUP_PARENT;
+ 	newnd.flags |= LOOKUP_RENAME_TARGET;
+ 
++retry_deleg:
+ 	trap = lock_rename(new_dir, old_dir);
+ 
+ 	old_dentry = lookup_hash(&oldnd);
+@@ -4203,13 +4236,19 @@ retry:
+ 	if (error)
+ 		goto exit5;
+ 	error = vfs_rename(old_dir->d_inode, old_dentry,
+-				   new_dir->d_inode, new_dentry);
++				   new_dir->d_inode, new_dentry,
++				   &delegated_inode);
+ exit5:
+ 	dput(new_dentry);
+ exit4:
+ 	dput(old_dentry);
+ exit3:
+ 	unlock_rename(new_dir, old_dir);
++	if (delegated_inode) {
++		error = break_deleg_wait(&delegated_inode);
++		if (!error)
++			goto retry_deleg;
++	}
+ 	mnt_drop_write(oldnd.path.mnt);
+ exit2:
+ 	if (retry_estale(error, lookup_flags))
+--- linux-3.12-SLE12.orig/fs/nfsd/vfs.c
++++ linux-3.12-SLE12/fs/nfsd/vfs.c
+@@ -1875,7 +1875,7 @@ nfsd_rename(struct svc_rqst *rqstp, stru
+ 		if (host_err)
+ 			goto out_dput_new;
+ 	}
+-	host_err = vfs_rename(fdir, odentry, tdir, ndentry);
++	host_err = vfs_rename(fdir, odentry, tdir, ndentry, NULL);
+ 	if (!host_err) {
+ 		host_err = commit_metadata(tfhp);
+ 		if (!host_err)
+--- linux-3.12-SLE12.orig/include/linux/fs.h
++++ linux-3.12-SLE12/include/linux/fs.h
+@@ -1468,7 +1468,7 @@ extern int vfs_symlink(struct inode *, s
+ extern int vfs_link(struct dentry *, struct inode *, struct dentry *);
+ extern int vfs_rmdir(struct inode *, struct dentry *);
+ extern int vfs_unlink(struct inode *, struct dentry *, struct inode **);
+-extern int vfs_rename(struct inode *, struct dentry *, struct inode *, struct dentry *);
++extern int vfs_rename(struct inode *, struct dentry *, struct inode *, struct dentry *, struct inode **);
+ 
+ /*
+  * VFS dentry helper functions.

@@ -1,0 +1,64 @@
+From: "J. Bruce Fields" <bfields@redhat.com>
+Date: Fri, 24 Jan 2014 18:04:40 -0500
+Subject: [PATCH] nfsd4: fix delegation-unlink/rename race
+Git-commit: 4335723e8e9fdc6e4bb2555696bc7f1abe75f200
+Patch-mainline: v3.14
+References: bnc#876463
+
+If a file is unlinked or renamed between the time when we do the local
+open and the time when we get the delegation, then we will return to the
+client indicating that it holds a delegation even though the file no
+longer exists under the name it was open under.
+
+But a client performing an open-by-name, when it is returned a
+delegation, must be able to assume that the file is still linked at the
+name it was opened under.
+
+So, hold the parent i_mutex for longer to prevent concurrent renames or
+unlinks.
+
+Signed-off-by: J. Bruce Fields <bfields@redhat.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfsd/nfs4proc.c |   10 +++++++---
+ fs/nfsd/vfs.c      |    7 ++++++-
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfsd/nfs4proc.c
++++ linux-3.12-SLE12/fs/nfsd/nfs4proc.c
+@@ -280,11 +280,15 @@ do_open_lookup(struct svc_rqst *rqstp, s
+ 		if (open->op_createmode == NFS4_CREATE_EXCLUSIVE && status == 0)
+ 			open->op_bmval[1] = (FATTR4_WORD1_TIME_ACCESS |
+ 							FATTR4_WORD1_TIME_MODIFY);
+-	} else {
++	} else
++		/*
++		 * Note this may exit with the parent still locked.
++		 * We will hold the lock until nfsd4_open's final
++		 * lookup, to prevent renames or unlinks until we've had
++		 * a chance to an acquire a delegation if appropriate.
++		 */
+ 		status = nfsd_lookup(rqstp, current_fh,
+ 				     open->op_fname.data, open->op_fname.len, resfh);
+-		fh_unlock(current_fh);
+-	}
+ 	if (status)
+ 		goto out;
+ 	status = nfsd_check_obj_isreg(resfh);
+--- linux-3.12-SLE12.orig/fs/nfsd/vfs.c
++++ linux-3.12-SLE12/fs/nfsd/vfs.c
+@@ -207,7 +207,12 @@ nfsd_lookup_dentry(struct svc_rqst *rqst
+ 				goto out_nfserr;
+ 		}
+ 	} else {
+-		fh_lock(fhp);
++		/*
++		 * In the nfsd4_open() case, this may be held across
++		 * subsequent open and delegation acquisition which may
++		 * need to take the child's i_mutex:
++		 */
++		fh_lock_nested(fhp, I_MUTEX_PARENT);
+ 		dentry = lookup_one_len(name, dparent, len);
+ 		host_err = PTR_ERR(dentry);
+ 		if (IS_ERR(dentry))
