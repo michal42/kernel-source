@@ -12,52 +12,65 @@ page allocation. Use jump labels to avoid the overhead.
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/cpuset.h | 31 +++++++++++++++++++++++++++++++
- kernel/cpuset.c        |  8 ++++++--
+ include/linux/cpuset.h | 29 ++++++++++++++++++++++++++---
+ kernel/cpuset.c        | 14 ++++----------
  mm/page_alloc.c        |  3 ++-
- 3 files changed, 39 insertions(+), 3 deletions(-)
+ 3 files changed, 32 insertions(+), 14 deletions(-)
 
 diff --git a/include/linux/cpuset.h b/include/linux/cpuset.h
-index 6f30672..162f271 100644
+index 6f30672..a7ebb89 100644
 --- a/include/linux/cpuset.h
 +++ b/include/linux/cpuset.h
-@@ -17,6 +17,35 @@
+@@ -12,10 +12,31 @@
+ #include <linux/cpumask.h>
+ #include <linux/nodemask.h>
+ #include <linux/mm.h>
++#include <linux/jump_label.h>
  
- extern int number_of_cpusets;	/* How many cpusets are defined in system? */
+ #ifdef CONFIG_CPUSETS
  
-+#ifdef HAVE_JUMP_LABEL
+-extern int number_of_cpusets;	/* How many cpusets are defined in system? */
 +extern struct static_key cpusets_enabled_key;
 +static inline bool cpusets_enabled(void)
 +{
 +	return static_key_false(&cpusets_enabled_key);
 +}
-+#else
-+static inline bool cpusets_enabled(void)
++
++static inline int nr_cpusets(void)
 +{
-+	return number_of_cpusets > 1;
++	/* jump label reference count + the top-level cpuset */
++	return static_key_count(&cpusets_enabled_key) + 1;
 +}
-+#endif
 +
 +static inline void cpuset_inc(void)
 +{
-+	number_of_cpusets++;
-+#ifdef HAVE_JUMP_LABEL
 +	static_key_slow_inc(&cpusets_enabled_key);
-+#endif
 +}
 +
 +static inline void cpuset_dec(void)
 +{
-+	number_of_cpusets--;
-+#ifdef HAVE_JUMP_LABEL
 +	static_key_slow_dec(&cpusets_enabled_key);
-+#endif
 +}
-+
+ 
  extern int cpuset_init(void);
  extern void cpuset_init_smp(void);
- extern void cpuset_update_active_cpus(bool cpu_online);
-@@ -120,6 +149,8 @@ static inline void set_mems_allowed(nodemask_t nodemask)
+@@ -32,13 +53,13 @@ extern int __cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask);
+ 
+ static inline int cpuset_node_allowed_softwall(int node, gfp_t gfp_mask)
+ {
+-	return number_of_cpusets <= 1 ||
++	return nr_cpusets() <= 1 ||
+ 		__cpuset_node_allowed_softwall(node, gfp_mask);
+ }
+ 
+ static inline int cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask)
+ {
+-	return number_of_cpusets <= 1 ||
++	return nr_cpusets() <= 1 ||
+ 		__cpuset_node_allowed_hardwall(node, gfp_mask);
+ }
+ 
+@@ -120,6 +141,8 @@ static inline void set_mems_allowed(nodemask_t nodemask)
  
  #else /* !CONFIG_CPUSETS */
  
@@ -67,21 +80,33 @@ index 6f30672..162f271 100644
  static inline void cpuset_init_smp(void) {}
  
 diff --git a/kernel/cpuset.c b/kernel/cpuset.c
-index e99fa68..6fb4b26 100644
+index e99fa68..d8afe85 100644
 --- a/kernel/cpuset.c
 +++ b/kernel/cpuset.c
-@@ -68,6 +68,10 @@
-  */
- int number_of_cpusets __read_mostly;
+@@ -61,12 +61,7 @@
+ #include <linux/cgroup.h>
+ #include <linux/wait.h>
  
-+#ifdef HAVE_JUMP_LABEL
-+struct static_key cpusets_enabled_key = STATIC_KEY_INIT_FALSE;
-+#endif
-+
+-/*
+- * Tracks how many cpusets are currently defined in system.
+- * When there is only one cpuset (the root cpuset) we can
+- * short circuit some hooks.
+- */
+-int number_of_cpusets __read_mostly;
++struct static_key cpusets_enabled_key __read_mostly = STATIC_KEY_INIT_FALSE;
+ 
  /* See "Frequency meter" comments, below. */
  
- struct fmeter {
-@@ -1980,7 +1984,7 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
+@@ -611,7 +606,7 @@ static int generate_sched_domains(cpumask_var_t **domains,
+ 		goto done;
+ 	}
+ 
+-	csa = kmalloc(number_of_cpusets * sizeof(cp), GFP_KERNEL);
++	csa = kmalloc(nr_cpusets() * sizeof(cp), GFP_KERNEL);
+ 	if (!csa)
+ 		goto done;
+ 	csn = 0;
+@@ -1980,7 +1975,7 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
  	if (is_spread_slab(parent))
  		set_bit(CS_SPREAD_SLAB, &cs->flags);
  
@@ -90,7 +115,7 @@ index e99fa68..6fb4b26 100644
  
  	if (!test_bit(CGRP_CPUSET_CLONE_CHILDREN, &css->cgroup->flags))
  		goto out_unlock;
-@@ -2031,7 +2035,7 @@ static void cpuset_css_offline(struct cgroup_subsys_state *css)
+@@ -2031,7 +2026,7 @@ static void cpuset_css_offline(struct cgroup_subsys_state *css)
  	if (is_sched_load_balance(cs))
  		update_flag(CS_SCHED_LOAD_BALANCE, cs, 0);
  
@@ -99,11 +124,19 @@ index e99fa68..6fb4b26 100644
  	clear_bit(CS_ONLINE, &cs->flags);
  
  	mutex_unlock(&cpuset_mutex);
+@@ -2086,7 +2081,6 @@ int __init cpuset_init(void)
+ 	if (!alloc_cpumask_var(&cpus_attach, GFP_KERNEL))
+ 		BUG();
+ 
+-	number_of_cpusets = 1;
+ 	return 0;
+ }
+ 
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index 3013d28..2f81479 100644
+index dfc677f..173e039 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -1912,7 +1912,8 @@ zonelist_scan:
+@@ -1925,7 +1925,8 @@ zonelist_scan:
  		if (IS_ENABLED(CONFIG_NUMA) && zlc_active &&
  			!zlc_zone_worth_trying(zonelist, z, allowednodes))
  				continue;
