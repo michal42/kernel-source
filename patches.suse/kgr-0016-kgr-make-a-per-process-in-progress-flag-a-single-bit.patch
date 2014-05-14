@@ -20,18 +20,18 @@ Cc: Steven Rostedt <rostedt@goodmis.org>
 Cc: Frederic Weisbecker <fweisbec@gmail.com>
 Cc: Ingo Molnar <mingo@redhat.com>
 ---
- arch/x86/include/asm/kgr.h         |    2 +-
+ arch/x86/include/asm/kgraft.h      |    2 +-
  arch/x86/include/asm/thread_info.h |    7 ++++---
  arch/x86/kernel/asm-offsets.c      |    1 -
  arch/x86/kernel/entry_64.S         |   12 +++++++++---
  fs/proc/base.c                     |    3 ++-
- include/linux/kgr.h                |   14 ++++++++++++++
+ include/linux/kgraft.h             |   14 ++++++++++++++
  include/linux/sched.h              |    2 +-
- kernel/kgr.c                       |    4 ++--
+ kernel/kgraft.c                    |    4 ++--
  8 files changed, 33 insertions(+), 12 deletions(-)
 
---- a/arch/x86/include/asm/kgr.h
-+++ b/arch/x86/include/asm/kgr.h
+--- a/arch/x86/include/asm/kgraft.h
++++ b/arch/x86/include/asm/kgraft.h
 @@ -18,7 +18,7 @@ static void _new_function ##_stub_slow (
  	struct kgr_loc_caches *c = ops->private;			\
  	bool irq = !!in_interrupt();					\
@@ -55,7 +55,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  #define TIF_IO_BITMAP		22	/* uses I/O bitmap */
  #define TIF_FORCED_TF		24	/* true if TF in eflags artificially */
  #define TIF_BLOCKSTEP		25	/* set when we want DEBUGCTLMSR_BTF */
-+#define TIF_KGR_IN_PROGRESS	26	/* kgr patching running */
++#define TIF_KGR_IN_PROGRESS	26	/* kGraft patching running */
  #define TIF_LAZY_MMU_UPDATES	27	/* task is updating the mmu lazily */
  #define TIF_SYSCALL_TRACEPOINT	28	/* syscall tracepoint instrumentation */
  #define TIF_ADDR32		29	/* 32-bit address space on 64 bits */
@@ -117,7 +117,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  	/* Handle reschedules */
  	/* edx:	work, edi: workmask */
  sysret_careful:
-+#if IS_ENABLED(CONFIG_KGR)
++#if IS_ENABLED(CONFIG_KGRAFT)
 +	andl $~_TIF_KGR_IN_PROGRESS,TI_flags+THREAD_INFO(%rsp,RIP-ARGOFFSET)
 +#endif
  	bt $TIF_NEED_RESCHED,%edx
@@ -127,7 +127,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  
  	/* Do syscall tracing */
  tracesys:
-+#if IS_ENABLED(CONFIG_KGR)
++#if IS_ENABLED(CONFIG_KGRAFT)
 +	andl $~_TIF_KGR_IN_PROGRESS,TI_flags+THREAD_INFO(%rsp,RIP-ARGOFFSET)
 +#endif
  #ifdef CONFIG_AUDITSYSCALL
@@ -145,7 +145,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  	/* First do a reschedule test. */
  	/* edx:	work, edi: workmask */
  int_careful:
-+#if IS_ENABLED(CONFIG_KGR)
++#if IS_ENABLED(CONFIG_KGRAFT)
 +	andl $~_TIF_KGR_IN_PROGRESS,TI_flags(%rcx)
 +#endif
  	bt $TIF_NEED_RESCHED,%edx
@@ -157,32 +157,32 @@ Cc: Ingo Molnar <mingo@redhat.com>
  #include <linux/slab.h>
  #include <linux/flex_array.h>
  #include <linux/posix-timers.h>
-+#include <linux/kgr.h>
++#include <linux/kgraft.h>
  #ifdef CONFIG_HARDWALL
  #include <asm/hardwall.h>
  #endif
 @@ -2127,7 +2128,7 @@ static const struct file_operations proc
- #if IS_ENABLED(CONFIG_KGR)
+ #if IS_ENABLED(CONFIG_KGRAFT)
  static int proc_pid_kgr_in_progress(struct task_struct *task, char *buffer)
  {
 -	return sprintf(buffer, "%d\n", task_thread_info(task)->kgr_in_progress);
 +	return sprintf(buffer, "%d\n", kgr_task_in_progress(task));
  }
- #endif /* IS_ENABLED(CONFIG_KGR) */
+ #endif /* IS_ENABLED(CONFIG_KGRAFT) */
  
---- a/include/linux/kgr.h
-+++ b/include/linux/kgr.h
-@@ -6,6 +6,9 @@
+--- a/include/linux/kgraft.h
++++ b/include/linux/kgraft.h
+@@ -7,6 +7,9 @@
  
- #if IS_ENABLED(CONFIG_KGR)
+ #if IS_ENABLED(CONFIG_KGRAFT)
  
 +static void kgr_mark_task_in_progress(struct task_struct *p);
 +static bool kgr_task_in_progress(struct task_struct *p);
 +
- #include <asm/kgr.h>
+ #include <asm/kgraft.h>
  
  #define KGR_TIMEOUT 30
-@@ -59,6 +62,17 @@ struct kgr_loc_caches {
+@@ -61,6 +64,17 @@ struct kgr_loc_caches {
  #define KGR_PATCH_END		NULL
  
  extern int kgr_start_patching(struct kgr_patch *);
@@ -197,13 +197,13 @@ Cc: Ingo Molnar <mingo@redhat.com>
 +	return test_tsk_thread_flag(p, TIF_KGR_IN_PROGRESS);
 +}
 +
- #endif /* IS_ENABLED(CONFIG_KGR) */
+ #endif /* IS_ENABLED(CONFIG_KGRAFT) */
  
  #endif /* LINUX_KGR_H */
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
-@@ -2786,7 +2786,7 @@ static inline void mm_init_owner(struct
- #if IS_ENABLED(CONFIG_KGR)
+@@ -2793,7 +2793,7 @@ static inline void mm_init_owner(struct
+ #if IS_ENABLED(CONFIG_KGRAFT)
  static inline void kgr_task_safe(struct task_struct *p)
  {
 -	task_thread_info(p)->kgr_in_progress = false;
@@ -211,8 +211,8 @@ Cc: Ingo Molnar <mingo@redhat.com>
  }
  #else
  static inline void kgr_task_safe(struct task_struct *p) { }
---- a/kernel/kgr.c
-+++ b/kernel/kgr.c
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
 @@ -44,7 +44,7 @@ static bool kgr_still_patching(void)
  
  	read_lock(&tasklist_lock);

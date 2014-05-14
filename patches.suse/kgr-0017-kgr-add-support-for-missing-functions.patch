@@ -1,0 +1,170 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Tue, 13 May 2014 18:02:52 +0200
+Subject: kgr: add support for missing functions
+Patch-mainline: submitted for review
+References: fate#313296
+
+Sometimes we want to patch a function which is in a module that is not
+currently loaded. In that case, patching would fail completely. So let
+the user decide whether it is fatal when the function to be patched is
+not found. If it is not, it is just skipped.  Other functions in the
+patch (if any) are still patched in that case.
+
+Note that this approach expects newly loaded modules to be fixed
+already. No "deferred" patching happens on the module load.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/kgraft.h          | 10 +++++++---
+ kernel/kgraft.c                 | 26 ++++++++++++++++++--------
+ samples/kgraft/kgraft_patcher.c |  4 ++--
+ 3 files changed, 27 insertions(+), 13 deletions(-)
+
+diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
+index fe3a658740b2..1ec32f3300bc 100644
+--- a/include/linux/kgraft.h
++++ b/include/linux/kgraft.h
+@@ -16,10 +16,13 @@ static bool kgr_task_in_progress(struct task_struct *p);
+ 
+ struct kgr_patch {
+ 	bool __percpu *irq_use_new;
+-	const struct kgr_patch_fun {
++	struct kgr_patch_fun {
+ 		const char *name;
+ 		const char *new_name;
+ 
++		bool abort_if_missing;
++		bool applied;
++
+ 		void *new_function;
+ 
+ 		struct ftrace_ops *ftrace_ops_slow;
+@@ -37,7 +40,7 @@ struct kgr_loc_caches {
+ 	bool __percpu *irq_use_new;
+ };
+ 
+-#define KGR_PATCHED_FUNCTION(_name, _new_function)				\
++#define KGR_PATCHED_FUNCTION(_name, _new_function, abort)			\
+ 	KGR_STUB_ARCH_SLOW(_name, _new_function);				\
+ 	KGR_STUB_ARCH_FAST(_name, _new_function);				\
+ 	extern void _new_function ## _stub_slow (unsigned long, unsigned long,	\
+@@ -52,9 +55,10 @@ struct kgr_loc_caches {
+ 		.func = _new_function ## _stub_fast,				\
+ 		.flags = FTRACE_OPS_FL_SAVE_REGS,				\
+ 	};									\
+-	static const struct kgr_patch_fun __kgr_patch_ ## _name = {		\
++	static struct kgr_patch_fun __kgr_patch_ ## _name = {			\
+ 		.name = #_name,							\
+ 		.new_name = #_new_function,					\
++		.abort_if_missing = abort,					\
+ 		.new_function = _new_function,					\
+ 		.ftrace_ops_slow = &__kgr_patch_ftrace_ops_slow_ ## _name,	\
+ 		.ftrace_ops_fast = &__kgr_patch_ftrace_ops_fast_ ## _name,	\
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index 3f87e5ff7236..d8592c652791 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -27,7 +27,7 @@
+ #include <linux/workqueue.h>
+ 
+ static int kgr_patch_code(const struct kgr_patch *patch,
+-		const struct kgr_patch_fun *patch_fun, bool final);
++		struct kgr_patch_fun *patch_fun, bool final);
+ static void kgr_work_fn(struct work_struct *work);
+ 
+ static struct workqueue_struct *kgr_wq;
+@@ -55,7 +55,7 @@ static bool kgr_still_patching(void)
+ 
+ static void kgr_finalize(void)
+ {
+-	const struct kgr_patch_fun *const *patch_fun;
++	struct kgr_patch_fun *const *patch_fun;
+ 
+ 	for (patch_fun = kgr_patch->patches; *patch_fun; patch_fun++) {
+ 		int ret = kgr_patch_code(kgr_patch, *patch_fun, true);
+@@ -206,7 +206,7 @@ free_caches:
+ }
+ 
+ static int kgr_patch_code(const struct kgr_patch *patch,
+-		const struct kgr_patch_fun *patch_fun, bool final)
++		struct kgr_patch_fun *patch_fun, bool final)
+ {
+ 	struct ftrace_ops *new_ops;
+ 	struct kgr_loc_caches *caches;
+@@ -216,11 +216,16 @@ static int kgr_patch_code(const struct kgr_patch *patch,
+ 	/* Choose between slow and fast stub */
+ 	if (!final) {
+ 		err = kgr_init_ftrace_ops(patch_fun);
+-		if (err)
++		if (err) {
++			if (err == -ENOENT && !patch_fun->abort_if_missing)
++				return 0;
+ 			return err;
++		}
+ 		pr_debug("kgr: patching %s to slow stub\n", patch_fun->name);
+ 		new_ops = patch_fun->ftrace_ops_slow;
+ 	} else {
++		if (!patch_fun->applied)
++			return 0;
+ 		pr_debug("kgr: patching %s to fast stub\n", patch_fun->name);
+ 		new_ops = patch_fun->ftrace_ops_fast;
+ 	}
+@@ -256,7 +261,9 @@ static int kgr_patch_code(const struct kgr_patch *patch,
+ 			/* don't fail: we are only slower */
+ 			return 0;
+ 		}
+-	}
++	} else
++		patch_fun->applied = true;
++
+ 	pr_debug("kgr: redirection for %lx (%s) done\n", fentry_loc,
+ 			patch_fun->name);
+ 
+@@ -271,7 +278,7 @@ static int kgr_patch_code(const struct kgr_patch *patch,
+  */
+ int kgr_start_patching(struct kgr_patch *patch)
+ {
+-	const struct kgr_patch_fun *const *patch_fun;
++	struct kgr_patch_fun *const *patch_fun;
+ 	int ret;
+ 
+ 	if (!kgr_initialized) {
+@@ -301,8 +308,11 @@ int kgr_start_patching(struct kgr_patch *patch)
+ 		 */
+ 		if (ret < 0) {
+ 			for (patch_fun--; patch_fun >= patch->patches;
+-					patch_fun--)
+-				unregister_ftrace_function((*patch_fun)->ftrace_ops_slow);
++					patch_fun--) {
++				if ((*patch_fun)->applied)
++					unregister_ftrace_function(
++						(*patch_fun)->ftrace_ops_slow);
++			}
+ 			goto unlock_free;
+ 		}
+ 	}
+diff --git a/samples/kgraft/kgraft_patcher.c b/samples/kgraft/kgraft_patcher.c
+index 7cb94f728128..5d02a908bc26 100644
+--- a/samples/kgraft/kgraft_patcher.c
++++ b/samples/kgraft/kgraft_patcher.c
+@@ -53,7 +53,7 @@ asmlinkage long kgr_new_sys_iopl(unsigned int level)
+ 
+ 	return 0;
+ }
+-KGR_PATCHED_FUNCTION(SyS_iopl, kgr_new_sys_iopl);
++KGR_PATCHED_FUNCTION(SyS_iopl, kgr_new_sys_iopl, true);
+ 
+ static bool new_capable(int cap)
+ {
+@@ -61,7 +61,7 @@ static bool new_capable(int cap)
+ 
+ 	return ns_capable(&init_user_ns, cap);
+ }
+-KGR_PATCHED_FUNCTION(capable, new_capable);
++KGR_PATCHED_FUNCTION(capable, new_capable, true);
+ 
+ static struct kgr_patch patch = {
+ 	.patches = {
+-- 
+1.9.3
+
