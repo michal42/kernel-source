@@ -27,23 +27,21 @@ Cc: <stable@vger.kernel.org> #3.13+
 Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
 Acked-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/infiniband/ulp/isert/ib_isert.c | 52 +++++++++++++++++++++++++++++----
- drivers/infiniband/ulp/isert/ib_isert.h |  2 +-
+ drivers/infiniband/ulp/isert/ib_isert.c |   52 ++++++++++++++++++++++++++++----
+ drivers/infiniband/ulp/isert/ib_isert.h |    2 -
  2 files changed, 47 insertions(+), 7 deletions(-)
 
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.c b/drivers/infiniband/ulp/isert/ib_isert.c
-index 06cc9ea..427ea00 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.c
 +++ b/drivers/infiniband/ulp/isert/ib_isert.c
-@@ -497,7 +497,6 @@ isert_connect_request(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
+@@ -504,7 +504,6 @@ isert_connect_request(struct rdma_cm_id
  	kref_init(&isert_conn->conn_kref);
  	kref_get(&isert_conn->conn_kref);
  	mutex_init(&isert_conn->conn_mutex);
 -	mutex_init(&isert_conn->conn_comp_mutex);
  	spin_lock_init(&isert_conn->conn_lock);
+ 	INIT_LIST_HEAD(&isert_conn->conn_fr_pool);
  
- 	cma_id->context = isert_conn;
-@@ -888,16 +887,17 @@ isert_init_send_wr(struct isert_conn *isert_conn, struct isert_cmd *isert_cmd,
+@@ -884,16 +883,17 @@ isert_init_send_wr(struct isert_conn *is
  	 * Coalesce send completion interrupts by only setting IB_SEND_SIGNALED
  	 * bit for every ISERT_COMP_BATCH_COUNT number of ib_post_send() calls.
  	 */
@@ -65,7 +63,7 @@ index 06cc9ea..427ea00 100644
  
  	send_wr->send_flags = IB_SEND_SIGNALED;
  }
-@@ -1693,10 +1693,45 @@ isert_send_completion(struct iser_tx_desc *tx_desc,
+@@ -1711,10 +1711,45 @@ isert_send_completion(struct iser_tx_des
  }
  
  static void
@@ -87,7 +85,7 @@ index 06cc9ea..427ea00 100644
 +		wr = &t->isert_cmd->rdma_wr;
 +
 +		atomic_sub(wr->send_wr_num + 1, &isert_conn->post_send_buf_count);
-+		isert_completion_put(t, t->isert_cmd, ib_dev);
++		isert_completion_put(t, t->isert_cmd, ib_dev, true);
 +	}
 +}
 +
@@ -106,13 +104,13 @@ index 06cc9ea..427ea00 100644
 +		wr = &t->isert_cmd->rdma_wr;
 +
 +		atomic_sub(wr->send_wr_num + 1, &isert_conn->post_send_buf_count);
-+		isert_completion_put(t, t->isert_cmd, ib_dev);
++		isert_completion_put(t, t->isert_cmd, ib_dev, true);
 +	}
 +	tx_desc->comp_llnode_batch = NULL;
  
  	if (!isert_cmd)
  		isert_unmap_tx_desc(tx_desc, ib_dev);
-@@ -1712,6 +1747,8 @@ isert_cq_rx_comp_err(struct isert_conn *isert_conn)
+@@ -1730,6 +1765,8 @@ isert_cq_rx_comp_err(struct isert_conn *
  	if (isert_conn->post_recv_buf_count)
  		return;
  
@@ -121,7 +119,7 @@ index 06cc9ea..427ea00 100644
  	if (conn->sess) {
  		target_sess_cmd_list_set_waiting(conn->sess->se_sess);
  		target_wait_for_sess_cmds(conn->sess->se_sess);
-@@ -1751,6 +1788,9 @@ isert_cq_tx_work(struct work_struct *work)
+@@ -1769,6 +1806,9 @@ isert_cq_tx_work(struct work_struct *wor
  			pr_debug("TX wc.vendor_err: 0x%08x\n", wc.vendor_err);
  
  			if (wc.wr_id != ISER_FASTREG_LI_WRID) {
@@ -131,8 +129,6 @@ index 06cc9ea..427ea00 100644
  				atomic_dec(&isert_conn->post_send_buf_count);
  				isert_cq_tx_comp_err(tx_desc, isert_conn);
  			}
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.h b/drivers/infiniband/ulp/isert/ib_isert.h
-index 10be55a..f6ae7f5 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.h
 +++ b/drivers/infiniband/ulp/isert/ib_isert.h
 @@ -46,6 +46,7 @@ struct iser_tx_desc {
@@ -151,6 +147,3 @@ index 10be55a..f6ae7f5 100644
  };
  
  #define ISERT_MAX_CQ 64
--- 
-1.7.12.4
-

@@ -12,12 +12,10 @@ Signed-off-by: Sagi Grimberg <sagig@mellanox.com>
 Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
 Acked-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/infiniband/ulp/isert/ib_isert.c | 84 +++++++++++++++++----------------
- drivers/infiniband/ulp/isert/ib_isert.h |  8 ++--
- 2 files changed, 47 insertions(+), 45 deletions(-)
+ drivers/infiniband/ulp/isert/ib_isert.c |   77 ++++++++++++++++----------------
+ drivers/infiniband/ulp/isert/ib_isert.h |    8 +--
+ 2 files changed, 43 insertions(+), 42 deletions(-)
 
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.c b/drivers/infiniband/ulp/isert/ib_isert.c
-index 4eda1eb..18018a6 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.c
 +++ b/drivers/infiniband/ulp/isert/ib_isert.c
 @@ -47,10 +47,10 @@ static int
@@ -34,7 +32,7 @@ index 4eda1eb..18018a6 100644
  
  static void
  isert_qp_event_callback(struct ib_event *e, void *context)
-@@ -227,11 +227,11 @@ isert_create_device_ib_res(struct isert_device *device)
+@@ -227,11 +227,11 @@ isert_create_device_ib_res(struct isert_
  
  	/* asign function handlers */
  	if (dev_attr->device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS) {
@@ -50,7 +48,7 @@ index 4eda1eb..18018a6 100644
  		device->reg_rdma_mem = isert_map_rdma;
  		device->unreg_rdma_mem = isert_unmap_cmd;
  	}
-@@ -239,9 +239,10 @@ isert_create_device_ib_res(struct isert_device *device)
+@@ -239,9 +239,10 @@ isert_create_device_ib_res(struct isert_
  	device->cqs_used = min_t(int, num_online_cpus(),
  				 device->ib_device->num_comp_vectors);
  	device->cqs_used = min(ISERT_MAX_CQ, device->cqs_used);
@@ -63,7 +61,7 @@ index 4eda1eb..18018a6 100644
  	device->cq_desc = kzalloc(sizeof(struct isert_cq_desc) *
  				device->cqs_used, GFP_KERNEL);
  	if (!device->cq_desc) {
-@@ -379,18 +380,18 @@ isert_device_find_by_ib_dev(struct rdma_cm_id *cma_id)
+@@ -379,18 +380,18 @@ isert_device_find_by_ib_dev(struct rdma_
  }
  
  static void
@@ -86,7 +84,7 @@ index 4eda1eb..18018a6 100644
  		list_del(&fr_desc->list);
  		ib_free_fast_reg_page_list(fr_desc->data_frpl);
  		ib_dereg_mr(fr_desc->data_mr);
-@@ -398,20 +399,20 @@ isert_conn_free_frwr_pool(struct isert_conn *isert_conn)
+@@ -398,13 +399,13 @@ isert_conn_free_frwr_pool(struct isert_c
  		++i;
  	}
  
@@ -103,16 +101,16 @@ index 4eda1eb..18018a6 100644
  {
  	struct fast_reg_descriptor *fr_desc;
  	struct isert_device *device = isert_conn->conn_device;
- 	int i, ret;
+@@ -418,7 +419,7 @@ isert_conn_create_frwr_pool(struct isert
+ 	tag_num = max_t(u32, ISCSIT_MIN_TAGS, se_nacl->queue_depth);
+ 	tag_num = (tag_num * 2) + ISCSIT_EXTRA_TAGS;
  
--	INIT_LIST_HEAD(&isert_conn->conn_frwr_pool);
 -	isert_conn->conn_frwr_pool_size = 0;
-+	INIT_LIST_HEAD(&isert_conn->conn_fr_pool);
 +	isert_conn->conn_fr_pool_size = 0;
- 	for (i = 0; i < ISCSI_DEF_XMIT_CMDS_MAX; i++) {
+ 	for (i = 0; i < tag_num; i++) {
  		fr_desc = kzalloc(sizeof(*fr_desc), GFP_KERNEL);
  		if (!fr_desc) {
-@@ -443,17 +444,17 @@ isert_conn_create_frwr_pool(struct isert_conn *isert_conn)
+@@ -450,17 +451,17 @@ isert_conn_create_frwr_pool(struct isert
  			 fr_desc, fr_desc->data_frpl->page_list);
  
  		fr_desc->valid = true;
@@ -135,37 +133,16 @@ index 4eda1eb..18018a6 100644
  	return ret;
  }
  
-@@ -556,11 +557,12 @@ isert_connect_request(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
- 		goto out_mr;
- 	}
+@@ -492,7 +493,7 @@ isert_connect_request(struct rdma_cm_id
+ 	mutex_init(&isert_conn->conn_mutex);
+ 	mutex_init(&isert_conn->conn_comp_mutex);
+ 	spin_lock_init(&isert_conn->conn_lock);
+-	INIT_LIST_HEAD(&isert_conn->conn_frwr_pool);
++	INIT_LIST_HEAD(&isert_conn->conn_fr_pool);
  
--	if (device->use_frwr) {
--		ret = isert_conn_create_frwr_pool(isert_conn);
-+	if (device->use_fastreg) {
-+		ret = isert_conn_create_fastreg_pool(isert_conn);
- 		if (ret) {
--			pr_err("Conn: %p failed to create frwr_pool\n", isert_conn);
--			goto out_frwr;
-+			pr_err("Conn: %p failed to create fastreg pool\n",
-+			       isert_conn);
-+			goto out_fastreg;
- 		}
- 	}
- 
-@@ -577,9 +579,9 @@ isert_connect_request(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
- 	return 0;
- 
- out_conn_dev:
--	if (device->use_frwr)
--		isert_conn_free_frwr_pool(isert_conn);
--out_frwr:
-+	if (device->use_fastreg)
-+		isert_conn_free_fastreg_pool(isert_conn);
-+out_fastreg:
- 	ib_dereg_mr(isert_conn->conn_mr);
- out_mr:
- 	ib_dealloc_pd(isert_conn->conn_pd);
-@@ -607,8 +609,8 @@ isert_connect_release(struct isert_conn *isert_conn)
+ 	cma_id->context = isert_conn;
+ 	isert_conn->conn_cm_id = cma_id;
+@@ -604,8 +605,8 @@ isert_connect_release(struct isert_conn
  
  	pr_debug("Entering isert_connect_release(): >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
  
@@ -176,7 +153,23 @@ index 4eda1eb..18018a6 100644
  
  	if (isert_conn->conn_qp) {
  		cq_index = ((struct isert_cq_desc *)
-@@ -1406,25 +1408,25 @@ isert_unmap_cmd(struct isert_cmd *isert_cmd, struct isert_conn *isert_conn)
+@@ -949,11 +950,11 @@ isert_put_login_tx(struct iscsi_conn *co
+ 	}
+ 	if (!login->login_failed) {
+ 		if (login->login_complete) {
+-			if (isert_conn->conn_device->use_frwr) {
+-				ret = isert_conn_create_frwr_pool(isert_conn);
++			if (isert_conn->conn_device->use_fastreg) {
++				ret = isert_conn_create_fastreg_pool(isert_conn);
+ 				if (ret) {
+-					pr_err("Conn: %p failed to create"
+-					       " frwr_pool\n", isert_conn);
++					pr_err("Conn: %p failed to create fastreg pool\n",
++					       isert_conn);
+ 					return ret;
+ 				}
+ 			}
+@@ -1412,25 +1413,25 @@ isert_unmap_cmd(struct isert_cmd *isert_
  }
  
  static void
@@ -207,7 +200,7 @@ index 4eda1eb..18018a6 100644
  		ib_dma_unmap_sg(ib_dev, wr->sge, wr->num_sge,
  				(wr->iser_ib_op == ISER_IB_RDMA_WRITE) ?
  				DMA_TO_DEVICE : DMA_FROM_DEVICE);
-@@ -2248,8 +2250,8 @@ isert_fast_reg_mr(struct fast_reg_descriptor *fr_desc,
+@@ -2267,8 +2268,8 @@ isert_fast_reg_mr(struct fast_reg_descri
  }
  
  static int
@@ -218,7 +211,7 @@ index 4eda1eb..18018a6 100644
  {
  	struct se_cmd *se_cmd = &cmd->se_cmd;
  	struct isert_cmd *isert_cmd = iscsit_priv_cmd(cmd);
-@@ -2327,7 +2329,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+@@ -2346,7 +2347,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *c
  		wr->fr_desc = NULL;
  	} else {
  		spin_lock_irqsave(&isert_conn->conn_lock, flags);
@@ -227,7 +220,7 @@ index 4eda1eb..18018a6 100644
  					   struct fast_reg_descriptor, list);
  		list_del(&fr_desc->list);
  		spin_unlock_irqrestore(&isert_conn->conn_lock, flags);
-@@ -2336,7 +2338,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
+@@ -2355,7 +2356,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *c
  		ret = isert_fast_reg_mr(fr_desc, isert_cmd, isert_conn,
  				  ib_sge, offset, data_len);
  		if (ret) {
@@ -236,8 +229,6 @@ index 4eda1eb..18018a6 100644
  			goto unmap_sg;
  		}
  	}
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.h b/drivers/infiniband/ulp/isert/ib_isert.h
-index abe3186..10be55a 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.h
 +++ b/drivers/infiniband/ulp/isert/ib_isert.h
 @@ -120,9 +120,9 @@ struct isert_conn {
@@ -262,6 +253,3 @@ index abe3186..10be55a 100644
  	int			cqs_used;
  	int			refcount;
  	int			cq_active_qps[ISERT_MAX_CQ];
--- 
-1.7.12.4
-

@@ -15,14 +15,12 @@ Signed-off-by: Sagi Grimberg <sagig@mellanox.com>
 Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
 Acked-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/infiniband/ulp/isert/ib_isert.c | 47 ++++++++++++++++++++++++++++-----
+ drivers/infiniband/ulp/isert/ib_isert.c |   47 +++++++++++++++++++++++++++-----
  1 file changed, 41 insertions(+), 6 deletions(-)
 
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.c b/drivers/infiniband/ulp/isert/ib_isert.c
-index 52b8583..526b8a5 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.c
 +++ b/drivers/infiniband/ulp/isert/ib_isert.c
-@@ -1705,6 +1705,7 @@ isert_completion_rdma_write(struct iser_tx_desc *tx_desc,
+@@ -1726,6 +1726,7 @@ isert_completion_rdma_write(struct iser_
  
  fail_mr_status:
  	device->unreg_rdma_mem(isert_cmd, isert_conn);
@@ -30,7 +28,7 @@ index 52b8583..526b8a5 100644
  	if (ret)
  		transport_send_check_condition_and_sense(se_cmd,
  							 se_cmd->pi_err, 0);
-@@ -1838,7 +1839,18 @@ isert_response_completion(struct iser_tx_desc *tx_desc,
+@@ -1859,7 +1860,18 @@ isert_response_completion(struct iser_tx
  		queue_work(isert_comp_wq, &isert_cmd->comp_work);
  		return;
  	}
@@ -49,8 +47,8 @@ index 52b8583..526b8a5 100644
 +		atomic_dec(&isert_conn->post_send_buf_count);
  
  	cmd->i_state = ISTATE_SENT_STATUS;
- 	isert_completion_put(tx_desc, isert_cmd, ib_dev);
-@@ -1871,7 +1883,7 @@ __isert_send_completion(struct iser_tx_desc *tx_desc,
+ 	isert_completion_put(tx_desc, isert_cmd, ib_dev, false);
+@@ -1892,7 +1904,7 @@ __isert_send_completion(struct iser_tx_d
  		break;
  	case ISER_IB_RDMA_WRITE:
  		pr_debug("isert_send_completion: Got ISER_IB_RDMA_WRITE\n");
@@ -59,7 +57,7 @@ index 52b8583..526b8a5 100644
  		isert_completion_rdma_write(tx_desc, isert_cmd);
  		break;
  	case ISER_IB_RDMA_READ:
-@@ -1922,7 +1934,18 @@ isert_cq_drain_comp_llist(struct isert_conn *isert_conn, struct ib_device *ib_de
+@@ -1943,7 +1955,18 @@ isert_cq_drain_comp_llist(struct isert_c
  		llnode = llist_next(llnode);
  		wr = &t->isert_cmd->rdma_wr;
  
@@ -76,10 +74,10 @@ index 52b8583..526b8a5 100644
 +				   &isert_conn->post_send_buf_count);
 +		else
 +			atomic_dec(&isert_conn->post_send_buf_count);
- 		isert_completion_put(t, t->isert_cmd, ib_dev);
+ 		isert_completion_put(t, t->isert_cmd, ib_dev, true);
  	}
  }
-@@ -1941,7 +1964,18 @@ isert_cq_tx_comp_err(struct iser_tx_desc *tx_desc, struct isert_conn *isert_conn
+@@ -1962,7 +1985,18 @@ isert_cq_tx_comp_err(struct iser_tx_desc
  		llnode = llist_next(llnode);
  		wr = &t->isert_cmd->rdma_wr;
  
@@ -96,10 +94,10 @@ index 52b8583..526b8a5 100644
 +				   &isert_conn->post_send_buf_count);
 +		else
 +			atomic_dec(&isert_conn->post_send_buf_count);
- 		isert_completion_put(t, t->isert_cmd, ib_dev);
+ 		isert_completion_put(t, t->isert_cmd, ib_dev, true);
  	}
  	tx_desc->comp_llnode_batch = NULL;
-@@ -2794,14 +2828,15 @@ isert_put_datain(struct iscsi_conn *conn, struct iscsi_cmd *cmd)
+@@ -2815,14 +2849,15 @@ isert_put_datain(struct iscsi_conn *conn
  		isert_init_send_wr(isert_conn, isert_cmd,
  				   &isert_cmd->tx_desc.send_wr, true);
  		isert_cmd->rdma_wr.s_send_wr.next = &isert_cmd->tx_desc.send_wr;
@@ -117,6 +115,3 @@ index 52b8583..526b8a5 100644
  	}
  
  	if (se_cmd->prot_op == TARGET_PROT_NORMAL)
--- 
-1.7.12.4
-

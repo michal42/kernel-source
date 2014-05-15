@@ -25,12 +25,10 @@ Cc: Roland Dreier <roland@purestorage.com>
 Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
 Acked-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/infiniband/ulp/isert/ib_isert.c | 65 ++++++++++++++++++++++++++-------
- drivers/infiniband/ulp/isert/ib_isert.h |  6 +++
+ drivers/infiniband/ulp/isert/ib_isert.c |   65 +++++++++++++++++++++++++-------
+ drivers/infiniband/ulp/isert/ib_isert.h |    6 ++
  2 files changed, 58 insertions(+), 13 deletions(-)
 
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.c b/drivers/infiniband/ulp/isert/ib_isert.c
-index 09c7129..a154894 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.c
 +++ b/drivers/infiniband/ulp/isert/ib_isert.c
 @@ -22,6 +22,7 @@
@@ -41,15 +39,15 @@ index 09c7129..a154894 100644
  #include <rdma/ib_verbs.h>
  #include <rdma/rdma_cm.h>
  #include <target/target_core_base.h>
-@@ -501,6 +502,7 @@ isert_connect_request(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
+@@ -508,6 +509,7 @@ isert_connect_request(struct rdma_cm_id
  	kref_init(&isert_conn->conn_kref);
  	kref_get(&isert_conn->conn_kref);
  	mutex_init(&isert_conn->conn_mutex);
 +	mutex_init(&isert_conn->conn_comp_mutex);
  	spin_lock_init(&isert_conn->conn_lock);
+ 	INIT_LIST_HEAD(&isert_conn->conn_frwr_pool);
  
- 	cma_id->context = isert_conn;
-@@ -855,14 +857,32 @@ isert_init_tx_hdrs(struct isert_conn *isert_conn,
+@@ -852,14 +854,32 @@ isert_init_tx_hdrs(struct isert_conn *is
  }
  
  static void
@@ -85,7 +83,7 @@ index 09c7129..a154894 100644
  }
  
  static int
-@@ -1596,8 +1616,8 @@ isert_response_completion(struct iser_tx_desc *tx_desc,
+@@ -1615,8 +1635,8 @@ isert_response_completion(struct iser_tx
  }
  
  static void
@@ -96,7 +94,7 @@ index 09c7129..a154894 100644
  {
  	struct ib_device *ib_dev = isert_conn->conn_cm_id->device;
  	struct isert_cmd *isert_cmd = tx_desc->isert_cmd;
-@@ -1638,7 +1658,25 @@ isert_send_completion(struct iser_tx_desc *tx_desc,
+@@ -1657,7 +1677,25 @@ isert_send_completion(struct iser_tx_des
  }
  
  static void
@@ -123,7 +121,7 @@ index 09c7129..a154894 100644
  {
  	struct ib_device *ib_dev = isert_conn->conn_cm_id->device;
  	struct isert_cmd *isert_cmd = tx_desc->isert_cmd;
-@@ -1815,7 +1853,7 @@ isert_put_response(struct iscsi_conn *conn, struct iscsi_cmd *cmd)
+@@ -1834,7 +1872,7 @@ isert_put_response(struct iscsi_conn *co
  		isert_cmd->tx_desc.num_sge = 2;
  	}
  
@@ -132,7 +130,7 @@ index 09c7129..a154894 100644
  
  	pr_debug("Posting SCSI Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1835,7 +1873,7 @@ isert_put_nopin(struct iscsi_cmd *cmd, struct iscsi_conn *conn,
+@@ -1854,7 +1892,7 @@ isert_put_nopin(struct iscsi_cmd *cmd, s
  			       &isert_cmd->tx_desc.iscsi_header,
  			       nopout_response);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -141,7 +139,7 @@ index 09c7129..a154894 100644
  
  	pr_debug("Posting NOPIN Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1853,7 +1891,7 @@ isert_put_logout_rsp(struct iscsi_cmd *cmd, struct iscsi_conn *conn)
+@@ -1872,7 +1910,7 @@ isert_put_logout_rsp(struct iscsi_cmd *c
  	iscsit_build_logout_rsp(cmd, conn, (struct iscsi_logout_rsp *)
  				&isert_cmd->tx_desc.iscsi_header);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -150,7 +148,7 @@ index 09c7129..a154894 100644
  
  	pr_debug("Posting Logout Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1871,7 +1909,7 @@ isert_put_tm_rsp(struct iscsi_cmd *cmd, struct iscsi_conn *conn)
+@@ -1890,7 +1928,7 @@ isert_put_tm_rsp(struct iscsi_cmd *cmd,
  	iscsit_build_task_mgt_rsp(cmd, conn, (struct iscsi_tm_rsp *)
  				  &isert_cmd->tx_desc.iscsi_header);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -159,7 +157,7 @@ index 09c7129..a154894 100644
  
  	pr_debug("Posting Task Management Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1903,7 +1941,7 @@ isert_put_reject(struct iscsi_cmd *cmd, struct iscsi_conn *conn)
+@@ -1922,7 +1960,7 @@ isert_put_reject(struct iscsi_cmd *cmd,
  	tx_dsg->lkey	= isert_conn->conn_mr->lkey;
  	isert_cmd->tx_desc.num_sge = 2;
  
@@ -168,7 +166,7 @@ index 09c7129..a154894 100644
  
  	pr_debug("Posting Reject IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1943,7 +1981,7 @@ isert_put_text_rsp(struct iscsi_cmd *cmd, struct iscsi_conn *conn)
+@@ -1962,7 +2000,7 @@ isert_put_text_rsp(struct iscsi_cmd *cmd
  		tx_dsg->lkey	= isert_conn->conn_mr->lkey;
  		isert_cmd->tx_desc.num_sge = 2;
  	}
@@ -177,7 +175,7 @@ index 09c7129..a154894 100644
  
  	pr_debug("Posting Text Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -2337,7 +2375,8 @@ isert_put_datain(struct iscsi_conn *conn, struct iscsi_cmd *cmd)
+@@ -2356,7 +2394,8 @@ isert_put_datain(struct iscsi_conn *conn
  	iscsit_build_rsp_pdu(cmd, conn, true, (struct iscsi_scsi_rsp *)
  			     &isert_cmd->tx_desc.iscsi_header);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -187,8 +185,6 @@ index 09c7129..a154894 100644
  
  	atomic_add(wr->send_wr_num + 1, &isert_conn->post_send_buf_count);
  
-diff --git a/drivers/infiniband/ulp/isert/ib_isert.h b/drivers/infiniband/ulp/isert/ib_isert.h
-index 52f4bf0..d694456 100644
 --- a/drivers/infiniband/ulp/isert/ib_isert.h
 +++ b/drivers/infiniband/ulp/isert/ib_isert.h
 @@ -44,6 +44,8 @@ struct iser_tx_desc {
@@ -211,6 +207,3 @@ index 52f4bf0..d694456 100644
  };
  
  #define ISERT_MAX_CQ 64
--- 
-1.7.12.4
-
