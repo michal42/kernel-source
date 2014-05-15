@@ -1,0 +1,48 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Wed, 25 Sep 2013 09:20:30 +0200
+Subject: vlan: unlink the upper neighbour before unregistering
+Patch-mainline: v3.13-rc1
+Git-commit: 47701a36a3ed6d97e5bbe7ad72cceb49ca329d00
+References: bnc#877776
+
+On netdev unregister we're removing also all of its sysfs-associated stuff,
+including the sysfs symlinks that are controlled by netdev neighbour code.
+Also, it's a subtle race condition - cause we can still access it after
+unregistering.
+
+Move the unlinking right before the unregistering to fix both.
+
+CC: Patrick McHardy <kaber@trash.net>
+CC: "David S. Miller" <davem@davemloft.net>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/8021q/vlan.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/net/8021q/vlan.c b/net/8021q/vlan.c
+index e3d0d6f..9a87f5a 100644
+--- a/net/8021q/vlan.c
++++ b/net/8021q/vlan.c
+@@ -98,14 +98,14 @@ void unregister_vlan_dev(struct net_device *dev, struct list_head *head)
+ 		vlan_gvrp_request_leave(dev);
+ 
+ 	vlan_group_set_device(grp, vlan->vlan_proto, vlan_id, NULL);
++
++	netdev_upper_dev_unlink(real_dev, dev);
+ 	/* Because unregister_netdevice_queue() makes sure at least one rcu
+ 	 * grace period is respected before device freeing,
+ 	 * we dont need to call synchronize_net() here.
+ 	 */
+ 	unregister_netdevice_queue(dev, head);
+ 
+-	netdev_upper_dev_unlink(real_dev, dev);
+-
+ 	if (grp->nr_vlan_devs == 0) {
+ 		vlan_mvrp_uninit_applicant(real_dev);
+ 		vlan_gvrp_uninit_applicant(real_dev);
+-- 
+1.8.1.4
+
