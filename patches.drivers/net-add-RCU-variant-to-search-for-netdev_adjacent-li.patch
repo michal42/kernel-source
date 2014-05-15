@@ -1,0 +1,51 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Wed, 25 Sep 2013 09:20:08 +0200
+Subject: net: add RCU variant to search for netdev_adjacent link
+Patch-mainline: v3.13-rc1
+Git-commit: 5249dec7380cb64928d2ae6201028b4da1dceb1e
+References: bnc#877776
+
+Currently we have only the RTNL flavour, however we can traverse it while
+holding only RCU, so add the RCU search. Add an RCU variant that uses
+list_head * as an argument, so that it can be universally used afterwards.
+
+CC: "David S. Miller" <davem@davemloft.net>
+CC: Eric Dumazet <edumazet@google.com>
+CC: Jiri Pirko <jiri@resnulli.us>
+CC: Alexander Duyck <alexander.h.duyck@intel.com>
+CC: Cong Wang <amwang@redhat.com>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/core/dev.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index cf43ed1..97ba949 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4401,6 +4401,19 @@ struct netdev_adjacent {
+ 	struct rcu_head rcu;
+ };
+ 
++static struct netdev_adjacent *__netdev_find_adj_rcu(struct net_device *dev,
++						     struct net_device *adj_dev,
++						     struct list_head *adj_list)
++{
++	struct netdev_adjacent *adj;
++
++	list_for_each_entry_rcu(adj, adj_list, list) {
++		if (adj->dev == adj_dev)
++			return adj;
++	}
++	return NULL;
++}
++
+ static struct netdev_adjacent *__netdev_find_adj(struct net_device *dev,
+ 						 struct net_device *adj_dev,
+ 						 struct list_head *adj_list)
+-- 
+1.8.1.4
+
