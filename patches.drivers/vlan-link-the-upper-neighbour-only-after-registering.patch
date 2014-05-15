@@ -1,0 +1,58 @@
+From: Veaceslav Falico <vfalico@redhat.com>
+Date: Wed, 25 Sep 2013 09:20:29 +0200
+Subject: vlan: link the upper neighbour only after registering
+Patch-mainline: v3.13-rc1
+Git-commit: 5df27e6cb2d302e90366848bc3c2bb73c41287fb
+References: bnc#877776
+
+Otherwise users might access it without being fully registered, as per
+sysfs - it only inits in register_netdevice(), so is unusable till it is
+called.
+
+CC: Patrick McHardy <kaber@trash.net>
+CC: "David S. Miller" <davem@davemloft.net>
+Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/8021q/vlan.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/net/8021q/vlan.c b/net/8021q/vlan.c
+index 856499f..e3d0d6f 100644
+--- a/net/8021q/vlan.c
++++ b/net/8021q/vlan.c
+@@ -169,13 +169,13 @@ int register_vlan_dev(struct net_device *dev)
+ 	if (err < 0)
+ 		goto out_uninit_mvrp;
+ 
+-	err = netdev_upper_dev_link(real_dev, dev);
+-	if (err)
+-		goto out_uninit_mvrp;
+-
+ 	err = register_netdevice(dev);
+ 	if (err < 0)
+-		goto out_upper_dev_unlink;
++		goto out_uninit_mvrp;
++
++	err = netdev_upper_dev_link(real_dev, dev);
++	if (err)
++		goto out_unregister_netdev;
+ 
+ 	/* Account for reference in struct vlan_dev_priv */
+ 	dev_hold(real_dev);
+@@ -191,8 +191,8 @@ int register_vlan_dev(struct net_device *dev)
+ 
+ 	return 0;
+ 
+-out_upper_dev_unlink:
+-	netdev_upper_dev_unlink(real_dev, dev);
++out_unregister_netdev:
++	unregister_netdevice(dev);
+ out_uninit_mvrp:
+ 	if (grp->nr_vlan_devs == 0)
+ 		vlan_mvrp_uninit_applicant(real_dev);
+-- 
+1.8.1.4
+
