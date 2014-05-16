@@ -1,8 +1,5 @@
-From 3f7e15ae16764c92023dda3c1974c2003002f23a Mon Sep 17 00:00:00 2001
 From: Mel Gorman <mgorman@suse.de>
-Date: Sun, 6 Apr 2014 15:41:04 +0100
-Subject: [PATCH] mm: page_alloc: Calculate classzone_idx once from the
- zonelist ref
+Subject: mm: page_alloc: calculate classzone_idx once from the zonelist ref
 
 References: VM/FS Performance
 Patch-mainline: No (Expected 3.17)
@@ -11,15 +8,26 @@ There is no need to calculate zone_idx(preferred_zone) multiple times
 or use the pgdat to figure it out.
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
+Acked-by: Rik van Riel <riel@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Vlastimil Babka <vbabka@suse.cz>
+Cc: Jan Kara <jack@suse.cz>
+Cc: Michal Hocko <mhocko@suse.cz>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Dave Hansen <dave.hansen@intel.com>
+Cc: Theodore Ts'o <tytso@mit.edu>
+Cc: "Paul E. McKenney" <paulmck@linux.vnet.ibm.com>
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 ---
- mm/page_alloc.c | 55 ++++++++++++++++++++++++++++++++-----------------------
- 1 file changed, 32 insertions(+), 23 deletions(-)
 
-diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index 2f81479..d85536f 100644
+ mm/page_alloc.c |   60 ++++++++++++++++++++++++++++++++------------------------
+ 1 file changed, 35 insertions(+), 25 deletions(-)
+
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -1889,17 +1889,15 @@ static inline void init_zone_allows_reclaim(int nid)
+@@ -1882,17 +1882,15 @@ static inline void init_zone_allows_recl
  static struct page *
  get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
  		struct zonelist *zonelist, int high_zoneidx, int alloc_flags,
@@ -38,7 +46,7 @@ index 2f81479..d85536f 100644
  zonelist_scan:
  	/*
  	 * Scan zonelist, looking for a zone with enough free.
-@@ -2163,7 +2161,7 @@ static inline struct page *
+@@ -2156,7 +2154,7 @@ static inline struct page *
  __alloc_pages_may_oom(gfp_t gfp_mask, unsigned int order,
  	struct zonelist *zonelist, enum zone_type high_zoneidx,
  	nodemask_t *nodemask, struct zone *preferred_zone,
@@ -47,7 +55,7 @@ index 2f81479..d85536f 100644
  {
  	struct page *page;
  
-@@ -2181,7 +2179,7 @@ __alloc_pages_may_oom(gfp_t gfp_mask, unsigned int order,
+@@ -2174,7 +2172,7 @@ __alloc_pages_may_oom(gfp_t gfp_mask, un
  	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask,
  		order, zonelist, high_zoneidx,
  		ALLOC_WMARK_HIGH|ALLOC_CPUSET,
@@ -56,16 +64,16 @@ index 2f81479..d85536f 100644
  	if (page)
  		goto out;
  
-@@ -2216,7 +2214,7 @@ static struct page *
+@@ -2209,7 +2207,7 @@ static struct page *
  __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
  	struct zonelist *zonelist, enum zone_type high_zoneidx,
  	nodemask_t *nodemask, int alloc_flags, struct zone *preferred_zone,
--	int migratetype, bool sync_migration,
-+	int classzone_idx, int migratetype, bool sync_migration,
+-	int migratetype, enum migrate_mode mode,
++	int classzone_idx, int migratetype, enum migrate_mode mode,
  	bool *contended_compaction, bool *deferred_compaction,
  	unsigned long *did_some_progress)
  {
-@@ -2244,7 +2242,7 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
+@@ -2237,7 +2235,7 @@ __alloc_pages_direct_compact(gfp_t gfp_m
  		page = get_page_from_freelist(gfp_mask, nodemask,
  				order, zonelist, high_zoneidx,
  				alloc_flags & ~ALLOC_NO_WATERMARKS,
@@ -74,16 +82,17 @@ index 2f81479..d85536f 100644
  		if (page) {
  			preferred_zone->compact_blockskip_flush = false;
  			compaction_defer_reset(preferred_zone, order, true);
-@@ -2276,7 +2274,7 @@ static inline struct page *
+@@ -2269,7 +2267,8 @@ static inline struct page *
  __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
  	struct zonelist *zonelist, enum zone_type high_zoneidx,
  	nodemask_t *nodemask, int alloc_flags, struct zone *preferred_zone,
--	int migratetype, bool sync_migration,
-+	int classzone_idx, int migratetype, bool sync_migration,
- 	bool *contended_compaction, bool *deferred_compaction,
- 	unsigned long *did_some_progress)
+-	int migratetype, enum migrate_mode mode, bool *contended_compaction,
++	int classzone_idx, int migratetype,
++	enum migrate_mode mode, bool *contended_compaction,
+ 	bool *deferred_compaction, unsigned long *did_some_progress)
  {
-@@ -2317,7 +2315,7 @@ static inline struct page *
+ 	return NULL;
+@@ -2309,7 +2308,7 @@ static inline struct page *
  __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
  	struct zonelist *zonelist, enum zone_type high_zoneidx,
  	nodemask_t *nodemask, int alloc_flags, struct zone *preferred_zone,
@@ -92,7 +101,7 @@ index 2f81479..d85536f 100644
  {
  	struct page *page = NULL;
  	bool drained = false;
-@@ -2335,7 +2333,8 @@ retry:
+@@ -2327,7 +2326,8 @@ retry:
  	page = get_page_from_freelist(gfp_mask, nodemask, order,
  					zonelist, high_zoneidx,
  					alloc_flags & ~ALLOC_NO_WATERMARKS,
@@ -102,7 +111,7 @@ index 2f81479..d85536f 100644
  
  	/*
  	 * If an allocation failed after direct reclaim, it could be because
-@@ -2358,14 +2357,14 @@ static inline struct page *
+@@ -2350,14 +2350,14 @@ static inline struct page *
  __alloc_pages_high_priority(gfp_t gfp_mask, unsigned int order,
  	struct zonelist *zonelist, enum zone_type high_zoneidx,
  	nodemask_t *nodemask, struct zone *preferred_zone,
@@ -119,7 +128,7 @@ index 2f81479..d85536f 100644
  
  		if (!page && gfp_mask & __GFP_NOFAIL)
  			wait_iff_congested(preferred_zone, BLK_RW_ASYNC, HZ/50);
-@@ -2466,7 +2465,7 @@ static inline struct page *
+@@ -2458,7 +2458,7 @@ static inline struct page *
  __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
  	struct zonelist *zonelist, enum zone_type high_zoneidx,
  	nodemask_t *nodemask, struct zone *preferred_zone,
@@ -128,7 +137,7 @@ index 2f81479..d85536f 100644
  {
  	const gfp_t wait = gfp_mask & __GFP_WAIT;
  	struct page *page = NULL;
-@@ -2515,15 +2514,19 @@ restart:
+@@ -2507,15 +2507,19 @@ restart:
  	 * Find the true preferred zone if the allocation is unconstrained by
  	 * cpusets.
  	 */
@@ -152,7 +161,7 @@ index 2f81479..d85536f 100644
  	if (page)
  		goto got_pg;
  
-@@ -2538,7 +2541,7 @@ rebalance:
+@@ -2530,7 +2534,7 @@ rebalance:
  
  		page = __alloc_pages_high_priority(gfp_mask, order,
  				zonelist, high_zoneidx, nodemask,
@@ -161,15 +170,17 @@ index 2f81479..d85536f 100644
  		if (page) {
  			goto got_pg;
  		}
-@@ -2564,6 +2567,7 @@ rebalance:
- 					zonelist, high_zoneidx,
- 					nodemask,
- 					alloc_flags, preferred_zone,
-+					classzone_idx,
- 					migratetype, sync_migration,
- 					&contended_compaction,
+@@ -2554,7 +2558,8 @@ rebalance:
+ 	 */
+ 	page = __alloc_pages_direct_compact(gfp_mask, order, zonelist,
+ 					high_zoneidx, nodemask, alloc_flags,
+-					preferred_zone, migratetype,
++					preferred_zone,
++					classzone_idx, migratetype,
+ 					migration_mode, &contended_compaction,
  					&deferred_compaction,
-@@ -2587,7 +2591,8 @@ rebalance:
+ 					&did_some_progress);
+@@ -2577,7 +2582,8 @@ rebalance:
  					zonelist, high_zoneidx,
  					nodemask,
  					alloc_flags, preferred_zone,
@@ -179,7 +190,7 @@ index 2f81479..d85536f 100644
  	if (page)
  		goto got_pg;
  
-@@ -2606,7 +2611,7 @@ rebalance:
+@@ -2596,7 +2602,7 @@ rebalance:
  			page = __alloc_pages_may_oom(gfp_mask, order,
  					zonelist, high_zoneidx,
  					nodemask, preferred_zone,
@@ -188,15 +199,17 @@ index 2f81479..d85536f 100644
  			if (page)
  				goto got_pg;
  
-@@ -2649,6 +2654,7 @@ rebalance:
- 					zonelist, high_zoneidx,
- 					nodemask,
- 					alloc_flags, preferred_zone,
-+					classzone_idx,
- 					migratetype, sync_migration,
- 					&contended_compaction,
+@@ -2637,7 +2643,8 @@ rebalance:
+ 		 */
+ 		page = __alloc_pages_direct_compact(gfp_mask, order, zonelist,
+ 					high_zoneidx, nodemask, alloc_flags,
+-					preferred_zone, migratetype,
++					preferred_zone,
++					classzone_idx, migratetype,
+ 					migration_mode, &contended_compaction,
  					&deferred_compaction,
-@@ -2676,11 +2682,13 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
+ 					&did_some_progress);
+@@ -2664,11 +2671,13 @@ __alloc_pages_nodemask(gfp_t gfp_mask, u
  {
  	enum zone_type high_zoneidx = gfp_zone(gfp_mask);
  	struct zone *preferred_zone;
@@ -210,7 +223,7 @@ index 2f81479..d85536f 100644
  
  	gfp_mask &= gfp_allowed_mask;
  
-@@ -2710,11 +2718,12 @@ retry_cpuset:
+@@ -2698,11 +2707,12 @@ retry_cpuset:
  	cpuset_mems_cookie = read_mems_allowed_begin();
  
  	/* The preferred zone is used for statistics later */
@@ -224,7 +237,7 @@ index 2f81479..d85536f 100644
  
  #ifdef CONFIG_CMA
  	if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
-@@ -2724,7 +2733,7 @@ retry:
+@@ -2712,7 +2722,7 @@ retry:
  	/* First allocation attempt */
  	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
  			zonelist, high_zoneidx, alloc_flags,
@@ -233,7 +246,7 @@ index 2f81479..d85536f 100644
  	if (unlikely(!page)) {
  		/*
  		 * The first pass makes sure allocations are spread
-@@ -2750,7 +2759,7 @@ retry:
+@@ -2738,7 +2748,7 @@ retry:
  		gfp_mask = memalloc_noio_flags(gfp_mask);
  		page = __alloc_pages_slowpath(gfp_mask, order,
  				zonelist, high_zoneidx, nodemask,
