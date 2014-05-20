@@ -9,6 +9,8 @@ migrated to the "new universe", create a 'kgr_in_progress' in
 /proc/<pid>/ so that it's possible to easily script the checks/actions
 in userspace.
 
+js: use the kgr helper
+
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz> [simplification]
 Cc: Steven Rostedt <rostedt@goodmis.org>
@@ -16,27 +18,35 @@ Cc: Frederic Weisbecker <fweisbec@gmail.com>
 Cc: Ingo Molnar <mingo@redhat.com>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- fs/proc/base.c  |   10 ++++++++++
+ fs/proc/base.c  |   11 +++++++++++
  kernel/kgraft.c |    3 +--
- 2 files changed, 11 insertions(+), 2 deletions(-)
+ 2 files changed, 12 insertions(+), 2 deletions(-)
 
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
-@@ -2124,6 +2124,13 @@ static const struct file_operations proc
+@@ -87,6 +87,7 @@
+ #include <linux/slab.h>
+ #include <linux/flex_array.h>
+ #include <linux/posix-timers.h>
++#include <linux/kgraft.h>
+ #ifdef CONFIG_HARDWALL
+ #include <asm/hardwall.h>
+ #endif
+@@ -2124,6 +2125,13 @@ static const struct file_operations proc
  };
  #endif /* CONFIG_CHECKPOINT_RESTORE */
  
 +#if IS_ENABLED(CONFIG_KGRAFT)
 +static int proc_pid_kgr_in_progress(struct task_struct *task, char *buffer)
 +{
-+	return sprintf(buffer, "%d\n", task_thread_info(task)->kgr_in_progress);
++	return sprintf(buffer, "%d\n", kgr_task_in_progress(task));
 +}
 +#endif /* IS_ENABLED(CONFIG_KGRAFT) */
 +
  static int proc_pident_instantiate(struct inode *dir,
  	struct dentry *dentry, struct task_struct *task, const void *ptr)
  {
-@@ -2656,6 +2663,9 @@ static const struct pid_entry tgid_base_
+@@ -2656,6 +2664,9 @@ static const struct pid_entry tgid_base_
  #ifdef CONFIG_CHECKPOINT_RESTORE
  	REG("timers",	  S_IRUGO, proc_timers_operations),
  #endif
@@ -48,10 +58,10 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -45,9 +45,8 @@ static bool kgr_still_patching(void)
+@@ -77,9 +77,8 @@ static bool kgr_still_patching(void)
  	read_lock(&tasklist_lock);
  	for_each_process(p) {
- 		if (task_thread_info(p)->kgr_in_progress) {
+ 		if (kgr_task_in_progress(p)) {
 -			pr_info("pid %d (%s) still in kernel after timeout\n",
 -					p->pid, p->comm);
  			failed = true;

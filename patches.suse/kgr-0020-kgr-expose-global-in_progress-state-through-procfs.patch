@@ -1,0 +1,72 @@
+From: Jiri Kosina <jkosina@suse.cz>
+Date: Tue, 20 May 2014 15:32:04 +0200
+Subject: kgr: expose global 'in_progress' state through procfs
+Patch-mainline: submitted for review
+References: fate#313296
+
+In addition to having a per-process flag that shows which processess have
+already been "migrated", it's useful to have a global-wide flag that will
+show whether the patching operation is currently undergoing without having
+to traverse all /proc entries.
+
+js: handle error
+
+Reported-by: Libor Pechacek <lpechacek@suse.cz>
+Signed-off-by: Jiri Kosina <jkosina@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ kernel/kgraft.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index 5ec0c1abe0d6..1247f1c60b09 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -26,6 +26,8 @@
+ #include <linux/spinlock.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
++#include <linux/seq_file.h>
++#include <linux/proc_fs.h>
+ 
+ static int kgr_patch_code(const struct kgr_patch *patch,
+ 		struct kgr_patch_fun *patch_fun, bool final);
+@@ -382,6 +384,25 @@ unlock_free:
+ }
+ EXPORT_SYMBOL_GPL(kgr_start_patching);
+ 
++static int kgr_show(struct seq_file *m, void *v)
++{
++	seq_printf(m, "%d\n", kgr_in_progress);
++	return 0;
++}
++
++static int kgr_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, kgr_show, NULL);
++}
++
++static const struct file_operations kgr_fops = {
++	.owner      = THIS_MODULE,
++	.open       = kgr_open,
++	.read       = seq_read,
++	.llseek     = seq_lseek,
++	.release    = single_release,
++};
++
+ static int __init kgr_init(void)
+ {
+ 	if (ftrace_is_dead()) {
+@@ -398,6 +419,9 @@ static int __init kgr_init(void)
+ 	kgr_initialized = true;
+ 	pr_info("kgr: successfully initialized\n");
+ 
++	if (!proc_create("kgr_in_progress", 0, NULL, &kgr_fops))
++		pr_warn("kgr: cannot create kgr_in_progress in procfs\n");
++
+ 	return 0;
+ }
+ module_init(kgr_init);
+-- 
+1.9.3
+

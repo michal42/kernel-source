@@ -4,11 +4,11 @@ Subject: kgr: make a per-process 'in progress' flag a single bit
 Patch-mainline: submitted for review
 References: fate#313296
 
-Having the per-task 'kgr_in_progress' flag stored as int is a waste of
-space, and manipulating it is likely slower than just performing a
-single bit operations. Convert the flag to thread info flag.
+Having the per-task 'kgr_in_progress' flag stored as long is a waste
+of space. And manipulating it is likely slower than just performing
+single bit operations. Convert the flag to a thread info flag.
 
-Additionaly, making KGR TI_flag part of _TIF_ALLWORK_MASK and
+Additionally, making the KGR TI_flag part of _TIF_ALLWORK_MASK and
 _TIF_WORK_SYSCALL_ENTRY allows for offloading the flag manipulation to
 slow code paths.
 
@@ -20,34 +20,20 @@ Cc: Steven Rostedt <rostedt@goodmis.org>
 Cc: Frederic Weisbecker <fweisbec@gmail.com>
 Cc: Ingo Molnar <mingo@redhat.com>
 ---
- arch/x86/include/asm/kgraft.h      |    2 +-
  arch/x86/include/asm/thread_info.h |    7 ++++---
  arch/x86/kernel/asm-offsets.c      |    1 -
  arch/x86/kernel/entry_64.S         |   12 +++++++++---
- fs/proc/base.c                     |    3 ++-
- include/linux/kgraft.h             |   14 ++++++++++++++
+ include/linux/kgraft.h             |    5 ++---
  include/linux/sched.h              |    2 +-
- kernel/kgraft.c                    |    4 ++--
- 8 files changed, 33 insertions(+), 12 deletions(-)
+ 5 files changed, 16 insertions(+), 11 deletions(-)
 
---- a/arch/x86/include/asm/kgraft.h
-+++ b/arch/x86/include/asm/kgraft.h
-@@ -18,7 +18,7 @@ static void _new_function ##_stub_slow (
- 	struct kgr_loc_caches *c = ops->private;			\
- 	bool irq = !!in_interrupt();					\
- 									\
--	if ((!irq && task_thread_info(current)->kgr_in_progress) ||	\
-+	if ((!irq && kgr_task_in_progress(current)) ||			\
- 			(irq && !*this_cpu_ptr(c->irq_use_new))) {	\
- 		pr_info("kgr: slow stub: calling old code at %lx\n",	\
- 				c->old);				\
 --- a/arch/x86/include/asm/thread_info.h
 +++ b/arch/x86/include/asm/thread_info.h
 @@ -41,7 +41,6 @@ struct thread_info {
  #endif
  	unsigned int		sig_on_uaccess_error:1;
  	unsigned int		uaccess_err:1;	/* uaccess failed */
--	unsigned short		kgr_in_progress;
+-	unsigned long		kgr_in_progress;
  };
  
  #define INIT_THREAD_INFO(tsk)			\
@@ -101,7 +87,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
  	movq  %rcx,RIP-ARGOFFSET(%rsp)
  	CFI_REL_OFFSET rip,RIP-ARGOFFSET
--	movw $0, TI_kgr_in_progress+THREAD_INFO(%rsp,RIP-ARGOFFSET)
+-	movq $0, TI_kgr_in_progress+THREAD_INFO(%rsp,RIP-ARGOFFSET)
  	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags+THREAD_INFO(%rsp,RIP-ARGOFFSET)
  	jnz tracesys
  system_call_fastpath:
@@ -109,7 +95,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  	LOCKDEP_SYS_EXIT
  	DISABLE_INTERRUPTS(CLBR_NONE)
  	TRACE_IRQS_OFF
--	movw $0, TI_kgr_in_progress+THREAD_INFO(%rsp,RIP-ARGOFFSET)
+-	movq $0, TI_kgr_in_progress+THREAD_INFO(%rsp,RIP-ARGOFFSET)
  	movl TI_flags+THREAD_INFO(%rsp,RIP-ARGOFFSET),%edx
  	andl %edi,%edx
  	jnz  sysret_careful
@@ -137,7 +123,7 @@ Cc: Ingo Molnar <mingo@redhat.com>
  GLOBAL(int_with_check)
  	LOCKDEP_SYS_EXIT_IRQ
  	GET_THREAD_INFO(%rcx)
--	movw $0, TI_kgr_in_progress(%rcx)
+-	movq $0, TI_kgr_in_progress(%rcx)
  	movl TI_flags(%rcx),%edx
  	andl %edi,%edx
  	jnz   int_careful
@@ -151,83 +137,32 @@ Cc: Ingo Molnar <mingo@redhat.com>
  	bt $TIF_NEED_RESCHED,%edx
  	jnc  int_very_careful
  	TRACE_IRQS_ON
---- a/fs/proc/base.c
-+++ b/fs/proc/base.c
-@@ -87,6 +87,7 @@
- #include <linux/slab.h>
- #include <linux/flex_array.h>
- #include <linux/posix-timers.h>
-+#include <linux/kgraft.h>
- #ifdef CONFIG_HARDWALL
- #include <asm/hardwall.h>
- #endif
-@@ -2127,7 +2128,7 @@ static const struct file_operations proc
- #if IS_ENABLED(CONFIG_KGRAFT)
- static int proc_pid_kgr_in_progress(struct task_struct *task, char *buffer)
- {
--	return sprintf(buffer, "%d\n", task_thread_info(task)->kgr_in_progress);
-+	return sprintf(buffer, "%d\n", kgr_task_in_progress(task));
- }
- #endif /* IS_ENABLED(CONFIG_KGRAFT) */
- 
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
-@@ -7,6 +7,9 @@
+@@ -73,13 +73,12 @@ extern int kgr_start_patching(struct kgr
  
- #if IS_ENABLED(CONFIG_KGRAFT)
- 
-+static void kgr_mark_task_in_progress(struct task_struct *p);
-+static bool kgr_task_in_progress(struct task_struct *p);
-+
- #include <asm/kgraft.h>
- 
- #define KGR_TIMEOUT 30
-@@ -61,6 +64,17 @@ struct kgr_loc_caches {
- #define KGR_PATCH_END		NULL
- 
- extern int kgr_start_patching(struct kgr_patch *);
-+
-+static inline void kgr_mark_task_in_progress(struct task_struct *p)
-+{
+ static inline void kgr_mark_task_in_progress(struct task_struct *p)
+ {
+-	/* This is replaced by thread_flag later. */
+-	set_bit(0, &task_thread_info(p)->kgr_in_progress);
 +	set_tsk_thread_flag(p, TIF_KGR_IN_PROGRESS);
-+}
-+
-+static inline bool kgr_task_in_progress(struct task_struct *p)
-+{
-+	return test_tsk_thread_flag(p, TIF_KGR_IN_PROGRESS);
-+}
-+
- #endif /* IS_ENABLED(CONFIG_KGRAFT) */
+ }
  
- #endif /* LINUX_KGR_H */
+ static inline bool kgr_task_in_progress(struct task_struct *p)
+ {
+-	return test_bit(0, &task_thread_info(p)->kgr_in_progress);
++	return test_tsk_thread_flag(p, TIF_KGR_IN_PROGRESS);
+ }
+ 
+ #endif /* IS_ENABLED(CONFIG_KGRAFT) */
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
 @@ -2793,7 +2793,7 @@ static inline void mm_init_owner(struct
  #if IS_ENABLED(CONFIG_KGRAFT)
  static inline void kgr_task_safe(struct task_struct *p)
  {
--	task_thread_info(p)->kgr_in_progress = false;
+-	clear_bit(0, &task_thread_info(p)->kgr_in_progress);
 +	clear_tsk_thread_flag(p, TIF_KGR_IN_PROGRESS);
  }
  #else
  static inline void kgr_task_safe(struct task_struct *p) { }
---- a/kernel/kgraft.c
-+++ b/kernel/kgraft.c
-@@ -44,7 +44,7 @@ static bool kgr_still_patching(void)
- 
- 	read_lock(&tasklist_lock);
- 	for_each_process(p) {
--		if (task_thread_info(p)->kgr_in_progress) {
-+		if (kgr_task_in_progress(p)) {
- 			failed = true;
- 			break;
- 		}
-@@ -98,7 +98,7 @@ static void kgr_handle_processes(void)
- 
- 	read_lock(&tasklist_lock);
- 	for_each_process(p) {
--		task_thread_info(p)->kgr_in_progress = true;
-+		kgr_mark_task_in_progress(p);
- 
- 		/* wake up kthreads, they will clean the progress flag */
- 		if (!p->mm) {

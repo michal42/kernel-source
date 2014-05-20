@@ -15,28 +15,23 @@ Cc: Steven Rostedt <rostedt@goodmis.org>
 Cc: Frederic Weisbecker <fweisbec@gmail.com>
 Cc: Ingo Molnar <mingo@redhat.com>
 ---
- arch/x86/include/asm/kgraft.h |  2 +-
- kernel/kgraft.c               | 25 +++++++++++++++----------
- 2 files changed, 16 insertions(+), 11 deletions(-)
+ kernel/kgraft.c | 27 ++++++++++++++++-----------
+ 1 file changed, 16 insertions(+), 11 deletions(-)
 
-diff --git a/arch/x86/include/asm/kgraft.h b/arch/x86/include/asm/kgraft.h
-index 172f7b966bb5..49daa46243fc 100644
---- a/arch/x86/include/asm/kgraft.h
-+++ b/arch/x86/include/asm/kgraft.h
-@@ -13,7 +13,7 @@ static void _new_function ##_stub_slow (unsigned long ip, unsigned long parent_i
- {									\
- 	struct kgr_loc_caches *c = ops->private;			\
- 									\
--	if (task_thread_info(current)->kgr_in_progress && current->mm) {\
-+	if (task_thread_info(current)->kgr_in_progress) {		\
- 		pr_info("kgr: slow stub: calling old code at %lx\n",	\
- 				c->old);				\
- 		regs->ip = c->old + MCOUNT_INSN_SIZE;			\
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 016bbb6cad93..553f87b8d895 100644
+index b0c712e8297c..d21eaad8d48d 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -42,11 +42,7 @@ static bool kgr_still_patching(void)
+@@ -53,7 +53,7 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+ {
+ 	struct kgr_loc_caches *c = ops->private;
+ 
+-	if (kgr_task_in_progress(current) && current->mm) {
++	if (kgr_task_in_progress(current)) {
+ 		pr_info("kgr: slow stub: calling old code at %lx\n",
+ 				c->old);
+ 		kgr_set_regs_ip(regs, c->old + MCOUNT_INSN_SIZE);
+@@ -71,11 +71,7 @@ static bool kgr_still_patching(void)
  
  	read_lock(&tasklist_lock);
  	for_each_process(p) {
@@ -44,12 +39,12 @@ index 016bbb6cad93..553f87b8d895 100644
 -		 * TODO
 -		 *   kernel thread codepaths not supported and silently ignored
 -		 */
--		if (task_thread_info(p)->kgr_in_progress && p->mm) {
-+		if (task_thread_info(p)->kgr_in_progress) {
+-		if (kgr_task_in_progress(p) && p->mm) {
++		if (kgr_task_in_progress(p)) {
  			pr_info("pid %d (%s) still in kernel after timeout\n",
  					p->pid, p->comm);
  			failed = true;
-@@ -94,13 +90,23 @@ static void kgr_work_fn(struct work_struct *work)
+@@ -123,13 +119,23 @@ static void kgr_work_fn(struct work_struct *work)
  	mutex_unlock(&kgr_in_progress_lock);
  }
  
@@ -61,7 +56,7 @@ index 016bbb6cad93..553f87b8d895 100644
  	read_lock(&tasklist_lock);
 -	for_each_process(p)
 +	for_each_process(p) {
- 		task_thread_info(p)->kgr_in_progress = true;
+ 		kgr_mark_task_in_progress(p);
 +
 +		/* wake up kthreads, they will clean the progress flag */
 +		if (!p->mm) {
@@ -75,7 +70,7 @@ index 016bbb6cad93..553f87b8d895 100644
  	read_unlock(&tasklist_lock);
  }
  
-@@ -243,8 +249,7 @@ static int kgr_patch_code(const struct kgr_patch_fun *patch_fun, bool final)
+@@ -274,8 +280,7 @@ static int kgr_patch_code(const struct kgr_patch_fun *patch_fun, bool final)
   * kgr_start_patching -- the entry for a kgraft patch
   * @patch: patch to be applied
   *
@@ -85,7 +80,7 @@ index 016bbb6cad93..553f87b8d895 100644
   */
  int kgr_start_patching(const struct kgr_patch *patch)
  {
-@@ -283,7 +288,7 @@ int kgr_start_patching(const struct kgr_patch *patch)
+@@ -314,7 +319,7 @@ int kgr_start_patching(const struct kgr_patch *patch)
  	kgr_patch = patch;
  	mutex_unlock(&kgr_in_progress_lock);
  

@@ -6,29 +6,27 @@ References: fate#313296
 
 These are a base which can be used for kgraft patch generation.
 
+js: cleanup and convert to the current patchset state
+js: remove some files
+
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  tools/Makefile                   |   13 
- tools/kgraft/Makefile            |   30 
+ tools/kgraft/Makefile            |   15 
  tools/kgraft/README              |   41 
  tools/kgraft/TODO                |   20 
- tools/kgraft/app.c               |   35 
- tools/kgraft/app.h               |    7 
  tools/kgraft/create-kgrmodule.sh |   25 
- tools/kgraft/create-stub.sh      |   53 
+ tools/kgraft/create-stub.sh      |   37 
  tools/kgraft/dwarf-inline-tree.c |  544 ++++
  tools/kgraft/dwarf_names.awk     |  126 +
  tools/kgraft/dwarf_names.c       | 4366 +++++++++++++++++++++++++++++++++++++++
  tools/kgraft/dwarf_names.h       |   53 
  tools/kgraft/extract-syms.sh     |   18 
  tools/kgraft/it2rev.pl           |   40 
- tools/kgraft/symlist             |    1 
- 15 files changed, 5367 insertions(+), 5 deletions(-)
+ 12 files changed, 5293 insertions(+), 5 deletions(-)
  create mode 100644 tools/kgraft/Makefile
  create mode 100644 tools/kgraft/README
  create mode 100644 tools/kgraft/TODO
- create mode 100644 tools/kgraft/app.c
- create mode 100644 tools/kgraft/app.h
  create mode 100755 tools/kgraft/create-kgrmodule.sh
  create mode 100755 tools/kgraft/create-stub.sh
  create mode 100644 tools/kgraft/dwarf-inline-tree.c
@@ -37,7 +35,6 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  create mode 100644 tools/kgraft/dwarf_names.h
  create mode 100755 tools/kgraft/extract-syms.sh
  create mode 100644 tools/kgraft/it2rev.pl
- create mode 100644 tools/kgraft/symlist
 
 --- a/tools/Makefile
 +++ b/tools/Makefile
@@ -97,37 +94,22 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  
 --- /dev/null
 +++ b/tools/kgraft/Makefile
-@@ -0,0 +1,30 @@
-+CC=gcc
-+CFLAGS=-g
+@@ -0,0 +1,15 @@
++CC	= $(CROSS_COMPILE)gcc
++CFLAGS	= -g
 +
-+all: objcopy-hacked dwarf-inline-tree it2rev.pl
-+
-+objcopy-hacked: objcopy.diff
-+	echo "Build by hand!"
-+	exit 1
++all: dwarf-inline-tree it2rev.pl
 +
 +dwarf-inline-tree: dwarf-inline-tree.o dwarf_names.o
-+	gcc -o $@ $^ -ldwarf -lelf
++	$(CC) -o $@ $^ -ldwarf -lelf
 +
 +dwarf-inline-tree.o: dwarf_names.h
 +dwarf_names.o: dwarf_names.h
 +
-+check: app.o symlist all
-+	@echo "inline tree"
-+	./dwarf-inline-tree app.o
-+	@echo "inline pairs"
-+	./dwarf-inline-tree app.o | perl it2rev.pl
-+	@echo "extract stuff"
-+	./objcopy-hacked --strip-unneeded -j .doesntexist. --keep-symbols symlist app.o app-extract.o
-+	@echo "symbols"
-+	readelf -sW app.o app-extract.o
-+
-+app.c: app.h
-+app.o: CFLAGS=-g -ffunction-sections -fdata-sections
-+
 +clean:
-+	rm -f dwarf-inline-tree.o dwarf_names.o dwarf-inline-tree app.o app-extract.o
++	rm -f dwarf-inline-tree.o dwarf_names.o dwarf-inline-tree
++
++.PHONY: all clean
 --- /dev/null
 +++ b/tools/kgraft/README
 @@ -0,0 +1,41 @@
@@ -196,54 +178,6 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +feasible to generate that list for most cases by interpreting a kernel
 +diff.  Binary comparison should _not_ be used to generate it.
 --- /dev/null
-+++ b/tools/kgraft/app.c
-@@ -0,0 +1,35 @@
-+#include <stdio.h>
-+#include "app.h"
-+
-+static int local_data;
-+int global_data;
-+
-+static void __attribute__((noinline)) in_app (void)
-+{
-+  printf ("in_app\n");
-+  in_app_inline ();
-+  local_data = 42;
-+}
-+
-+static inline void __attribute__((always_inline)) in_app_inline_twice (void)
-+{
-+  global_data++;
-+  in_app_inline ();
-+}
-+
-+void in_app_global (void)
-+{
-+  printf ("in_app_global\n");
-+  in_app();
-+  in_app_inline_twice ();
-+  global_data = 43;
-+}
-+
-+int main ()
-+{
-+  in_app_global();
-+  second_file ();
-+  printf ("local_data = %d\n", local_data);
-+  printf ("global_data = %d\n", global_data);
-+  return 0;
-+}
---- /dev/null
-+++ b/tools/kgraft/app.h
-@@ -0,0 +1,7 @@
-+static inline void __attribute__((always_inline)) in_app_inline (void)
-+{
-+  static int local_static_data;
-+  printf ("in_app_inline: %d\n", local_static_data++);
-+}
-+
-+void second_file (void);
---- /dev/null
 +++ b/tools/kgraft/create-kgrmodule.sh
 @@ -0,0 +1,25 @@
 +#!/bin/bash
@@ -273,7 +207,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +ls -l kgrafttmp/kgrmodule.ko
 --- /dev/null
 +++ b/tools/kgraft/create-stub.sh
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,37 @@
 +#!/bin/bash
 +
 +if test -z "$1"; then
@@ -283,22 +217,16 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +cat <<EOF
 +#include <linux/module.h>
 +#include <linux/kernel.h>
-+#include <linux/init.h>
 +#include <linux/kgraft.h>
-+#include <linux/kallsyms.h>
-+#include <linux/sched.h>
-+#include <linux/types.h>
-+#include <linux/capability.h>
-+#include <linux/ptrace.h>
 +
 +EOF
 +
 +for i in $@; do
 +    echo "extern void new_$i (void);"
-+    echo "KGR_PATCHED_FUNCTION(patch, $i, new_$i);"
++    echo "KGR_PATCHED_FUNCTION($i, new_$i);"
 +done
 +
-+echo "static const struct kgr_patch patch = {"
++echo "static struct kgr_patch patch = {"
 +echo "	.patches = {"
 +for i in $@; do
 +    echo "		KGR_PATCH($i),"
@@ -310,20 +238,10 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +cat <<EOF
 +static int __init kgr_patcher_init(void)
 +{
-+        /* removing not supported (yet?) */
 +        __module_get(THIS_MODULE);
-+        /* +4 to skip push rbb / mov rsp,rbp prologue */
-+        kgr_start_patching(&patch);
-+        return 0;
++        return kgr_start_patching(&patch);
 +}
-+
-+static void __exit kgr_patcher_cleanup(void)
-+{
-+        printk(KERN_ERR "removing now buggy!\n");
-+}
-+
 +module_init(kgr_patcher_init);
-+module_exit(kgr_patcher_cleanup);
 +
 +MODULE_LICENSE("GPL");
 +EOF
@@ -5492,7 +5410,3 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +	print "\n";
 +    }
 +}
---- /dev/null
-+++ b/tools/kgraft/symlist
-@@ -0,0 +1 @@
-+in_app
