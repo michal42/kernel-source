@@ -1,0 +1,45 @@
+From: Su Friendy <friendy.su@sony.com.cn>
+Date: Wed, 7 May 2014 13:54:52 +0800
+Subject: iommu/amd: fix enabling exclusion range for an exact device
+Git-commit: 2c16c9fdacbbf3bd8ff6390e12c5d28b3f2c78ac
+Patch-mainline: v3.16 or v3.15-rc6 (next release)
+References: bnc#879452
+
+set_device_exclusion_range(u16 devid, struct ivmd_header *m) enables
+exclusion range for ONE device. IOMMU does not translate the access
+to the exclusion range from the device.
+
+The device is specified by input argument 'devid'. But 'devid' is not
+passed to the actual set function set_dev_entry_bit(), instead
+'m->devid' is passed. 'm->devid' does not specify the exact device
+which needs enable the exclusion range. 'm->devid' represents DeviceID
+field of IVMD, which has different meaning depends on IVMD type.
+
+The caller init_exclusion_range() sets 'devid' for ONE device. When
+m->type is equal to ACPI_IVMD_TYPE_ALL or ACPI_IVMD_TYPE_RANGE,
+'m->devid' is not equal to 'devid'.
+
+This patch fixes 'm->devid' to 'devid'.
+
+Signed-off-by: Su Friendy <friendy.su@sony.com.cn>
+Signed-off-by: Tamori Masahiro <Masahiro.Tamori@jp.sony.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/amd_iommu_init.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/iommu/amd_iommu_init.c b/drivers/iommu/amd_iommu_init.c
+index b76c58d..0e08545 100644
+--- a/drivers/iommu/amd_iommu_init.c
++++ b/drivers/iommu/amd_iommu_init.c
+@@ -788,7 +788,7 @@ static void __init set_device_exclusion_range(u16 devid, struct ivmd_header *m)
+ 		 * per device. But we can enable the exclusion range per
+ 		 * device. This is done here
+ 		 */
+-		set_dev_entry_bit(m->devid, DEV_ENTRY_EX);
++		set_dev_entry_bit(devid, DEV_ENTRY_EX);
+ 		iommu->exclusion_start = m->range_start;
+ 		iommu->exclusion_length = m->range_length;
+ 	}
+
