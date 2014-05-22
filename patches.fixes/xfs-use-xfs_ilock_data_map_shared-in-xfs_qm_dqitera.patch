@@ -1,0 +1,48 @@
+From baf16c800788da08b9c292e24df797229b8fc9df Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Fri, 6 Dec 2013 12:30:14 -0800
+Subject: [PATCH] xfs: use xfs_ilock_data_map_shared in xfs_qm_dqiterate
+Git-commit: da51d32d4596a14ee33917b9eca056d4bf41706a
+Patch-mainline: v3.14-rc1
+
+We might not have read in the extent list at this point, so make sure we
+take the ilock exclusively if we have to do so.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_qm.c |    6 ++++--
+ 1 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/fs/xfs/xfs_qm.c b/fs/xfs/xfs_qm.c
+index 4d237f7..0093548 100644
+--- a/fs/xfs/xfs_qm.c
++++ b/fs/xfs/xfs_qm.c
+@@ -1239,16 +1239,18 @@ xfs_qm_dqiterate(
+ 	lblkno = 0;
+ 	maxlblkcnt = XFS_B_TO_FSB(mp, mp->m_super->s_maxbytes);
+ 	do {
++		uint		lock_mode;
++
+ 		nmaps = XFS_DQITER_MAP_SIZE;
+ 		/*
+ 		 * We aren't changing the inode itself. Just changing
+ 		 * some of its data. No new blocks are added here, and
+ 		 * the inode is never added to the transaction.
+ 		 */
+-		xfs_ilock(qip, XFS_ILOCK_SHARED);
++		lock_mode = xfs_ilock_data_map_shared(qip);
+ 		error = xfs_bmapi_read(qip, lblkno, maxlblkcnt - lblkno,
+ 				       map, &nmaps, 0);
+-		xfs_iunlock(qip, XFS_ILOCK_SHARED);
++		xfs_iunlock(qip, lock_mode);
+ 		if (error)
+ 			break;
+ 
+-- 
+1.6.0.2
+
