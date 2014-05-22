@@ -1,0 +1,244 @@
+From 51ce3fd57911096c805addf5d4ed9a723d24714b Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 27 Feb 2014 15:17:27 +1100
+Subject: [PATCH] xfs: add helper for verifying checksums on xfs_bufs
+Git-commit: 5158217058fc2cdb92e05b9bb3c1a350d2a51ed9
+Patch-mainline: v3.15-rc1
+
+Many/most callers of xfs_verify_cksum() pass bp->b_addr and
+BBTOB(bp->b_length) as the first 2 args.  Add a helper
+which can just accept the bp and the crc offset, and work
+it out on its own, for brevity.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_alloc.c          |    6 ++----
+ fs/xfs/xfs_attr_leaf.c      |    3 +--
+ fs/xfs/xfs_btree.c          |    8 ++++----
+ fs/xfs/xfs_buf.h            |    7 +++++++
+ fs/xfs/xfs_da_btree.c       |    3 +--
+ fs/xfs/xfs_dir2_block.c     |    3 +--
+ fs/xfs/xfs_dir2_data.c      |    3 +--
+ fs/xfs/xfs_dir2_leaf.c      |    3 +--
+ fs/xfs/xfs_dir2_node.c      |    3 +--
+ fs/xfs/xfs_ialloc.c         |    4 ++--
+ fs/xfs/xfs_linux.h          |    1 +
+ fs/xfs/xfs_sb.c             |    3 +--
+ fs/xfs/xfs_symlink_remote.c |    3 +--
+ 13 files changed, 24 insertions(+), 26 deletions(-)
+
+diff --git a/fs/xfs/xfs_alloc.c b/fs/xfs/xfs_alloc.c
+index 61add23..a1cd243 100644
+--- a/fs/xfs/xfs_alloc.c
++++ b/fs/xfs/xfs_alloc.c
+@@ -485,8 +485,7 @@ xfs_agfl_read_verify(
+ 	if (!xfs_sb_version_hascrc(&mp->m_sb))
+ 		return;
+ 
+-	agfl_ok = xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-				   XFS_AGFL_CRC_OFF);
++	agfl_ok = xfs_buf_verify_cksum(bp, XFS_AGFL_CRC_OFF);
+ 
+ 	agfl_ok = agfl_ok && xfs_agfl_verify(bp);
+ 
+@@ -2240,8 +2239,7 @@ xfs_agf_read_verify(
+ 	int		agf_ok = 1;
+ 
+ 	if (xfs_sb_version_hascrc(&mp->m_sb))
+-		agf_ok = xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_AGF_CRC_OFF);
++		agf_ok = xfs_buf_verify_cksum(bp, XFS_AGF_CRC_OFF);
+ 
+ 	agf_ok = agf_ok && xfs_agf_verify(mp, bp);
+ 
+diff --git a/fs/xfs/xfs_attr_leaf.c b/fs/xfs/xfs_attr_leaf.c
+index 86db20a..60d8574 100644
+--- a/fs/xfs/xfs_attr_leaf.c
++++ b/fs/xfs/xfs_attr_leaf.c
+@@ -241,8 +241,7 @@ xfs_attr3_leaf_read_verify(
+ 	struct xfs_mount	*mp = bp->b_target->bt_mount;
+ 
+ 	if ((xfs_sb_version_hascrc(&mp->m_sb) &&
+-	     !xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_ATTR3_LEAF_CRC_OFF)) ||
++	     !xfs_buf_verify_cksum(bp, XFS_ATTR3_LEAF_CRC_OFF)) ||
+ 	    !xfs_attr3_leaf_verify(bp)) {
+ 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, EFSCORRUPTED);
+diff --git a/fs/xfs/xfs_btree.c b/fs/xfs/xfs_btree.c
+index 5690e10..9cbece8 100644
+--- a/fs/xfs/xfs_btree.c
++++ b/fs/xfs/xfs_btree.c
+@@ -245,8 +245,8 @@ xfs_btree_lblock_verify_crc(
+ 	struct xfs_buf		*bp)
+ {
+ 	if (xfs_sb_version_hascrc(&bp->b_target->bt_mount->m_sb))
+-		return xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					XFS_BTREE_LBLOCK_CRC_OFF);
++		return xfs_buf_verify_cksum(bp, XFS_BTREE_LBLOCK_CRC_OFF);
++
+ 	return true;
+ }
+ 
+@@ -278,8 +278,8 @@ xfs_btree_sblock_verify_crc(
+ 	struct xfs_buf		*bp)
+ {
+ 	if (xfs_sb_version_hascrc(&bp->b_target->bt_mount->m_sb))
+-		return xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					XFS_BTREE_SBLOCK_CRC_OFF);
++		return xfs_buf_verify_cksum(bp, XFS_BTREE_SBLOCK_CRC_OFF);
++
+ 	return true;
+ }
+ 
+diff --git a/fs/xfs/xfs_buf.h b/fs/xfs/xfs_buf.h
+index 27ee49f..e0f5806 100644
+--- a/fs/xfs/xfs_buf.h
++++ b/fs/xfs/xfs_buf.h
+@@ -370,6 +370,13 @@ static inline void xfs_buf_relse(xfs_buf_t *bp)
+ 	xfs_buf_rele(bp);
+ }
+ 
++static inline int
++xfs_buf_verify_cksum(struct xfs_buf *bp, unsigned long cksum_offset)
++{
++	return xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
++				cksum_offset);
++}
++
+ /*
+  *	Handling of buftargs.
+  */
+diff --git a/fs/xfs/xfs_da_btree.c b/fs/xfs/xfs_da_btree.c
+index a6fcbd2..a8a6eba 100644
+--- a/fs/xfs/xfs_da_btree.c
++++ b/fs/xfs/xfs_da_btree.c
+@@ -261,8 +261,7 @@ xfs_da3_node_read_verify(
+ 
+ 	switch (be16_to_cpu(info->magic)) {
+ 		case XFS_DA3_NODE_MAGIC:
+-			if (!xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					      XFS_DA3_NODE_CRC_OFF))
++			if (!xfs_buf_verify_cksum(bp, XFS_DA3_NODE_CRC_OFF))
+ 				break;
+ 			/* fall through */
+ 		case XFS_DA_NODE_MAGIC:
+diff --git a/fs/xfs/xfs_dir2_block.c b/fs/xfs/xfs_dir2_block.c
+index 12dad18..4ea9aef 100644
+--- a/fs/xfs/xfs_dir2_block.c
++++ b/fs/xfs/xfs_dir2_block.c
+@@ -90,8 +90,7 @@ xfs_dir3_block_read_verify(
+ 	struct xfs_mount	*mp = bp->b_target->bt_mount;
+ 
+ 	if ((xfs_sb_version_hascrc(&mp->m_sb) &&
+-	     !xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_DIR3_DATA_CRC_OFF)) ||
++	     !xfs_buf_verify_cksum(bp, XFS_DIR3_DATA_CRC_OFF)) ||
+ 	    !xfs_dir3_block_verify(bp)) {
+ 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, EFSCORRUPTED);
+diff --git a/fs/xfs/xfs_dir2_data.c b/fs/xfs/xfs_dir2_data.c
+index 47e1326..27d2be3 100644
+--- a/fs/xfs/xfs_dir2_data.c
++++ b/fs/xfs/xfs_dir2_data.c
+@@ -251,8 +251,7 @@ xfs_dir3_data_read_verify(
+ 	struct xfs_mount	*mp = bp->b_target->bt_mount;
+ 
+ 	if ((xfs_sb_version_hascrc(&mp->m_sb) &&
+-	     !xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_DIR3_DATA_CRC_OFF)) ||
++	     !xfs_buf_verify_cksum(bp, XFS_DIR3_DATA_CRC_OFF)) ||
+ 	    !xfs_dir3_data_verify(bp)) {
+ 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, EFSCORRUPTED);
+diff --git a/fs/xfs/xfs_dir2_leaf.c b/fs/xfs/xfs_dir2_leaf.c
+index 1021c83..0c1bc18 100644
+--- a/fs/xfs/xfs_dir2_leaf.c
++++ b/fs/xfs/xfs_dir2_leaf.c
+@@ -226,8 +226,7 @@ __read_verify(
+ 	struct xfs_mount	*mp = bp->b_target->bt_mount;
+ 
+ 	if ((xfs_sb_version_hascrc(&mp->m_sb) &&
+-	     !xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_DIR3_LEAF_CRC_OFF)) ||
++	     !xfs_buf_verify_cksum(bp, XFS_DIR3_LEAF_CRC_OFF)) ||
+ 	    !xfs_dir3_leaf_verify(bp, magic)) {
+ 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, EFSCORRUPTED);
+diff --git a/fs/xfs/xfs_dir2_node.c b/fs/xfs/xfs_dir2_node.c
+index d8aa14e..adffd1a 100644
+--- a/fs/xfs/xfs_dir2_node.c
++++ b/fs/xfs/xfs_dir2_node.c
+@@ -117,8 +117,7 @@ xfs_dir3_free_read_verify(
+ 	struct xfs_mount	*mp = bp->b_target->bt_mount;
+ 
+ 	if ((xfs_sb_version_hascrc(&mp->m_sb) &&
+-	     !xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_DIR3_FREE_CRC_OFF)) ||
++	     !xfs_buf_verify_cksum(bp, XFS_DIR3_FREE_CRC_OFF)) ||
+ 	    !xfs_dir3_free_verify(bp)) {
+ 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, EFSCORRUPTED);
+diff --git a/fs/xfs/xfs_ialloc.c b/fs/xfs/xfs_ialloc.c
+index b5f272d..48d2d80 100644
+--- a/fs/xfs/xfs_ialloc.c
++++ b/fs/xfs/xfs_ialloc.c
+@@ -1579,8 +1579,8 @@ xfs_agi_read_verify(
+ 	int		agi_ok = 1;
+ 
+ 	if (xfs_sb_version_hascrc(&mp->m_sb))
+-		agi_ok = xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-					  XFS_AGI_CRC_OFF);
++		agi_ok = xfs_buf_verify_cksum(bp, XFS_AGI_CRC_OFF);
++
+ 	agi_ok = agi_ok && xfs_agi_verify(bp);
+ 
+ 	if (unlikely(XFS_TEST_ERROR(!agi_ok, mp, XFS_ERRTAG_IALLOC_READ_AGI,
+diff --git a/fs/xfs/xfs_linux.h b/fs/xfs/xfs_linux.h
+index d887cdd..dba4ba5 100644
+--- a/fs/xfs/xfs_linux.h
++++ b/fs/xfs/xfs_linux.h
+@@ -119,6 +119,7 @@ typedef __uint64_t __psunsigned_t;
+ #include "xfs_iops.h"
+ #include "xfs_aops.h"
+ #include "xfs_super.h"
++#include "xfs_cksum.h"
+ #include "xfs_buf.h"
+ #include "xfs_message.h"
+ 
+diff --git a/fs/xfs/xfs_sb.c b/fs/xfs/xfs_sb.c
+index 4525dcf..111281a 100644
+--- a/fs/xfs/xfs_sb.c
++++ b/fs/xfs/xfs_sb.c
+@@ -619,8 +619,7 @@ xfs_sb_read_verify(
+ 						XFS_SB_VERSION_5) ||
+ 	     dsb->sb_crc != 0)) {
+ 
+-		if (!xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-				      XFS_SB_CRC_OFF)) {
++		if (!xfs_buf_verify_cksum(bp, XFS_SB_CRC_OFF)) {
+ 			/* Only fail bad secondaries on a known V5 filesystem */
+ 			if (bp->b_bn == XFS_SB_DADDR ||
+ 			    xfs_sb_version_hascrc(&mp->m_sb)) {
+diff --git a/fs/xfs/xfs_symlink_remote.c b/fs/xfs/xfs_symlink_remote.c
+index 2fd52c7..892bf5b 100644
+--- a/fs/xfs/xfs_symlink_remote.c
++++ b/fs/xfs/xfs_symlink_remote.c
+@@ -131,8 +131,7 @@ xfs_symlink_read_verify(
+ 	if (!xfs_sb_version_hascrc(&mp->m_sb))
+ 		return;
+ 
+-	if (!xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
+-				  XFS_SYMLINK_CRC_OFF) ||
++	if (!xfs_buf_verify_cksum(bp, XFS_SYMLINK_CRC_OFF) ||
+ 	    !xfs_symlink_verify(bp)) {
+ 		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW, mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, EFSCORRUPTED);
+-- 
+1.6.0.2
+
