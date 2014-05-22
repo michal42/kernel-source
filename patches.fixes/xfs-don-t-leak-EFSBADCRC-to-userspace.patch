@@ -1,0 +1,92 @@
+From a4ce5b3ce6227fd3c8b7dc02617e4ccf8c59d885 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Fri, 7 Mar 2014 16:19:14 +1100
+Subject: [PATCH] xfs: don't leak EFSBADCRC to userspace
+Git-commit: ac75a1f7a4af4dddcc1ac3c0778f0e3f75dc8f32
+Patch-mainline: v3.15-rc1
+
+While the verifier routines may return EFSBADCRC when a buffer has
+a bad CRC, we need to translate that to EFSCORRUPTED so that the
+higher layers treat the error appropriately and we return a
+consistent error to userspace. This fixes a xfs/005 regression.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_mount.c     |    3 +++
+ fs/xfs/xfs_symlink.c   |    4 ++++
+ fs/xfs/xfs_trans_buf.c |   11 +++++++++++
+ 3 files changed, 18 insertions(+), 0 deletions(-)
+
+diff --git a/fs/xfs/xfs_mount.c b/fs/xfs/xfs_mount.c
+index 17967ec..ea7110a 100644
+--- a/fs/xfs/xfs_mount.c
++++ b/fs/xfs/xfs_mount.c
+@@ -319,6 +319,9 @@ reread:
+ 		error = bp->b_error;
+ 		if (loud)
+ 			xfs_warn(mp, "SB validate failed with error %d.", error);
++		/* bad CRC means corrupted metadata */
++		if (error == EFSBADCRC)
++			error = EFSCORRUPTED;
+ 		goto release_buf;
+ 	}
+ 
+diff --git a/fs/xfs/xfs_symlink.c b/fs/xfs/xfs_symlink.c
+index 2245c55..8adf670 100644
+--- a/fs/xfs/xfs_symlink.c
++++ b/fs/xfs/xfs_symlink.c
+@@ -81,6 +81,10 @@ xfs_readlink_bmap(
+ 		if (error) {
+ 			xfs_buf_ioerror_alert(bp, __func__);
+ 			xfs_buf_relse(bp);
++
++			/* bad CRC means corrupted metadata */
++			if (error == EFSBADCRC)
++				error = EFSCORRUPTED;
+ 			goto out;
+ 		}
+ 		byte_cnt = XFS_SYMLINK_BUF_SPACE(mp, byte_cnt);
+diff --git a/fs/xfs/xfs_trans_buf.c b/fs/xfs/xfs_trans_buf.c
+index 8c75b8f..8e59e98 100644
+--- a/fs/xfs/xfs_trans_buf.c
++++ b/fs/xfs/xfs_trans_buf.c
+@@ -277,6 +277,10 @@ xfs_trans_read_buf_map(
+ 			XFS_BUF_UNDONE(bp);
+ 			xfs_buf_stale(bp);
+ 			xfs_buf_relse(bp);
++
++			/* bad CRC means corrupted metadata */
++			if (error == EFSBADCRC)
++				error = EFSCORRUPTED;
+ 			return error;
+ 		}
+ #ifdef DEBUG
+@@ -329,6 +333,9 @@ xfs_trans_read_buf_map(
+ 				if (tp->t_flags & XFS_TRANS_DIRTY)
+ 					xfs_force_shutdown(tp->t_mountp,
+ 							SHUTDOWN_META_IO_ERROR);
++				/* bad CRC means corrupted metadata */
++				if (error == EFSBADCRC)
++					error = EFSCORRUPTED;
+ 				return error;
+ 			}
+ 		}
+@@ -366,6 +373,10 @@ xfs_trans_read_buf_map(
+ 		if (tp->t_flags & XFS_TRANS_DIRTY)
+ 			xfs_force_shutdown(tp->t_mountp, SHUTDOWN_META_IO_ERROR);
+ 		xfs_buf_relse(bp);
++
++		/* bad CRC means corrupted metadata */
++		if (error == EFSBADCRC)
++			error = EFSCORRUPTED;
+ 		return error;
+ 	}
+ #ifdef DEBUG
+-- 
+1.6.0.2
+
