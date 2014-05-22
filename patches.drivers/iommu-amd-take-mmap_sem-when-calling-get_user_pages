@@ -1,0 +1,33 @@
+From: Jay Cornwall <jay.cornwall@amd.com>
+Date: Mon, 28 Apr 2014 17:27:46 -0500
+Subject: iommu/amd: Take mmap_sem when calling get_user_pages
+Git-commit: 4378d99295fae5fd42b0ed1a3eeef2a1684e0c17
+Patch-mainline: v3.16 or v3.15-rc6 (next release)
+References: bnc#879452
+
+get_user_pages requires caller to hold a read lock on mmap_sem.
+
+Signed-off-by: Jay Cornwall <jay.cornwall@amd.com>
+Signed-off-by: Suravee Suthikulpanit <suravee.suthikulpanit@amd.com>
+Signed-off-by: Joerg Roedel <joro@8bytes.org>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/amd_iommu_v2.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/iommu/amd_iommu_v2.c b/drivers/iommu/amd_iommu_v2.c
+index 5208828..203b2e6 100644
+--- a/drivers/iommu/amd_iommu_v2.c
++++ b/drivers/iommu/amd_iommu_v2.c
+@@ -504,8 +504,10 @@ static void do_fault(struct work_struct *work)
+ 
+ 	write = !!(fault->flags & PPR_FAULT_WRITE);
+ 
++	down_read(&fault->state->mm->mmap_sem);
+ 	npages = get_user_pages(fault->state->task, fault->state->mm,
+ 				fault->address, 1, write, 0, &page, NULL);
++	up_read(&fault->state->mm->mmap_sem);
+ 
+ 	if (npages == 1) {
+ 		put_page(page);
+
