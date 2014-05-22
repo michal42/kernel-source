@@ -1,0 +1,41 @@
+From: David Woodhouse <David.Woodhouse@intel.com>
+Date: Sun, 9 Mar 2014 13:25:07 -0700
+Subject: iommu/vt-d: Use domain_remove_one_dev_info() in domain_add_dev_info()
+ error path
+Git-commit: e2f8c5f6d45b092b52adea9d71018ef11250b924
+Patch-mainline: v3.15-rc2
+References: bnc#870687 bnc#879482 fate#317112
+
+Signed-off-by: David Woodhouse <David.Woodhouse@intel.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 8 +-------
+ 1 file changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index 7d3d33f..84f0d42 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2453,8 +2453,6 @@ static int domain_add_dev_info(struct dmar_domain *domain,
+ 			       int translation)
+ {
+ 	struct dmar_domain *ndomain;
+-	struct device_domain_info *info;
+-	unsigned long flags;
+ 	int ret;
+ 
+ 	ndomain = dmar_insert_dev_info(pci_domain_nr(pdev->bus),
+@@ -2465,11 +2463,7 @@ static int domain_add_dev_info(struct dmar_domain *domain,
+ 
+ 	ret = domain_context_mapping(domain, pdev, translation);
+ 	if (ret) {
+-		spin_lock_irqsave(&device_domain_lock, flags);
+-		info = pdev->dev.archdata.iommu;
+-		unlink_domain_info(info);
+-		spin_unlock_irqrestore(&device_domain_lock, flags);
+-		free_devinfo_mem(info);
++		domain_remove_one_dev_info(domain, pdev);
+ 		return ret;
+ 	}
+ 
+
