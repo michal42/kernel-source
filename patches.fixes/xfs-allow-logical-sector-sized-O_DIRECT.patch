@@ -1,0 +1,159 @@
+From c2a7ec1a70e0ea7248abcb336a8a34c122a704ad Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@sandeen.net>
+Date: Tue, 21 Jan 2014 16:46:23 -0600
+Subject: [PATCH] xfs: allow logical-sector sized O_DIRECT
+Git-commit: 7c71ee78031c248dca13fc94dea9a4cc217db6cf
+Patch-mainline: v3.14-rc1
+
+Some time ago, mkfs.xfs started picking the storage physical
+sector size as the default filesystem "sector size" in order
+to avoid RMW costs incurred by doing IOs at logical sector
+size alignments.
+
+However, this means that for a filesystem made with i.e.
+a 4k sector size on an "advanced format" 4k/512 disk,
+512-byte direct IOs are no longer allowed.  This means
+that XFS has essentially turned this AF drive into a hard
+4K device, from the filesystem on up.
+
+XFS's mkfs-specified "sector size" is really just controlling
+the minimum size & alignment of filesystem metadata.
+
+There is no real need to tightly couple XFS's minimal
+metadata size to the minimum allowed direct IO size;
+XFS can continue doing metadata in optimal sizes, but
+still allow smaller DIOs for apps which issue them,
+for whatever reason.
+
+This patch adds a new field to the xfs_buftarg, so that
+we now track 2 sizes:
+
+ 1) The metadata sector size, which is the minimum unit and
+    alignment of IO which will be performed by metadata operations.
+ 2) The device logical sector size
+
+The first is used internally by the file system for metadata
+alignment and IOs.
+The second is used for the minimum allowed direct IO alignment.
+
+This has passed xfstests on filesystems made with 4k sectors,
+including when run under the patch I sent to ignore
+XFS_IOC_DIOINFO, and issue 512 DIOs anyway.  I also directly
+tested end of block behavior on preallocated, sparse, and
+existing files when we do a 512 IO into a 4k file on a
+4k-sector filesystem, to be sure there were no unexpected
+behaviors.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_buf.c   |    5 +++++
+ fs/xfs/xfs_buf.h   |   15 +++++++++++++++
+ fs/xfs/xfs_file.c  |    7 +++++--
+ fs/xfs/xfs_ioctl.c |    2 +-
+ 4 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/fs/xfs/xfs_buf.c b/fs/xfs/xfs_buf.c
+index 052cd3d..494e5a4 100644
+--- a/fs/xfs/xfs_buf.c
++++ b/fs/xfs/xfs_buf.c
+@@ -1614,6 +1614,7 @@ xfs_setsize_buftarg_flags(
+ 	unsigned int		sectorsize,
+ 	int			verbose)
+ {
++	/* Set up metadata sector size info */
+ 	btp->bt_meta_sectorsize = sectorsize;
+ 	btp->bt_meta_sectormask = sectorsize - 1;
+ 
+@@ -1628,6 +1629,10 @@ xfs_setsize_buftarg_flags(
+ 		return EINVAL;
+ 	}
+ 
++	/* Set up device logical sector size mask */
++	btp->bt_logical_sectorsize = bdev_logical_block_size(btp->bt_bdev);
++	btp->bt_logical_sectormask = bdev_logical_block_size(btp->bt_bdev) - 1;
++
+ 	return 0;
+ }
+ 
+diff --git a/fs/xfs/xfs_buf.h b/fs/xfs/xfs_buf.h
+index ff644a7..27ee49f 100644
+--- a/fs/xfs/xfs_buf.h
++++ b/fs/xfs/xfs_buf.h
+@@ -88,6 +88,19 @@ typedef unsigned int xfs_buf_flags_t;
+  */
+ #define XFS_BSTATE_DISPOSE	 (1 << 0)	/* buffer being discarded */
+ 
++/*
++ * The xfs_buftarg contains 2 notions of "sector size" -
++ *
++ * 1) The metadata sector size, which is the minimum unit and
++ *    alignment of IO which will be performed by metadata operations.
++ * 2) The device logical sector size
++ *
++ * The first is specified at mkfs time, and is stored on-disk in the
++ * superblock's sb_sectsize.
++ *
++ * The latter is derived from the underlying device, and controls direct IO
++ * alignment constraints.
++ */
+ typedef struct xfs_buftarg {
+ 	dev_t			bt_dev;
+ 	struct block_device	*bt_bdev;
+@@ -95,6 +108,8 @@ typedef struct xfs_buftarg {
+ 	struct xfs_mount	*bt_mount;
+ 	unsigned int		bt_meta_sectorsize;
+ 	size_t			bt_meta_sectormask;
++	size_t			bt_logical_sectorsize;
++	size_t			bt_logical_sectormask;
+ 
+ 	/* LRU control structures */
+ 	struct shrinker		bt_shrinker;
+diff --git a/fs/xfs/xfs_file.c b/fs/xfs/xfs_file.c
+index 97e94db..0771fae 100644
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -278,7 +278,8 @@ xfs_file_aio_read(
+ 		xfs_buftarg_t	*target =
+ 			XFS_IS_REALTIME_INODE(ip) ?
+ 				mp->m_rtdev_targp : mp->m_ddev_targp;
+-		if ((pos | size) & target->bt_meta_sectormask) {
++		/* DIO must be aligned to device logical sector size */
++		if ((pos | size) & target->bt_logical_sectormask) {
+ 			if (pos == i_size_read(inode))
+ 				return 0;
+ 			return -XFS_ERROR(EINVAL);
+@@ -734,9 +735,11 @@ xfs_file_dio_aio_write(
+ 	struct xfs_buftarg	*target = XFS_IS_REALTIME_INODE(ip) ?
+ 					mp->m_rtdev_targp : mp->m_ddev_targp;
+ 
+-	if ((pos | count) & target->bt_meta_sectormask)
++	/* DIO must be aligned to device logical sector size */
++	if ((pos | count) & target->bt_logical_sectormask)
+ 		return -XFS_ERROR(EINVAL);
+ 
++	/* "unaligned" here means not aligned to a filesystem block */
+ 	if ((pos & mp->m_blockmask) || ((pos + count) & mp->m_blockmask))
+ 		unaligned_io = 1;
+ 
+diff --git a/fs/xfs/xfs_ioctl.c b/fs/xfs/xfs_ioctl.c
+index a15dafe..37b0463 100644
+--- a/fs/xfs/xfs_ioctl.c
++++ b/fs/xfs/xfs_ioctl.c
+@@ -1485,7 +1485,7 @@ xfs_file_ioctl(
+ 			XFS_IS_REALTIME_INODE(ip) ?
+ 			mp->m_rtdev_targp : mp->m_ddev_targp;
+ 
+-		da.d_mem = da.d_miniosz = target->bt_meta_sectorsize;
++		da.d_mem =  da.d_miniosz = target->bt_logical_sectorsize;
+ 		da.d_maxiosz = INT_MAX & ~(da.d_miniosz - 1);
+ 
+ 		if (copy_to_user(arg, &da, sizeof(da)))
+-- 
+1.6.0.2
+
