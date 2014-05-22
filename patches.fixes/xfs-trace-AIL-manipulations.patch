@@ -1,0 +1,145 @@
+From 3d4752d291437147e5b6def48db60336abd45992 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Fri, 1 Nov 2013 15:27:18 +1100
+Subject: [PATCH] xfs: trace AIL manipulations
+Git-commit: 750b9c90668b173a92b20e747b9736b8537eda5a
+Patch-mainline: v3.13-rc1
+
+I debugging a log tail issue on a RHEL6 kernel, I added these trace
+points to trace log items being added, moved and removed in the AIL
+and how that affected the log tail LSN that was written to the log.
+They were very helpful in that they immediately identified the cause
+of the problem being seen. Hence I'd like to always have them
+available for use.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_log.c       |    1 +
+ fs/xfs/xfs_trace.h     |   59 +++++++++++++++++++++++++++++++++++++++++++++++-
+ fs/xfs/xfs_trans_ail.c |    3 ++
+ 3 files changed, 62 insertions(+), 1 deletions(-)
+
+diff --git a/fs/xfs/xfs_log.c b/fs/xfs/xfs_log.c
+index eb88669..46fa5c6 100644
+--- a/fs/xfs/xfs_log.c
++++ b/fs/xfs/xfs_log.c
+@@ -1078,6 +1078,7 @@ xlog_assign_tail_lsn_locked(
+ 		tail_lsn = lip->li_lsn;
+ 	else
+ 		tail_lsn = atomic64_read(&log->l_last_sync_lsn);
++	trace_xfs_log_assign_tail_lsn(log, tail_lsn);
+ 	atomic64_set(&log->l_tail_lsn, tail_lsn);
+ 	return tail_lsn;
+ }
+diff --git a/fs/xfs/xfs_trace.h b/fs/xfs/xfs_trace.h
+index 47910e6..f195476 100644
+--- a/fs/xfs/xfs_trace.h
++++ b/fs/xfs/xfs_trace.h
+@@ -31,8 +31,8 @@ struct xfs_da_args;
+ struct xfs_da_node_entry;
+ struct xfs_dquot;
+ struct xfs_log_item;
+-struct xlog_ticket;
+ struct xlog;
++struct xlog_ticket;
+ struct xlog_recover;
+ struct xlog_recover_item;
+ struct xfs_buf_log_format;
+@@ -938,6 +938,63 @@ DEFINE_LOG_ITEM_EVENT(xfs_ail_pinned);
+ DEFINE_LOG_ITEM_EVENT(xfs_ail_locked);
+ DEFINE_LOG_ITEM_EVENT(xfs_ail_flushing);
+ 
++DECLARE_EVENT_CLASS(xfs_ail_class,
++	TP_PROTO(struct xfs_log_item *lip, xfs_lsn_t old_lsn, xfs_lsn_t new_lsn),
++	TP_ARGS(lip, old_lsn, new_lsn),
++	TP_STRUCT__entry(
++		__field(dev_t, dev)
++		__field(void *, lip)
++		__field(uint, type)
++		__field(uint, flags)
++		__field(xfs_lsn_t, old_lsn)
++		__field(xfs_lsn_t, new_lsn)
++	),
++	TP_fast_assign(
++		__entry->dev = lip->li_mountp->m_super->s_dev;
++		__entry->lip = lip;
++		__entry->type = lip->li_type;
++		__entry->flags = lip->li_flags;
++		__entry->old_lsn = old_lsn;
++		__entry->new_lsn = new_lsn;
++	),
++	TP_printk("dev %d:%d lip 0x%p old lsn %d/%d new lsn %d/%d type %s flags %s",
++		  MAJOR(__entry->dev), MINOR(__entry->dev),
++		  __entry->lip,
++		  CYCLE_LSN(__entry->old_lsn), BLOCK_LSN(__entry->old_lsn),
++		  CYCLE_LSN(__entry->new_lsn), BLOCK_LSN(__entry->new_lsn),
++		  __print_symbolic(__entry->type, XFS_LI_TYPE_DESC),
++		  __print_flags(__entry->flags, "|", XFS_LI_FLAGS))
++)
++
++#define DEFINE_AIL_EVENT(name) \
++DEFINE_EVENT(xfs_ail_class, name, \
++	TP_PROTO(struct xfs_log_item *lip, xfs_lsn_t old_lsn, xfs_lsn_t new_lsn), \
++	TP_ARGS(lip, old_lsn, new_lsn))
++DEFINE_AIL_EVENT(xfs_ail_insert);
++DEFINE_AIL_EVENT(xfs_ail_move);
++DEFINE_AIL_EVENT(xfs_ail_delete);
++
++TRACE_EVENT(xfs_log_assign_tail_lsn,
++	TP_PROTO(struct xlog *log, xfs_lsn_t new_lsn),
++	TP_ARGS(log, new_lsn),
++	TP_STRUCT__entry(
++		__field(dev_t, dev)
++		__field(xfs_lsn_t, new_lsn)
++		__field(xfs_lsn_t, old_lsn)
++		__field(xfs_lsn_t, last_sync_lsn)
++	),
++	TP_fast_assign(
++		__entry->dev = log->l_mp->m_super->s_dev;
++		__entry->new_lsn = new_lsn;
++		__entry->old_lsn = atomic64_read(&log->l_tail_lsn);
++		__entry->last_sync_lsn = atomic64_read(&log->l_last_sync_lsn);
++	),
++	TP_printk("dev %d:%d new tail lsn %d/%d, old lsn %d/%d, last sync %d/%d",
++		  MAJOR(__entry->dev), MINOR(__entry->dev),
++		  CYCLE_LSN(__entry->new_lsn), BLOCK_LSN(__entry->new_lsn),
++		  CYCLE_LSN(__entry->old_lsn), BLOCK_LSN(__entry->old_lsn),
++		  CYCLE_LSN(__entry->last_sync_lsn), BLOCK_LSN(__entry->last_sync_lsn))
++)
+ 
+ DECLARE_EVENT_CLASS(xfs_file_class,
+ 	TP_PROTO(struct xfs_inode *ip, size_t count, loff_t offset, int flags),
+diff --git a/fs/xfs/xfs_trans_ail.c b/fs/xfs/xfs_trans_ail.c
+index 21c6d7d..dfdfe07 100644
+--- a/fs/xfs/xfs_trans_ail.c
++++ b/fs/xfs/xfs_trans_ail.c
+@@ -658,11 +658,13 @@ xfs_trans_ail_update_bulk(
+ 			if (XFS_LSN_CMP(lsn, lip->li_lsn) <= 0)
+ 				continue;
+ 
++			trace_xfs_ail_move(lip, lip->li_lsn, lsn);
+ 			xfs_ail_delete(ailp, lip);
+ 			if (mlip == lip)
+ 				mlip_changed = 1;
+ 		} else {
+ 			lip->li_flags |= XFS_LI_IN_AIL;
++			trace_xfs_ail_insert(lip, 0, lsn);
+ 		}
+ 		lip->li_lsn = lsn;
+ 		list_add(&lip->li_ail, &tmp);
+@@ -731,6 +733,7 @@ xfs_trans_ail_delete_bulk(
+ 			return;
+ 		}
+ 
++		trace_xfs_ail_delete(lip, mlip->li_lsn, lip->li_lsn);
+ 		xfs_ail_delete(ailp, lip);
+ 		lip->li_flags &= ~XFS_LI_IN_AIL;
+ 		lip->li_lsn = 0;
+-- 
+1.6.0.2
+
