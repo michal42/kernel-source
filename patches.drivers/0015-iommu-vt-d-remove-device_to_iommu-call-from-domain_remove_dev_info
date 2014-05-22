@@ -1,0 +1,52 @@
+From: David Woodhouse <David.Woodhouse@intel.com>
+Date: Sun, 9 Mar 2014 13:33:06 -0700
+Subject: iommu/vt-d: Remove device_to_iommu() call from
+ domain_remove_dev_info()
+Git-commit: 7c7faa11ecf3eec17699ae73fc6e336cbf993081
+Patch-mainline: v3.15-rc2
+References: bnc#870687 bnc#879482 fate#317112
+
+This was problematic because it works by domain/bus/devfn and we want
+to make device_to_iommu() use only a struct device * (for handling non-PCI
+devices). Now that the iommu pointer is reliably stored in the
+device_domain_info, we don't need to look it up.
+
+Signed-off-by: David Woodhouse <David.Woodhouse@intel.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index dc322d0..aa8548c 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2084,7 +2084,6 @@ static void domain_remove_dev_info(struct dmar_domain *domain)
+ {
+ 	struct device_domain_info *info;
+ 	unsigned long flags, flags2;
+-	struct intel_iommu *iommu;
+ 
+ 	spin_lock_irqsave(&device_domain_lock, flags);
+ 	while (!list_empty(&domain->devices)) {
+@@ -2094,16 +2093,15 @@ static void domain_remove_dev_info(struct dmar_domain *domain)
+ 		spin_unlock_irqrestore(&device_domain_lock, flags);
+ 
+ 		iommu_disable_dev_iotlb(info);
+-		iommu = device_to_iommu(info->segment, info->bus, info->devfn);
+-		iommu_detach_dev(iommu, info->bus, info->devfn);
++		iommu_detach_dev(info->iommu, info->bus, info->devfn);
+ 
+ 		if (domain->flags & DOMAIN_FLAG_VIRTUAL_MACHINE) {
+-			iommu_detach_dependent_devices(iommu, info->dev);
++			iommu_detach_dependent_devices(info->iommu, info->dev);
+ 			/* clear this iommu in iommu_bmp, update iommu count
+ 			 * and capabilities
+ 			 */
+ 			spin_lock_irqsave(&domain->iommu_lock, flags2);
+-			if (test_and_clear_bit(iommu->seq_id,
++			if (test_and_clear_bit(info->iommu->seq_id,
+ 					       domain->iommu_bmp)) {
+ 				domain->iommu_count--;
+ 				domain_update_iommu_cap(domain);
+
