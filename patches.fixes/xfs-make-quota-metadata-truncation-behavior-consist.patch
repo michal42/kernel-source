@@ -1,0 +1,71 @@
+From 07e0c1fa8f9e2a43edcc92816d79f2036104c50f Mon Sep 17 00:00:00 2001
+From: Jie Liu <jeff.liu@oracle.com>
+Date: Fri, 22 Nov 2013 14:04:00 +0800
+Subject: [PATCH] xfs: make quota metadata truncation behavior consistent to user space
+Git-commit: c61a9e39f637373929a110ad2a5922a2e8b00f4c
+Patch-mainline: v3.14-rc1
+
+In xfs_qm_scall_trunc_qfiles(), we ignore the error if failed to remove
+the users quota metadata and proceed to remove groups and projects if
+they are being there.  However, in user space, the remove operation will
+break and return if failed to remove any kind of quota.
+Also for v5 super block, we can enabled both group and project quota at
+the same time, in this case the current error handling will cover the
+group error with projects but they might failed due to different reasons.
+
+It seems we'd better the error handling consistent to the user space and
+don't trying to remove another kind of quota metadata if the previous
+operation is failed.
+
+Signed-off-by: Jie Liu <jeff.liu@oracle.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_qm_syscalls.c |   18 ++++++++++++------
+ 1 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/fs/xfs/xfs_qm_syscalls.c b/fs/xfs/xfs_qm_syscalls.c
+index fb67091..a492150 100644
+--- a/fs/xfs/xfs_qm_syscalls.c
++++ b/fs/xfs/xfs_qm_syscalls.c
+@@ -284,7 +284,7 @@ xfs_qm_scall_trunc_qfiles(
+ 	xfs_mount_t	*mp,
+ 	uint		flags)
+ {
+-	int		error = 0, error2 = 0;
++	int		error;
+ 
+ 	if (!xfs_sb_version_hasquota(&mp->m_sb) || flags == 0) {
+ 		xfs_debug(mp, "%s: flags=%x m_qflags=%x",
+@@ -292,14 +292,20 @@ xfs_qm_scall_trunc_qfiles(
+ 		return XFS_ERROR(EINVAL);
+ 	}
+ 
+-	if (flags & XFS_DQ_USER)
++	if (flags & XFS_DQ_USER) {
+ 		error = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_uquotino);
+-	if (flags & XFS_DQ_GROUP)
+-		error2 = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_gquotino);
++		if (error)
++			return error;
++	}
++	if (flags & XFS_DQ_GROUP) {
++		error = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_gquotino);
++		if (error)
++			return error;
++	}
+ 	if (flags & XFS_DQ_PROJ)
+-		error2 = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_pquotino);
++		error = xfs_qm_scall_trunc_qfile(mp, mp->m_sb.sb_pquotino);
+ 
+-	return error ? error : error2;
++	return error;
+ }
+ 
+ /*
+-- 
+1.6.0.2
+
