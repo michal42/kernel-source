@@ -1,0 +1,98 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/uaccess: test if current->mm is set before walking page tables
+Patch-mainline: v3.14-rc1
+Git-commit: b03b467944b3e88a36a33b5429425c42dbd5b8a0
+References: bnc#878391, LTC#110601
+
+Description:  kernel: remove page table walk for user space accesses
+Symptom:      Unexpected program crashes, random data corruption.
+Problem:      The user space access functions perform page table walks in order
+              to translate a user space virtual address to a physical address.
+              While doing that the kernel must make sure the page table can not
+              be changed concurrently from a different cpu.
+              Therefore the page table lock must be held. However instead of
+              acquiring the per page table split page table lock the kernel
+              incorrectly acquired the per mm global page table lock.
+              This allows different cpus to modify the page table contents
+              while its contents are inspected and being used to access the
+              corresponding user space address space.
+              Therefore the kernel may access a page which was concurrently
+              freed on a different cpu, which can lead to data corruption.
+              This problem exists only for futex operations.
+Solution:     Remove page table walks and rework the user space access code to
+              use machine instructions to access user space. This avoids all
+              locking issues.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/uaccess: test if current->mm is set before walking page tables
+
+              If get_fs() == USER_DS we better test if current->mm is not zero before
+              walking page tables.
+              The page table walk code would try to lock mm->page_table_lock, however
+              if mm is zero this might crash.
+
+              Now it is arguably incorrect trying to access userspace if current->mm
+              is zero, however we have seen that and s390 would be the only architecture
+              which would crash in such a case.
+              So we better make the page table walk code a bit more robust and report
+              always a fault instead.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/lib/uaccess_pt.c |   10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/arch/s390/lib/uaccess_pt.c
++++ b/arch/s390/lib/uaccess_pt.c
+@@ -153,6 +153,8 @@ static __always_inline size_t __user_cop
+ 	unsigned long offset, done, size, kaddr;
+ 	void *from, *to;
+ 
++	if (!mm)
++		return n;
+ 	done = 0;
+ retry:
+ 	spin_lock(&mm->page_table_lock);
+@@ -262,6 +264,8 @@ static size_t strnlen_user_pt(size_t cou
+ 		return 0;
+ 	if (segment_eq(get_fs(), KERNEL_DS))
+ 		return strnlen_kernel(count, src);
++	if (!mm)
++		return 0;
+ 	done = 0;
+ retry:
+ 	spin_lock(&mm->page_table_lock);
+@@ -323,6 +327,8 @@ static size_t copy_in_user_pt(size_t n,
+ 
+ 	if (segment_eq(get_fs(), KERNEL_DS))
+ 		return copy_in_kernel(n, to, from);
++	if (!mm)
++		return n;
+ 	done = 0;
+ retry:
+ 	spin_lock(&mm->page_table_lock);
+@@ -411,6 +417,8 @@ int futex_atomic_op_pt(int op, u32 __use
+ 
+ 	if (segment_eq(get_fs(), KERNEL_DS))
+ 		return __futex_atomic_op_pt(op, uaddr, oparg, old);
++	if (unlikely(!current->mm))
++		return -EFAULT;
+ 	spin_lock(&current->mm->page_table_lock);
+ 	uaddr = (u32 __force __user *)
+ 		__dat_user_addr((__force unsigned long) uaddr, 1);
+@@ -448,6 +456,8 @@ int futex_atomic_cmpxchg_pt(u32 *uval, u
+ 
+ 	if (segment_eq(get_fs(), KERNEL_DS))
+ 		return __futex_atomic_cmpxchg_pt(uval, uaddr, oldval, newval);
++	if (unlikely(!current->mm))
++		return -EFAULT;
+ 	spin_lock(&current->mm->page_table_lock);
+ 	uaddr = (u32 __force __user *)
+ 		__dat_user_addr((__force unsigned long) uaddr, 1);
