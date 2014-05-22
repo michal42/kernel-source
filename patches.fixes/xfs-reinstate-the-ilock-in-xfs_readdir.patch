@@ -1,0 +1,56 @@
+From f1aba2b19e6275ada8d3dc6acc06b1e9d75894d1 Mon Sep 17 00:00:00 2001
+From: Ben Myers <bpm@sgi.com>
+Date: Fri, 6 Dec 2013 12:30:11 -0800
+Subject: [PATCH] xfs: reinstate the ilock in xfs_readdir
+Git-commit: 40194ecc6d78327d98e66de3213db96ca0a31e6f
+Patch-mainline: v3.14-rc1
+
+Although it was removed in commit 051e7cd44ab8, ilock needs to be taken in
+xfs_readdir because we might have to read the extent list in from disk.  This
+keeps other threads from reading from or writing to the extent list while it is
+being read in and is still in a transitional state.
+
+This has been associated with "Access to block zero" messages on directories
+with large numbers of extents resulting from excessive filesytem fragmentation,
+as well as extent list corruption.  Unfortunately no test case at this point.
+
+Signed-off-by: Ben Myers <bpm@sgi.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_dir2_readdir.c |    4 ++++
+ 1 files changed, 4 insertions(+), 0 deletions(-)
+
+diff --git a/fs/xfs/xfs_dir2_readdir.c b/fs/xfs/xfs_dir2_readdir.c
+index 8f84153..b03dd7f 100644
+--- a/fs/xfs/xfs_dir2_readdir.c
++++ b/fs/xfs/xfs_dir2_readdir.c
+@@ -674,6 +674,7 @@ xfs_readdir(
+ {
+ 	int		rval;		/* return value */
+ 	int		v;		/* type-checking value */
++	uint		lock_mode;
+ 
+ 	trace_xfs_readdir(dp);
+ 
+@@ -683,6 +684,7 @@ xfs_readdir(
+ 	ASSERT(S_ISDIR(dp->i_d.di_mode));
+ 	XFS_STATS_INC(xs_dir_getdents);
+ 
++	lock_mode = xfs_ilock_data_map_shared(dp);
+ 	if (dp->i_d.di_format == XFS_DINODE_FMT_LOCAL)
+ 		rval = xfs_dir2_sf_getdents(dp, ctx);
+ 	else if ((rval = xfs_dir2_isblock(NULL, dp, &v)))
+@@ -691,5 +693,7 @@ xfs_readdir(
+ 		rval = xfs_dir2_block_getdents(dp, ctx);
+ 	else
+ 		rval = xfs_dir2_leaf_getdents(dp, ctx, bufsize);
++	xfs_iunlock(dp, lock_mode);
++
+ 	return rval;
+ }
+-- 
+1.6.0.2
+
