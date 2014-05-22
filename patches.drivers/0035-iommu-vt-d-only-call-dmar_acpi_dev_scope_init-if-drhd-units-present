@@ -1,0 +1,46 @@
+From: David Woodhouse <David.Woodhouse@intel.com>
+Date: Fri, 28 Mar 2014 11:28:40 +0000
+Subject: iommu/vt-d: Only call dmar_acpi_dev_scope_init() if DRHD units present
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Git-commit: 63b4262478ee6384c7efb5279be54236e5d6361b
+Patch-mainline: v3.15-rc2
+References: bnc#870687 bnc#879482 fate#317112
+
+As pointed out by Jörg and fixed in commit 11f1a7768 ("iommu/vt-d: Check
+for NULL pointer in dmar_acpi_dev_scope_init(), this code path can
+bizarrely get exercised even on AMD IOMMU systems with IRQ remapping
+enabled.
+
+In addition to the defensive check for NULL which Jörg added, let's also
+just avoid calling the function at all if there aren't an Intel IOMMU
+units in the system.
+
+Signed-off-by: David Woodhouse <David.Woodhouse@intel.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/dmar.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/iommu/dmar.c b/drivers/iommu/dmar.c
+index e531a2b..142650e 100644
+--- a/drivers/iommu/dmar.c
++++ b/drivers/iommu/dmar.c
+@@ -698,13 +698,13 @@ int __init dmar_dev_scope_init(void)
+ 	if (dmar_dev_scope_status != 1)
+ 		return dmar_dev_scope_status;
+ 
+-	dmar_acpi_dev_scope_init();
+-
+ 	if (list_empty(&dmar_drhd_units)) {
+ 		dmar_dev_scope_status = -ENODEV;
+ 	} else {
+ 		dmar_dev_scope_status = 0;
+ 
++		dmar_acpi_dev_scope_init();
++
+ 		for_each_pci_dev(dev) {
+ 			if (dev->is_virtfn)
+ 				continue;
+
