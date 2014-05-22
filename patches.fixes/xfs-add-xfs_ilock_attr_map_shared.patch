@@ -1,0 +1,134 @@
+From efa70be165497826f674846f681e6e2364af906c Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Wed, 18 Dec 2013 02:14:39 -0800
+Subject: [PATCH 2/2] xfs: add xfs_ilock_attr_map_shared
+Git-commit: efa70be165497826f674846f681e6e2364af906c
+Patch-mainline: v3.14-rc1
+
+Equivalent to xfs_ilock_data_map_shared, except for the attribute fork.
+
+Make xfs_getbmap use it if called for the attribute fork instead of
+xfs_ilock_data_map_shared.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Ben Myers <bpm@sgi.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_bmap_util.c | 27 ++++++++++++++++-----------
+ fs/xfs/xfs_inode.c     | 34 ++++++++++++++++++++++++----------
+ fs/xfs/xfs_inode.h     |  1 +
+ 3 files changed, 41 insertions(+), 21 deletions(-)
+
+diff --git a/fs/xfs/xfs_bmap_util.c b/fs/xfs/xfs_bmap_util.c
+index 460aeb87c04e..374ba050942f 100644
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -617,22 +617,27 @@ xfs_getbmap(
+ 		return XFS_ERROR(ENOMEM);
+ 
+ 	xfs_ilock(ip, XFS_IOLOCK_SHARED);
+-	if (whichfork == XFS_DATA_FORK && !(iflags & BMV_IF_DELALLOC)) {
+-		if (ip->i_delayed_blks || XFS_ISIZE(ip) > ip->i_d.di_size) {
++	if (whichfork == XFS_DATA_FORK) {
++		if (!(iflags & BMV_IF_DELALLOC) &&
++		    (ip->i_delayed_blks || XFS_ISIZE(ip) > ip->i_d.di_size)) {
+ 			error = -filemap_write_and_wait(VFS_I(ip)->i_mapping);
+ 			if (error)
+ 				goto out_unlock_iolock;
++
++			/*
++			 * Even after flushing the inode, there can still be
++			 * delalloc blocks on the inode beyond EOF due to
++			 * speculative preallocation.  These are not removed
++			 * until the release function is called or the inode
++			 * is inactivated.  Hence we cannot assert here that
++			 * ip->i_delayed_blks == 0.
++			 */
+ 		}
+-		/*
+-		 * even after flushing the inode, there can still be delalloc
+-		 * blocks on the inode beyond EOF due to speculative
+-		 * preallocation. These are not removed until the release
+-		 * function is called or the inode is inactivated. Hence we
+-		 * cannot assert here that ip->i_delayed_blks == 0.
+-		 */
+-	}
+ 
+-	lock = xfs_ilock_data_map_shared(ip);
++		lock = xfs_ilock_data_map_shared(ip);
++	} else {
++		lock = xfs_ilock_attr_map_shared(ip);
++	}
+ 
+ 	/*
+ 	 * Don't let nex be bigger than the number of extents
+diff --git a/fs/xfs/xfs_inode.c b/fs/xfs/xfs_inode.c
+index fdd483783365..e655bb07e8bb 100644
+--- a/fs/xfs/xfs_inode.c
++++ b/fs/xfs/xfs_inode.c
+@@ -77,17 +77,18 @@ xfs_get_extsz_hint(
+ }
+ 
+ /*
+- * This is a wrapper routine around the xfs_ilock() routine used to centralize
+- * some grungy code.  It is used in places that wish to lock the inode solely
+- * for reading the extents.  The reason these places can't just call
+- * xfs_ilock(SHARED) is that the inode lock also guards to bringing in of the
+- * extents from disk for a file in b-tree format.  If the inode is in b-tree
+- * format, then we need to lock the inode exclusively until the extents are read
+- * in.  Locking it exclusively all the time would limit our parallelism
+- * unnecessarily, though.  What we do instead is check to see if the extents
+- * have been read in yet, and only lock the inode exclusively if they have not.
++ * These two are wrapper routines around the xfs_ilock() routine used to
++ * centralize some grungy code.  They are used in places that wish to lock the
++ * inode solely for reading the extents.  The reason these places can't just
++ * call xfs_ilock(ip, XFS_ILOCK_SHARED) is that the inode lock also guards to
++ * bringing in of the extents from disk for a file in b-tree format.  If the
++ * inode is in b-tree format, then we need to lock the inode exclusively until
++ * the extents are read in.  Locking it exclusively all the time would limit
++ * our parallelism unnecessarily, though.  What we do instead is check to see
++ * if the extents have been read in yet, and only lock the inode exclusively
++ * if they have not.
+  *
+- * The function returns a value which should be given to the corresponding
++ * The functions return a value which should be given to the corresponding
+  * xfs_iunlock() call.
+  */
+ uint
+@@ -103,6 +104,19 @@ xfs_ilock_data_map_shared(
+ 	return lock_mode;
+ }
+ 
++uint
++xfs_ilock_attr_map_shared(
++	struct xfs_inode	*ip)
++{
++	uint			lock_mode = XFS_ILOCK_SHARED;
++
++	if (ip->i_d.di_aformat == XFS_DINODE_FMT_BTREE &&
++	    (ip->i_afp->if_flags & XFS_IFEXTENTS) == 0)
++		lock_mode = XFS_ILOCK_EXCL;
++	xfs_ilock(ip, lock_mode);
++	return lock_mode;
++}
++
+ /*
+  * The xfs inode contains 2 locks: a multi-reader lock called the
+  * i_iolock and a multi-reader lock called the i_lock.  This routine
+diff --git a/fs/xfs/xfs_inode.h b/fs/xfs/xfs_inode.h
+index fde368624ea7..65e2350f449c 100644
+--- a/fs/xfs/xfs_inode.h
++++ b/fs/xfs/xfs_inode.h
+@@ -338,6 +338,7 @@ void		xfs_iunlock(xfs_inode_t *, uint);
+ void		xfs_ilock_demote(xfs_inode_t *, uint);
+ int		xfs_isilocked(xfs_inode_t *, uint);
+ uint		xfs_ilock_data_map_shared(struct xfs_inode *);
++uint		xfs_ilock_attr_map_shared(struct xfs_inode *);
+ int		xfs_ialloc(struct xfs_trans *, xfs_inode_t *, umode_t,
+ 			   xfs_nlink_t, xfs_dev_t, prid_t, int,
+ 			   struct xfs_buf **, xfs_inode_t **);
+-- 
+1.8.1.4
+
