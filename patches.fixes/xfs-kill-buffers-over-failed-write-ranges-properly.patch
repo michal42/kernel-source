@@ -1,0 +1,60 @@
+From e8513a9dd2156d43ae34b16d0c930dfdd4e2d798 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Mon, 14 Apr 2014 18:11:58 +1000
+Subject: [PATCH] xfs: kill buffers over failed write ranges properly
+Git-commit: 4ab9ed578e82851645f3dd69d36d91ae77564d6c
+Patch-mainline: v3.15-rc5
+
+When a write fails, if we don't clear the delalloc flags from the
+buffers over the failed range, they can persist beyond EOF and cause
+problems. writeback will see the pages in the page cache, see they
+are dirty and continually retry the write, assuming that the page
+beyond EOF is just racing with a truncate. The page will eventually
+be released due to some other operation (e.g. direct IO), and it
+will not pass through invalidation because it is dirty. Hence it
+will be released with buffer_delay set on it, and trigger warnings
+in xfs_vm_releasepage() and assert fail in xfs_file_aio_write_direct
+because invalidation failed and we didn't write the corect amount.
+
+This causes failures on block size < page size filesystems in fsx
+and fsstress workloads run by xfstests.
+
+Fix it by completely trashing any state on the buffer that could be
+used to imply that it contains valid data when the delalloc range
+over the buffer is punched out during the failed write handling.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Tested-by: Brian Foster <bfoster@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_aops.c |   10 ++++++++++
+ 1 files changed, 10 insertions(+), 0 deletions(-)
+
+diff --git a/fs/xfs/xfs_aops.c b/fs/xfs/xfs_aops.c
+index 9d22d90..e7e2b67 100644
+--- a/fs/xfs/xfs_aops.c
++++ b/fs/xfs/xfs_aops.c
+@@ -1562,6 +1562,16 @@ xfs_vm_write_failed(
+ 
+ 		xfs_vm_kill_delalloc_range(inode, block_offset,
+ 					   block_offset + bh->b_size);
++
++		/*
++		 * This buffer does not contain data anymore. make sure anyone
++		 * who finds it knows that for certain.
++		 */
++		clear_buffer_delay(bh);
++		clear_buffer_uptodate(bh);
++		clear_buffer_mapped(bh);
++		clear_buffer_new(bh);
++		clear_buffer_dirty(bh);
+ 	}
+ 
+ }
+-- 
+1.6.0.2
+
