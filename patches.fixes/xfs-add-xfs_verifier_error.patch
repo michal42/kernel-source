@@ -1,0 +1,92 @@
+From 62431be4b1e20a49ad6a4cdb208f2bee34961159 Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@sandeen.net>
+Date: Thu, 27 Feb 2014 15:21:07 +1100
+Subject: [PATCH] xfs: add xfs_verifier_error()
+Git-commit: ca23f8fdd6a0dd37b3909ce7709c491f0c26399d
+Patch-mainline: v3.15-rc1
+
+We want to distinguish between corruption, CRC errors,
+etc.  In addition, the full stack trace on verifier errors
+seems less than helpful; it looks more like an oops than
+corruption.
+
+Create a new function to specifically alert the user to
+verifier errors, which can differentiate between
+EFSCORRUPTED and CRC mismatches.  It doesn't dump stack
+unless the xfs error level is turned up high.
+
+Define a new error message (EFSBADCRC) to clearly identify
+CRC errors.  (Defined to EBADMSG, bad message)
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_error.c |   25 +++++++++++++++++++++++++
+ fs/xfs/xfs_error.h |    1 +
+ fs/xfs/xfs_linux.h |    1 +
+ 3 files changed, 27 insertions(+), 0 deletions(-)
+
+diff --git a/fs/xfs/xfs_error.c b/fs/xfs/xfs_error.c
+index 40f2985..b563a40 100644
+--- a/fs/xfs/xfs_error.c
++++ b/fs/xfs/xfs_error.c
+@@ -181,3 +181,28 @@ xfs_corruption_error(
+ 	xfs_error_report(tag, level, mp, filename, linenum, ra);
+ 	xfs_alert(mp, "Corruption detected. Unmount and run xfs_repair");
+ }
++
++/*
++ * Warnings specifically for verifier errors.  Differentiate CRC vs. invalid
++ * values, and omit the stack trace unless the error level is tuned high.
++ */
++void
++xfs_verifier_error(
++	struct xfs_buf		*bp)
++{
++	struct xfs_mount *mp = bp->b_target->bt_mount;
++
++	xfs_alert(mp, "Metadata %s detected at %pF, block 0x%llx",
++		  bp->b_error == EFSBADCRC ? "CRC error" : "corruption",
++		  __return_address, bp->b_bn);
++
++	xfs_alert(mp, "Unmount and run xfs_repair");
++
++	if (xfs_error_level >= XFS_ERRLEVEL_LOW) {
++		xfs_alert(mp, "First 64 bytes of corrupted metadata buffer:");
++		xfs_hex_dump(xfs_buf_offset(bp, 0), 64);
++	}
++
++	if (xfs_error_level >= XFS_ERRLEVEL_HIGH)
++		xfs_stack_trace();
++}
+diff --git a/fs/xfs/xfs_error.h b/fs/xfs/xfs_error.h
+index 079a367..c1c57d4 100644
+--- a/fs/xfs/xfs_error.h
++++ b/fs/xfs/xfs_error.h
+@@ -34,6 +34,7 @@ extern void xfs_error_report(const char *tag, int level, struct xfs_mount *mp,
+ extern void xfs_corruption_error(const char *tag, int level,
+ 			struct xfs_mount *mp, void *p, const char *filename,
+ 			int linenum, inst_t *ra);
++extern void xfs_verifier_error(struct xfs_buf *bp);
+ 
+ #define	XFS_ERROR_REPORT(e, lvl, mp)	\
+ 	xfs_error_report(e, lvl, mp, __FILE__, __LINE__, __return_address)
+diff --git a/fs/xfs/xfs_linux.h b/fs/xfs/xfs_linux.h
+index dba4ba5..6c8b2ee 100644
+--- a/fs/xfs/xfs_linux.h
++++ b/fs/xfs/xfs_linux.h
+@@ -179,6 +179,7 @@ typedef __uint64_t __psunsigned_t;
+ #define ENOATTR		ENODATA		/* Attribute not found */
+ #define EWRONGFS	EINVAL		/* Mount with wrong filesystem type */
+ #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
++#define EFSBADCRC	EBADMSG		/* Bad CRC detected */
+ 
+ #define SYNCHRONIZE()	barrier()
+ #define __return_address __builtin_return_address(0)
+-- 
+1.6.0.2
+
