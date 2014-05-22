@@ -1,0 +1,41 @@
+From: David Woodhouse <David.Woodhouse@intel.com>
+Date: Mon, 14 Apr 2014 22:01:30 -0700
+Subject: iommu/vt-d: Fix get_domain_for_dev() handling of upstream PCIe bridges
+Git-commit: 9f05d3fb644bf178c169d9c70dcfe360e3a006ae
+Patch-mainline: v3.15-rc2
+References: bnc#870687 bnc#879482 fate#317112
+
+Commit 146922ec79 ("iommu/vt-d: Make get_domain_for_dev() take struct
+device") introduced new variables bridge_bus and bridge_devfn to
+identify the upstream PCIe to PCI bridge responsible for the given
+target device. Leaving the original bus/devfn variables to identify
+the target device itself, now that it is no longer assumed to be PCI
+and we can no longer trivially find that information.
+
+However, the patch failed to correctly use the new variables in all
+cases; instead using the as-yet-uninitialised 'bus' and 'devfn'
+variables.
+
+Reported-by: Alex Williamson <alex.williamson@redhat.com>
+Signed-off-by: David Woodhouse <David.Woodhouse@intel.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index 13dc231..f256ffc 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2237,7 +2237,9 @@ static struct dmar_domain *get_domain_for_dev(struct device *dev, int gaw)
+ 				bridge_devfn = dev_tmp->devfn;
+ 			}
+ 			spin_lock_irqsave(&device_domain_lock, flags);
+-			info = dmar_search_domain_by_dev_info(segment, bus, devfn);
++			info = dmar_search_domain_by_dev_info(segment,
++							      bridge_bus,
++							      bridge_devfn);
+ 			if (info) {
+ 				iommu = info->iommu;
+ 				domain = info->domain;
+
