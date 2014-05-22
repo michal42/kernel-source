@@ -1,0 +1,81 @@
+From c7a8cecd20cb6faa50120badb8ff73dadc8d86ab Mon Sep 17 00:00:00 2001
+From: Mark Tinguely <tinguely@sgi.com>
+Date: Wed, 2 Oct 2013 07:51:12 -0500
+Subject: [PATCH] xfs: free the list of recovery items on error
+Git-commit: 2a84108fe275f95fbe838b1c92b7c45258dcae5c
+Patch-mainline: v3.14-rc1
+
+Recovery builds a list of items on the transaction's
+r_itemq head. Normally these items are committed and freed.
+But in the event of a recovery error, these allocations
+are leaked.
+
+If the error occurs during item reordering, then reconstruct
+the r_itemq list before deleting the list to avoid leaking
+the entries that were on one of the temporary lists.
+
+Signed-off-by: Mark Tinguely <tinguely@sgi.com>
+Reviewed-by: Ben Myers <bpm@sgi.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_log_recover.c |   17 ++++++++++++++---
+ 1 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/fs/xfs/xfs_log_recover.c b/fs/xfs/xfs_log_recover.c
+index e7ca48e..898b689 100644
+--- a/fs/xfs/xfs_log_recover.c
++++ b/fs/xfs/xfs_log_recover.c
+@@ -1659,6 +1659,7 @@ xlog_recover_reorder_trans(
+ 	int			pass)
+ {
+ 	xlog_recover_item_t	*item, *n;
++	int			error = 0;
+ 	LIST_HEAD(sort_list);
+ 	LIST_HEAD(cancel_list);
+ 	LIST_HEAD(buffer_list);
+@@ -1700,9 +1701,17 @@ xlog_recover_reorder_trans(
+ 				"%s: unrecognized type of log operation",
+ 				__func__);
+ 			ASSERT(0);
+-			return XFS_ERROR(EIO);
++			/*
++			 * return the remaining items back to the transaction
++			 * item list so they can be freed in caller.
++			 */
++			if (!list_empty(&sort_list))
++				list_splice_init(&sort_list, &trans->r_itemq);
++			error = XFS_ERROR(EIO);
++			goto out;
+ 		}
+ 	}
++out:
+ 	ASSERT(list_empty(&sort_list));
+ 	if (!list_empty(&buffer_list))
+ 		list_splice(&buffer_list, &trans->r_itemq);
+@@ -1712,7 +1721,7 @@ xlog_recover_reorder_trans(
+ 		list_splice_tail(&inode_buffer_list, &trans->r_itemq);
+ 	if (!list_empty(&cancel_list))
+ 		list_splice_tail(&cancel_list, &trans->r_itemq);
+-	return 0;
++	return error;
+ }
+ 
+ /*
+@@ -3743,8 +3752,10 @@ xlog_recover_process_data(
+ 				error = XFS_ERROR(EIO);
+ 				break;
+ 			}
+-			if (error)
++			if (error) {
++				xlog_recover_free_trans(trans);
+ 				return error;
++			}
+ 		}
+ 		dp += be32_to_cpu(ohead->oh_len);
+ 		num_logops--;
+-- 
+1.6.0.2
+
