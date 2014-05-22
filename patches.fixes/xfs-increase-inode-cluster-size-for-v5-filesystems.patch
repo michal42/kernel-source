@@ -1,0 +1,134 @@
+From 0e13e4e81dfa65466cb1bf0567d849c117add71e Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Fri, 1 Nov 2013 15:27:20 +1100
+Subject: [PATCH] xfs: increase inode cluster size for v5 filesystems
+Git-commit: 8f80587bacb6eb893df0ee4e35fefa0dfcfdf9f4
+Patch-mainline: v3.13-rc1
+
+v5 filesystems use 512 byte inodes as a minimum, so read inodes in
+clusters that are effectively half the size of a v4 filesystem with
+256 byte inodes. For v5 fielsystems, scale the inode cluster size
+with the size of the inode so that we keep a constant 32 inodes per
+cluster ratio for all inode IO.
+
+This only works if mkfs.xfs sets the inode alignment appropriately
+for larger inode clusters, so this functionality is made conditional
+on mkfs doing the right thing. xfs_repair needs to know about
+the inode alignment changes, too.
+
+Wall time:
+	create	bulkstat	find+stat	ls -R	unlink
+v4	237s	161s		173s		201s	299s
+v5	235s	163s		205s		 31s	356s
+patched	234s	160s		182s		 29s	317s
+
+System time:
+	create	bulkstat	find+stat	ls -R	unlink
+v4	2601s	2490s		1653s		1656s	2960s
+v5	2637s	2497s		1681s		  20s	3216s
+patched	2613s	2451s		1658s		  20s	3007s
+
+So, wall time same or down across the board, system time same or
+down across the board, and cache hit rates all improve except for
+the ls -R case which is a pure cold cache directory read workload
+on v5 filesystems...
+
+So, this patch removes most of the performance and CPU usage
+differential between v4 and v5 filesystems on traversal related
+workloads.
+
+Note: while this patch is currently for v5 filesystems only, there
+is no reason it can't be ported back to v4 filesystems.  This hasn't
+been done here because bringing the code back to v4 requires
+forwards and backwards kernel compatibility testing.  i.e. to
+deterine if older kernels(*) do the right thing with larger inode
+alignments but still only using 8k inode cluster sizes. None of this
+testing and validation on v4 filesystems has been done, so for the
+moment larger inode clusters is limited to v5 superblocks.
+
+(*) a current default config v4 filesystem should mount just fine on
+2.6.23 (when lazy-count support was introduced), and so if we change
+the alignment emitted by mkfs without a feature bit then we have to
+make sure it works properly on all kernels since 2.6.23. And if we
+allow it to be changed when the lazy-count bit is not set, then it's
+all kernels since v2 logs were introduced that need to be tested for
+compatibility...
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Eric Sandeen <sandeen@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_mount.c      |   15 +++++++++++++++
+ fs/xfs/xfs_mount.h      |    2 +-
+ fs/xfs/xfs_trans_resv.c |    3 +--
+ 3 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/fs/xfs/xfs_mount.c b/fs/xfs/xfs_mount.c
+index 5dcc680..de18871 100644
+--- a/fs/xfs/xfs_mount.c
++++ b/fs/xfs/xfs_mount.c
+@@ -46,6 +46,7 @@
+ #include "xfs_icache.h"
+ #include "xfs_cksum.h"
+ #include "xfs_buf_item.h"
++#include "xfs_dinode.h"
+ 
+ 
+ #ifdef HAVE_PERCPU_SB
+@@ -723,8 +724,22 @@ xfs_mountfs(
+ 	 * Set the inode cluster size.
+ 	 * This may still be overridden by the file system
+ 	 * block size if it is larger than the chosen cluster size.
++	 *
++	 * For v5 filesystems, scale the cluster size with the inode size to
++	 * keep a constant ratio of inode per cluster buffer, but only if mkfs
++	 * has set the inode alignment value appropriately for larger cluster
++	 * sizes.
+ 	 */
+ 	mp->m_inode_cluster_size = XFS_INODE_BIG_CLUSTER_SIZE;
++	if (xfs_sb_version_hascrc(&mp->m_sb)) {
++		int	new_size = mp->m_inode_cluster_size;
++
++		new_size *= mp->m_sb.sb_inodesize / XFS_DINODE_MIN_SIZE;
++		if (mp->m_sb.sb_inoalignmt >= XFS_B_TO_FSBT(mp, new_size))
++			mp->m_inode_cluster_size = new_size;
++		xfs_info(mp, "Using inode cluster size of %d bytes",
++			 mp->m_inode_cluster_size);
++	}
+ 
+ 	/*
+ 	 * Set inode alignment fields
+diff --git a/fs/xfs/xfs_mount.h b/fs/xfs/xfs_mount.h
+index 1fc1dcc..7f0ccd1 100644
+--- a/fs/xfs/xfs_mount.h
++++ b/fs/xfs/xfs_mount.h
+@@ -111,7 +111,7 @@ typedef struct xfs_mount {
+ 	__uint8_t		m_blkbb_log;	/* blocklog - BBSHIFT */
+ 	__uint8_t		m_agno_log;	/* log #ag's */
+ 	__uint8_t		m_agino_log;	/* #bits for agino in inum */
+-	__uint16_t		m_inode_cluster_size;/* min inode buf size */
++	uint			m_inode_cluster_size;/* min inode buf size */
+ 	uint			m_blockmask;	/* sb_blocksize-1 */
+ 	uint			m_blockwsize;	/* sb_blocksize in words */
+ 	uint			m_blockwmask;	/* blockwsize-1 */
+diff --git a/fs/xfs/xfs_trans_resv.c b/fs/xfs/xfs_trans_resv.c
+index a65a3cc..d5b28ba 100644
+--- a/fs/xfs/xfs_trans_resv.c
++++ b/fs/xfs/xfs_trans_resv.c
+@@ -393,8 +393,7 @@ xfs_calc_ifree_reservation(
+ 		xfs_calc_inode_res(mp, 1) +
+ 		xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+ 		xfs_calc_buf_res(1, XFS_FSB_TO_B(mp, 1)) +
+-		MAX((__uint16_t)XFS_FSB_TO_B(mp, 1),
+-		    XFS_INODE_CLUSTER_SIZE(mp)) +
++		max_t(uint, XFS_FSB_TO_B(mp, 1), XFS_INODE_CLUSTER_SIZE(mp)) +
+ 		xfs_calc_buf_res(1, 0) +
+ 		xfs_calc_buf_res(2 + XFS_IALLOC_BLOCKS(mp) +
+ 				 mp->m_in_maxlevels, 0) +
+-- 
+1.6.0.2
+
