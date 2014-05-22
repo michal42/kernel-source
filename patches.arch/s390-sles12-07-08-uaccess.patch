@@ -1,0 +1,403 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/uaccess: consistent types
+Patch-mainline: v3.15-rc1
+Git-commit: 211deca6bf413560b562d69748ebc4df5d80d65e
+References: bnc#878391, LTC#110601
+
+Description:  kernel: remove page table walk for user space accesses
+Symptom:      Unexpected program crashes, random data corruption.
+Problem:      The user space access functions perform page table walks in order
+              to translate a user space virtual address to a physical address.
+              While doing that the kernel must make sure the page table can not
+              be changed concurrently from a different cpu.
+              Therefore the page table lock must be held. However instead of
+              acquiring the per page table split page table lock the kernel
+              incorrectly acquired the per mm global page table lock.
+              This allows different cpus to modify the page table contents
+              while its contents are inspected and being used to access the
+              corresponding user space address space.
+              Therefore the kernel may access a page which was concurrently
+              freed on a different cpu, which can lead to data corruption.
+              This problem exists only for futex operations.
+Solution:     Remove page table walks and rework the user space access code to
+              use machine instructions to access user space. This avoids all
+              locking issues.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/uaccess: consistent types
+
+              The types 'size_t' and 'unsigned long' have been used randomly for the
+              uaccess functions. This looks rather confusing.
+              So let's change all functions to use unsigned long instead and get rid
+              of size_t in order to have a consistent interface.
+
+              The only exception is strncpy_from_user() which uses 'long' since it
+              may return a signed value (-EFAULT).
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/uaccess.h |   20 ++++++++++----------
+ arch/s390/lib/uaccess.h         |   12 ++++++------
+ arch/s390/lib/uaccess_mvcos.c   |   39 ++++++++++++++++++++-------------------
+ arch/s390/lib/uaccess_pt.c      |   38 +++++++++++++++++++-------------------
+ arch/s390/mm/maccess.c          |    4 ++--
+ 5 files changed, 57 insertions(+), 56 deletions(-)
+
+--- a/arch/s390/include/asm/uaccess.h
++++ b/arch/s390/include/asm/uaccess.h
+@@ -111,8 +111,8 @@ int __handle_fault(unsigned long, unsign
+  * If some data could not be copied, this function will pad the copied
+  * data to the requested size using zero bytes.
+  */
+-size_t __must_check __copy_from_user(void *to, const void __user *from,
+-				     size_t n);
++unsigned long __must_check __copy_from_user(void *to, const void __user *from,
++					    unsigned long n);
+ 
+ /**
+  * __copy_to_user: - Copy a block of data into user space, with less checking.
+@@ -134,13 +134,13 @@ unsigned long __must_check __copy_to_use
+ #define __copy_to_user_inatomic __copy_to_user
+ #define __copy_from_user_inatomic __copy_from_user
+ 
+-static inline int __put_user_fn(void *x, void __user *ptr, size_t size)
++static inline int __put_user_fn(void *x, void __user *ptr, unsigned long size)
+ {
+ 	size = __copy_to_user(ptr, x, size);
+ 	return size ? -EFAULT : 0;
+ }
+ 
+-static inline int __get_user_fn(void *x, const void __user *ptr, size_t size)
++static inline int __get_user_fn(void *x, const void __user *ptr, unsigned long size)
+ {
+ 	size = __copy_from_user(x, ptr, size);
+ 	return size ? -EFAULT : 0;
+@@ -308,9 +308,9 @@ strncpy_from_user(char *dst, const char
+ 	return __strncpy_from_user(dst, src, count);
+ }
+ 
+-size_t __must_check __strnlen_user(const char __user *src, size_t count);
++unsigned long __must_check __strnlen_user(const char __user *src, unsigned long count);
+ 
+-static inline size_t strnlen_user(const char __user *src, size_t n)
++static inline unsigned long strnlen_user(const char __user *src, unsigned long n)
+ {
+ 	might_fault();
+ 	return __strnlen_user(src, n);
+@@ -335,15 +335,15 @@ static inline size_t strnlen_user(const
+ /*
+  * Zero Userspace
+  */
+-size_t __must_check __clear_user(void __user *to, size_t size);
++unsigned long __must_check __clear_user(void __user *to, unsigned long size);
+ 
+-static inline size_t __must_check clear_user(void __user *to, size_t n)
++static inline unsigned long __must_check clear_user(void __user *to, unsigned long n)
+ {
+ 	might_fault();
+ 	return __clear_user(to, n);
+ }
+ 
+-int copy_to_user_real(void __user *dest, void *src, size_t count);
+-int copy_from_user_real(void *dest, void __user *src, size_t count);
++int copy_to_user_real(void __user *dest, void *src, unsigned long count);
++int copy_from_user_real(void *dest, void __user *src, unsigned long count);
+ 
+ #endif /* __S390_UACCESS_H */
+--- a/arch/s390/lib/uaccess.h
++++ b/arch/s390/lib/uaccess.h
+@@ -6,11 +6,11 @@
+ #ifndef __ARCH_S390_LIB_UACCESS_H
+ #define __ARCH_S390_LIB_UACCESS_H
+ 
+-size_t copy_from_user_pt(void *to, const void __user *from, size_t n);
+-size_t copy_to_user_pt(void __user *to, const void *from, size_t n);
+-size_t copy_in_user_pt(void __user *to, const void __user *from, size_t n);
+-size_t clear_user_pt(void __user *to, size_t n);
+-size_t strnlen_user_pt(const char __user *src, size_t count);
+-size_t strncpy_from_user_pt(char *dst, const char __user *src, size_t count);
++unsigned long copy_from_user_pt(void *to, const void __user *from, unsigned long n);
++unsigned long copy_to_user_pt(void __user *to, const void *from, unsigned long n);
++unsigned long copy_in_user_pt(void __user *to, const void __user *from, unsigned long n);
++unsigned long clear_user_pt(void __user *to, unsigned long n);
++unsigned long strnlen_user_pt(const char __user *src, unsigned long count);
++long strncpy_from_user_pt(char *dst, const char __user *src, long count);
+ 
+ #endif /* __ARCH_S390_LIB_UACCESS_H */
+--- a/arch/s390/lib/uaccess_mvcos.c
++++ b/arch/s390/lib/uaccess_mvcos.c
+@@ -30,8 +30,8 @@
+ 
+ static struct static_key have_mvcos = STATIC_KEY_INIT_TRUE;
+ 
+-static inline size_t copy_from_user_mvcos(void *x, const void __user *ptr,
+-					  size_t size)
++static inline unsigned long copy_from_user_mvcos(void *x, const void __user *ptr,
++						 unsigned long size)
+ {
+ 	register unsigned long reg0 asm("0") = 0x81UL;
+ 	unsigned long tmp1, tmp2;
+@@ -70,7 +70,7 @@ static inline size_t copy_from_user_mvco
+ 	return size;
+ }
+ 
+-size_t __copy_from_user(void *to, const void __user *from, size_t n)
++unsigned long __copy_from_user(void *to, const void __user *from, unsigned long n)
+ {
+ 	if (static_key_true(&have_mvcos))
+ 		return copy_from_user_mvcos(to, from, n);
+@@ -78,8 +78,8 @@ size_t __copy_from_user(void *to, const
+ }
+ EXPORT_SYMBOL(__copy_from_user);
+ 
+-static inline size_t copy_to_user_mvcos(void __user *ptr, const void *x,
+-					size_t size)
++static inline unsigned long copy_to_user_mvcos(void __user *ptr, const void *x,
++					       unsigned long size)
+ {
+ 	register unsigned long reg0 asm("0") = 0x810000UL;
+ 	unsigned long tmp1, tmp2;
+@@ -108,7 +108,7 @@ static inline size_t copy_to_user_mvcos(
+ 	return size;
+ }
+ 
+-size_t __copy_to_user(void __user *to, const void *from, size_t n)
++unsigned long __copy_to_user(void __user *to, const void *from, unsigned long n)
+ {
+ 	if (static_key_true(&have_mvcos))
+ 		return copy_to_user_mvcos(to, from, n);
+@@ -116,8 +116,8 @@ size_t __copy_to_user(void __user *to, c
+ }
+ EXPORT_SYMBOL(__copy_to_user);
+ 
+-static inline size_t copy_in_user_mvcos(void __user *to, const void __user *from,
+-					size_t size)
++static inline unsigned long copy_in_user_mvcos(void __user *to, const void __user *from,
++					       unsigned long size)
+ {
+ 	register unsigned long reg0 asm("0") = 0x810081UL;
+ 	unsigned long tmp1, tmp2;
+@@ -139,7 +139,7 @@ static inline size_t copy_in_user_mvcos(
+ 	return size;
+ }
+ 
+-size_t __copy_in_user(void __user *to, const void __user *from, size_t n)
++unsigned long __copy_in_user(void __user *to, const void __user *from, unsigned long n)
+ {
+ 	if (static_key_true(&have_mvcos))
+ 		return copy_in_user_mvcos(to, from, n);
+@@ -147,7 +147,7 @@ size_t __copy_in_user(void __user *to, c
+ }
+ EXPORT_SYMBOL(__copy_in_user);
+ 
+-static inline size_t clear_user_mvcos(void __user *to, size_t size)
++static inline unsigned long clear_user_mvcos(void __user *to, unsigned long size)
+ {
+ 	register unsigned long reg0 asm("0") = 0x810000UL;
+ 	unsigned long tmp1, tmp2;
+@@ -175,7 +175,7 @@ static inline size_t clear_user_mvcos(vo
+ 	return size;
+ }
+ 
+-size_t __clear_user(void __user *to, size_t size)
++unsigned long __clear_user(void __user *to, unsigned long size)
+ {
+ 	if (static_key_true(&have_mvcos))
+ 		return clear_user_mvcos(to, size);
+@@ -183,14 +183,15 @@ size_t __clear_user(void __user *to, siz
+ }
+ EXPORT_SYMBOL(__clear_user);
+ 
+-static inline size_t strnlen_user_mvcos(const char __user *src, size_t count)
++static inline unsigned long strnlen_user_mvcos(const char __user *src,
++					       unsigned long count)
+ {
+-	size_t done, len, offset, len_str;
++	unsigned long done, len, offset, len_str;
+ 	char buf[256];
+ 
+ 	done = 0;
+ 	do {
+-		offset = (size_t)src & ~PAGE_MASK;
++		offset = (unsigned long)src & ~PAGE_MASK;
+ 		len = min(256UL, PAGE_SIZE - offset);
+ 		len = min(count - done, len);
+ 		if (copy_from_user_mvcos(buf, src, len))
+@@ -202,7 +203,7 @@ static inline size_t strnlen_user_mvcos(
+ 	return done + 1;
+ }
+ 
+-size_t __strnlen_user(const char __user *src, size_t count)
++unsigned long __strnlen_user(const char __user *src, unsigned long count)
+ {
+ 	if (static_key_true(&have_mvcos))
+ 		return strnlen_user_mvcos(src, count);
+@@ -210,16 +211,16 @@ size_t __strnlen_user(const char __user
+ }
+ EXPORT_SYMBOL(__strnlen_user);
+ 
+-static inline size_t strncpy_from_user_mvcos(char *dst, const char __user *src,
+-					     size_t count)
++static inline long strncpy_from_user_mvcos(char *dst, const char __user *src,
++					   long count)
+ {
+ 	unsigned long done, len, offset, len_str;
+ 
+-	if (unlikely(!count))
++	if (unlikely(count <= 0))
+ 		return 0;
+ 	done = 0;
+ 	do {
+-		offset = (size_t)src & ~PAGE_MASK;
++		offset = (unsigned long)src & ~PAGE_MASK;
+ 		len = min(count - done, PAGE_SIZE - offset);
+ 		if (copy_from_user_mvcos(dst, src, len))
+ 			return -EFAULT;
+--- a/arch/s390/lib/uaccess_pt.c
++++ b/arch/s390/lib/uaccess_pt.c
+@@ -22,7 +22,7 @@
+ #define SLR	"slgr"
+ #endif
+ 
+-static size_t strnlen_kernel(const char __user *src, size_t count)
++static unsigned long strnlen_kernel(const char __user *src, unsigned long count)
+ {
+ 	register unsigned long reg0 asm("0") = 0UL;
+ 	unsigned long tmp1, tmp2;
+@@ -42,8 +42,8 @@ static size_t strnlen_kernel(const char
+ 	return count;
+ }
+ 
+-static size_t copy_in_kernel(void __user *to, const void __user *from,
+-			     size_t count)
++static unsigned long copy_in_kernel(void __user *to, const void __user *from,
++				    unsigned long count)
+ {
+ 	unsigned long tmp1;
+ 
+@@ -146,8 +146,8 @@ static unsigned long follow_table(struct
+ 
+ #endif /* CONFIG_64BIT */
+ 
+-static __always_inline size_t __user_copy_pt(unsigned long uaddr, void *kptr,
+-					     size_t n, int write_user)
++static inline unsigned long __user_copy_pt(unsigned long uaddr, void *kptr,
++					   unsigned long n, int write_user)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long offset, done, size, kaddr;
+@@ -189,8 +189,7 @@ fault:
+  * Do DAT for user address by page table walk, return kernel address.
+  * This function needs to be called with current->mm->page_table_lock held.
+  */
+-static __always_inline unsigned long __dat_user_addr(unsigned long uaddr,
+-						     int write)
++static inline unsigned long __dat_user_addr(unsigned long uaddr, int write)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long kaddr;
+@@ -211,9 +210,9 @@ fault:
+ 	return 0;
+ }
+ 
+-size_t copy_from_user_pt(void *to, const void __user *from, size_t n)
++unsigned long copy_from_user_pt(void *to, const void __user *from, unsigned long n)
+ {
+-	size_t rc;
++	unsigned long rc;
+ 
+ 	if (segment_eq(get_fs(), KERNEL_DS))
+ 		return copy_in_kernel((void __user *) to, from, n);
+@@ -223,17 +222,17 @@ size_t copy_from_user_pt(void *to, const
+ 	return rc;
+ }
+ 
+-size_t copy_to_user_pt(void __user *to, const void *from, size_t n)
++unsigned long copy_to_user_pt(void __user *to, const void *from, unsigned long n)
+ {
+ 	if (segment_eq(get_fs(), KERNEL_DS))
+ 		return copy_in_kernel(to, (void __user *) from, n);
+ 	return __user_copy_pt((unsigned long) to, (void *) from, n, 1);
+ }
+ 
+-size_t clear_user_pt(void __user *to, size_t n)
++unsigned long clear_user_pt(void __user *to, unsigned long n)
+ {
+ 	void *zpage = (void *) empty_zero_page;
+-	long done, size, ret;
++	unsigned long done, size, ret;
+ 
+ 	done = 0;
+ 	do {
+@@ -253,12 +252,12 @@ size_t clear_user_pt(void __user *to, si
+ 	return 0;
+ }
+ 
+-size_t strnlen_user_pt(const char __user *src, size_t count)
++unsigned long strnlen_user_pt(const char __user *src, unsigned long count)
+ {
+ 	unsigned long uaddr = (unsigned long) src;
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long offset, done, len, kaddr;
+-	size_t len_str;
++	unsigned long len_str;
+ 
+ 	if (unlikely(!count))
+ 		return 0;
+@@ -289,15 +288,15 @@ fault:
+ 	goto retry;
+ }
+ 
+-size_t strncpy_from_user_pt(char *dst, const char __user *src, size_t count)
++long strncpy_from_user_pt(char *dst, const char __user *src, long count)
+ {
+-	size_t done, len, offset, len_str;
++	unsigned long done, len, offset, len_str;
+ 
+-	if (unlikely(!count))
++	if (unlikely(count <= 0))
+ 		return 0;
+ 	done = 0;
+ 	do {
+-		offset = (size_t)src & ~PAGE_MASK;
++		offset = (unsigned long)src & ~PAGE_MASK;
+ 		len = min(count - done, PAGE_SIZE - offset);
+ 		if (segment_eq(get_fs(), KERNEL_DS)) {
+ 			if (copy_in_kernel((void __user *) dst, src, len))
+@@ -314,7 +313,8 @@ size_t strncpy_from_user_pt(char *dst, c
+ 	return done;
+ }
+ 
+-size_t copy_in_user_pt(void __user *to, const void __user *from, size_t n)
++unsigned long copy_in_user_pt(void __user *to, const void __user *from,
++			      unsigned long n)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long offset_max, uaddr, done, size, error_code;
+--- a/arch/s390/mm/maccess.c
++++ b/arch/s390/mm/maccess.c
+@@ -128,7 +128,7 @@ void memcpy_absolute(void *dest, void *s
+ /*
+  * Copy memory from kernel (real) to user (virtual)
+  */
+-int copy_to_user_real(void __user *dest, void *src, size_t count)
++int copy_to_user_real(void __user *dest, void *src, unsigned long count)
+ {
+ 	int offs = 0, size, rc;
+ 	char *buf;
+@@ -154,7 +154,7 @@ out:
+ /*
+  * Copy memory from user (virtual) to kernel (real)
+  */
+-int copy_from_user_real(void *dest, void __user *src, size_t count)
++int copy_from_user_real(void *dest, void __user *src, unsigned long count)
+ {
+ 	int offs = 0, size, rc;
+ 	char *buf;
