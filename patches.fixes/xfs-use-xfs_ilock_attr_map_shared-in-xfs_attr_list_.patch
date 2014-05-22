@@ -1,0 +1,58 @@
+From 1acaf5a2bd151737fdef13fa99a432450e798bf3 Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Fri, 6 Dec 2013 12:30:16 -0800
+Subject: [PATCH] xfs: use xfs_ilock_attr_map_shared in xfs_attr_list_int
+Git-commit: 568d994e9f53657cb6b3e9c95a83c130d36f83c9
+Patch-mainline: v3.14-rc1
+
+We might not have read in the extent list at this point, so make sure we
+take the ilock exclusively if we have to do so.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_attr_list.c |    8 +++-----
+ 1 files changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/fs/xfs/xfs_attr_list.c b/fs/xfs/xfs_attr_list.c
+index cbc80d4..1721a50 100644
+--- a/fs/xfs/xfs_attr_list.c
++++ b/fs/xfs/xfs_attr_list.c
+@@ -509,17 +509,17 @@ xfs_attr_list_int(
+ {
+ 	int error;
+ 	xfs_inode_t *dp = context->dp;
++	uint		lock_mode;
+ 
+ 	XFS_STATS_INC(xs_attr_list);
+ 
+ 	if (XFS_FORCED_SHUTDOWN(dp->i_mount))
+ 		return EIO;
+ 
+-	xfs_ilock(dp, XFS_ILOCK_SHARED);
+-
+ 	/*
+ 	 * Decide on what work routines to call based on the inode size.
+ 	 */
++	lock_mode = xfs_ilock_attr_map_shared(dp);
+ 	if (!xfs_inode_hasattr(dp)) {
+ 		error = 0;
+ 	} else if (dp->i_d.di_aformat == XFS_DINODE_FMT_LOCAL) {
+@@ -529,9 +529,7 @@ xfs_attr_list_int(
+ 	} else {
+ 		error = xfs_attr_node_list(context);
+ 	}
+-
+-	xfs_iunlock(dp, XFS_ILOCK_SHARED);
+-
++	xfs_iunlock(dp, lock_mode);
+ 	return error;
+ }
+ 
+-- 
+1.6.0.2
+
