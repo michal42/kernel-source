@@ -1,0 +1,68 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/uaccess: fix possible register corruption in strnlen_user_srst()
+Patch-mainline: v3.15-rc2
+Git-commit: fa255f51c95fd91b4d7bb50a0fdcca18dd47db21
+References: bnc#878391, LTC#110601
+
+Description:  kernel: remove page table walk for user space accesses
+Symptom:      Unexpected program crashes, random data corruption.
+Problem:      The user space access functions perform page table walks in order
+              to translate a user space virtual address to a physical address.
+              While doing that the kernel must make sure the page table can not
+              be changed concurrently from a different cpu.
+              Therefore the page table lock must be held. However instead of
+              acquiring the per page table split page table lock the kernel
+              incorrectly acquired the per mm global page table lock.
+              This allows different cpus to modify the page table contents
+              while its contents are inspected and being used to access the
+              corresponding user space address space.
+              Therefore the kernel may access a page which was concurrently
+              freed on a different cpu, which can lead to data corruption.
+              This problem exists only for futex operations.
+Solution:     Remove page table walks and rework the user space access code to
+              use machine instructions to access user space. This avoids all
+              locking issues.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/uaccess: fix possible register corruption in strnlen_user_srst()
+
+              The whole point of the out-of-line strnlen_user_srst() function was to
+              avoid corruption of register 0 due to register asm assignment.
+              However 'somebody' :) forgot to remove the update_primary_asce() function
+              call, which may clobber register 0 contents.
+              So let's remove that call and also move the size check to the calling
+              function.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/lib/uaccess.c |    5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+--- a/arch/s390/lib/uaccess.c
++++ b/arch/s390/lib/uaccess.c
+@@ -338,9 +338,6 @@ static inline unsigned long strnlen_user
+ 	register unsigned long reg0 asm("0") = 0;
+ 	unsigned long tmp1, tmp2;
+ 
+-	if (unlikely(!size))
+-		return 0;
+-	update_primary_asce(current);
+ 	asm volatile(
+ 		"   la    %2,0(%1)\n"
+ 		"   la    %3,0(%0,%1)\n"
+@@ -359,6 +356,8 @@ static inline unsigned long strnlen_user
+ 
+ unsigned long __strnlen_user(const char __user *src, unsigned long size)
+ {
++	if (unlikely(!size))
++		return 0;
+ 	update_primary_asce(current);
+ 	return strnlen_user_srst(src, size);
+ }
