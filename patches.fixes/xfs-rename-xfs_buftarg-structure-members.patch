@@ -1,0 +1,106 @@
+From b54263cfe6f4263cba679157352163ab6b545599 Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@sandeen.net>
+Date: Tue, 21 Jan 2014 16:45:52 -0600
+Subject: [PATCH] xfs: rename xfs_buftarg structure members
+Git-commit: 6da54179b3f1bb6a302fd5f3b38fae32ee463ed1
+Patch-mainline: v3.14-rc1
+
+In preparation for adding new members to the structure,
+give these old ones more descriptive names:
+
+	bt_ssize -> bt_meta_sectorsize
+	bt_smask -> bt_meta_sectormask
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_buf.c   |    8 ++++----
+ fs/xfs/xfs_buf.h   |    4 ++--
+ fs/xfs/xfs_file.c  |    4 ++--
+ fs/xfs/xfs_ioctl.c |    2 +-
+ 4 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/fs/xfs/xfs_buf.c b/fs/xfs/xfs_buf.c
+index 19eea37..052cd3d 100644
+--- a/fs/xfs/xfs_buf.c
++++ b/fs/xfs/xfs_buf.c
+@@ -444,8 +444,8 @@ _xfs_buf_find(
+ 	numbytes = BBTOB(numblks);
+ 
+ 	/* Check for IOs smaller than the sector size / not sector aligned */
+-	ASSERT(!(numbytes < btp->bt_ssize));
+-	ASSERT(!(BBTOB(blkno) & (xfs_off_t)btp->bt_smask));
++	ASSERT(!(numbytes < btp->bt_meta_sectorsize));
++	ASSERT(!(BBTOB(blkno) & (xfs_off_t)btp->bt_meta_sectormask));
+ 
+ 	/*
+ 	 * Corrupted block numbers can get through to here, unfortunately, so we
+@@ -1614,8 +1614,8 @@ xfs_setsize_buftarg_flags(
+ 	unsigned int		sectorsize,
+ 	int			verbose)
+ {
+-	btp->bt_ssize = sectorsize;
+-	btp->bt_smask = sectorsize - 1;
++	btp->bt_meta_sectorsize = sectorsize;
++	btp->bt_meta_sectormask = sectorsize - 1;
+ 
+ 	if (set_blocksize(btp->bt_bdev, sectorsize)) {
+ 		char name[BDEVNAME_SIZE];
+diff --git a/fs/xfs/xfs_buf.h b/fs/xfs/xfs_buf.h
+index ad7cc98..ff644a7 100644
+--- a/fs/xfs/xfs_buf.h
++++ b/fs/xfs/xfs_buf.h
+@@ -93,8 +93,8 @@ typedef struct xfs_buftarg {
+ 	struct block_device	*bt_bdev;
+ 	struct backing_dev_info	*bt_bdi;
+ 	struct xfs_mount	*bt_mount;
+-	unsigned int		bt_ssize;
+-	size_t			bt_smask;
++	unsigned int		bt_meta_sectorsize;
++	size_t			bt_meta_sectormask;
+ 
+ 	/* LRU control structures */
+ 	struct shrinker		bt_shrinker;
+diff --git a/fs/xfs/xfs_file.c b/fs/xfs/xfs_file.c
+index 0a02c86..97e94db 100644
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -278,7 +278,7 @@ xfs_file_aio_read(
+ 		xfs_buftarg_t	*target =
+ 			XFS_IS_REALTIME_INODE(ip) ?
+ 				mp->m_rtdev_targp : mp->m_ddev_targp;
+-		if ((pos & target->bt_smask) || (size & target->bt_smask)) {
++		if ((pos | size) & target->bt_meta_sectormask) {
+ 			if (pos == i_size_read(inode))
+ 				return 0;
+ 			return -XFS_ERROR(EINVAL);
+@@ -734,7 +734,7 @@ xfs_file_dio_aio_write(
+ 	struct xfs_buftarg	*target = XFS_IS_REALTIME_INODE(ip) ?
+ 					mp->m_rtdev_targp : mp->m_ddev_targp;
+ 
+-	if ((pos & target->bt_smask) || (count & target->bt_smask))
++	if ((pos | count) & target->bt_meta_sectormask)
+ 		return -XFS_ERROR(EINVAL);
+ 
+ 	if ((pos & mp->m_blockmask) || ((pos + count) & mp->m_blockmask))
+diff --git a/fs/xfs/xfs_ioctl.c b/fs/xfs/xfs_ioctl.c
+index 56bd47f..a15dafe 100644
+--- a/fs/xfs/xfs_ioctl.c
++++ b/fs/xfs/xfs_ioctl.c
+@@ -1485,7 +1485,7 @@ xfs_file_ioctl(
+ 			XFS_IS_REALTIME_INODE(ip) ?
+ 			mp->m_rtdev_targp : mp->m_ddev_targp;
+ 
+-		da.d_mem = da.d_miniosz = target->bt_ssize;
++		da.d_mem = da.d_miniosz = target->bt_meta_sectorsize;
+ 		da.d_maxiosz = INT_MAX & ~(da.d_miniosz - 1);
+ 
+ 		if (copy_to_user(arg, &da, sizeof(da)))
+-- 
+1.6.0.2
+
