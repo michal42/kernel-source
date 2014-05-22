@@ -1,0 +1,56 @@
+From 2dbe35a4f2bbab22c378d3c7af22df1eb3d72603 Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Fri, 6 Dec 2013 12:30:13 -0800
+Subject: [PATCH] xfs: use xfs_ilock_data_map_shared in xfs_qm_dqtobp
+Git-commit: f4df8adc8325127ff015ef9c2a8f005edaaedd07
+Patch-mainline: v3.14-rc1
+
+We might not have read in the extent list at this point, so make sure we
+take the ilock exclusively if we have to do so.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_dquot.c |    7 ++++---
+ 1 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/fs/xfs/xfs_dquot.c b/fs/xfs/xfs_dquot.c
+index 1ee776d..9f4fd9a 100644
+--- a/fs/xfs/xfs_dquot.c
++++ b/fs/xfs/xfs_dquot.c
+@@ -580,16 +580,17 @@ xfs_qm_dqtobp(
+ 	struct xfs_mount	*mp = dqp->q_mount;
+ 	xfs_dqid_t		id = be32_to_cpu(dqp->q_core.d_id);
+ 	struct xfs_trans	*tp = (tpp ? *tpp : NULL);
++	uint			lock_mode;
+ 
+ 	dqp->q_fileoffset = (xfs_fileoff_t)id / mp->m_quotainfo->qi_dqperchunk;
+ 
+-	xfs_ilock(quotip, XFS_ILOCK_SHARED);
++	lock_mode = xfs_ilock_data_map_shared(quotip);
+ 	if (!xfs_this_quota_on(dqp->q_mount, dqp->dq_flags)) {
+ 		/*
+ 		 * Return if this type of quotas is turned off while we
+ 		 * didn't have the quota inode lock.
+ 		 */
+-		xfs_iunlock(quotip, XFS_ILOCK_SHARED);
++		xfs_iunlock(quotip, lock_mode);
+ 		return ESRCH;
+ 	}
+ 
+@@ -599,7 +600,7 @@ xfs_qm_dqtobp(
+ 	error = xfs_bmapi_read(quotip, dqp->q_fileoffset,
+ 			       XFS_DQUOT_CLUSTER_SIZE_FSB, &map, &nmaps, 0);
+ 
+-	xfs_iunlock(quotip, XFS_ILOCK_SHARED);
++	xfs_iunlock(quotip, lock_mode);
+ 	if (error)
+ 		return error;
+ 
+-- 
+1.6.0.2
+
