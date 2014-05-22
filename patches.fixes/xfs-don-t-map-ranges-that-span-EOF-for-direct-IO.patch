@@ -1,0 +1,83 @@
+From 8db93709dd0d85214276e1025c46f73b23777ab0 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Thu, 17 Apr 2014 08:15:19 +1000
+Subject: [PATCH] xfs: don't map ranges that span EOF for direct IO
+Git-commit: 0e1f789d0dc38db79dfc4ddfd9cf541a8c198b7a
+Patch-mainline: v3.15-rc5
+
+Al Viro tracked down the problem that has caused generic/263 to fail
+on XFS since the test was introduced. If is caused by
+xfs_get_blocks() mapping a single extent that spans EOF without
+marking it as buffer-new() so that the direct IO code does not zero
+the tail of the block at the new EOF. This is a long standing bug
+that has been around for many, many years.
+
+Because xfs_get_blocks() starts the map before EOF, it can't set
+buffer_new(), because that causes he direct IO code to also zero
+unaligned sectors at the head of the IO. This would overwrite valid
+data with zeros, and hence we cannot validly return a single extent
+that spans EOF to direct IO.
+
+Fix this by detecting a mapping that spans EOF and truncate it down
+to EOF. This results in the the direct IO code doing the right thing
+for unaligned data blocks before EOF, and then returning to get
+another mapping for the region beyond EOF which XFS treats correctly
+by setting buffer_new() on it. This makes direct Io behave correctly
+w.r.t. tail block zeroing beyond EOF, and fsx is happy about that.
+
+Again, thanks to Al Viro for finding what I couldn't.
+
+[ dchinner: Fix for __divdi3 build error:
+
+	Reported-by: Paul Gortmaker <paul.gortmaker@windriver.com>
+	Tested-by: Paul Gortmaker <paul.gortmaker@windriver.com>
+	Signed-off-by: Mark Tinguely <tinguely@sgi.com>
+	Reviewed-by: Eric Sandeen <sandeen@redhat.com>
+]
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Tested-by: Brian Foster <bfoster@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_aops.c |   14 ++++++++++++++
+ 1 files changed, 14 insertions(+), 0 deletions(-)
+
+diff --git a/fs/xfs/xfs_aops.c b/fs/xfs/xfs_aops.c
+index b4b5664..691579d 100644
+--- a/fs/xfs/xfs_aops.c
++++ b/fs/xfs/xfs_aops.c
+@@ -1341,6 +1341,14 @@ __xfs_get_blocks(
+ 	/*
+ 	 * If this is O_DIRECT or the mpage code calling tell them how large
+ 	 * the mapping is, so that we can avoid repeated get_blocks calls.
++	 *
++	 * If the mapping spans EOF, then we have to break the mapping up as the
++	 * mapping for blocks beyond EOF must be marked new so that sub block
++	 * regions can be correctly zeroed. We can't do this for mappings within
++	 * EOF unless the mapping was just allocated or is unwritten, otherwise
++	 * the callers would overwrite existing data with zeros. Hence we have
++	 * to split the mapping into a range up to and including EOF, and a
++	 * second mapping for beyond EOF.
+ 	 */
+ 	if (direct || size > (1 << inode->i_blkbits)) {
+ 		xfs_off_t		mapping_size;
+@@ -1351,6 +1359,12 @@ __xfs_get_blocks(
+ 		ASSERT(mapping_size > 0);
+ 		if (mapping_size > size)
+ 			mapping_size = size;
++		if (offset < i_size_read(inode) &&
++		    offset + mapping_size >= i_size_read(inode)) {
++			/* limit mapping to block that spans EOF */
++			mapping_size = roundup_64(i_size_read(inode) - offset,
++						  1 << inode->i_blkbits);
++		}
+ 		if (mapping_size > LONG_MAX)
+ 			mapping_size = LONG_MAX;
+ 
+-- 
+1.6.0.2
+
