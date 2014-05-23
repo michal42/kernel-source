@@ -1,0 +1,70 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/uaccess: introduce 'uaccesspt' kernel parameter
+Patch-mainline: v3.15-rc1
+Git-commit: 56f15e518cfdc732bd4e4da90e0c9cf2fc4e7c1b
+References: bnc#878391, LTC#110601
+
+Description:  kernel: remove page table walk for user space accesses
+Symptom:      Unexpected program crashes, random data corruption.
+Problem:      The user space access functions perform page table walks in order
+              to translate a user space virtual address to a physical address.
+              While doing that the kernel must make sure the page table can not
+              be changed concurrently from a different cpu.
+              Therefore the page table lock must be held. However instead of
+              acquiring the per page table split page table lock the kernel
+              incorrectly acquired the per mm global page table lock.
+              This allows different cpus to modify the page table contents
+              while its contents are inspected and being used to access the
+              corresponding user space address space.
+              Therefore the kernel may access a page which was concurrently
+              freed on a different cpu, which can lead to data corruption.
+              This problem exists only for futex operations.
+Solution:     Remove page table walks and rework the user space access code to
+              use machine instructions to access user space. This avoids all
+              locking issues.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/uaccess: introduce 'uaccesspt' kernel parameter
+
+              The uaccesspt kernel parameter allows to enforce using the uaccess page
+              table walk variant. This is mainly for debugging purposes, so this mode
+              can also be enabled on machines which support the mvcos instruction.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/lib/uaccess_mvcos.c |   15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+--- a/arch/s390/lib/uaccess_mvcos.c
++++ b/arch/s390/lib/uaccess_mvcos.c
+@@ -241,9 +241,22 @@ long __strncpy_from_user(char *dst, cons
+ }
+ EXPORT_SYMBOL(__strncpy_from_user);
+ 
++/*
++ * The uaccess page tabe walk variant can be enforced with the "uaccesspt"
++ * kernel parameter. This is mainly for debugging purposes.
++ */
++static int force_uaccess_pt __initdata;
++
++static int __init parse_uaccess_pt(char *__unused)
++{
++	force_uaccess_pt = 1;
++	return 0;
++}
++early_param("uaccesspt", parse_uaccess_pt);
++
+ static int __init uaccess_init(void)
+ {
+-	if (IS_ENABLED(CONFIG_32BIT) || !test_facility(27))
++	if (IS_ENABLED(CONFIG_32BIT) || force_uaccess_pt || !test_facility(27))
+ 		static_key_slow_dec(&have_mvcos);
+ 	return 0;
+ }

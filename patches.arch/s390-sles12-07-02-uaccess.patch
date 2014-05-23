@@ -1,0 +1,105 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/compat: make psw32_user_bits a constant value again
+Patch-mainline: v3.13-rc1
+Git-commit: f26946d7ecad0afdd85e6ae56663d0fe26676b34
+References: bnc#878391, LTC#110601
+
+Description:  kernel: remove page table walk for user space accesses
+Symptom:      Unexpected program crashes, random data corruption.
+Problem:      The user space access functions perform page table walks in order
+              to translate a user space virtual address to a physical address.
+              While doing that the kernel must make sure the page table can not
+              be changed concurrently from a different cpu.
+              Therefore the page table lock must be held. However instead of
+              acquiring the per page table split page table lock the kernel
+              incorrectly acquired the per mm global page table lock.
+              This allows different cpus to modify the page table contents
+              while its contents are inspected and being used to access the
+              corresponding user space address space.
+              Therefore the kernel may access a page which was concurrently
+              freed on a different cpu, which can lead to data corruption.
+              This problem exists only for futex operations.
+Solution:     Remove page table walks and rework the user space access code to
+              use machine instructions to access user space. This avoids all
+              locking issues.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/compat: make psw32_user_bits a constant value again
+
+              Make psw32_user_bits a constant value again.
+              This is a leftover of the code which allowed to run the kernel either
+              in primary or home space which got removed with 9a905662 "s390/uaccess:
+              always run the kernel in home space".
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/compat.h   |    4 +++-
+ arch/s390/kernel/compat_linux.c  |    4 ----
+ arch/s390/kernel/compat_signal.c |    2 +-
+ arch/s390/kernel/ptrace.c        |    4 ++--
+ 4 files changed, 6 insertions(+), 8 deletions(-)
+
+--- a/arch/s390/include/asm/compat.h
++++ b/arch/s390/include/asm/compat.h
+@@ -35,7 +35,9 @@
+ #define PSW32_ASC_SECONDARY	0x00008000UL
+ #define PSW32_ASC_HOME		0x0000C000UL
+ 
+-extern u32 psw32_user_bits;
++#define PSW32_USER_BITS (PSW32_MASK_DAT | PSW32_MASK_IO | PSW32_MASK_EXT | \
++			 PSW32_DEFAULT_KEY | PSW32_MASK_BASE | \
++			 PSW32_MASK_MCHECK | PSW32_MASK_PSTATE | PSW32_ASC_HOME)
+ 
+ #define COMPAT_USER_HZ		100
+ #define COMPAT_UTS_MACHINE	"s390\0\0\0\0"
+--- a/arch/s390/kernel/compat_linux.c
++++ b/arch/s390/kernel/compat_linux.c
+@@ -58,10 +58,6 @@
+ 
+ #include "compat_linux.h"
+ 
+-u32 psw32_user_bits = PSW32_MASK_DAT | PSW32_MASK_IO | PSW32_MASK_EXT |
+-		      PSW32_DEFAULT_KEY | PSW32_MASK_BASE | PSW32_MASK_MCHECK |
+-		      PSW32_MASK_PSTATE | PSW32_ASC_HOME;
+- 
+ /* For this source file, we want overflow handling. */
+ 
+ #undef high2lowuid
+--- a/arch/s390/kernel/compat_signal.c
++++ b/arch/s390/kernel/compat_signal.c
+@@ -156,7 +156,7 @@ static int save_sigregs32(struct pt_regs
+ 	_sigregs32 user_sregs;
+ 	int i;
+ 
+-	user_sregs.regs.psw.mask = psw32_user_bits |
++	user_sregs.regs.psw.mask = PSW32_USER_BITS |
+ 		((__u32)(regs->psw.mask >> 32) & PSW32_MASK_USER);
+ 	user_sregs.regs.psw.addr = (__u32) regs->psw.addr |
+ 		(__u32)(regs->psw.mask & PSW_MASK_BA);
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -556,7 +556,7 @@ static u32 __peek_user_compat(struct tas
+ 		if (addr == (addr_t) &dummy32->regs.psw.mask) {
+ 			/* Fake a 31 bit psw mask. */
+ 			tmp = (__u32)(regs->psw.mask >> 32);
+-			tmp = psw32_user_bits | (tmp & PSW32_MASK_USER);
++			tmp = PSW32_USER_BITS | (tmp & PSW32_MASK_USER);
+ 		} else if (addr == (addr_t) &dummy32->regs.psw.addr) {
+ 			/* Fake a 31 bit psw address. */
+ 			tmp = (__u32) regs->psw.addr |
+@@ -654,7 +654,7 @@ static int __poke_user_compat(struct tas
+ 		 */
+ 		if (addr == (addr_t) &dummy32->regs.psw.mask) {
+ 			/* Build a 64 bit psw mask from 31 bit mask. */
+-			if ((tmp & ~PSW32_MASK_USER) != psw32_user_bits)
++			if ((tmp & ~PSW32_MASK_USER) != PSW32_USER_BITS)
+ 				/* Invalid psw mask. */
+ 				return -EINVAL;
+ 			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_USER) |

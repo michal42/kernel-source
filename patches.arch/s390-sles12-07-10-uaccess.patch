@@ -1,0 +1,60 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/uaccess: remove dead kernel parameter 'user_mode='
+Patch-mainline: v3.15-rc1
+Git-commit: 7385d0a550813c912094c5df22aeeb463712300e
+References: bnc#878391, LTC#110601
+
+Description:  kernel: remove page table walk for user space accesses
+Symptom:      Unexpected program crashes, random data corruption.
+Problem:      The user space access functions perform page table walks in order
+              to translate a user space virtual address to a physical address.
+              While doing that the kernel must make sure the page table can not
+              be changed concurrently from a different cpu.
+              Therefore the page table lock must be held. However instead of
+              acquiring the per page table split page table lock the kernel
+              incorrectly acquired the per mm global page table lock.
+              This allows different cpus to modify the page table contents
+              while its contents are inspected and being used to access the
+              corresponding user space address space.
+              Therefore the kernel may access a page which was concurrently
+              freed on a different cpu, which can lead to data corruption.
+              This problem exists only for futex operations.
+Solution:     Remove page table walks and rework the user space access code to
+              use machine instructions to access user space. This avoids all
+              locking issues.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/uaccess: remove dead kernel parameter 'user_mode='
+
+              Remove another leftover from the time when we supported running
+              user space in either home or primary address space.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/setup.c |    8 --------
+ 1 file changed, 8 deletions(-)
+
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -287,14 +287,6 @@ static int __init parse_vmalloc(char *ar
+ }
+ early_param("vmalloc", parse_vmalloc);
+ 
+-static int __init early_parse_user_mode(char *p)
+-{
+-	if (!p || strcmp(p, "primary") == 0)
+-		return 0;
+-	return 1;
+-}
+-early_param("user_mode", early_parse_user_mode);
+-
+ void *restart_stack __attribute__((__section__(".data")));
+ 
+ static void __init setup_lowcore(void)
