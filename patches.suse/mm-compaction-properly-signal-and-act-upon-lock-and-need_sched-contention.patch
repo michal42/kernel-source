@@ -65,8 +65,8 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
 +/*
 + * Aside from avoiding lock contention, compaction also periodically checks
 + * need_resched() and either schedules in sync compaction, or aborts async
-+ * compaction. This is similar to compact_checklock_irqsave() does, but used
-+ * where no lock is concerned.
++ * compaction. This is similar to what compact_checklock_irqsave() does, but
++ * is used where no lock is concerned.
 + *
 + * Returns false when no scheduling was needed, or sync compaction scheduled.
 + * Returns true when async compaction should abort.
@@ -77,13 +77,13 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
 +	if (need_resched()) {
 +		if (cc->mode == MIGRATE_ASYNC) {
 +			cc->contended = true;
-+			return false;
++			return true;
 +		}
 +
 +		cond_resched();
 +	}
 +
-+	return true;
++	return false;
 +}
 +
  /* Returns true if the page is within a block suitable for migration to */
@@ -103,7 +103,7 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
  
  	/* Time to isolate some pages for migration */
  	for (; low_pfn < end_pfn; low_pfn++) {
-@@ -719,9 +740,11 @@ static void isolate_freepages(struct zon
+@@ -718,9 +739,11 @@ static void isolate_freepages(struct zon
  		/*
  		 * This can iterate a massively long zone without finding any
  		 * suitable migration targets, so periodically check if we need
@@ -117,7 +117,7 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
  
  		if (!pfn_valid(block_start_pfn))
  			continue;
-@@ -759,6 +782,13 @@ static void isolate_freepages(struct zon
+@@ -758,6 +781,13 @@ static void isolate_freepages(struct zon
  		 */
  		if (isolated)
  			cc->finished_update_free = true;
@@ -131,7 +131,7 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
  	}
  
  	/* split_free_page does not map the pages */
-@@ -786,9 +816,13 @@ static struct page *compaction_alloc(str
+@@ -784,9 +814,13 @@ static struct page *compaction_alloc(str
  	struct compact_control *cc = (struct compact_control *)data;
  	struct page *freepage;
  
@@ -147,7 +147,7 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
  
  		if (list_empty(&cc->freepages))
  			return NULL;
-@@ -858,7 +892,7 @@ static int compact_finished(struct zone
+@@ -856,7 +890,7 @@ static int compact_finished(struct zone
  	unsigned int order;
  	unsigned long watermark;
  
@@ -158,7 +158,7 @@ v2: update struct compact_control comment (per Naoya Horiguchi)
  	/* Compaction run completes if the migrate and free scanner meet */
 --- a/mm/internal.h
 +++ b/mm/internal.h
-@@ -131,7 +131,10 @@ struct compact_control {
+@@ -132,7 +132,10 @@ struct compact_control {
  	int order;			/* order a direct compactor needs */
  	int migratetype;		/* MOVABLE, RECLAIMABLE etc */
  	struct zone *zone;
