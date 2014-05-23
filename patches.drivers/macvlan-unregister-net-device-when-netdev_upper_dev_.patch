@@ -1,0 +1,45 @@
+From: Cong Wang <cwang@twopensource.com>
+Date: Tue, 11 Feb 2014 15:51:29 -0800
+Subject: macvlan: unregister net device when netdev_upper_dev_link() fails
+Patch-mainline: v3.14-rc4
+Git-commit: da37705cef30841616ed644ff33455bbc7374db0
+References: fate#316924 bnc#875631 bnc#876145
+
+rtnl_newlink() doesn't unregister it for us on failure.
+
+Cc: Patrick McHardy <kaber@trash.net>
+Cc: David S. Miller <davem@davemloft.net>
+Signed-off-by: Cong Wang <xiyou.wangcong@gmail.com>
+Signed-off-by: Cong Wang <cwang@twopensource.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/macvlan.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/macvlan.c b/drivers/net/macvlan.c
+index baf488c..5fd731d 100644
+--- a/drivers/net/macvlan.c
++++ b/drivers/net/macvlan.c
+@@ -874,14 +874,15 @@ int macvlan_common_newlink(struct net *src_net, struct net_device *dev,
+ 	dev->priv_flags |= IFF_MACVLAN;
+ 	err = netdev_upper_dev_link(lowerdev, dev);
+ 	if (err)
+-		goto destroy_port;
+-
++		goto unregister_netdev;
+ 
+ 	list_add_tail_rcu(&vlan->list, &port->vlans);
+ 	netif_stacked_transfer_operstate(lowerdev, dev);
+ 
+ 	return 0;
+ 
++unregister_netdev:
++	unregister_netdevice(dev);
+ destroy_port:
+ 	port->count -= 1;
+ 	if (!port->count)
+-- 
+1.8.4.5
+
