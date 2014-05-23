@@ -41,7 +41,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  				&wait, TASK_UNINTERRUPTIBLE);
  		mutex_unlock(&root->log_mutex);
  
--		if (root->fs_info->last_trans_log_full_commit !=
+-		if (ACCESS_ONCE(root->fs_info->last_trans_log_full_commit) !=
 -		    trans->transid && root->log_transid < transid + 2 &&
 +		if (root->log_transid < transid + 2 &&
  		    atomic_read(&root->log_commit[index]))
@@ -49,7 +49,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  		finish_wait(&root->log_commit_wait[index], &wait);
  		mutex_lock(&root->log_mutex);
--	} while (root->fs_info->last_trans_log_full_commit !=
+-	} while (ACCESS_ONCE(root->fs_info->last_trans_log_full_commit) !=
 -		 trans->transid && root->log_transid < transid + 2 &&
 +	} while (root->log_transid < transid + 2 &&
  		 atomic_read(&root->log_commit[index]));
@@ -78,7 +78,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	while (1) {
  		int batch = atomic_read(&root->log_batch);
  		/* when we're on an ssd, just kick the log commit out */
-@@ -2527,11 +2534,10 @@ int btrfs_sync_log(struct btrfs_trans_ha
+@@ -2529,11 +2536,10 @@ int btrfs_sync_log(struct btrfs_trans_ha
  	if (atomic_read(&log_root_tree->log_commit[index2])) {
  		blk_finish_plug(&plug);
  		btrfs_wait_marked_extents(log, &log->dirty_log_pages, mark);
