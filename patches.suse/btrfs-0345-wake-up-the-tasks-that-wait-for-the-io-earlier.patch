@@ -1,0 +1,51 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Thu, 6 Mar 2014 13:54:56 +0800
+Patch-mainline: 3.15
+Git-commit: af7a65097b3f0a63caf1755df78d04e1a33588ef
+Subject: [PATCH] Btrfs: wake up the tasks that wait for the io earlier
+
+The tasks that wait for the IO_DONE flag just care about the io of the dirty
+pages, so it is better to wake up them immediately after all the pages are
+written, not the whole process of the io completes.
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ordered-data.c |   14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+--- a/fs/btrfs/ordered-data.c
++++ b/fs/btrfs/ordered-data.c
+@@ -349,10 +349,13 @@ int btrfs_dec_test_first_ordered_pending
+ 	if (!uptodate)
+ 		set_bit(BTRFS_ORDERED_IOERR, &entry->flags);
+ 
+-	if (entry->bytes_left == 0)
++	if (entry->bytes_left == 0) {
+ 		ret = test_and_set_bit(BTRFS_ORDERED_IO_DONE, &entry->flags);
+-	else
++		if (waitqueue_active(&entry->wait))
++			wake_up(&entry->wait);
++	} else {
+ 		ret = 1;
++	}
+ out:
+ 	if (!ret && cached && entry) {
+ 		*cached = entry;
+@@ -410,10 +413,13 @@ have_entry:
+ 	if (!uptodate)
+ 		set_bit(BTRFS_ORDERED_IOERR, &entry->flags);
+ 
+-	if (entry->bytes_left == 0)
++	if (entry->bytes_left == 0) {
+ 		ret = test_and_set_bit(BTRFS_ORDERED_IO_DONE, &entry->flags);
+-	else
++		if (waitqueue_active(&entry->wait))
++			wake_up(&entry->wait);
++	} else {
+ 		ret = 1;
++	}
+ out:
+ 	if (!ret && cached && entry) {
+ 		*cached = entry;

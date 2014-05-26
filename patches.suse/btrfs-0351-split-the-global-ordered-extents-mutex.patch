@@ -1,0 +1,92 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Thu, 6 Mar 2014 13:55:02 +0800
+Patch-mainline: 3.15
+Git-commit: 31f3d255c677073f83daa1e0671bbf2157bf8edc
+Subject: [PATCH] Btrfs: split the global ordered extents mutex
+
+When we create a snapshot, we just need wait the ordered extents in
+the source fs/file root, but because we use the global mutex to protect
+this ordered extents list of the source fs/file root to avoid accessing
+a empty list, if someone got the mutex to access the ordered extents list
+of the other fs/file root, we had to wait.
+
+This patch splits the above global mutex, now every fs/file root has
+its own mutex to protect its own list.
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/ctree.h        |    2 ++
+ fs/btrfs/disk-io.c      |    1 +
+ fs/btrfs/ordered-data.c |   17 ++++-------------
+ 3 files changed, 7 insertions(+), 13 deletions(-)
+
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -1815,6 +1815,8 @@ struct btrfs_root {
+ 	struct list_head delalloc_inodes;
+ 	struct list_head delalloc_root;
+ 	u64 nr_delalloc_inodes;
++
++	struct mutex ordered_extent_mutex;
+ 	/*
+ 	 * this is used by the balancing code to wait for all the pending
+ 	 * ordered extents
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -1230,6 +1230,7 @@ static void __setup_root(u32 nodesize, u
+ 	spin_lock_init(&root->log_extents_lock[1]);
+ 	mutex_init(&root->objectid_mutex);
+ 	mutex_init(&root->log_mutex);
++	mutex_init(&root->ordered_extent_mutex);
+ 	init_waitqueue_head(&root->log_writer_wait);
+ 	init_waitqueue_head(&root->log_commit_wait[0]);
+ 	init_waitqueue_head(&root->log_commit_wait[1]);
+--- a/fs/btrfs/ordered-data.c
++++ b/fs/btrfs/ordered-data.c
+@@ -595,7 +595,7 @@ static void btrfs_run_ordered_extent_wor
+  * wait for all the ordered extents in a root.  This is done when balancing
+  * space between drives.
+  */
+-static int __btrfs_wait_ordered_extents(struct btrfs_root *root, int nr)
++int btrfs_wait_ordered_extents(struct btrfs_root *root, int nr)
+ {
+ 	struct list_head splice, works;
+ 	struct btrfs_ordered_extent *ordered, *next;
+@@ -604,6 +604,7 @@ static int __btrfs_wait_ordered_extents(
+ 	INIT_LIST_HEAD(&splice);
+ 	INIT_LIST_HEAD(&works);
+ 
++	mutex_lock(&root->ordered_extent_mutex);
+ 	spin_lock(&root->ordered_extent_lock);
+ 	list_splice_init(&root->ordered_extents, &splice);
+ 	while (!list_empty(&splice) && nr) {
+@@ -634,17 +635,7 @@ static int __btrfs_wait_ordered_extents(
+ 		btrfs_put_ordered_extent(ordered);
+ 		cond_resched();
+ 	}
+-
+-	return count;
+-}
+-
+-int btrfs_wait_ordered_extents(struct btrfs_root *root, int nr)
+-{
+-	int count;
+-
+-	mutex_lock(&root->fs_info->ordered_operations_mutex);
+-	count = __btrfs_wait_ordered_extents(root, nr);
+-	mutex_unlock(&root->fs_info->ordered_operations_mutex);
++	mutex_unlock(&root->ordered_extent_mutex);
+ 
+ 	return count;
+ }
+@@ -669,7 +660,7 @@ void btrfs_wait_ordered_roots(struct btr
+ 			       &fs_info->ordered_roots);
+ 		spin_unlock(&fs_info->ordered_root_lock);
+ 
+-		done = __btrfs_wait_ordered_extents(root, nr);
++		done = btrfs_wait_ordered_extents(root, nr);
+ 		btrfs_put_fs_root(root);
+ 
+ 		spin_lock(&fs_info->ordered_root_lock);

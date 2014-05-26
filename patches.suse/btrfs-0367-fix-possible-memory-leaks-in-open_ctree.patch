@@ -1,0 +1,61 @@
+From: Wang Shilong <wangsl.fnst@cn.fujitsu.com>
+Date: Wed, 23 Apr 2014 19:33:35 +0800
+Patch-mainline: 3.15
+Git-commit: 28c16cbbc32781224309e50cc99c684f2498bc59
+Subject: [PATCH] Btrfs: fix possible memory leaks in open_ctree()
+
+Fix possible memory leaks in the following error handling paths:
+
+read_tree_block()
+btrfs_recover_log_trees
+btrfs_commit_super()
+btrfs_find_orphan_roots()
+btrfs_cleanup_fs_roots()
+
+Signed-off-by: Wang Shilong <wangsl.fnst@cn.fujitsu.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/disk-io.c |   10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -2896,7 +2896,7 @@ retry_root_backup:
+ 			printk(KERN_ERR "BTRFS: failed to read log tree\n");
+ 			free_extent_buffer(log_tree_root->node);
+ 			kfree(log_tree_root);
+-			goto fail_trans_kthread;
++			goto fail_qgroup;
+ 		}
+ 		/* returns with log_tree_root freed on success */
+ 		ret = btrfs_recover_log_trees(log_tree_root);
+@@ -2905,24 +2905,24 @@ retry_root_backup:
+ 				    "Failed to recover log tree");
+ 			free_extent_buffer(log_tree_root->node);
+ 			kfree(log_tree_root);
+-			goto fail_trans_kthread;
++			goto fail_qgroup;
+ 		}
+ 
+ 		if (sb->s_flags & MS_RDONLY) {
+ 			ret = btrfs_commit_super(tree_root);
+ 			if (ret)
+-				goto fail_trans_kthread;
++				goto fail_qgroup;
+ 		}
+ 	}
+ 
+ 	ret = btrfs_find_orphan_roots(tree_root);
+ 	if (ret)
+-		goto fail_trans_kthread;
++		goto fail_qgroup;
+ 
+ 	if (!(sb->s_flags & MS_RDONLY)) {
+ 		ret = btrfs_cleanup_fs_roots(fs_info);
+ 		if (ret)
+-			goto fail_trans_kthread;
++			goto fail_qgroup;
+ 
+ 		ret = btrfs_recover_relocation(tree_root);
+ 		if (ret < 0) {

@@ -1,0 +1,37 @@
+From: Filipe Manana <fdmanana@gmail.com>
+Date: Fri, 14 Mar 2014 20:55:01 +0000
+Patch-mainline: 3.15
+Git-commit: 21543baddcdbaa49db5ac8766ae564381e7c64d9
+Subject: [PATCH] Btrfs: fix race when updating existing ref head
+
+While we update an existing ref head's extent_op, we're not holding
+its spinlock, so while we're updating its extent_op contents (key,
+flags) we can have a task running __btrfs_run_delayed_refs() that
+holds the ref head's lock and sets its extent_op to NULL right after
+the task updating the ref head just checked its extent_op was not NULL.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/delayed-ref.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/fs/btrfs/delayed-ref.c
++++ b/fs/btrfs/delayed-ref.c
+@@ -507,6 +507,7 @@ update_existing_head_ref(struct btrfs_de
+ 	ref = btrfs_delayed_node_to_head(update);
+ 	BUG_ON(existing_ref->is_data != ref->is_data);
+ 
++	spin_lock(&existing_ref->lock);
+ 	if (ref->must_insert_reserved) {
+ 		/* if the extent was freed and then
+ 		 * reallocated before the delayed ref
+@@ -548,7 +549,6 @@ update_existing_head_ref(struct btrfs_de
+ 	 * only need the lock for this case cause we could be processing it
+ 	 * currently, for refs we just added we know we're a-ok.
+ 	 */
+-	spin_lock(&existing_ref->lock);
+ 	existing->ref_mod += update->ref_mod;
+ 	spin_unlock(&existing_ref->lock);
+ }
