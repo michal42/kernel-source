@@ -1,0 +1,30 @@
+From: Josef Bacik <jbacik@fb.com>
+Date: Thu, 27 Mar 2014 19:41:34 -0400
+Patch-mainline: 3.15
+Git-commit: 573a075567f0174551e2fad2a3164afd2af788f2
+Subject: [PATCH] Btrfs: check for an extent_op on the locked ref
+
+We could have possibly added an extent_op to the locked_ref while we dropped
+locked_ref->lock, so check for this case as well and loop around.  Otherwise we
+could lose flag updates which would lead to extent tree corruption.  Thanks,
+
+cc: stable@vger.kernel.org
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent-tree.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -2444,7 +2444,8 @@ static noinline int __btrfs_run_delayed_
+ 			spin_unlock(&locked_ref->lock);
+ 			spin_lock(&delayed_refs->lock);
+ 			spin_lock(&locked_ref->lock);
+-			if (rb_first(&locked_ref->ref_root)) {
++			if (rb_first(&locked_ref->ref_root) ||
++			    locked_ref->extent_op) {
+ 				spin_unlock(&locked_ref->lock);
+ 				spin_unlock(&delayed_refs->lock);
+ 				continue;
