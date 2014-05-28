@@ -1,0 +1,59 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 2 Oct 2013 16:06:14 +0200
+Subject: KVM: x86: mask unsupported XSAVE entries from leaf 0Dh index 0
+Git-repo: git://kernel.suse.com/kernel.git
+Git-commit: 647e23bb333ff196e7be8ae08c842d855fb850f6
+Patch-mainline: v3.13-rc1
+References: bcn#871306
+
+XSAVE entries that KVM does not support are reported by
+KVM_GET_SUPPORTED_CPUID for leaf 0Dh index 0 if the host supports them;
+they should be left out unless there is also hypervisor support for them.
+
+Sub-leafs are correctly handled in supported_xcr0_bit, fix index 0
+to match.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Gleb Natapov <gleb@redhat.com>
+(cherry picked from commit 647e23bb333ff196e7be8ae08c842d855fb850f6)
+Signed-off-by: Bruce Rogers <brogers@suse.com>
+---
+ arch/x86/kvm/cpuid.c | 4 +++-
+ arch/x86/kvm/x86.h   | 1 +
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index 18927bb..a55f262 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -182,7 +182,7 @@ static bool supported_xcr0_bit(unsigned bit)
+ {
+ 	u64 mask = ((u64)1 << bit);
+ 
+-	return mask & (XSTATE_FP | XSTATE_SSE | XSTATE_YMM) & host_xcr0;
++	return mask & KVM_SUPPORTED_XCR0 & host_xcr0;
+ }
+ 
+ #define F(x) bit(X86_FEATURE_##x)
+@@ -383,6 +383,8 @@ static int do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
+ 	case 0xd: {
+ 		int idx, i;
+ 
++		entry->eax &= host_xcr0 & KVM_SUPPORTED_XCR0;
++		entry->edx &= (host_xcr0 & KVM_SUPPORTED_XCR0) >> 32;
+ 		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+ 		for (idx = 1, i = 1; idx < 64; ++idx) {
+ 			if (*nent >= maxnent)
+diff --git a/arch/x86/kvm/x86.h b/arch/x86/kvm/x86.h
+index 3186542..8da5823 100644
+--- a/arch/x86/kvm/x86.h
++++ b/arch/x86/kvm/x86.h
+@@ -122,6 +122,7 @@ int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
+ 	gva_t addr, void *val, unsigned int bytes,
+ 	struct x86_exception *exception);
+ 
++#define KVM_SUPPORTED_XCR0	(XSTATE_FP | XSTATE_SSE | XSTATE_YMM)
+ extern u64 host_xcr0;
+ 
+ extern unsigned int min_timer_period_us;
+
