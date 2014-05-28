@@ -1,0 +1,58 @@
+From: Gleb Natapov <gleb@redhat.com>
+Date: Wed, 25 Sep 2013 12:51:35 +0300
+Subject: KVM: nVMX: Check all exceptions for intercept during delivery to L2
+Git-repo: git://kernel.suse.com/kernel.git
+Git-commit: e011c663b9c786d115c0f45e5b0bfae0c39428d4
+Patch-mainline: v3.13-rc1
+References: bcn#871306
+
+All exceptions should be checked for intercept during delivery to L2,
+but we check only #PF currently. Drop nested_run_pending while we are
+at it since exception cannot be injected during vmentry anyway.
+
+Signed-off-by: Gleb Natapov <gleb@redhat.com>
+[Renamed the nested_vmx_check_exception function. - Paolo]
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+(cherry picked from commit e011c663b9c786d115c0f45e5b0bfae0c39428d4)
+Signed-off-by: Bruce Rogers <brogers@suse.com>
+---
+ arch/x86/kvm/vmx.c | 12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 22fbb8e..2001922 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -1898,16 +1898,12 @@ static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
+ /*
+  * KVM wants to inject page-faults which it got to the guest. This function
+  * checks whether in a nested guest, we need to inject them to L1 or L2.
+- * This function assumes it is called with the exit reason in vmcs02 being
+- * a #PF exception (this is the only case in which KVM injects a #PF when L2
+- * is running).
+  */
+-static int nested_pf_handled(struct kvm_vcpu *vcpu)
++static int nested_vmx_check_exception(struct kvm_vcpu *vcpu, unsigned nr)
+ {
+ 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
+ 
+-	/* TODO: also check PFEC_MATCH/MASK, not just EB.PF. */
+-	if (!(vmcs12->exception_bitmap & (1u << PF_VECTOR)))
++	if (!(vmcs12->exception_bitmap & (1u << nr)))
+ 		return 0;
+ 
+ 	nested_vmx_vmexit(vcpu);
+@@ -1921,8 +1917,8 @@ static void vmx_queue_exception(struct kvm_vcpu *vcpu, unsigned nr,
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	u32 intr_info = nr | INTR_INFO_VALID_MASK;
+ 
+-	if (!reinject && nr == PF_VECTOR && is_guest_mode(vcpu) &&
+-	    !vmx->nested.nested_run_pending && nested_pf_handled(vcpu))
++	if (!reinject && is_guest_mode(vcpu) &&
++	    nested_vmx_check_exception(vcpu, nr))
+ 		return;
+ 
+ 	if (has_error_code) {
+
