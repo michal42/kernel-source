@@ -1,0 +1,65 @@
+From: Srivatsa S. Bhat <srivatsa.bhat@linux.vnet.ibm.com>
+Subject: smp: Print more useful debug info upon receiving IPI on an offline CPU
+Git-commit: ddb7fec09b32ec61e428e7e882b6821a10d3df3f
+Patch-mainline: v3.15-rc5
+References: bnc#878672 
+
+Today the smp-call-function code just prints a warning if we get an IPI on
+an offline CPU. This info is sufficient to let us know that something went
+wrong, but often it is very hard to debug exactly who sent the IPI and why,
+from this info alone.
+
+In most cases, we get the warning about the IPI to an offline CPU, immediately
+after the CPU going offline comes out of the stop-machine phase and reenables
+interrupts. Since all online CPUs participate in stop-machine, the information
+regarding the sender of the IPI is already lost by the time we exit the
+stop-machine loop. So even if we dump the stack on each CPU at this point,
+we won't find anything useful since all of them will show the stack-trace of
+the stopper thread. So we need a better way to figure out who sent the IPI and
+why.
+
+To achieve this, when we detect an IPI targeted to an offline CPU, loop through
+the call-single-data linked list and print out the payload (i.e., the name
+of the function which was supposed to be executed by the target CPU). This
+would give us an insight as to who might have sent the IPI and help us debug
+this further.
+
+[Backport needed because it interferes with 6897fc22ea01b56]
+
+Signed-off-by: Srivatsa S. Bhat <srivatsa.bhat@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+
+diff -Naurp linux-3.12.20-17.1-clean/kernel/smp.c linux-3.12.20-17.1/kernel/smp.c
+--- linux-3.12.20-17.1-clean/kernel/smp.c	2014-05-19 14:25:14.710000003 +0530
++++ linux-3.12.20-17.1/kernel/smp.c	2014-05-19 14:28:08.590000003 +0530
+@@ -180,16 +180,25 @@ void generic_exec_single(int cpu, struct
+ void generic_smp_call_function_single_interrupt(void)
+ {
+ 	struct call_single_queue *q = &__get_cpu_var(call_single_queue);
++	struct call_single_data *cur_csd;
++	static bool warned;
+ 	LIST_HEAD(list);
+ 
++	raw_spin_lock(&q->lock);
++	list_replace_init(&q->list, &list);
++	raw_spin_unlock(&q->lock);
++
+ 	/*
+ 	 * Shouldn't receive this interrupt on a cpu that is not yet online.
+ 	 */
+-	WARN_ON_ONCE(!cpu_online(smp_processor_id()));
++	if (unlikely(!cpu_online(smp_processor_id()) && !warned)) {
++		warned = true;
++		WARN(1, "IPI on offline CPU %d\n", smp_processor_id());
+ 
+-	raw_spin_lock(&q->lock);
+-	list_replace_init(&q->list, &list);
+-	raw_spin_unlock(&q->lock);
++		list_for_each_entry(cur_csd, &list, list)
++			pr_warn("IPI callback %pS sent to offline CPU\n",
++				cur_csd->func);
++	}
+ 
+ 	while (!list_empty(&list)) {
+ 		struct call_single_data *csd;
