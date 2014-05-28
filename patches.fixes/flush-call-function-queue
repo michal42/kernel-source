@@ -1,0 +1,122 @@
+From: Srivatsa S. Bhat <srivatsa.bhat@linux.vnet.ibm.com>
+Subject: CPU hotplug, smp: Flush any pending IPI callbacks before CPU offline
+Git-commit: ab7a42783d939cdbe729c18ab32dbf0d25746ea2
+Git-commit: 5f52c02c3307f747ee4889c593dc47910754722a
+Patch-mainline: v3.15-rc5
+References: bnc#878672 
+
+During CPU offline, in the stop-machine loop, we use 2 separate stages to
+disable interrupts, to ensure that the CPU going offline doesn't get any new
+IPIs from the other CPUs after it has gone offline.
+
+However, an IPI sent much earlier might arrive late on the target CPU
+(possibly _after_ the CPU has gone offline) due to hardware latencies,
+and due to this, the smp-call-function callbacks queued on the outgoing
+CPU might not get noticed (and hence not executed) at all.
+
+This is somewhat theoretical, but in any case, it makes sense to explicitly
+loop through the call_single_queue and flush any pending callbacks before the
+CPU goes completely offline. So, flush the queued smp-call-function callbacks
+in the MULTI_STOP_DISABLE_IRQ_ACTIVE stage, after disabling interrupts on the
+active CPU. That way, we would have handled all the queued callbacks before
+going offline, and also, no new IPIs can be sent by the other CPUs to the
+outgoing CPU at that point, because they will all be executing the stop-machine
+code with interrupts disabled.
+
+[Backport neded because of 5fd77595ec6214 interference]
+
+Suggested-by: Frederic Weisbecker <fweisbec@gmail.com>
+Signed-off-by: Srivatsa S. Bhat <srivatsa.bhat@linux.vnet.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+---
+
+diff -Naurp linux-3.12.20-17.1-clean/include/linux/smp.h linux-3.12.20-17.1/include/linux/smp.h
+--- linux-3.12.20-17.1-clean/include/linux/smp.h	2014-05-19 14:25:14.540000003 +0530
++++ linux-3.12.20-17.1/include/linux/smp.h	2014-05-19 14:34:49.720000003 +0530
+@@ -49,6 +49,8 @@ void on_each_cpu_cond(bool (*cond_func)(
+ 		smp_call_func_t func, void *info, bool wait,
+ 		gfp_t gfp_flags);
+ 
++void flush_smp_call_function_queue(void);
++
+ #ifdef CONFIG_SMP
+ 
+ #include <linux/preempt.h>
+diff -Naurp linux-3.12.20-17.1-clean/kernel/smp.c linux-3.12.20-17.1/kernel/smp.c
+--- linux-3.12.20-17.1-clean/kernel/smp.c	2014-05-19 14:32:12.870000003 +0530
++++ linux-3.12.20-17.1/kernel/smp.c	2014-05-19 14:37:26.080000003 +0530
+@@ -214,6 +214,46 @@ void generic_smp_call_function_single_in
+ 
+ static DEFINE_PER_CPU_SHARED_ALIGNED(struct call_single_data, csd_data);
+ 
++/**
++ * flush_smp_call_function_queue - Flush pending smp-call-function callbacks
++ *
++ * Flush any pending smp-call-function callbacks queued on this CPU (including
++ * those for which the source CPU's IPIs might not have been received on this
++ * CPU yet). This is invoked by a CPU about to go offline, to ensure that all
++ * pending IPI functions are run before it goes completely offline.
++ *
++ * Loop through the call_single_queue and run all the queued functions.
++ * Must be called with interrupts disabled.
++ */
++void flush_smp_call_function_queue(void)
++{
++	struct call_single_queue *q = &__get_cpu_var(call_single_queue);
++	LIST_HEAD(list);
++
++	WARN_ON(!irqs_disabled());
++
++	raw_spin_lock(&q->lock);
++
++	if (likely(list_empty(&q->list))) {
++		raw_spin_unlock(&q->lock);
++		return;
++	}
++
++	list_replace_init(&q->list, &list);
++	raw_spin_unlock(&q->lock);
++
++	while (!list_empty(&list)) {
++		struct call_single_data *csd;
++
++		csd = list_entry(list.next, struct call_single_data, list);
++		list_del(&csd->list);
++
++		csd->func(csd->info);
++
++		csd_unlock(csd);
++	}
++}
++
+ /*
+  * smp_call_function_single - Run a function on a specific CPU
+  * @func: The function to run. This must be fast and non-blocking.
+diff -Naurp linux-3.12.20-17.1-clean/kernel/stop_machine.c linux-3.12.20-17.1/kernel/stop_machine.c
+--- linux-3.12.20-17.1-clean/kernel/stop_machine.c	2014-05-19 14:34:33.120000005 +0530
++++ linux-3.12.20-17.1/kernel/stop_machine.c	2014-05-19 14:35:25.280000003 +0530
+@@ -22,6 +22,7 @@
+ #include <linux/atomic.h>
+ #include <linux/lglock.h>
+ #include <linux/console.h>
++#include <linux/smp.h>
+ 
+ /*
+  * Structure to determine completion condition and record errors.  May
+@@ -225,6 +226,16 @@ static int multi_cpu_stop(void *data)
+ 					local_irq_disable();
+ 					hard_irq_disable();
+ 				}
++
++				/*
++				 * IPIs (from the inactive CPUs) might arrive
++				 * late due to hardware latencies. So flush
++				 * out any pending IPI callbacks explicitly,
++				 * to ensure that the outgoing CPU doesn't go
++				 * offline with work still pending (during
++				 * CPU hotplug).
++				 */
++				flush_smp_call_function_queue();
+ 				break;
+ 			case MULTI_STOP_RUN:
+ 				if (is_active)
