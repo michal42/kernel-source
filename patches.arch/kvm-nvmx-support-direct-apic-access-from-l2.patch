@@ -1,0 +1,41 @@
+From: Jan Kiszka <jan.kiszka@siemens.com>
+Date: Mon, 16 Dec 2013 12:55:46 +0100
+Subject: KVM: nVMX: Support direct APIC access from L2
+Git-repo: git://kernel.suse.com/kernel.git
+Git-commit: ca3f257ae570c37d3da30a524a2f61ce602c6c99
+Patch-mainline: v3.14-rc1
+References: bcn#871306
+
+It's a pathological case, but still a valid one: If L1 disables APIC
+virtualization and also allows L2 to directly write to the APIC page, we
+have to forcibly enable APIC virtualization while in L2 if the in-kernel
+APIC is in use.
+
+This allows to run the direct interrupt test case in the vmx unit test
+without x2APIC.
+
+Signed-off-by: Jan Kiszka <jan.kiszka@siemens.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit ca3f257ae570c37d3da30a524a2f61ce602c6c99)
+Signed-off-by: Bruce Rogers <brogers@suse.com>
+---
+ arch/x86/kvm/vmx.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index ea6f3b9..cae143b 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -7766,6 +7766,11 @@ static void prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
+ 			else
+ 				vmcs_write64(APIC_ACCESS_ADDR,
+ 				  page_to_phys(vmx->nested.apic_access_page));
++		} else if (vm_need_virtualize_apic_accesses(vmx->vcpu.kvm)) {
++			exec_control |=
++				SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES;
++			vmcs_write64(APIC_ACCESS_ADDR,
++				page_to_phys(vcpu->kvm->arch.apic_access_page));
+ 		}
+ 
+ 		vmcs_write32(SECONDARY_VM_EXEC_CONTROL, exec_control);
+
