@@ -1,0 +1,64 @@
+From: Petr Mladek <pmladek@suse.cz>
+Date: Thu, 3 Apr 2014 14:48:42 -0700
+Subject: [PATCH] printk: use also the last bytes in the ring buffer
+Patch-mainline: v3.15-rc1
+Git-commit: 39b25109b400ea397e64c417d8b965a53e2ee0f0
+References: bnc#831949
+
+pmladek@suse.cz:
+This fix is useful but it is primary here to reduce conflicts in
+the printk/NMI stuff.
+
+
+It seems that we have newer used the last byte in the ring buffer.  In
+fact, we have newer used the last 4 bytes because of padding.
+
+First problem is in the check for free space.  The exact number of free
+bytes is enough to store the length of data.
+
+Second problem is in the check where the ring buffer is rotated.  The
+left side counts the first unused index.  It is unused, so it might be
+the same as the size of the buffer.
+
+Note that the first problem has to be fixed together with the second
+one.  Otherwise, the buffer is rotated even when there is enough space
+on the end of the buffer.  Then the beginning of the buffer is rewritten
+and valid entries get corrupted.
+
+Signed-off-by: Petr Mladek <pmladek@suse.cz>
+Cc: Steven Rostedt <rostedt@goodmis.org>
+Cc: Frederic Weisbecker <fweisbec@gmail.com>
+Cc: Jan Kara <jack@suse.cz>
+Cc: Michal Hocko <mhocko@suse.cz>
+Cc: Kay Sievers <kay@vrfy.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ kernel/printk/printk.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+index 012f3e40671d..b3a1790f9e05 100644
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -319,7 +319,7 @@ static void log_store(int facility, int level,
+ 		else
+ 			free = log_first_idx - log_next_idx;
+ 
+-		if (free > size + sizeof(struct printk_log))
++		if (free >= size + sizeof(struct printk_log))
+ 			break;
+ 
+ 		/* drop old messages until we have enough contiuous space */
+@@ -327,7 +327,7 @@ static void log_store(int facility, int level,
+ 		log_first_seq++;
+ 	}
+ 
+-	if (log_next_idx + size + sizeof(struct printk_log) >= log_buf_len) {
++	if (log_next_idx + size + sizeof(struct printk_log) > log_buf_len) {
+ 		/*
+ 		 * This message + an additional empty header does not fit
+ 		 * at the end of the buffer. Add an empty header with len == 0
+-- 
+1.8.4
+
