@@ -1,0 +1,67 @@
+From: Anand Jain <anand.jain@oracle.com>
+Date: Sun, 6 Apr 2014 12:59:07 +0800
+Patch-mainline: pending
+Subject: [PATCH] btrfs: btrfs_rm_device() should zero mirror SB as well
+
+This fix will ensure all SB copies on the disk is zeroed
+when the disk is intentionally removed. This helps to
+better manage disks in the user land.
+
+This version of patch also merges the Zach patch as below.
+
+ btrfs: don't double brelse on device rm
+
+Signed-off-by: Anand Jain <anand.jain@oracle.com>
+Signed-off-by: Zach Brown <zab@redhat.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/volumes.c |   31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -1709,12 +1709,43 @@ int btrfs_rm_device(struct btrfs_root *r
+ 	 * remove it from the devices list and zero out the old super
+ 	 */
+ 	if (clear_super && disk_super) {
++		u64 bytenr;
++		int i;
++
+ 		/* make sure this device isn't detected as part of
+ 		 * the FS anymore
+ 		 */
+ 		memset(&disk_super->magic, 0, sizeof(disk_super->magic));
+ 		set_buffer_dirty(bh);
+ 		sync_dirty_buffer(bh);
++
++		/* clear the mirror copies of super block on the disk
++		 * being removed, 0th copy is been taken care above and
++		 * the below would take of the rest
++		 */
++		for (i = 1; i < BTRFS_SUPER_MIRROR_MAX; i++) {
++			bytenr = btrfs_sb_offset(i);
++			if (bytenr + BTRFS_SUPER_INFO_SIZE >=
++					i_size_read(bdev->bd_inode))
++				break;
++
++			brelse(bh);
++			bh = __bread(bdev, bytenr / 4096,
++					BTRFS_SUPER_INFO_SIZE);
++			if (!bh)
++				continue;
++
++			disk_super = (struct btrfs_super_block *)bh->b_data;
++
++			if (btrfs_super_bytenr(disk_super) != bytenr ||
++				btrfs_super_magic(disk_super) != BTRFS_MAGIC) {
++				continue;
++			}
++			memset(&disk_super->magic, 0,
++						sizeof(disk_super->magic));
++			set_buffer_dirty(bh);
++			sync_dirty_buffer(bh);
++		}
+ 	}
+ 
+ 	ret = 0;
