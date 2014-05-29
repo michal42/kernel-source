@@ -1,0 +1,196 @@
+From 7ae7dff942d89a772afc442a7b7f9f06403bc0a3 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 28 May 2014 14:15:49 +0100
+Subject: [PATCH] mm: page_alloc: Reset fair zone allocation policy only when
+ batch counts are expired
+
+References: VM/FS Performance
+Patch-mainline: No (Expected 3.17)
+
+The fair zone allocation policy round-robins allocations between zones on
+a node to avoid age inversion problems during reclaim using a counter to
+manage the round-robin. If the first allocation fails, the batch counts get
+reset and the allocation is attempted again before going into the slow path.
+There are at least two problems with this
+
+1. If the eligible zones are below the low watermark we reset the counts
+   even though the batches might be fine.
+2. We potentially do batch resets even when the right choice is to fallback
+   to other nodes.
+
+When resetting batch counts, it was expected that the count would be <=
+0 but the bizarre side-effect is that we are resetting counters that were
+initially postive so (high - low - batch) potentially sets a high positive
+batch count to close to 0. This leads to a premature reset in the near
+future, more overhead and more ... screwing around.
+
+The user-visible effect depends on zone sizes and a host of other effects
+the obvious one is that single-node machines with multiple zones will
+see degraded performance for streaming readers and writers at least. The
+effect is also visible on NUMA machines but it may be harder to identify
+in the midst of other noise.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/page_alloc.c | 90 ++++++++++++++++++++++++++++++---------------------------
+ 1 file changed, 47 insertions(+), 43 deletions(-)
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 3204c39..5991fc2 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1895,6 +1895,28 @@ static inline void init_zone_allows_reclaim(int nid)
+ }
+ #endif	/* CONFIG_NUMA */
+ 
++static void reset_alloc_batches(struct zonelist *zonelist,
++				enum zone_type high_zoneidx,
++				struct zone *preferred_zone)
++{
++	struct zoneref *z;
++	struct zone *zone;
++
++	for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
++		/*
++		 * Only reset the batches of zones that were actually
++		 * considered in the fairness pass, we don't want to
++		 * trash fairness information for zones that are not
++		 * actually part of this zonelist's round-robin cycle.
++		 */
++		if (!zone_local(preferred_zone, zone))
++			continue;
++		mod_zone_page_state(zone, NR_ALLOC_BATCH,
++			high_wmark_pages(zone) - low_wmark_pages(zone) -
++			atomic_long_read(&zone->vm_stat[NR_ALLOC_BATCH]));
++	}
++}
++
+ /*
+  * get_page_from_freelist goes through the zonelist trying to allocate
+  * a page.
+@@ -1912,6 +1934,7 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
+ 	int did_zlc_setup = 0;		/* just call zlc_setup() one time */
+ 	bool consider_zone_dirty = (alloc_flags & ALLOC_WMARK_LOW) &&
+ 				(gfp_mask & __GFP_WRITE);
++	bool batch_depleted = (alloc_flags & ALLOC_FAIR);
+ 
+ zonelist_scan:
+ 	/*
+@@ -1921,7 +1944,6 @@ zonelist_scan:
+ 	for_each_zone_zonelist_nodemask(zone, z, zonelist,
+ 						high_zoneidx, nodemask) {
+ 		unsigned long mark;
+-
+ 		if (IS_ENABLED(CONFIG_NUMA) && zlc_active &&
+ 			!zlc_zone_worth_trying(zonelist, z, allowednodes))
+ 				continue;
+@@ -1936,11 +1958,13 @@ zonelist_scan:
+ 		 * time the page has in memory before being reclaimed.
+ 		 */
+ 		if (alloc_flags & ALLOC_FAIR) {
+-			if (!zone_local(preferred_zone, zone))
+-				continue;
+ 			if (zone_page_state(zone, NR_ALLOC_BATCH) <= 0)
+ 				continue;
++			batch_depleted = false;
++			if (!zone_local(preferred_zone, zone))
++				continue;
+ 		}
++
+ 		/*
+ 		 * When allocating a page cache page for writing, we
+ 		 * want to get it from a zone that is within its dirty
+@@ -2051,7 +2075,7 @@ this_zone_full:
+ 		goto zonelist_scan;
+ 	}
+ 
+-	if (page)
++	if (page) {
+ 		/*
+ 		 * page->pfmemalloc is set when ALLOC_NO_WATERMARKS was
+ 		 * necessary to allocate the page. The expectation is
+@@ -2060,6 +2084,25 @@ this_zone_full:
+ 		 * for !PFMEMALLOC purposes.
+ 		 */
+ 		page->pfmemalloc = !!(alloc_flags & ALLOC_NO_WATERMARKS);
++	} else {
++		/*
++		 * The first pass makes sure allocations are spread
++		 * fairly within the local node.  However, the local
++		 * node might have free pages left after the fairness
++		 * batches are exhausted, and remote zones haven't
++		 * even been considered yet.  Try once more without
++		 * fairness, and include remote zones now, before
++		 * entering the slowpath and waking kswapd: prefer
++		 * spilling to a remote zone over swapping locally.
++		 */
++		if ((alloc_flags & ALLOC_FAIR)) {
++			if (batch_depleted)
++				reset_alloc_batches(zonelist, high_zoneidx,
++					    preferred_zone);
++			alloc_flags &= ~ALLOC_FAIR;
++			goto zonelist_scan;
++		}
++	}
+ 
+ 	return page;
+ }
+@@ -2389,28 +2432,6 @@ __alloc_pages_high_priority(gfp_t gfp_mask, unsigned int order,
+ 	return page;
+ }
+ 
+-static void reset_alloc_batches(struct zonelist *zonelist,
+-				enum zone_type high_zoneidx,
+-				struct zone *preferred_zone)
+-{
+-	struct zoneref *z;
+-	struct zone *zone;
+-
+-	for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
+-		/*
+-		 * Only reset the batches of zones that were actually
+-		 * considered in the fairness pass, we don't want to
+-		 * trash fairness information for zones that are not
+-		 * actually part of this zonelist's round-robin cycle.
+-		 */
+-		if (!zone_local(preferred_zone, zone))
+-			continue;
+-		mod_zone_page_state(zone, NR_ALLOC_BATCH,
+-			high_wmark_pages(zone) - low_wmark_pages(zone) -
+-			atomic_long_read(&zone->vm_stat[NR_ALLOC_BATCH]));
+-	}
+-}
+-
+ static void wake_all_kswapds(unsigned int order,
+ 			     struct zonelist *zonelist,
+ 			     enum zone_type high_zoneidx,
+@@ -2741,29 +2762,12 @@ retry_cpuset:
+ 	if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+ 		alloc_flags |= ALLOC_CMA;
+ #endif
+-retry:
+ 	/* First allocation attempt */
+ 	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
+ 			zonelist, high_zoneidx, alloc_flags,
+ 			preferred_zone, classzone_idx, migratetype);
+ 	if (unlikely(!page)) {
+ 		/*
+-		 * The first pass makes sure allocations are spread
+-		 * fairly within the local node.  However, the local
+-		 * node might have free pages left after the fairness
+-		 * batches are exhausted, and remote zones haven't
+-		 * even been considered yet.  Try once more without
+-		 * fairness, and include remote zones now, before
+-		 * entering the slowpath and waking kswapd: prefer
+-		 * spilling to a remote zone over swapping locally.
+-		 */
+-		if (alloc_flags & ALLOC_FAIR) {
+-			reset_alloc_batches(zonelist, high_zoneidx,
+-					    preferred_zone);
+-			alloc_flags &= ~ALLOC_FAIR;
+-			goto retry;
+-		}
+-		/*
+ 		 * Runtime PM, block IO and its error handling path
+ 		 * can deadlock because I/O on the device might not
+ 		 * complete.
