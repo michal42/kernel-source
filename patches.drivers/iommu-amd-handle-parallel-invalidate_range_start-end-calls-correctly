@@ -1,0 +1,65 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Tue, 20 May 2014 23:18:26 +0200
+Subject: iommu/amd: Handle parallel invalidate_range_start/end calls correctly
+Git-commit: e79df31c60ea79954e854616da233e1b8c6475ab
+Patch-mainline: v3.16 or v3.15-rc8 (next release)
+References: bnc#880670
+
+Add a counter to the pasid_state so that we do not restore
+the original page-table before all invalidate_range_start
+to invalidate_range_end sections have finished.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/amd_iommu_v2.c | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+Index: linux-3.12-SLE12_amd-vi-fixes/drivers/iommu/amd_iommu_v2.c
+===================================================================
+--- linux-3.12-SLE12_amd-vi-fixes.orig/drivers/iommu/amd_iommu_v2.c
++++ linux-3.12-SLE12_amd-vi-fixes/drivers/iommu/amd_iommu_v2.c
+@@ -45,6 +45,8 @@ struct pri_queue {
+ struct pasid_state {
+ 	struct list_head list;			/* For global state-list */
+ 	atomic_t count;				/* Reference count */
++	atomic_t mmu_notifier_count;		/* Counting nested mmu_notifier
++						   calls */
+ 	struct task_struct *task;		/* Task bound to this PASID */
+ 	struct mm_struct *mm;			/* mm_struct for the faults */
+ 	struct mmu_notifier mn;                 /* mmu_otifier handle */
+@@ -443,8 +445,11 @@ static void mn_invalidate_range_start(st
+ 	pasid_state = mn_to_state(mn);
+ 	dev_state   = pasid_state->device_state;
+ 
+-	amd_iommu_domain_set_gcr3(dev_state->domain, pasid_state->pasid,
+-				  __pa(empty_page_table));
++	if (atomic_add_return(1, &pasid_state->mmu_notifier_count) == 1) {
++		amd_iommu_domain_set_gcr3(dev_state->domain,
++					  pasid_state->pasid,
++					  __pa(empty_page_table));
++	}
+ }
+ 
+ static void mn_invalidate_range_end(struct mmu_notifier *mn,
+@@ -457,8 +462,11 @@ static void mn_invalidate_range_end(stru
+ 	pasid_state = mn_to_state(mn);
+ 	dev_state   = pasid_state->device_state;
+ 
+-	amd_iommu_domain_set_gcr3(dev_state->domain, pasid_state->pasid,
+-				  __pa(pasid_state->mm->pgd));
++	if (atomic_dec_and_test(&pasid_state->mmu_notifier_count)) {
++		amd_iommu_domain_set_gcr3(dev_state->domain,
++					  pasid_state->pasid,
++					  __pa(pasid_state->mm->pgd));
++	}
+ }
+ 
+ static struct mmu_notifier_ops iommu_mn = {
+@@ -682,6 +690,7 @@ int amd_iommu_bind_pasid(struct pci_dev
+ 		goto out;
+ 
+ 	atomic_set(&pasid_state->count, 1);
++	atomic_set(&pasid_state->mmu_notifier_count, 0);
+ 	init_waitqueue_head(&pasid_state->wq);
+ 	spin_lock_init(&pasid_state->lock);
+ 
