@@ -21,13 +21,11 @@ Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
- include/net/rtnetlink.h      |  14 ++++
- include/uapi/linux/if_link.h |   2 +
- net/core/rtnetlink.c         | 158 +++++++++++++++++++++++++++++++++++++------
+ include/net/rtnetlink.h      |   14 +++
+ include/uapi/linux/if_link.h |    2 
+ net/core/rtnetlink.c         |  158 +++++++++++++++++++++++++++++++++++++------
  3 files changed, 154 insertions(+), 20 deletions(-)
 
-diff --git a/include/net/rtnetlink.h b/include/net/rtnetlink.h
-index 7026648..cae6c83 100644
 --- a/include/net/rtnetlink.h
 +++ b/include/net/rtnetlink.h
 @@ -81,6 +81,20 @@ struct rtnl_link_ops {
@@ -51,8 +49,6 @@ index 7026648..cae6c83 100644
  };
  
  extern int	__rtnl_link_register(struct rtnl_link_ops *ops);
-diff --git a/include/uapi/linux/if_link.h b/include/uapi/linux/if_link.h
-index 035e6eb..1f5f3b8 100644
 --- a/include/uapi/linux/if_link.h
 +++ b/include/uapi/linux/if_link.h
 @@ -241,6 +241,8 @@ enum {
@@ -64,11 +60,9 @@ index 035e6eb..1f5f3b8 100644
  	__IFLA_INFO_MAX,
  };
  
-diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
-index 142a3f1..e9fd079 100644
 --- a/net/core/rtnetlink.c
 +++ b/net/core/rtnetlink.c
-@@ -365,6 +365,22 @@ void rtnl_link_unregister(struct rtnl_link_ops *ops)
+@@ -396,6 +396,22 @@ void rtnl_link_unregister(struct rtnl_li
  }
  EXPORT_SYMBOL_GPL(rtnl_link_unregister);
  
@@ -91,7 +85,7 @@ index 142a3f1..e9fd079 100644
  static size_t rtnl_link_get_size(const struct net_device *dev)
  {
  	const struct rtnl_link_ops *ops = dev->rtnl_link_ops;
-@@ -385,6 +401,8 @@ static size_t rtnl_link_get_size(const struct net_device *dev)
+@@ -416,6 +432,8 @@ static size_t rtnl_link_get_size(const s
  		/* IFLA_INFO_XSTATS */
  		size += nla_total_size(ops->get_xstats_size(dev));
  
@@ -100,7 +94,7 @@ index 142a3f1..e9fd079 100644
  	return size;
  }
  
-@@ -477,40 +495,101 @@ static size_t rtnl_link_get_af_size(const struct net_device *dev)
+@@ -508,40 +526,101 @@ static size_t rtnl_link_get_af_size(cons
  	return size;
  }
  
@@ -217,8 +211,8 @@ index 142a3f1..e9fd079 100644
  err_cancel_link:
  	nla_nest_cancel(skb, linkinfo);
  out:
-@@ -1070,10 +1149,7 @@ static int rtnl_fill_ifinfo(struct sk_buff *skb, struct net_device *dev,
- 	if (rtnl_port_fill(skb, dev))
+@@ -1105,10 +1184,7 @@ static int rtnl_fill_ifinfo(struct sk_bu
+ 	if (rtnl_port_fill(skb, dev, ext_filter_mask))
  		goto nla_put_failure;
  
 -	if (rtnl_bond_slave_fill(skb, dev))
@@ -229,7 +223,7 @@ index 142a3f1..e9fd079 100644
  		if (rtnl_link_fill(skb, dev) < 0)
  			goto nla_put_failure;
  	}
-@@ -1196,6 +1272,8 @@ EXPORT_SYMBOL(ifla_policy);
+@@ -1238,6 +1314,8 @@ EXPORT_SYMBOL(ifla_policy);
  static const struct nla_policy ifla_info_policy[IFLA_INFO_MAX+1] = {
  	[IFLA_INFO_KIND]	= { .type = NLA_STRING },
  	[IFLA_INFO_DATA]	= { .type = NLA_NESTED },
@@ -238,7 +232,7 @@ index 142a3f1..e9fd079 100644
  };
  
  static const struct nla_policy ifla_vfinfo_policy[IFLA_VF_INFO_MAX+1] = {
-@@ -1783,7 +1861,9 @@ static int rtnl_newlink(struct sk_buff *skb, struct nlmsghdr *nlh)
+@@ -1825,7 +1903,9 @@ static int rtnl_newlink(struct sk_buff *
  {
  	struct net *net = sock_net(skb->sk);
  	const struct rtnl_link_ops *ops;
@@ -248,7 +242,7 @@ index 142a3f1..e9fd079 100644
  	struct ifinfomsg *ifm;
  	char kind[MODULE_NAME_LEN];
  	char ifname[IFNAMSIZ];
-@@ -1813,6 +1893,12 @@ replay:
+@@ -1855,6 +1935,12 @@ replay:
  			dev = NULL;
  	}
  
@@ -261,7 +255,7 @@ index 142a3f1..e9fd079 100644
  	err = validate_linkmsg(dev, tb);
  	if (err < 0)
  		return err;
-@@ -1834,7 +1920,10 @@ replay:
+@@ -1876,7 +1962,10 @@ replay:
  	}
  
  	if (1) {
@@ -273,7 +267,7 @@ index 142a3f1..e9fd079 100644
  		struct net *dest_net;
  
  		if (ops) {
-@@ -1853,6 +1942,24 @@ replay:
+@@ -1895,6 +1984,24 @@ replay:
  			}
  		}
  
@@ -298,10 +292,12 @@ index 142a3f1..e9fd079 100644
  		if (dev) {
  			int modified = 0;
  
-@@ -1872,6 +1979,17 @@ replay:
+@@ -1912,6 +2019,17 @@ replay:
+ 				if (err < 0)
+ 					return err;
  				modified = 1;
- 			}
- 
++			}
++
 +			if (linkinfo[IFLA_INFO_SLAVE_DATA]) {
 +				if (!m_ops || !m_ops->slave_changelink)
 +					return -EOPNOTSUPP;
@@ -311,11 +307,6 @@ index 142a3f1..e9fd079 100644
 +				if (err < 0)
 +					return err;
 +				modified = 1;
-+			}
-+
- 			return do_setlink(dev, ifm, tb, ifname, modified);
- 		}
+ 			}
  
--- 
-1.8.1.4
-
+ 			return do_setlink(dev, ifm, tb, ifname, modified);
