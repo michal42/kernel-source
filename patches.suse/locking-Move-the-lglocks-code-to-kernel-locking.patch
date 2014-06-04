@@ -1,0 +1,235 @@
+From cd295fbece635a686a9e6424c0cf0a73e8cfddef Mon Sep 17 00:00:00 2001
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Mon, 4 Nov 2013 11:51:33 +0100
+Subject: [PATCH] locking: Move the lglocks code to kernel/locking/
+
+References: Locking scalability
+Patch-mainline: Yes (v3.13)
+Git-commit: cd4d241d57c99c6b00ef1799ad797d90f75a1da9
+
+Suggested-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/n/tip-amd6pg1mif6tikbyktfvby3y@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/Makefile         |  2 +-
+ kernel/lglock.c         | 89 -------------------------------------------------
+ kernel/locking/Makefile |  2 +-
+ kernel/locking/lglock.c | 89 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 91 insertions(+), 91 deletions(-)
+
+diff --git a/kernel/Makefile b/kernel/Makefile
+index 39fe1f8..6cd04e6 100644
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -10,7 +10,7 @@ obj-y     = fork.o exec_domain.o panic.o \
+ 	    kthread.o wait.o sys_ni.o posix-cpu-timers.o \
+ 	    hrtimer.o nsproxy.o srcu.o \
+ 	    notifier.o ksysfs.o cred.o reboot.o \
+-	    async.o range.o groups.o lglock.o smpboot.o
++	    async.o range.o groups.o smpboot.o
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ # Do not trace debug files and internal ftrace files
+diff --git a/kernel/lglock.c b/kernel/lglock.c
+deleted file mode 100644
+index 86ae2ae..0000000
+--- a/kernel/lglock.c
++++ /dev/null
+@@ -1,89 +0,0 @@
+-/* See include/linux/lglock.h for description */
+-#include <linux/module.h>
+-#include <linux/lglock.h>
+-#include <linux/cpu.h>
+-#include <linux/string.h>
+-
+-/*
+- * Note there is no uninit, so lglocks cannot be defined in
+- * modules (but it's fine to use them from there)
+- * Could be added though, just undo lg_lock_init
+- */
+-
+-void lg_lock_init(struct lglock *lg, char *name)
+-{
+-	LOCKDEP_INIT_MAP(&lg->lock_dep_map, name, &lg->lock_key, 0);
+-}
+-EXPORT_SYMBOL(lg_lock_init);
+-
+-void lg_local_lock(struct lglock *lg)
+-{
+-	arch_spinlock_t *lock;
+-
+-	preempt_disable();
+-	lock_acquire_shared(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
+-	lock = this_cpu_ptr(lg->lock);
+-	arch_spin_lock(lock);
+-}
+-EXPORT_SYMBOL(lg_local_lock);
+-
+-void lg_local_unlock(struct lglock *lg)
+-{
+-	arch_spinlock_t *lock;
+-
+-	lock_release(&lg->lock_dep_map, 1, _RET_IP_);
+-	lock = this_cpu_ptr(lg->lock);
+-	arch_spin_unlock(lock);
+-	preempt_enable();
+-}
+-EXPORT_SYMBOL(lg_local_unlock);
+-
+-void lg_local_lock_cpu(struct lglock *lg, int cpu)
+-{
+-	arch_spinlock_t *lock;
+-
+-	preempt_disable();
+-	lock_acquire_shared(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
+-	lock = per_cpu_ptr(lg->lock, cpu);
+-	arch_spin_lock(lock);
+-}
+-EXPORT_SYMBOL(lg_local_lock_cpu);
+-
+-void lg_local_unlock_cpu(struct lglock *lg, int cpu)
+-{
+-	arch_spinlock_t *lock;
+-
+-	lock_release(&lg->lock_dep_map, 1, _RET_IP_);
+-	lock = per_cpu_ptr(lg->lock, cpu);
+-	arch_spin_unlock(lock);
+-	preempt_enable();
+-}
+-EXPORT_SYMBOL(lg_local_unlock_cpu);
+-
+-void lg_global_lock(struct lglock *lg)
+-{
+-	int i;
+-
+-	preempt_disable();
+-	lock_acquire_exclusive(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
+-	for_each_possible_cpu(i) {
+-		arch_spinlock_t *lock;
+-		lock = per_cpu_ptr(lg->lock, i);
+-		arch_spin_lock(lock);
+-	}
+-}
+-EXPORT_SYMBOL(lg_global_lock);
+-
+-void lg_global_unlock(struct lglock *lg)
+-{
+-	int i;
+-
+-	lock_release(&lg->lock_dep_map, 1, _RET_IP_);
+-	for_each_possible_cpu(i) {
+-		arch_spinlock_t *lock;
+-		lock = per_cpu_ptr(lg->lock, i);
+-		arch_spin_unlock(lock);
+-	}
+-	preempt_enable();
+-}
+-EXPORT_SYMBOL(lg_global_unlock);
+diff --git a/kernel/locking/Makefile b/kernel/locking/Makefile
+index b0e0d73..bdd313a 100644
+--- a/kernel/locking/Makefile
++++ b/kernel/locking/Makefile
+@@ -1,5 +1,5 @@
+ 
+-obj-y += mutex.o semaphore.o rwsem.o
++obj-y += mutex.o semaphore.o rwsem.o lglock.o
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ CFLAGS_REMOVE_lockdep.o = -pg
+diff --git a/kernel/locking/lglock.c b/kernel/locking/lglock.c
+new file mode 100644
+index 0000000..86ae2ae
+--- /dev/null
++++ b/kernel/locking/lglock.c
+@@ -0,0 +1,89 @@
++/* See include/linux/lglock.h for description */
++#include <linux/module.h>
++#include <linux/lglock.h>
++#include <linux/cpu.h>
++#include <linux/string.h>
++
++/*
++ * Note there is no uninit, so lglocks cannot be defined in
++ * modules (but it's fine to use them from there)
++ * Could be added though, just undo lg_lock_init
++ */
++
++void lg_lock_init(struct lglock *lg, char *name)
++{
++	LOCKDEP_INIT_MAP(&lg->lock_dep_map, name, &lg->lock_key, 0);
++}
++EXPORT_SYMBOL(lg_lock_init);
++
++void lg_local_lock(struct lglock *lg)
++{
++	arch_spinlock_t *lock;
++
++	preempt_disable();
++	lock_acquire_shared(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
++	lock = this_cpu_ptr(lg->lock);
++	arch_spin_lock(lock);
++}
++EXPORT_SYMBOL(lg_local_lock);
++
++void lg_local_unlock(struct lglock *lg)
++{
++	arch_spinlock_t *lock;
++
++	lock_release(&lg->lock_dep_map, 1, _RET_IP_);
++	lock = this_cpu_ptr(lg->lock);
++	arch_spin_unlock(lock);
++	preempt_enable();
++}
++EXPORT_SYMBOL(lg_local_unlock);
++
++void lg_local_lock_cpu(struct lglock *lg, int cpu)
++{
++	arch_spinlock_t *lock;
++
++	preempt_disable();
++	lock_acquire_shared(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
++	lock = per_cpu_ptr(lg->lock, cpu);
++	arch_spin_lock(lock);
++}
++EXPORT_SYMBOL(lg_local_lock_cpu);
++
++void lg_local_unlock_cpu(struct lglock *lg, int cpu)
++{
++	arch_spinlock_t *lock;
++
++	lock_release(&lg->lock_dep_map, 1, _RET_IP_);
++	lock = per_cpu_ptr(lg->lock, cpu);
++	arch_spin_unlock(lock);
++	preempt_enable();
++}
++EXPORT_SYMBOL(lg_local_unlock_cpu);
++
++void lg_global_lock(struct lglock *lg)
++{
++	int i;
++
++	preempt_disable();
++	lock_acquire_exclusive(&lg->lock_dep_map, 0, 0, NULL, _RET_IP_);
++	for_each_possible_cpu(i) {
++		arch_spinlock_t *lock;
++		lock = per_cpu_ptr(lg->lock, i);
++		arch_spin_lock(lock);
++	}
++}
++EXPORT_SYMBOL(lg_global_lock);
++
++void lg_global_unlock(struct lglock *lg)
++{
++	int i;
++
++	lock_release(&lg->lock_dep_map, 1, _RET_IP_);
++	for_each_possible_cpu(i) {
++		arch_spinlock_t *lock;
++		lock = per_cpu_ptr(lg->lock, i);
++		arch_spin_unlock(lock);
++	}
++	preempt_enable();
++}
++EXPORT_SYMBOL(lg_global_unlock);

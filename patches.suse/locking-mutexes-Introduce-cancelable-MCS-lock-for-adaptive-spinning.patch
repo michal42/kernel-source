@@ -1,4 +1,4 @@
-From 1a62087a7b624e538b8b39917b25d285b2dba0fe Mon Sep 17 00:00:00 2001
+From 3882a58504f18d52e86c955a70b3c2e9612a25b5 Mon Sep 17 00:00:00 2001
 From: Peter Zijlstra <peterz@infradead.org>
 Date: Wed, 29 Jan 2014 12:51:42 +0100
 Subject: [PATCH] locking/mutexes: Introduce cancelable MCS lock for adaptive
@@ -36,10 +36,10 @@ Link: http://lkml.kernel.org/n/tip-62hcl5wxydmjzd182zhvk89m@git.kernel.org
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/mutex.h |  17 ++++-
- kernel/Makefile       |   2 +-
- kernel/mcs_spinlock.c | 178 ++++++++++++++++++++++++++++++++++++++++++++++++++
- kernel/mutex.c        |  65 ++----------------
+ include/linux/mutex.h         |  17 +++-
+ kernel/locking/Makefile       |   2 +-
+ kernel/locking/mcs_spinlock.c | 178 ++++++++++++++++++++++++++++++++++++++++++
+ kernel/locking/mutex.c        |  65 ++-------------
  4 files changed, 201 insertions(+), 61 deletions(-)
 
 diff --git a/include/linux/mutex.h b/include/linux/mutex.h
@@ -77,24 +77,22 @@ index bab49da..4372438 100644
  #endif
  #ifdef CONFIG_DEBUG_MUTEXES
  	const char 		*name;
-diff --git a/kernel/Makefile b/kernel/Makefile
-index a09537b..5a7c7bd 100644
---- a/kernel/Makefile
-+++ b/kernel/Makefile
-@@ -10,7 +10,7 @@ obj-y     = fork.o exec_domain.o panic.o \
- 	    kthread.o wait.o sys_ni.o posix-cpu-timers.o mutex.o \
- 	    hrtimer.o rwsem.o nsproxy.o srcu.o semaphore.o \
- 	    notifier.o ksysfs.o cred.o reboot.o \
--	    async.o range.o groups.o lglock.o smpboot.o
-+	    async.o range.o groups.o lglock.o smpboot.o mcs_spinlock.o
+diff --git a/kernel/locking/Makefile b/kernel/locking/Makefile
+index baab8e5..2a9ee96 100644
+--- a/kernel/locking/Makefile
++++ b/kernel/locking/Makefile
+@@ -1,5 +1,5 @@
+ 
+-obj-y += mutex.o semaphore.o rwsem.o lglock.o
++obj-y += mutex.o semaphore.o rwsem.o lglock.o mcs_spinlock.o
  
  ifdef CONFIG_FUNCTION_TRACER
- # Do not trace debug files and internal ftrace files
-diff --git a/kernel/mcs_spinlock.c b/kernel/mcs_spinlock.c
+ CFLAGS_REMOVE_lockdep.o = -pg
+diff --git a/kernel/locking/mcs_spinlock.c b/kernel/locking/mcs_spinlock.c
 new file mode 100644
 index 0000000..d203146
 --- /dev/null
-+++ b/kernel/mcs_spinlock.c
++++ b/kernel/locking/mcs_spinlock.c
 @@ -0,0 +1,178 @@
 +
 +#include <linux/percpu.h>
@@ -274,10 +272,10 @@ index 0000000..d203146
 +
 +#endif
 +
-diff --git a/kernel/mutex.c b/kernel/mutex.c
-index c74a7a9..9547cd8 100644
---- a/kernel/mutex.c
-+++ b/kernel/mutex.c
+diff --git a/kernel/locking/mutex.c b/kernel/locking/mutex.c
+index b982cb3..dfebc05 100644
+--- a/kernel/locking/mutex.c
++++ b/kernel/locking/mutex.c
 @@ -59,7 +59,7 @@ __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
  	INIT_LIST_HEAD(&lock->wait_list);
  	mutex_clear_owner(lock);
@@ -348,7 +346,7 @@ index c74a7a9..9547cd8 100644
   * Mutex spinning code migrated from kernel/sched/core.c
   */
  
-@@ -430,7 +376,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -426,7 +372,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  	struct mutex_waiter waiter;
  	unsigned long flags;
  	int ret;
@@ -356,7 +354,7 @@ index c74a7a9..9547cd8 100644
  
  	preempt_disable();
  	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
-@@ -461,7 +406,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -457,7 +402,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  	if (!mutex_can_spin_on_owner(lock))
  		goto slowpath;
  
@@ -367,7 +365,7 @@ index c74a7a9..9547cd8 100644
  	for (;;) {
  		struct task_struct *owner;
  
-@@ -500,7 +447,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -496,7 +443,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  			}
  
  			mutex_set_owner(lock);
@@ -376,7 +374,7 @@ index c74a7a9..9547cd8 100644
  			preempt_enable();
  			return 0;
  		}
-@@ -522,7 +469,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -518,7 +465,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  		 */
  		arch_mutex_cpu_relax();
  	}

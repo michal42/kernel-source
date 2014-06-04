@@ -1,4 +1,4 @@
-From b4982af27827484f95064d1e1740948b97f800a8 Mon Sep 17 00:00:00 2001
+From 79fde6d3a03fde950437faf6ba86ab8424be5904 Mon Sep 17 00:00:00 2001
 From: Jason Low <jason.low2@hp.com>
 Date: Tue, 28 Jan 2014 11:13:13 -0800
 Subject: [PATCH] locking/mutexes: Modify the way optimistic spinners are
@@ -40,14 +40,14 @@ Link: http://lkml.kernel.org/r/1390936396-3962-3-git-send-email-jason.low2@hp.co
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- kernel/mutex.c | 16 +++++++---------
+ kernel/locking/mutex.c | 16 +++++++---------
  1 file changed, 7 insertions(+), 9 deletions(-)
 
-diff --git a/kernel/mutex.c b/kernel/mutex.c
-index 13cd585..c74a7a9 100644
---- a/kernel/mutex.c
-+++ b/kernel/mutex.c
-@@ -430,6 +430,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+diff --git a/kernel/locking/mutex.c b/kernel/locking/mutex.c
+index c42c39c..b982cb3 100644
+--- a/kernel/locking/mutex.c
++++ b/kernel/locking/mutex.c
+@@ -426,6 +426,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  	struct mutex_waiter waiter;
  	unsigned long flags;
  	int ret;
@@ -55,7 +55,7 @@ index 13cd585..c74a7a9 100644
  
  	preempt_disable();
  	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
-@@ -460,9 +461,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -456,9 +457,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  	if (!mutex_can_spin_on_owner(lock))
  		goto slowpath;
  
@@ -66,7 +66,7 @@ index 13cd585..c74a7a9 100644
  
  		if (use_ww_ctx && ww_ctx->acquired > 0) {
  			struct ww_mutex *ww;
-@@ -477,19 +478,16 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -473,19 +474,16 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  			 * performed the optimistic spinning cannot be done.
  			 */
  			if (ACCESS_ONCE(ww->ctx))
@@ -89,7 +89,7 @@ index 13cd585..c74a7a9 100644
  
  		if ((atomic_read(&lock->count) == 1) &&
  		    (atomic_cmpxchg(&lock->count, 1, 0) == 1)) {
-@@ -506,7 +504,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -502,7 +500,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  			preempt_enable();
  			return 0;
  		}
@@ -97,7 +97,7 @@ index 13cd585..c74a7a9 100644
  
  		/*
  		 * When there's no owner, we might have preempted between the
-@@ -515,7 +512,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -511,7 +508,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  		 * the owner complete.
  		 */
  		if (!owner && (need_resched() || rt_task(task)))
@@ -106,7 +106,7 @@ index 13cd585..c74a7a9 100644
  
  		/*
  		 * The cpu_relax() call is a compiler barrier which forces
-@@ -525,6 +522,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -521,6 +518,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  		 */
  		arch_mutex_cpu_relax();
  	}
