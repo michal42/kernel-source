@@ -1,0 +1,49 @@
+From: Al Viro <viro@zeniv.linux.org.uk>
+Date: Thu, 29 May 2014 09:18:26 -0400
+Subject: dentry_kill() doesn't need the second argument now
+Git-commit: 8cbf74da435d1bd13dbb790f94c7ff67b2fb6af4
+Patch-mainline: v3.15-rc8
+References: bnc#874025, bnc#881085
+
+it's 1 in the only remaining caller.
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Acked-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/dcache.c |   11 ++++-------
+ 1 file changed, 4 insertions(+), 7 deletions(-)
+
+--- a/fs/dcache.c
++++ b/fs/dcache.c
+@@ -525,8 +525,7 @@ static void __dentry_kill(struct dentry
+  * If ref is non-zero, then decrement the refcount too.
+  * Returns dentry requiring refcount drop, or NULL if we're done.
+  */
+-static struct dentry *
+-dentry_kill(struct dentry *dentry, int unlock_on_failure)
++static struct dentry *dentry_kill(struct dentry *dentry)
+ 	__releases(dentry->d_lock)
+ {
+ 	struct inode *inode = dentry->d_inode;
+@@ -548,10 +547,8 @@ dentry_kill(struct dentry *dentry, int u
+ 	return parent;
+ 
+ failed:
+-	if (unlock_on_failure) {
+-		spin_unlock(&dentry->d_lock);
+-		cpu_relax();
+-	}
++	spin_unlock(&dentry->d_lock);
++	cpu_relax();
+ 	return dentry; /* try again with same dentry */
+ }
+ 
+@@ -640,7 +637,7 @@ void dput(struct dentry *dentry)
+ 	return;
+ 
+ kill_it:
+-	dentry = dentry_kill(dentry, 1);
++	dentry = dentry_kill(dentry);
+ 	if (dentry)
+ 		goto repeat;
+ }
