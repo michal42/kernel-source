@@ -1,0 +1,55 @@
+From: Jan Kara <jack@suse.cz>
+Date: Wed, 14 May 2014 14:03:22 +0200
+Subject: [PATCH v2] xfs: Fix rounding in xfs_alloc_fix_len()
+Patch-mainline: Not yet, expected 3.16
+References: bnc#875503
+
+Rounding in xfs_alloc_fix_len() is wrong. As the comment states, the
+result should be a number of a form (k*prod+mod) however due to sign
+mistake the result is different. As a result allocations on raid arrays
+could be misaligned in some cases.
+
+This also seems to fix occasional assertion failure:
+	XFS_WANT_CORRUPTED_GOTO(rlen <= flen, error0)
+in xfs_alloc_ag_vextent_size().
+
+Also add an assertion that the result of xfs_alloc_fix_len() is of
+expected form.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+---
+ fs/xfs/xfs_alloc.c | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/fs/xfs/xfs_alloc.c b/fs/xfs/xfs_alloc.c
+index c1cf6a336a72..1351a24d3cdc 100644
+--- a/fs/xfs/xfs_alloc.c
++++ b/fs/xfs/xfs_alloc.c
+@@ -257,16 +257,14 @@ xfs_alloc_fix_len(
+ 	k = rlen % args->prod;
+ 	if (k == args->mod)
+ 		return;
+-	if (k > args->mod) {
+-		if ((int)(rlen = rlen - k - args->mod) < (int)args->minlen)
+-			return;
+-	} else {
+-		if ((int)(rlen = rlen - args->prod - (args->mod - k)) <
+-		    (int)args->minlen)
+-			return;
+-	}
+-	ASSERT(rlen >= args->minlen);
+-	ASSERT(rlen <= args->maxlen);
++	if (k > args->mod)
++		rlen = rlen - (k - args->mod);
++	else
++		rlen = rlen - args->prod + (args->mod - k);
++	if ((int)rlen < (int)args->minlen)
++		return;
++	ASSERT(rlen >= args->minlen && rlen <= args->maxlen);
++	ASSERT(rlen % args->prod == args->mod);
+ 	args->len = rlen;
+ }
+ 
+-- 
+1.8.1.4
+
