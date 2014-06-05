@@ -1,10 +1,10 @@
-From 79fde6d3a03fde950437faf6ba86ab8424be5904 Mon Sep 17 00:00:00 2001
+From f96a2f993201254d18a1d036f1874cd14cd9ce9f Mon Sep 17 00:00:00 2001
 From: Jason Low <jason.low2@hp.com>
 Date: Tue, 28 Jan 2014 11:13:13 -0800
 Subject: [PATCH] locking/mutexes: Modify the way optimistic spinners are
  queued
 
-References: VM Performance
+References: Locking scalability
 Patch-mainline: Yes (v3.15)
 Git-commit: 47667fa1502e4d759df87e9cc7fbc0f202483361
 
@@ -40,33 +40,25 @@ Link: http://lkml.kernel.org/r/1390936396-3962-3-git-send-email-jason.low2@hp.co
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- kernel/locking/mutex.c | 16 +++++++---------
- 1 file changed, 7 insertions(+), 9 deletions(-)
+ kernel/locking/mutex.c | 15 ++++++---------
+ 1 file changed, 6 insertions(+), 9 deletions(-)
 
 diff --git a/kernel/locking/mutex.c b/kernel/locking/mutex.c
-index c42c39c..b982cb3 100644
+index 1e9bd67..bea0985 100644
 --- a/kernel/locking/mutex.c
 +++ b/kernel/locking/mutex.c
-@@ -426,6 +426,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
- 	struct mutex_waiter waiter;
- 	unsigned long flags;
- 	int ret;
-+	struct mspin_node node;
- 
- 	preempt_disable();
- 	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
-@@ -456,9 +457,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -411,9 +411,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  	if (!mutex_can_spin_on_owner(lock))
  		goto slowpath;
  
-+	mspin_lock(MLOCK(lock), &node);
++	mcs_spin_lock(&lock->mcs_lock, &node);
  	for (;;) {
  		struct task_struct *owner;
--		struct mspin_node  node;
+-		struct mcs_spinlock  node;
  
  		if (use_ww_ctx && ww_ctx->acquired > 0) {
  			struct ww_mutex *ww;
-@@ -473,19 +474,16 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -428,19 +428,16 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  			 * performed the optimistic spinning cannot be done.
  			 */
  			if (ACCESS_ONCE(ww->ctx))
@@ -78,10 +70,10 @@ index c42c39c..b982cb3 100644
  		 * If there's an owner, wait for it to either
  		 * release the lock or go to sleep.
  		 */
--		mspin_lock(MLOCK(lock), &node);
+-		mcs_spin_lock(&lock->mcs_lock, &node);
  		owner = ACCESS_ONCE(lock->owner);
 -		if (owner && !mutex_spin_on_owner(lock, owner)) {
--			mspin_unlock(MLOCK(lock), &node);
+-			mcs_spin_unlock(&lock->mcs_lock, &node);
 -			goto slowpath;
 -		}
 +		if (owner && !mutex_spin_on_owner(lock, owner))
@@ -89,15 +81,15 @@ index c42c39c..b982cb3 100644
  
  		if ((atomic_read(&lock->count) == 1) &&
  		    (atomic_cmpxchg(&lock->count, 1, 0) == 1)) {
-@@ -502,7 +500,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -457,7 +454,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  			preempt_enable();
  			return 0;
  		}
--		mspin_unlock(MLOCK(lock), &node);
+-		mcs_spin_unlock(&lock->mcs_lock, &node);
  
  		/*
  		 * When there's no owner, we might have preempted between the
-@@ -511,7 +508,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -466,7 +462,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  		 * the owner complete.
  		 */
  		if (!owner && (need_resched() || rt_task(task)))
@@ -106,11 +98,11 @@ index c42c39c..b982cb3 100644
  
  		/*
  		 * The cpu_relax() call is a compiler barrier which forces
-@@ -521,6 +518,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -476,6 +472,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  		 */
  		arch_mutex_cpu_relax();
  	}
-+	mspin_unlock(MLOCK(lock), &node);
++	mcs_spin_unlock(&lock->mcs_lock, &node);
  slowpath:
  #endif
  	spin_lock_mutex(&lock->wait_lock, flags);

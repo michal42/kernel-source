@@ -1,4 +1,4 @@
-From 3882a58504f18d52e86c955a70b3c2e9612a25b5 Mon Sep 17 00:00:00 2001
+From e1aecc7bb6beb728f42f8651aa5dfe1112d067d1 Mon Sep 17 00:00:00 2001
 From: Peter Zijlstra <peterz@infradead.org>
 Date: Wed, 29 Jan 2014 12:51:42 +0100
 Subject: [PATCH] locking/mutexes: Introduce cancelable MCS lock for adaptive
@@ -8,10 +8,6 @@ References: VM Performance
 Patch-mainline: Yes (v3.15)
 Git-commit: fb0527bd5ea99bfeb2dd91e3c1433ecf745d6b99
 
-NOTE: This differs from the upstream commit in that smp_load_acquire() is
-	not available. Instead we use a full memory barrier where
-	smp_load_acquire was used upstream.
-
 Since we want a task waiting for a mutex_lock() to go to sleep and
 reschedule on need_resched() we must be able to abort the
 mcs_spin_lock() around the adaptive spin.
@@ -19,60 +15,35 @@ mcs_spin_lock() around the adaptive spin.
 Therefore implement a cancelable mcs lock.
 
 Signed-off-by: Peter Zijlstra <peterz@infradead.org>
-Cc: chegu_vinod@hp.com
-Cc: paulmck@linux.vnet.ibm.com
-Cc: Waiman.Long@hp.com
-Cc: torvalds@linux-foundation.org
-Cc: tglx@linutronix.de
-Cc: riel@redhat.com
-Cc: akpm@linux-foundation.org
-Cc: davidlohr@hp.com
-Cc: hpa@zytor.com
-Cc: andi@firstfloor.org
-Cc: aswin@hp.com
-Cc: scott.norton@hp.com
-Cc: Jason Low <jason.low2@hp.com>
 Link: http://lkml.kernel.org/n/tip-62hcl5wxydmjzd182zhvk89m@git.kernel.org
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/mutex.h         |  17 +++-
+ include/linux/mutex.h         |   4 +-
  kernel/locking/Makefile       |   2 +-
  kernel/locking/mcs_spinlock.c | 178 ++++++++++++++++++++++++++++++++++++++++++
- kernel/locking/mutex.c        |  65 ++-------------
- 4 files changed, 201 insertions(+), 61 deletions(-)
+ kernel/locking/mcs_spinlock.h |  15 ++++
+ kernel/locking/mutex.c        |  10 ++-
+ 5 files changed, 202 insertions(+), 7 deletions(-)
 
 diff --git a/include/linux/mutex.h b/include/linux/mutex.h
-index bab49da..4372438 100644
+index 32a32e6..cf70660 100644
 --- a/include/linux/mutex.h
 +++ b/include/linux/mutex.h
-@@ -19,6 +19,21 @@
- #include <asm/processor.h>
- 
- /*
-+ * Cancellable version of the MCS lock above.
-+ *
-+ * Intended for adaptive spinning of sleeping locks:
-+ * mutex_lock()/rwsem_down_{read,write}() etc.
-+ */
-+
-+struct optimistic_spin_queue {
-+	struct optimistic_spin_queue *next, *prev;
-+	int locked; /* 1 if lock acquired */
-+};
-+
-+extern bool osq_lock(struct optimistic_spin_queue **lock);
-+extern void osq_unlock(struct optimistic_spin_queue **lock);
-+
-+/*
-  * Simple, straightforward mutexes with strict semantics:
-  *
-  * - only one task can hold the mutex at a time
-@@ -55,7 +70,7 @@ struct mutex {
+@@ -46,7 +46,7 @@
+  * - detects multi-task circular deadlocks and prints out all affected
+  *   locks and tasks (and only those tasks)
+  */
+-struct mcs_spinlock;
++struct optimistic_spin_queue;
+ struct mutex {
+ 	/* 1: unlocked, 0: locked, negative: locked, possible waiters */
+ 	atomic_t		count;
+@@ -56,7 +56,7 @@ struct mutex {
  	struct task_struct	*owner;
  #endif
  #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
--	void			*spin_mlock;	/* Spinner MCS lock */
+-	struct mcs_spinlock	*mcs_lock;	/* Spinner MCS lock */
 +	struct optimistic_spin_queue	*osq;	/* Spinner MCS lock */
  #endif
  #ifdef CONFIG_DEBUG_MUTEXES
@@ -90,7 +61,7 @@ index baab8e5..2a9ee96 100644
  CFLAGS_REMOVE_lockdep.o = -pg
 diff --git a/kernel/locking/mcs_spinlock.c b/kernel/locking/mcs_spinlock.c
 new file mode 100644
-index 0000000..d203146
+index 0000000..838dc9e
 --- /dev/null
 +++ b/kernel/locking/mcs_spinlock.c
 @@ -0,0 +1,178 @@
@@ -98,6 +69,7 @@ index 0000000..d203146
 +#include <linux/percpu.h>
 +#include <linux/mutex.h>
 +#include <linux/sched.h>
++#include "mcs_spinlock.h"
 +
 +#ifdef CONFIG_SMP
 +
@@ -176,8 +148,8 @@ index 0000000..d203146
 +	 * guaranteed their existence -- this allows us to apply
 +	 * cmpxchg in an attempt to undo our queueing.
 +	 */
-+	smp_mb();
-+	while (!node->locked) {
++
++	while (!smp_load_acquire(&node->locked)) {
 +		/*
 +		 * If we need to reschedule bail... so we can block.
 +		 */
@@ -207,8 +179,7 @@ index 0000000..d203146
 +		 * in which case we should observe @node->locked becomming
 +		 * true.
 +		 */
-+		smp_mb();
-+		if (&node->locked)
++		if (smp_load_acquire(&node->locked))
 +			return true;
 +
 +		arch_mutex_cpu_relax();
@@ -272,113 +243,68 @@ index 0000000..d203146
 +
 +#endif
 +
+diff --git a/kernel/locking/mcs_spinlock.h b/kernel/locking/mcs_spinlock.h
+index 9578ef8..e6ac898 100644
+--- a/kernel/locking/mcs_spinlock.h
++++ b/kernel/locking/mcs_spinlock.h
+@@ -74,4 +74,19 @@ void mcs_spin_unlock(struct mcs_spinlock **lock, struct mcs_spinlock *node)
+ 	smp_store_release(&next->locked, 1);
+ }
+ 
++/*
++ * Cancellable version of the MCS lock above.
++ *
++ * Intended for adaptive spinning of sleeping locks:
++ * mutex_lock()/rwsem_down_{read,write}() etc.
++ */
++
++struct optimistic_spin_queue {
++	struct optimistic_spin_queue *next, *prev;
++	int locked; /* 1 if lock acquired */
++};
++
++extern bool osq_lock(struct optimistic_spin_queue **lock);
++extern void osq_unlock(struct optimistic_spin_queue **lock);
++
+ #endif /* __LINUX_MCS_SPINLOCK_H */
 diff --git a/kernel/locking/mutex.c b/kernel/locking/mutex.c
-index b982cb3..dfebc05 100644
+index bea0985..587c7c8 100644
 --- a/kernel/locking/mutex.c
 +++ b/kernel/locking/mutex.c
-@@ -59,7 +59,7 @@ __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
+@@ -61,7 +61,7 @@ __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
  	INIT_LIST_HEAD(&lock->wait_list);
  	mutex_clear_owner(lock);
  #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
--	lock->spin_mlock = NULL;
+-	lock->mcs_lock = NULL;
 +	lock->osq = NULL;
  #endif
  
  	debug_mutex_init(lock, name, key);
-@@ -114,60 +114,6 @@ EXPORT_SYMBOL(mutex_lock);
- 
- #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
- /*
-- * In order to avoid a stampede of mutex spinners from acquiring the mutex
-- * more or less simultaneously, the spinners need to acquire a MCS lock
-- * first before spinning on the owner field.
-- *
-- * We don't inline mspin_lock() so that perf can correctly account for the
-- * time spent in this lock function.
-- */
--struct mspin_node {
--	struct mspin_node *next ;
--	int		  locked;	/* 1 if lock acquired */
--};
--#define	MLOCK(mutex)	((struct mspin_node **)&((mutex)->spin_mlock))
--
--static noinline
--void mspin_lock(struct mspin_node **lock, struct mspin_node *node)
--{
--	struct mspin_node *prev;
--
--	/* Init node */
--	node->locked = 0;
--	node->next   = NULL;
--
--	prev = xchg(lock, node);
--	if (likely(prev == NULL)) {
--		/* Lock acquired */
--		node->locked = 1;
--		return;
--	}
--	ACCESS_ONCE(prev->next) = node;
--	smp_wmb();
--	/* Wait until the lock holder passes the lock down */
--	while (!ACCESS_ONCE(node->locked))
--		arch_mutex_cpu_relax();
--}
--
--static void mspin_unlock(struct mspin_node **lock, struct mspin_node *node)
--{
--	struct mspin_node *next = ACCESS_ONCE(node->next);
--
--	if (likely(!next)) {
--		/*
--		 * Release the lock by setting it to NULL
--		 */
--		if (cmpxchg(lock, node, NULL) == node)
--			return;
--		/* Wait until the next pointer is set */
--		while (!(next = ACCESS_ONCE(node->next)))
--			arch_mutex_cpu_relax();
--	}
--	ACCESS_ONCE(next->locked) = 1;
--	smp_wmb();
--}
--
--/*
-  * Mutex spinning code migrated from kernel/sched/core.c
-  */
- 
-@@ -426,7 +372,6 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
- 	struct mutex_waiter waiter;
- 	unsigned long flags;
- 	int ret;
--	struct mspin_node node;
- 
- 	preempt_disable();
- 	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
-@@ -457,7 +402,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -411,7 +411,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  	if (!mutex_can_spin_on_owner(lock))
  		goto slowpath;
  
--	mspin_lock(MLOCK(lock), &node);
+-	mcs_spin_lock(&lock->mcs_lock, &node);
 +	if (!osq_lock(&lock->osq))
 +		goto slowpath;
 +
  	for (;;) {
  		struct task_struct *owner;
  
-@@ -496,7 +443,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -450,7 +452,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  			}
  
  			mutex_set_owner(lock);
--			mspin_unlock(MLOCK(lock), &node);
+-			mcs_spin_unlock(&lock->mcs_lock, &node);
 +			osq_unlock(&lock->osq);
  			preempt_enable();
  			return 0;
  		}
-@@ -518,7 +465,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+@@ -472,7 +474,7 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
  		 */
  		arch_mutex_cpu_relax();
  	}
--	mspin_unlock(MLOCK(lock), &node);
+-	mcs_spin_unlock(&lock->mcs_lock, &node);
 +	osq_unlock(&lock->osq);
  slowpath:
  #endif
