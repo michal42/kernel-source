@@ -1,0 +1,98 @@
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Subject: [PATCH] powerpc/scom: Enable 64-bit addresses
+Git-commit: d7a88c7eb46acb486922822eec3224c0bcab29dc
+Patch-mainline: v3.13-rc1
+References: bnc#878240,FATE#315784 
+
+On P8, XSCOM addresses has a special "indirect" form that
+requires more than 32-bits, so let's use u64 everywhere in
+the code instead of u32.
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/arch/powerpc/include/asm/scom.h
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/include/asm/scom.h
++++ linux-3.12-SLE12/arch/powerpc/include/asm/scom.h
+@@ -54,8 +54,8 @@ struct scom_controller {
+ 	scom_map_t (*map)(struct device_node *ctrl_dev, u64 reg, u64 count);
+ 	void (*unmap)(scom_map_t map);
+ 
+-	u64 (*read)(scom_map_t map, u32 reg);
+-	void (*write)(scom_map_t map, u32 reg, u64 value);
++	u64 (*read)(scom_map_t map, u64 reg);
++	void (*write)(scom_map_t map, u64 reg, u64 value);
+ };
+ 
+ extern const struct scom_controller *scom_controller;
+@@ -134,7 +134,7 @@ static inline void scom_unmap(scom_map_t
+  * @map: Result of scom_map
+  * @reg: Register index within that map
+  */
+-static inline u64 scom_read(scom_map_t map, u32 reg)
++static inline u64 scom_read(scom_map_t map, u64 reg)
+ {
+ 	return scom_controller->read(map, reg);
+ }
+@@ -145,7 +145,7 @@ static inline u64 scom_read(scom_map_t m
+  * @reg: Register index within that map
+  * @value: Value to write
+  */
+-static inline void scom_write(scom_map_t map, u32 reg, u64 value)
++static inline void scom_write(scom_map_t map, u64 reg, u64 value)
+ {
+ 	scom_controller->write(map, reg, value);
+ }
+Index: linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-xscom.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/powernv/opal-xscom.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-xscom.c
+@@ -27,7 +27,7 @@
+  */
+ struct opal_scom_map {
+ 	uint32_t chip;
+-	uint32_t addr;
++	uint64_t addr;
+ };
+ 
+ static scom_map_t opal_scom_map(struct device_node *dev, u64 reg, u64 count)
+@@ -71,7 +71,7 @@ static int opal_xscom_err_xlate(int64_t
+ 	}
+ }
+ 
+-static int opal_scom_read(scom_map_t map, u32 reg, u64 *value)
++static int opal_scom_read(scom_map_t map, u64 reg, u64 *value)
+ {
+ 	struct opal_scom_map *m = map;
+ 	int64_t rc;
+@@ -80,7 +80,7 @@ static int opal_scom_read(scom_map_t map
+ 	return opal_xscom_err_xlate(rc);
+ }
+ 
+-static int opal_scom_write(scom_map_t map, u32 reg, u64 value)
++static int opal_scom_write(scom_map_t map, u64 reg, u64 value)
+ {
+ 	struct opal_scom_map *m = map;
+ 	int64_t rc;
+Index: linux-3.12-SLE12/arch/powerpc/platforms/wsp/scom_wsp.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/wsp/scom_wsp.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/wsp/scom_wsp.c
+@@ -50,14 +50,14 @@ static void wsp_scom_unmap(scom_map_t ma
+ 	iounmap((void *)map);
+ }
+ 
+-static u64 wsp_scom_read(scom_map_t map, u32 reg)
++static u64 wsp_scom_read(scom_map_t map, u64 reg)
+ {
+ 	u64 __iomem *addr = (u64 __iomem *)map;
+ 
+ 	return in_be64(addr + reg);
+ }
+ 
+-static void wsp_scom_write(scom_map_t map, u32 reg, u64 value)
++static void wsp_scom_write(scom_map_t map, u64 reg, u64 value)
+ {
+ 	u64 __iomem *addr = (u64 __iomem *)map;
+ 

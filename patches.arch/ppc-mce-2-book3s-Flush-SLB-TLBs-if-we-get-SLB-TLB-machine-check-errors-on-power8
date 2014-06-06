@@ -1,0 +1,105 @@
+From: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
+Subject: [PATCH] powerpc/book3s: Flush SLB/TLBs if we get SLB/TLB machine check errors on power8.
+Git-commit: ae744f3432d3872c51298d922728e13c24ccc068
+Patch-mainline: v3.14-rc1
+References: bnc#878240,FATE#315784 
+
+This patch handles the memory errors on power8. If we get a machine check
+exception due to SLB or TLB errors, then flush SLBs/TLBs and reload SLBs to
+recover.
+
+Signed-off-by: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
+Acked-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/arch/powerpc/include/asm/mce.h
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/include/asm/mce.h
++++ linux-3.12-SLE12/arch/powerpc/include/asm/mce.h
+@@ -64,4 +64,7 @@
+ 					 P7_DSISR_MC_SLB_MULTIHIT | \
+ 					 P7_DSISR_MC_SLB_MULTIHIT_PARITY)
+ 
++#define P8_DSISR_MC_SLB_ERRORS		(P7_DSISR_MC_SLB_ERRORS | \
++					 P8_DSISR_MC_ERAT_MULTIHIT_SEC)
++
+ #endif /* __ASM_PPC64_MCE_H__ */
+Index: linux-3.12-SLE12/arch/powerpc/kernel/cputable.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/kernel/cputable.c
++++ linux-3.12-SLE12/arch/powerpc/kernel/cputable.c
+@@ -72,6 +72,7 @@ extern void __setup_cpu_power8(unsigned
+ extern void __restore_cpu_power8(void);
+ extern void __restore_cpu_a2(void);
+ extern long __machine_check_early_realmode_p7(struct pt_regs *regs);
++extern long __machine_check_early_realmode_p8(struct pt_regs *regs);
+ #endif /* CONFIG_PPC64 */
+ #if defined(CONFIG_E500)
+ extern void __setup_cpu_e5500(unsigned long offset, struct cpu_spec* spec);
+@@ -458,6 +459,7 @@ static struct cpu_spec __initdata cpu_sp
+ 		.oprofile_cpu_type	= "ppc64/ibm-compat-v1",
+ 		.cpu_setup		= __setup_cpu_power8,
+ 		.cpu_restore		= __restore_cpu_power8,
++		.machine_check_early	= __machine_check_early_realmode_p8,
+ 		.platform		= "power8",
+ 	},
+ 	{	/* Power7 */
+@@ -514,6 +516,7 @@ static struct cpu_spec __initdata cpu_sp
+ 		.oprofile_type		= PPC_OPROFILE_INVALID,
+ 		.cpu_setup		= __setup_cpu_power8,
+ 		.cpu_restore		= __restore_cpu_power8,
++		.machine_check_early	= __machine_check_early_realmode_p8,
+ 		.platform		= "power8",
+ 	},
+ 	{	/* Power8 */
+@@ -532,6 +535,7 @@ static struct cpu_spec __initdata cpu_sp
+ 		.oprofile_type		= PPC_OPROFILE_INVALID,
+ 		.cpu_setup		= __setup_cpu_power8,
+ 		.cpu_restore		= __restore_cpu_power8,
++		.machine_check_early	= __machine_check_early_realmode_p8,
+ 		.platform		= "power8",
+ 	},
+ 	{	/* Cell Broadband Engine */
+Index: linux-3.12-SLE12/arch/powerpc/kernel/mce_power.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/kernel/mce_power.c
++++ linux-3.12-SLE12/arch/powerpc/kernel/mce_power.c
+@@ -148,3 +148,37 @@ long __machine_check_early_realmode_p7(s
+ 	/* TODO: Decode machine check reason. */
+ 	return handled;
+ }
++
++static long mce_handle_ierror_p8(uint64_t srr1)
++{
++	long handled = 0;
++
++	handled = mce_handle_common_ierror(srr1);
++
++	if (P7_SRR1_MC_IFETCH(srr1) == P8_SRR1_MC_IFETCH_ERAT_MULTIHIT) {
++		flush_and_reload_slb();
++		handled = 1;
++	}
++	return handled;
++}
++
++static long mce_handle_derror_p8(uint64_t dsisr)
++{
++	return mce_handle_derror(dsisr, P8_DSISR_MC_SLB_ERRORS);
++}
++
++long __machine_check_early_realmode_p8(struct pt_regs *regs)
++{
++	uint64_t srr1;
++	long handled = 1;
++
++	srr1 = regs->msr;
++
++	if (P7_SRR1_MC_LOADSTORE(srr1))
++		handled = mce_handle_derror_p8(regs->dsisr);
++	else
++		handled = mce_handle_ierror_p8(srr1);
++
++	/* TODO: Decode machine check reason. */
++	return handled;
++}

@@ -3,7 +3,7 @@ Subject: powerpc: Put FP/VSX and VR state into structures
 Git-commit: de79f7b9f6f92ec1bd6f61fa1f20de60728a5b5e
 Patch-mainline: v3.13-rc1
 References: bnc#863212 
-
+    
     This creates new 'thread_fp_state' and 'thread_vr_state' structures
     to store FP/VSX state (including FPSCR) and Altivec/VSX state
     (including VSCR), and uses them in the thread_struct.  In the
@@ -141,7 +141,7 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
  #ifdef __BIG_ENDIAN__
  #define STXVD2X_ROT(n,b,base)		STXVD2X(n,b,base)
  #define LXVD2X_ROT(n,b,base)		LXVD2X(n,b,base)
-@@ -191,43 +135,14 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLP
+@@ -191,42 +135,15 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLP
  #define LXVD2X_ROT(n,b,base)		LXVD2X(n,b,base);	\
  					XXSWAPD(n,n)
  #endif
@@ -174,27 +174,26 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
 -
  /* Save the lower 32 VSRs in the thread VSR region */
 -#define SAVE_VSR(n,b,base)	li b,THREAD_VSR0+(16*(n)); \
--				STXVD2X_ROT(n,R##base,R##b)
-+#define SAVE_VSR(n,b,base)	li b,16*(n);  STXVD2X_ROT(n,R##base,R##b)
++#define SAVE_VSR(n,b,base)	li b,16*(n); \
+ 				STXVD2X_ROT(n,R##base,R##b)
  #define SAVE_2VSRS(n,b,base)	SAVE_VSR(n,b,base); SAVE_VSR(n+1,b,base)
  #define SAVE_4VSRS(n,b,base)	SAVE_2VSRS(n,b,base); SAVE_2VSRS(n+2,b,base)
  #define SAVE_8VSRS(n,b,base)	SAVE_4VSRS(n,b,base); SAVE_4VSRS(n+4,b,base)
  #define SAVE_16VSRS(n,b,base)	SAVE_8VSRS(n,b,base); SAVE_8VSRS(n+8,b,base)
  #define SAVE_32VSRS(n,b,base)	SAVE_16VSRS(n,b,base); SAVE_16VSRS(n+16,b,base)
 -#define REST_VSR(n,b,base)	li b,THREAD_VSR0+(16*(n)); \
--				LXVD2X_ROT(n,R##base,R##b)
-+#define REST_VSR(n,b,base)	li b,16*(n); LXVD2X_ROT(n,R##base,R##b)
++#define REST_VSR(n,b,base)	li b,16*(n); \
+ 				LXVD2X_ROT(n,R##base,R##b)
  #define REST_2VSRS(n,b,base)	REST_VSR(n,b,base); REST_VSR(n+1,b,base)
  #define REST_4VSRS(n,b,base)	REST_2VSRS(n,b,base); REST_2VSRS(n+2,b,base)
- #define REST_8VSRS(n,b,base)	REST_4VSRS(n,b,base); REST_4VSRS(n+4,b,base)
 Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/include/asm/processor.h
 +++ linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
-@@ -152,8 +152,20 @@ typedef struct {
- 	unsigned long seg;
- } mm_segment_t;
+@@ -144,8 +144,20 @@ typedef struct {
  
+ #define TS_FPROFFSET 0
+ #define TS_VSRLOWOFFSET 1
 -#define TS_FPR(i) fpr[i][TS_FPROFFSET]
 -#define TS_TRANS_FPR(i) transact_fpr[i][TS_FPROFFSET]
 +#define TS_FPR(i) fp_state.fpr[i][TS_FPROFFSET]
@@ -214,7 +213,7 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
  
  struct thread_struct {
  	unsigned long	ksp;		/* Kernel stack pointer */
-@@ -206,13 +218,7 @@ struct thread_struct {
+@@ -198,13 +210,7 @@ struct thread_struct {
  	unsigned long	dvc2;
  #endif
  #endif
@@ -229,7 +228,7 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
  	int		fpexc_mode;	/* floating-point exception mode */
  	unsigned int	align_ctl;	/* alignment handling control */
  #ifdef CONFIG_PPC64
-@@ -230,10 +236,7 @@ struct thread_struct {
+@@ -222,10 +228,7 @@ struct thread_struct {
  	struct arch_hw_breakpoint hw_brk; /* info on the hardware breakpoint */
  	unsigned long	trap_nr;	/* last trap # on this thread */
  #ifdef CONFIG_ALTIVEC
@@ -241,7 +240,7 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
  	unsigned long	vrsave;
  	int		used_vr;	/* set if process has used altivec */
  #endif /* CONFIG_ALTIVEC */
-@@ -270,13 +273,8 @@ struct thread_struct {
+@@ -262,13 +265,8 @@ struct thread_struct {
  	 * transact_fpr[] is the new set of transactional values.
  	 * VRs work the same way.
  	 */
@@ -257,7 +256,7 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
  	unsigned long	transact_vrsave;
  #endif /* CONFIG_PPC_TRANSACTIONAL_MEM */
  #ifdef CONFIG_KVM_BOOK3S_32_HANDLER
-@@ -330,8 +328,6 @@ struct thread_struct {
+@@ -322,8 +320,6 @@ struct thread_struct {
  	.ksp = INIT_SP, \
  	.regs = (struct pt_regs *)INIT_SP - 1, /* XXX bogus, I think */ \
  	.fs = KERNEL_DS, \
@@ -283,28 +282,25 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/align.c
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/align.c
 +++ linux-3.12-SLE12/arch/powerpc/kernel/align.c
-@@ -667,9 +667,9 @@ static int emulate_vsx(unsigned char __u
- 	flush_vsx_to_thread(current);
- 
+@@ -660,7 +660,7 @@ static int emulate_vsx(unsigned char __u
  	if (reg < 32)
--		ptr = (char *) &current->thread.fpr[reg][0];
-+		ptr = (char *) &current->thread.fp_state.fpr[reg][0];
+ 		ptr = (char *) &current->thread.TS_FPR(reg);
  	else
 -		ptr = (char *) &current->thread.vr[reg - 32];
 +		ptr = (char *) &current->thread.vr_state.vr[reg - 32];
  
  	lptr = (unsigned long *) ptr;
  
-@@ -949,7 +949,7 @@ int fix_alignment(struct pt_regs *regs)
- 			return -EFAULT;
- 
+@@ -897,7 +897,7 @@ int fix_alignment(struct pt_regs *regs)
+ 				return -EFAULT;
+ 		}
  	} else if (flags & F) {
 -		data.dd = current->thread.TS_FPR(reg);
 +		data.ll = current->thread.TS_FPR(reg);
  		if (flags & S) {
  			/* Single-precision FP store requires conversion... */
  #ifdef CONFIG_PPC_FPU
-@@ -1026,7 +1026,7 @@ int fix_alignment(struct pt_regs *regs)
+@@ -975,7 +975,7 @@ int fix_alignment(struct pt_regs *regs)
  		if (unlikely(ret))
  			return -EFAULT;
  	} else if (flags & F)
@@ -489,7 +485,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/process.c
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/process.c
 +++ linux-3.12-SLE12/arch/powerpc/kernel/process.c
-@@ -1133,12 +1133,10 @@ void start_thread(struct pt_regs *regs,
+@@ -1144,12 +1144,10 @@ void start_thread(struct pt_regs *regs,
  #ifdef CONFIG_VSX
  	current->thread.used_vsr = 0;
  #endif
@@ -631,18 +627,26 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/ptrace.c
  
  
  	return ret;
-@@ -1558,7 +1558,7 @@ long arch_ptrace(struct task_struct *chi
- 				memcpy(&tmp, &child->thread.TS_FPR(fpidx),
- 				       sizeof(long));
+@@ -1554,10 +1555,10 @@ long arch_ptrace(struct task_struct *chi
+ 
+ 			flush_fp_to_thread(child);
+ 			if (fpidx < (PT_FPSCR - PT_FPR0))
+-				tmp = ((unsigned long *)child->thread.fpr)
++				tmp = ((unsigned long *)child->thread.fp_state.fpr)
+ 					[fpidx * TS_FPRWIDTH];
  			else
 -				tmp = child->thread.fpscr.val;
 +				tmp = child->thread.fp_state.fpscr;
  		}
  		ret = put_user(tmp, datalp);
  		break;
-@@ -1591,7 +1591,7 @@ long arch_ptrace(struct task_struct *chi
- 				memcpy(&child->thread.TS_FPR(fpidx), &data,
- 				       sizeof(long));
+@@ -1587,10 +1588,10 @@ long arch_ptrace(struct task_struct *chi
+ 
+ 			flush_fp_to_thread(child);
+ 			if (fpidx < (PT_FPSCR - PT_FPR0))
+-				((unsigned long *)child->thread.fpr)
++				((unsigned long *)child->thread.fp_state.fpr)
+ 					[fpidx * TS_FPRWIDTH] = data;
  			else
 -				child->thread.fpscr.val = data;
 +				child->thread.fp_state.fpscr = data;
@@ -653,15 +657,15 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/ptrace32.c
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/ptrace32.c
 +++ linux-3.12-SLE12/arch/powerpc/kernel/ptrace32.c
-@@ -46,7 +46,6 @@
+@@ -43,7 +43,6 @@
  #define FPRNUMBER(i) (((i) - PT_FPR0) >> 1)
  #define FPRHALF(i) (((i) - PT_FPR0) & 1)
  #define FPRINDEX(i) TS_FPRWIDTH * FPRNUMBER(i) * 2 + FPRHALF(i)
 -#define FPRINDEX_3264(i) (TS_FPRWIDTH * ((i) - PT_FPR0))
  
- static int compat_ptrace_getsiginfo(struct task_struct *child, compat_siginfo_t __user *data)
- {
-@@ -129,7 +128,7 @@ long compat_arch_ptrace(struct task_stru
+ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
+ 			compat_ulong_t caddr, compat_ulong_t cdata)
+@@ -105,7 +104,7 @@ long compat_arch_ptrace(struct task_stru
  			 * to be an array of unsigned int (32 bits) - the
  			 * index passed in is based on this assumption.
  			 */
@@ -670,7 +674,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/ptrace32.c
  				[FPRINDEX(index)];
  		}
  		ret = put_user((unsigned int)tmp, (u32 __user *)data);
-@@ -171,8 +170,7 @@ long compat_arch_ptrace(struct task_stru
+@@ -147,8 +146,7 @@ long compat_arch_ptrace(struct task_stru
  		if (numReg >= PT_FPR0) {
  			flush_fp_to_thread(child);
  			/* get 64 bit FPR */
@@ -680,7 +684,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/ptrace32.c
  		} else { /* register within PT_REGS struct */
  			unsigned long tmp2;
  			ret = ptrace_get_reg(child, numReg, &tmp2);
-@@ -231,7 +229,7 @@ long compat_arch_ptrace(struct task_stru
+@@ -207,7 +205,7 @@ long compat_arch_ptrace(struct task_stru
  			 * to be an array of unsigned int (32 bits) - the
  			 * index passed in is based on this assumption.
  			 */
@@ -689,7 +693,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/ptrace32.c
  				[FPRINDEX(index)] = data;
  			ret = 0;
  		}
-@@ -275,8 +273,7 @@ long compat_arch_ptrace(struct task_stru
+@@ -251,8 +249,7 @@ long compat_arch_ptrace(struct task_stru
  			u64 *tmp;
  			flush_fp_to_thread(child);
  			/* get 64 bit FPR ... */
@@ -947,7 +951,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/signal_32.c
  		}
  #endif /* CONFIG_VSX */
  
-@@ -1036,7 +1038,7 @@ int handle_rt_signal32(unsigned long sig
+@@ -1038,7 +1040,7 @@ int handle_rt_signal32(unsigned long sig
  		if (__put_user(0, &rt_sf->uc.uc_link))
  			goto badframe;
  
@@ -956,7 +960,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/signal_32.c
  
  	/* create a stack frame for the caller of the handler */
  	newsp = ((unsigned long)rt_sf) - (__SIGNAL_FRAMESIZE + 16);
-@@ -1469,7 +1471,7 @@ int handle_signal32(unsigned long sig, s
+@@ -1470,7 +1472,7 @@ int handle_signal32(unsigned long sig, s
  
  	regs->link = tramp;
  
@@ -1053,7 +1057,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/signal_64.c
  		}
  	}
  #endif
-@@ -747,7 +748,7 @@ int handle_rt_signal64(int signr, struct
+@@ -755,7 +756,7 @@ int handle_rt_signal64(int signr, struct
  		goto badframe;
  
  	/* Make sure signal handler doesn't get spurious FP exceptions */
@@ -1132,7 +1136,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/tm.S
  
  dont_backup_fp:
  	/* The moment we treclaim, ALL of our GPRs will switch
-@@ -358,10 +359,11 @@ _GLOBAL(tm_recheckpoint)
+@@ -358,10 +359,11 @@ _GLOBAL(__tm_recheckpoint)
  	andis.	r0, r4, MSR_VEC@h
  	beq	dont_restore_vec
  

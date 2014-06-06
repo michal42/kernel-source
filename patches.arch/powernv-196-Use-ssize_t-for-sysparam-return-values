@@ -1,0 +1,59 @@
+From: Joel Stanley <joel@jms.id.au>
+Subject: [PATCH] powerpc/powernv: Use ssize_t for sysparam return values
+Git-commit: b8569d230416c490065098684adf13c1751cb830
+Patch-mainline: v3.15-rc6
+References: bnc#878240,FATE#315784 
+
+The OPAL calls are returning int64_t values, which the sysparam code
+stores in an int, and the sysfs callback returns ssize_t. Make code a
+easier to read by consistently using ssize_t.
+
+Signed-off-by: Joel Stanley <joel@jms.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/opal-sysparam.c b/arch/powerpc/platforms/powernv/opal-sysparam.c
+index a51ea18..0675e1a 100644
+--- a/arch/powerpc/platforms/powernv/opal-sysparam.c
++++ b/arch/powerpc/platforms/powernv/opal-sysparam.c
+@@ -39,10 +39,11 @@ struct param_attr {
+ 	struct kobj_attribute kobj_attr;
+ };
+ 
+-static int opal_get_sys_param(u32 param_id, u32 length, void *buffer)
++static ssize_t opal_get_sys_param(u32 param_id, u32 length, void *buffer)
+ {
+ 	struct opal_msg msg;
+-	int ret, token;
++	ssize_t ret;
++	int token;
+ 
+ 	token = opal_async_get_token_interruptible();
+ 	if (token < 0) {
+@@ -59,7 +60,7 @@ static int opal_get_sys_param(u32 param_id, u32 length, void *buffer)
+ 
+ 	ret = opal_async_wait_response(token, &msg);
+ 	if (ret) {
+-		pr_err("%s: Failed to wait for the async response, %d\n",
++		pr_err("%s: Failed to wait for the async response, %zd\n",
+ 				__func__, ret);
+ 		goto out_token;
+ 	}
+@@ -111,7 +112,7 @@ static ssize_t sys_param_show(struct kobject *kobj,
+ {
+ 	struct param_attr *attr = container_of(kobj_attr, struct param_attr,
+ 			kobj_attr);
+-	int ret;
++	ssize_t ret;
+ 
+ 	mutex_lock(&opal_sysparam_mutex);
+ 	ret = opal_get_sys_param(attr->param_id, attr->param_size,
+@@ -132,7 +133,7 @@ static ssize_t sys_param_store(struct kobject *kobj,
+ {
+ 	struct param_attr *attr = container_of(kobj_attr, struct param_attr,
+ 			kobj_attr);
+-	int ret;
++	ssize_t ret;
+ 
+ 	mutex_lock(&opal_sysparam_mutex);
+ 	memcpy(param_data_buf, buf, count);

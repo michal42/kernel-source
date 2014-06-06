@@ -1,0 +1,66 @@
+From: Gavin Shan <gwshan@linux.vnet.ibm.com>
+Subject: [PATCH] powerpc/powernv: Use EEH PCI config accessors
+Git-commit: 1d9a544646cd0c2c9367aea6d3a7b6f42c9467ac
+Patch-mainline: next-20140523
+References: bnc#878240,FATE#315784 
+
+For EEH PowerNV backends, they need use their own PCI config
+accesors as the normal one could be blocked during PE reset.
+The patch also removes necessary parameter "hose" for the
+function ioda_eeh_bridge_reset().
+
+Signed-off-by: Gavin Shan <gwshan@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/eeh-ioda.c b/arch/powerpc/platforms/powernv/eeh-ioda.c
+index 9ff7b2d..ed6c686 100644
+--- a/arch/powerpc/platforms/powernv/eeh-ioda.c
++++ b/arch/powerpc/platforms/powernv/eeh-ioda.c
+@@ -478,26 +478,27 @@ out:
+ 	return 0;
+ }
+ 
+-static int ioda_eeh_bridge_reset(struct pci_controller *hose,
+-		struct pci_dev *dev, int option)
++static int ioda_eeh_bridge_reset(struct pci_dev *dev, int option)
++
+ {
+-	u16 ctrl;
++	struct device_node *dn = pci_device_to_OF_node(dev);
++	u32 ctrl;
+ 
+-	pr_debug("%s: Reset device %04x:%02x:%02x.%01x with option %d\n",
+-		 __func__, hose->global_number, dev->bus->number,
+-		 PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), option);
++	pr_debug("%s: Reset PCI bus %04x:%02x with option %d\n",
++		 __func__, pci_domain_nr(dev->bus),
++		 dev->bus->number, option);
+ 
+ 	switch (option) {
+ 	case EEH_RESET_FUNDAMENTAL:
+ 	case EEH_RESET_HOT:
+-		pci_read_config_word(dev, PCI_BRIDGE_CONTROL, &ctrl);
++		eeh_ops->read_config(dn, PCI_BRIDGE_CONTROL, 2, &ctrl);
+ 		ctrl |= PCI_BRIDGE_CTL_BUS_RESET;
+-		pci_write_config_word(dev, PCI_BRIDGE_CONTROL, ctrl);
++		eeh_ops->write_config(dn, PCI_BRIDGE_CONTROL, 2, ctrl);
+ 		break;
+ 	case EEH_RESET_DEACTIVATE:
+-		pci_read_config_word(dev, PCI_BRIDGE_CONTROL, &ctrl);
++		eeh_ops->read_config(dn, PCI_BRIDGE_CONTROL, 2, &ctrl);
+ 		ctrl &= ~PCI_BRIDGE_CTL_BUS_RESET;
+-		pci_write_config_word(dev, PCI_BRIDGE_CONTROL, ctrl);
++		eeh_ops->write_config(dn, PCI_BRIDGE_CONTROL, 2, ctrl);
+ 		break;
+ 	}
+ 
+@@ -552,7 +553,7 @@ static int ioda_eeh_reset(struct eeh_pe *pe, int option)
+ 		if (pci_is_root_bus(bus))
+ 			ret = ioda_eeh_root_reset(hose, option);
+ 		else
+-			ret = ioda_eeh_bridge_reset(hose, bus->self, option);
++			ret = ioda_eeh_bridge_reset(bus->self, option);
+ 	}
+ 
+ 	return ret;

@@ -1,0 +1,29 @@
+From: Joel Stanley <joel@jms.id.au>
+Subject: [PATCH] powerpc/powernv: Check sysfs size before copying
+Git-commit: 85390378f0a6abf3bdb10c3d504d77862a2d0ec9
+Patch-mainline: v3.15-rc6
+References: bnc#878240,FATE#315784 
+
+The sysparam code currently uses the userspace supplied number of
+bytes when memcpy()ing in to a local 64-byte buffer.
+
+Limit the maximum number of bytes by the size of the buffer.
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/opal-sysparam.c b/arch/powerpc/platforms/powernv/opal-sysparam.c
+index 0675e1a..83f5f2a 100644
+--- a/arch/powerpc/platforms/powernv/opal-sysparam.c
++++ b/arch/powerpc/platforms/powernv/opal-sysparam.c
+@@ -135,6 +135,10 @@ static ssize_t sys_param_store(struct kobject *kobj,
+ 			kobj_attr);
+ 	ssize_t ret;
+ 
++        /* MAX_PARAM_DATA_LEN is sizeof(param_data_buf) */
++        if (count > MAX_PARAM_DATA_LEN)
++                count = MAX_PARAM_DATA_LEN;
++
+ 	mutex_lock(&opal_sysparam_mutex);
+ 	memcpy(param_data_buf, buf, count);
+ 	ret = opal_set_sys_param(attr->param_id, attr->param_size,

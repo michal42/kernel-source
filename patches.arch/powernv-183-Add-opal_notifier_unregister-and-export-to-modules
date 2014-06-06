@@ -1,0 +1,50 @@
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Subject: [PATCH] powerpc/powernv: Add opal_notifier_unregister() and export to modules
+Git-commit: 798af00c4d75cdbed58bfe5c31e721bc0daedd9b
+Patch-mainline: v3.15-rc1
+References: bnc#878240,FATE#315784 
+
+opal_notifier_register() is missing a pending "unregister" variant
+and should be exposed to modules.
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/include/asm/opal.h b/arch/powerpc/include/asm/opal.h
+index fe2aa0b..6fb5f90 100644
+--- a/arch/powerpc/include/asm/opal.h
++++ b/arch/powerpc/include/asm/opal.h
+@@ -892,6 +892,8 @@ extern int early_init_dt_scan_opal(unsigned long node, const char *uname,
+ 				   int depth, void *data);
+ 
+ extern int opal_notifier_register(struct notifier_block *nb);
++extern int opal_notifier_unregister(struct notifier_block *nb);
++
+ extern int opal_message_notifier_register(enum OpalMessageType msg_type,
+ 						struct notifier_block *nb);
+ extern void opal_notifier_enable(void);
+diff --git a/arch/powerpc/platforms/powernv/opal.c b/arch/powerpc/platforms/powernv/opal.c
+index e92f2f6..7835d5b 100644
+--- a/arch/powerpc/platforms/powernv/opal.c
++++ b/arch/powerpc/platforms/powernv/opal.c
+@@ -180,6 +180,20 @@ int opal_notifier_register(struct notifier_block *nb)
+ 	atomic_notifier_chain_register(&opal_notifier_head, nb);
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(opal_notifier_register);
++
++int opal_notifier_unregister(struct notifier_block *nb)
++{
++	if (!nb) {
++		pr_warning("%s: Invalid argument (%p)\n",
++			   __func__, nb);
++		return -EINVAL;
++	}
++
++	atomic_notifier_chain_unregister(&opal_notifier_head, nb);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(opal_notifier_unregister);
+ 
+ static void opal_do_notifier(uint64_t events)
+ {

@@ -1,0 +1,36 @@
+From: Anton Blanchard <anton@samba.org>
+Subject: [PATCH] powerpc/powernv: Fix little endian issues in OPAL flash code
+Git-commit: cc146d1db0673396429ce4f906350d684ef4ca2a
+Patch-mainline: v3.15-rc6
+References: bnc#878240,FATE#315784 
+
+With this patch I was able to update firmware on an LE kernel.
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/opal-flash.c b/arch/powerpc/platforms/powernv/opal-flash.c
+index 714ef97..a968fd1 100644
+--- a/arch/powerpc/platforms/powernv/opal-flash.c
++++ b/arch/powerpc/platforms/powernv/opal-flash.c
+@@ -131,11 +131,15 @@ static DEFINE_MUTEX(image_data_mutex);
+  */
+ static inline void opal_flash_validate(void)
+ {
+-	struct validate_flash_t *args_buf = &validate_flash_data;
++	long ret;
++	void *buf = validate_flash_data.buf;
++	__be32 size, result;
++
++	ret = opal_validate_flash(__pa(buf), &size, &result);
+ 
+-	args_buf->status = opal_validate_flash(__pa(args_buf->buf),
+-					       &(args_buf->buf_size),
+-					       &(args_buf->result));
++	validate_flash_data.status = ret;
++	validate_flash_data.buf_size = be32_to_cpu(size);
++	validate_flash_data.result = be32_to_cpu(result);
+ }
+ 
+ /*

@@ -37,34 +37,10 @@ Acked-by: Torsten Duwe <duwe@suse.de>
  arch/powerpc/platforms/powernv/opal-takeover.S |  2 ++
  5 files changed, 32 insertions(+), 30 deletions(-)
 
-diff --git a/arch/powerpc/lib/copypage_power7.S b/arch/powerpc/lib/copypage_power7.S
-index affc6d3..d7dafb3 100644
---- a/arch/powerpc/lib/copypage_power7.S
-+++ b/arch/powerpc/lib/copypage_power7.S
-@@ -56,15 +56,15 @@ _GLOBAL(copypage_power7)
- 
- #ifdef CONFIG_ALTIVEC
- 	mflr	r0
--	std	r3,STK_PARAM(R3)(r1)
--	std	r4,STK_PARAM(R4)(r1)
-+	std	r3,-STACKFRAMESIZE+STK_REG(R31)(r1)
-+	std	r4,-STACKFRAMESIZE+STK_REG(R30)(r1)
- 	std	r0,16(r1)
- 	stdu	r1,-STACKFRAMESIZE(r1)
- 	bl	enter_vmx_copy
- 	cmpwi	r3,0
- 	ld	r0,STACKFRAMESIZE+16(r1)
--	ld	r3,STACKFRAMESIZE+STK_PARAM(R3)(r1)
--	ld	r4,STACKFRAMESIZE+STK_PARAM(R4)(r1)
-+	ld	r3,STK_REG(R31)(r1)
-+	ld	r4,STK_REG(R30)(r1)
- 	mtlr	r0
- 
- 	li	r0,(PAGE_SIZE/128)
-diff --git a/arch/powerpc/lib/copyuser_power7.S b/arch/powerpc/lib/copyuser_power7.S
-index db0fcbc..c46c876 100644
---- a/arch/powerpc/lib/copyuser_power7.S
-+++ b/arch/powerpc/lib/copyuser_power7.S
+Index: linux-3.12-SLE12/arch/powerpc/lib/copyuser_power7.S
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/lib/copyuser_power7.S
++++ linux-3.12-SLE12/arch/powerpc/lib/copyuser_power7.S
 @@ -85,9 +85,9 @@
  .Lexit:
  	addi	r1,r1,STACKFRAMESIZE
@@ -116,10 +92,10 @@ index db0fcbc..c46c876 100644
  	mtlr	r0
  
  	/*
-diff --git a/arch/powerpc/lib/memcpy_64.S b/arch/powerpc/lib/memcpy_64.S
-index 01da956..9d3960c 100644
---- a/arch/powerpc/lib/memcpy_64.S
-+++ b/arch/powerpc/lib/memcpy_64.S
+Index: linux-3.12-SLE12/arch/powerpc/lib/memcpy_64.S
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/lib/memcpy_64.S
++++ linux-3.12-SLE12/arch/powerpc/lib/memcpy_64.S
 @@ -12,7 +12,7 @@
  	.align	7
  _GLOBAL(memcpy)
@@ -129,7 +105,7 @@ index 01da956..9d3960c 100644
  FTR_SECTION_ELSE
  	b	memcpy_power7
  ALT_FTR_SECTION_END_IFCLR(CPU_FTR_VMX_COPY)
-@@ -73,7 +73,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_UNALIGNED_LD_STD)
+@@ -71,7 +71,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_UNALIGNED_
  2:	bf	cr7*4+3,3f
  	lbz	r9,8(r4)
  	stb	r9,0(r3)
@@ -138,7 +114,7 @@ index 01da956..9d3960c 100644
  	blr
  
  .Lsrc_unaligned:
-@@ -156,7 +156,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_UNALIGNED_LD_STD)
+@@ -154,7 +154,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_UNALIGNED_
  2:	bf	cr7*4+3,3f
  	rotldi	r9,r9,8
  	stb	r9,0(r3)
@@ -147,17 +123,17 @@ index 01da956..9d3960c 100644
  	blr
  
  .Ldst_unaligned:
-@@ -201,5 +201,5 @@ END_FTR_SECTION_IFCLR(CPU_FTR_UNALIGNED_LD_STD)
+@@ -199,5 +199,5 @@ END_FTR_SECTION_IFCLR(CPU_FTR_UNALIGNED_
  3:	bf	cr7*4+3,4f
  	lbz	r0,0(r4)
  	stb	r0,0(r3)
 -4:	ld	r3,STK_PARAM(R3)(r1)	/* return dest pointer */
 +4:	ld	r3,-STACKFRAMESIZE+STK_REG(R31)(r1)	/* return dest pointer */
  	blr
-diff --git a/arch/powerpc/lib/memcpy_power7.S b/arch/powerpc/lib/memcpy_power7.S
-index 87d8eec..2ff5c14 100644
---- a/arch/powerpc/lib/memcpy_power7.S
-+++ b/arch/powerpc/lib/memcpy_power7.S
+Index: linux-3.12-SLE12/arch/powerpc/lib/memcpy_power7.S
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/lib/memcpy_power7.S
++++ linux-3.12-SLE12/arch/powerpc/lib/memcpy_power7.S
 @@ -33,14 +33,14 @@ _GLOBAL(memcpy_power7)
  	cmpldi	r5,16
  	cmpldi	cr1,r5,4096
@@ -223,10 +199,10 @@ index 87d8eec..2ff5c14 100644
 +	ld	r3,-STACKFRAMESIZE+STK_REG(R31)(r1)
  	b	exit_vmx_copy		/* tail call optimise */
  #endif /* CONFiG_ALTIVEC */
-diff --git a/arch/powerpc/platforms/powernv/opal-takeover.S b/arch/powerpc/platforms/powernv/opal-takeover.S
-index 3cd2628..11a3169 100644
---- a/arch/powerpc/platforms/powernv/opal-takeover.S
-+++ b/arch/powerpc/platforms/powernv/opal-takeover.S
+Index: linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-takeover.S
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/powernv/opal-takeover.S
++++ linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-takeover.S
 @@ -21,11 +21,13 @@
  _GLOBAL(opal_query_takeover)
  	mfcr	r0

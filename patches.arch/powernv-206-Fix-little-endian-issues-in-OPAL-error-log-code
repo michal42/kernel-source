@@ -1,0 +1,57 @@
+From: Anton Blanchard <anton@samba.org>
+Subject: [PATCH] powerpc/powernv: Fix little endian issues in OPAL error log code
+Git-commit: 14ad0c58d5df6e5911a5413abdc2a9be6a8acb51
+Patch-mainline: v3.15-rc6
+References: bnc#878240,FATE#315784 
+
+Fix little endian issues with the OPAL error log code.
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Reviewed-by: Stewart Smith <stewart@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/include/asm/opal.h b/arch/powerpc/include/asm/opal.h
+index cb7d52e..1a752ac 100644
+--- a/arch/powerpc/include/asm/opal.h
++++ b/arch/powerpc/include/asm/opal.h
+@@ -859,7 +859,7 @@ int64_t opal_lpc_read(uint32_t chip_id, enum OpalLPCAddressType addr_type,
+ 		      uint32_t addr, __be32 *data, uint32_t sz);
+ 
+ int64_t opal_read_elog(uint64_t buffer, uint64_t size, uint64_t log_id);
+-int64_t opal_get_elog_size(uint64_t *log_id, uint64_t *size, uint64_t *elog_type);
++int64_t opal_get_elog_size(__be64 *log_id, __be64 *size, __be64 *elog_type);
+ int64_t opal_write_elog(uint64_t buffer, uint64_t size, uint64_t offset);
+ int64_t opal_send_ack_elog(uint64_t log_id);
+ void opal_resend_pending_logs(void);
+diff --git a/arch/powerpc/platforms/powernv/opal-elog.c b/arch/powerpc/platforms/powernv/opal-elog.c
+index 7e3821e..10268c4 100644
+--- a/arch/powerpc/platforms/powernv/opal-elog.c
++++ b/arch/powerpc/platforms/powernv/opal-elog.c
+@@ -238,18 +238,25 @@ static struct elog_obj *create_elog_obj(uint64_t id, size_t size, uint64_t type)
+ 
+ static void elog_work_fn(struct work_struct *work)
+ {
++	__be64 size;
++	__be64 id;
++	__be64 type;
+ 	uint64_t elog_size;
+ 	uint64_t log_id;
+ 	uint64_t elog_type;
+ 	int rc;
+ 	char name[2+16+1];
+ 
+-	rc = opal_get_elog_size(&log_id, &elog_size, &elog_type);
++	rc = opal_get_elog_size(&id, &size, &type);
+ 	if (rc != OPAL_SUCCESS) {
+ 		pr_err("ELOG: Opal log read failed\n");
+ 		return;
+ 	}
+ 
++	elog_size = be64_to_cpu(size);
++	log_id = be64_to_cpu(id);
++	elog_type = be64_to_cpu(type);
++
+ 	BUG_ON(elog_size > OPAL_MAX_ERRLOG_SIZE);
+ 
+ 	if (elog_size >= OPAL_MAX_ERRLOG_SIZE)

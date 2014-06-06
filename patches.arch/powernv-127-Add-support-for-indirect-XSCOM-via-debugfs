@@ -1,0 +1,59 @@
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Subject: [PATCH] powerpc/powernv: Add support for indirect XSCOM via debugfs
+Git-commit: 80546ac51396bd1d2e37cc78c7bed44c08f90352
+Patch-mainline: v3.13-rc1
+References: bnc#878240,FATE#315784 
+
+Indirect XSCOM addresses normally have the top bit set (of the 64-bit
+address). This doesn't work via the normal debugfs interface, so we use
+a different encoding, which we need to convert before calling OPAL.
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-xscom.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/powernv/opal-xscom.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-xscom.c
+@@ -71,11 +71,33 @@ static int opal_xscom_err_xlate(int64_t
+ 	}
+ }
+ 
++static u64 opal_scom_unmangle(u64 reg)
++{
++	/*
++	 * XSCOM indirect addresses have the top bit set. Additionally
++	 * the reset of the top 3 nibbles is always 0.
++	 *
++	 * Because the debugfs interface uses signed offsets and shifts
++	 * the address left by 3, we basically cannot use the top 4 bits
++	 * of the 64-bit address, and thus cannot use the indirect bit.
++	 *
++	 * To deal with that, we support the indirect bit being in bit
++	 * 4 (IBM notation) instead of bit 0 in this API, we do the
++	 * conversion here. To leave room for further xscom address
++	 * expansion, we only clear out the top byte
++	 *
++	 */
++	if (reg & (1ull << 59))
++		reg = (reg & ~(0xffull << 56)) | (1ull << 63);
++	return reg;
++}
++
+ static int opal_scom_read(scom_map_t map, u64 reg, u64 *value)
+ {
+ 	struct opal_scom_map *m = map;
+ 	int64_t rc;
+ 
++	reg = opal_scom_unmangle(reg);
+ 	rc = opal_xscom_read(m->chip, m->addr + reg, (uint64_t *)__pa(value));
+ 	return opal_xscom_err_xlate(rc);
+ }
+@@ -85,6 +107,7 @@ static int opal_scom_write(scom_map_t ma
+ 	struct opal_scom_map *m = map;
+ 	int64_t rc;
+ 
++	reg = opal_scom_unmangle(reg);
+ 	rc = opal_xscom_write(m->chip, m->addr + reg, value);
+ 	return opal_xscom_err_xlate(rc);
+ }

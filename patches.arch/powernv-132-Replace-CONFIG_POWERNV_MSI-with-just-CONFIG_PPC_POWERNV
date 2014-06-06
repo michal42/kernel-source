@@ -1,0 +1,53 @@
+From: Michael Ellerman <michael@ellerman.id.au>
+Subject: [PATCH] powerpc/powernv: Replace CONFIG_POWERNV_MSI with just CONFIG_PPC_POWERNV
+Git-commit: 66c29da6782b9861b17f9fc81746e30315e039c2
+Patch-mainline: v3.14-rc1
+References: bnc#878240,FATE#315784 
+
+We currently have a user visible CONFIG_POWERNV_MSI option, but it
+doesn't actually disable MSI for powernv. The MSI code is always built,
+what it does disable is the inclusion of the MSI bitmap code, which
+leads to a build error.
+
+eg, with PPC_POWERNV=y and POWERNV_MSI=n we get:
+
+  arch/powerpc/platforms/built-in.o: In function `.pnv_teardown_msi_irqs':
+  pci.c:(.text+0x3558): undefined reference to `.msi_bitmap_free_hwirqs'
+
+We don't really need a POWERNV_MSI symbol, just have the MSI bitmap code
+depend directly on PPC_POWERNV.
+
+Signed-off-by: Michael Ellerman <michael@ellerman.id.au>
+Reviewed-by: Gavin Shan <shangw@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/arch/powerpc/platforms/powernv/Kconfig
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/powernv/Kconfig
++++ linux-3.12-SLE12/arch/powerpc/platforms/powernv/Kconfig
+@@ -13,11 +13,6 @@ config PPC_POWERNV
+ 	select ARCH_RANDOM
+ 	default y
+ 
+-config POWERNV_MSI
+-	bool "Support PCI MSI on PowerNV platform"
+-	depends on PCI_MSI
+-	default y
+-
+ config PPC_POWERNV_RTAS
+ 	depends on PPC_POWERNV
+ 	bool "Support for RTAS based PowerNV platforms such as BML"
+Index: linux-3.12-SLE12/arch/powerpc/sysdev/Kconfig
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/sysdev/Kconfig
++++ linux-3.12-SLE12/arch/powerpc/sysdev/Kconfig
+@@ -19,7 +19,7 @@ config PPC_MSI_BITMAP
+ 	default y if MPIC
+ 	default y if FSL_PCI
+ 	default y if PPC4xx_MSI
+-	default y if POWERNV_MSI
++	default y if PPC_POWERNV
+ 
+ source "arch/powerpc/sysdev/xics/Kconfig"
+ 

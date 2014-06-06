@@ -1,0 +1,35 @@
+From: Joel Stanley <joel@jms.id.au>
+Subject: [PATCH] powerpc/powernv: Check sysparam size before creation
+Git-commit: 63aecfb20a6629f1ca91d7a052f87988ceb6dd53
+Patch-mainline: v3.15-rc6
+References: bnc#878240,FATE#315784 
+
+The size of the sysparam sysfs files is determined from the device tree
+at boot. However the buffer is hard coded to 64 bytes. If we encounter a
+parameter that is larger than 64, or miss-parse the device tree, the
+buffer will overflow when reading or writing to the parameter.
+
+Check it at discovery time, and if the parameter is too large, do not
+create a sysfs entry for it.
+
+Signed-off-by: Joel Stanley <joel@jms.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/opal-sysparam.c b/arch/powerpc/platforms/powernv/opal-sysparam.c
+index c59e77a..d202f9b 100644
+--- a/arch/powerpc/platforms/powernv/opal-sysparam.c
++++ b/arch/powerpc/platforms/powernv/opal-sysparam.c
+@@ -241,6 +241,12 @@ void __init opal_sys_param_init(void)
+ 
+ 	/* For each of the parameters, populate the parameter attributes */
+ 	for (i = 0; i < count; i++) {
++		if (size[i] > MAX_PARAM_DATA_LEN) {
++			pr_warn("SYSPARAM: Not creating parameter %d as size "
++				"exceeds buffer length\n", i);
++			continue;
++		}
++
+ 		sysfs_attr_init(&attr[i].kobj_attr.attr);
+ 		attr[i].param_id = id[i];
+ 		attr[i].param_size = size[i];

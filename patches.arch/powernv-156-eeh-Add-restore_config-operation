@@ -1,0 +1,71 @@
+From: Gavin Shan <shangw@linux.vnet.ibm.com>
+Subject: [PATCH] powerpc/eeh: Add restore_config operation
+Git-commit: 1d350544d5bf17d835d2850004c64ca51235c771
+Patch-mainline: v3.14-rc1
+References: bnc#878240,FATE#315784 
+
+After reset on the specific PE or PHB, we never configure AER
+correctly on PowerNV platform. We needn't care it on pSeries
+platform. The patch introduces additional EEH operation eeh_ops::
+restore_config() so that we have chance to configure AER correctly
+for PowerNV platform.
+
+Signed-off-by: Gavin Shan <shangw@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/include/asm/eeh.h b/arch/powerpc/include/asm/eeh.h
+index d3e5e9b..7f8adc8 100644
+--- a/arch/powerpc/include/asm/eeh.h
++++ b/arch/powerpc/include/asm/eeh.h
+@@ -157,6 +157,7 @@ struct eeh_ops {
+ 	int (*read_config)(struct device_node *dn, int where, int size, u32 *val);
+ 	int (*write_config)(struct device_node *dn, int where, int size, u32 val);
+ 	int (*next_error)(struct eeh_pe **pe);
++	int (*restore_config)(struct device_node *dn);
+ };
+ 
+ extern struct eeh_ops *eeh_ops;
+diff --git a/arch/powerpc/kernel/eeh_pe.c b/arch/powerpc/kernel/eeh_pe.c
+index 1feccd6..f0c353f 100644
+--- a/arch/powerpc/kernel/eeh_pe.c
++++ b/arch/powerpc/kernel/eeh_pe.c
+@@ -736,6 +736,9 @@ static void *eeh_restore_one_device_bars(void *data, void *flag)
+ 	else
+ 		eeh_restore_device_bars(edev, dn);
+ 
++	if (eeh_ops->restore_config)
++		eeh_ops->restore_config(dn);
++
+ 	return NULL;
+ }
+ 
+diff --git a/arch/powerpc/platforms/powernv/eeh-powernv.c b/arch/powerpc/platforms/powernv/eeh-powernv.c
+index 73b9814..ab91e6a 100644
+--- a/arch/powerpc/platforms/powernv/eeh-powernv.c
++++ b/arch/powerpc/platforms/powernv/eeh-powernv.c
+@@ -359,7 +359,8 @@ static struct eeh_ops powernv_eeh_ops = {
+ 	.configure_bridge       = powernv_eeh_configure_bridge,
+ 	.read_config            = pnv_pci_cfg_read,
+ 	.write_config           = pnv_pci_cfg_write,
+-	.next_error		= powernv_eeh_next_error
++	.next_error		= powernv_eeh_next_error,
++	.restore_config		= NULL
+ };
+ 
+ /**
+diff --git a/arch/powerpc/platforms/pseries/eeh_pseries.c b/arch/powerpc/platforms/pseries/eeh_pseries.c
+index ccb633e..9ef3cc8 100644
+--- a/arch/powerpc/platforms/pseries/eeh_pseries.c
++++ b/arch/powerpc/platforms/pseries/eeh_pseries.c
+@@ -689,7 +689,9 @@ static struct eeh_ops pseries_eeh_ops = {
+ 	.get_log		= pseries_eeh_get_log,
+ 	.configure_bridge       = pseries_eeh_configure_bridge,
+ 	.read_config		= pseries_eeh_read_config,
+-	.write_config		= pseries_eeh_write_config
++	.write_config		= pseries_eeh_write_config,
++	.next_error		= NULL,
++	.restore_config		= NULL
+ };
+ 
+ /**

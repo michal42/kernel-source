@@ -1,0 +1,88 @@
+From: Gavin Shan <gwshan@linux.vnet.ibm.com>
+Subject: [PATCH] powerpc/powernv: Move PNV_EEH_STATE_ENABLED around
+Git-commit: f5bc6b70d2f1e4d7c6d2956e9e66a6a55821460d
+Patch-mainline: next-20140523
+References: bnc#878240,FATE#315784 
+
+The flag PNV_EEH_STATE_ENABLED is put into pnv_phb::eeh_state,
+which is protected by CONFIG_EEH. We needn't that. Instead, we
+can have pnv_phb::flags and maintain all flags there, which is
+the purpose of the patch. The patch also renames PNV_EEH_STATE_ENABLED
+to PNV_PHB_FLAG_EEH.
+
+Signed-off-by: Gavin Shan <gwshan@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/eeh-ioda.c b/arch/powerpc/platforms/powernv/eeh-ioda.c
+index 5432598..9ff7b2d 100644
+--- a/arch/powerpc/platforms/powernv/eeh-ioda.c
++++ b/arch/powerpc/platforms/powernv/eeh-ioda.c
+@@ -154,7 +154,7 @@ static int ioda_eeh_post_init(struct pci_controller *hose)
+ 	}
+ #endif
+ 
+-	phb->eeh_state |= PNV_EEH_STATE_ENABLED;
++	phb->flags |= PNV_PHB_FLAG_EEH;
+ 
+ 	return 0;
+ }
+diff --git a/arch/powerpc/platforms/powernv/pci.c b/arch/powerpc/platforms/powernv/pci.c
+index 8518817..114e1a7 100644
+--- a/arch/powerpc/platforms/powernv/pci.c
++++ b/arch/powerpc/platforms/powernv/pci.c
+@@ -426,7 +426,7 @@ int pnv_pci_cfg_read(struct device_node *dn,
+ 	if (phb_pe && (phb_pe->state & EEH_PE_ISOLATED))
+ 		return PCIBIOS_SUCCESSFUL;
+ 
+-	if (phb->eeh_state & PNV_EEH_STATE_ENABLED) {
++	if (phb->flags & PNV_PHB_FLAG_EEH) {
+ 		if (*val == EEH_IO_ERROR_VALUE(size) &&
+ 		    eeh_dev_check_failure(of_node_to_eeh_dev(dn)))
+ 			return PCIBIOS_DEVICE_NOT_FOUND;
+@@ -464,12 +464,8 @@ int pnv_pci_cfg_write(struct device_node *dn,
+ 	}
+ 
+ 	/* Check if the PHB got frozen due to an error (no response) */
+-#ifdef CONFIG_EEH
+-	if (!(phb->eeh_state & PNV_EEH_STATE_ENABLED))
++	if (!(phb->flags & PNV_PHB_FLAG_EEH))
+ 		pnv_pci_config_check_eeh(phb, dn);
+-#else
+-	pnv_pci_config_check_eeh(phb, dn);
+-#endif
+ 
+ 	return PCIBIOS_SUCCESSFUL;
+ }
+diff --git a/arch/powerpc/platforms/powernv/pci.h b/arch/powerpc/platforms/powernv/pci.h
+index 6870f60..94e3495 100644
+--- a/arch/powerpc/platforms/powernv/pci.h
++++ b/arch/powerpc/platforms/powernv/pci.h
+@@ -81,24 +81,23 @@ struct pnv_eeh_ops {
+ 	int (*configure_bridge)(struct eeh_pe *pe);
+ 	int (*next_error)(struct eeh_pe **pe);
+ };
+-
+-#define PNV_EEH_STATE_ENABLED	(1 << 0)	/* EEH enabled	*/
+-
+ #endif /* CONFIG_EEH */
+ 
++#define PNV_PHB_FLAG_EEH	(1 << 0)
++
+ struct pnv_phb {
+ 	struct pci_controller	*hose;
+ 	enum pnv_phb_type	type;
+ 	enum pnv_phb_model	model;
+ 	u64			hub_id;
+ 	u64			opal_id;
++	int			flags;
+ 	void __iomem		*regs;
+ 	int			initialized;
+ 	spinlock_t		lock;
+ 
+ #ifdef CONFIG_EEH
+ 	struct pnv_eeh_ops	*eeh_ops;
+-	int			eeh_state;
+ #endif
+ 
+ #ifdef CONFIG_DEBUG_FS

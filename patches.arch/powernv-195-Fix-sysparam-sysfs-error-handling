@@ -1,0 +1,60 @@
+From: Joel Stanley <joel@jms.id.au>
+Subject: [PATCH] powerpc/powernv: Fix sysparam sysfs error handling
+Git-commit: ba9a32b176c31ec4d3d7314bb2e529a85423f7a4
+Patch-mainline: v3.15-rc6
+References: bnc#878240,FATE#315784 
+
+When a sysparam query in OPAL returned a negative value (error code),
+sysfs would spew out a decent chunk of memory; almost 64K more than
+expected. This was traced to a sign/unsigned mix up in the OPAL sysparam
+sysfs code at sys_param_show.
+
+The return value of sys_param_show is a ssize_t, calculated using
+
+  return ret ? ret : attr->param_size;
+
+Alan Modra explains:
+
+  "attr->param_size" is an unsigned int, "ret" an int, so the overall
+  expression has type unsigned int.  Result is that ret is cast to
+  unsigned int before being cast to ssize_t.
+
+Instead of using the ternary operator, set ret to the param_size if an
+error is not detected. The same bug exists in the sysfs write callback;
+this patch fixes it in the same way.
+
+A note on debugging this next time: on my system gcc will warn about
+this if compiled with -Wsign-compare, which is not enabled by -Wall,
+only -Wextra.
+
+Signed-off-by: Joel Stanley <joel@jms.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/platforms/powernv/opal-sysparam.c b/arch/powerpc/platforms/powernv/opal-sysparam.c
+index 6b61472..a51ea18 100644
+--- a/arch/powerpc/platforms/powernv/opal-sysparam.c
++++ b/arch/powerpc/platforms/powernv/opal-sysparam.c
+@@ -121,9 +121,10 @@ static ssize_t sys_param_show(struct kobject *kobj,
+ 
+ 	memcpy(buf, param_data_buf, attr->param_size);
+ 
++	ret = attr->param_size;
+ out:
+ 	mutex_unlock(&opal_sysparam_mutex);
+-	return ret ? ret : attr->param_size;
++	return ret;
+ }
+ 
+ static ssize_t sys_param_store(struct kobject *kobj,
+@@ -138,7 +139,9 @@ static ssize_t sys_param_store(struct kobject *kobj,
+ 	ret = opal_set_sys_param(attr->param_id, attr->param_size,
+ 			param_data_buf);
+ 	mutex_unlock(&opal_sysparam_mutex);
+-	return ret ? ret : count;
++	if (!ret)
++		ret = count;
++	return ret;
+ }
+ 
+ void __init opal_sys_param_init(void)
