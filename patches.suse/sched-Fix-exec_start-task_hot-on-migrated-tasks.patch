@@ -1,0 +1,41 @@
+From 74f1c5b97956232e11eb3c02bcb26fca361338d9 Mon Sep 17 00:00:00 2001
+From: Ben Segall <bsegall@google.com>
+Date: Thu, 15 May 2014 15:59:20 -0700
+Subject: [PATCH] sched: Fix exec_start/task_hot on migrated tasks
+
+References: Scheduler scalability
+Patch-mainline: Yes
+Git-commit: 3944a9274ef6cda0cc282daf0739832f661670f7
+
+task_hot checks exec_start on any runnable task, but if it has been
+migrated since the it last ran, then exec_start is a clock_task from
+another cpu. If the old cpu's clock_task was sufficiently far ahead of
+this cpu's then the task will not be considered for another migration
+until it has run. Instead reset exec_start whenever a task is migrated,
+since it is presumably no longer hot anyway.
+
+Signed-off-by: Ben Segall <bsegall@google.com>
+[ Made it compile. ]
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20140515225920.7179.13924.stgit@sword-of-the-dawn.mtv.corp.google.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 6fad794..3ab5a43 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -4594,6 +4594,9 @@ migrate_task_rq_fair(struct task_struct *p, int next_cpu)
+ 		atomic_long_add(se->avg.load_avg_contrib,
+ 						&cfs_rq->removed_load);
+ 	}
++
++	/* We have migrated, no longer consider this task hot */
++	se->exec_start = 0;
+ }
+ #endif /* CONFIG_SMP */
+ 
