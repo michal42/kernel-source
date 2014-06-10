@@ -1,0 +1,202 @@
+From: Len Brown <len.brown@intel.com>
+Date: Fri, 4 Apr 2014 01:21:07 -0400
+Subject: intel_idle: fine-tune IVT residency targets
+Git-commit: 0138d8f0755b5b28d0acdb0a758bcfcaf441fc58
+Patch-mainline: v3.15-rc1
+References: bnc#881797
+
+Ivy Town processors have slightly different properties
+than Ivy Bridge processors, particuarly as socket count grows.
+Here we add dedicated tables covering 1-2 socket,
+3-4 socket, and > 4 socket IVT configurations.
+
+This reduces the frequency of deep transitions on those systems,
+which can impact throughput.
+
+Signed-off-by: Len Brown <len.brown@intel.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/idle/intel_idle.c | 141 +++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 140 insertions(+), 1 deletion(-)
+
+Index: linux-3.12-SLE12_master/drivers/idle/intel_idle.c
+===================================================================
+--- linux-3.12-SLE12_master.orig/drivers/idle/intel_idle.c
++++ linux-3.12-SLE12_master/drivers/idle/intel_idle.c
+@@ -236,6 +236,105 @@ static struct cpuidle_state ivb_cstates[
+ 		.enter = NULL }
+ };
+ 
++static struct cpuidle_state ivt_cstates[] = {
++	{
++		.name = "C1-IVT",
++		.desc = "MWAIT 0x00",
++		.flags = MWAIT2flg(0x00) | CPUIDLE_FLAG_TIME_VALID,
++		.exit_latency = 1,
++		.target_residency = 1,
++		.enter = &intel_idle },
++	{
++		.name = "C1E-IVT",
++		.desc = "MWAIT 0x01",
++		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_TIME_VALID,
++		.exit_latency = 10,
++		.target_residency = 80,
++		.enter = &intel_idle },
++	{
++		.name = "C3-IVT",
++		.desc = "MWAIT 0x10",
++		.flags = MWAIT2flg(0x10) | CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
++		.exit_latency = 59,
++		.target_residency = 156,
++		.enter = &intel_idle },
++	{
++		.name = "C6-IVT",
++		.desc = "MWAIT 0x20",
++		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
++		.exit_latency = 82,
++		.target_residency = 300,
++		.enter = &intel_idle },
++	{
++		.enter = NULL }
++};
++
++static struct cpuidle_state ivt_cstates_4s[] = {
++	{
++		.name = "C1-IVT-4S",
++		.desc = "MWAIT 0x00",
++		.flags = MWAIT2flg(0x00) | CPUIDLE_FLAG_TIME_VALID,
++		.exit_latency = 1,
++		.target_residency = 1,
++		.enter = &intel_idle },
++	{
++		.name = "C1E-IVT-4S",
++		.desc = "MWAIT 0x01",
++		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_TIME_VALID,
++		.exit_latency = 10,
++		.target_residency = 250,
++		.enter = &intel_idle },
++	{
++		.name = "C3-IVT-4S",
++		.desc = "MWAIT 0x10",
++		.flags = MWAIT2flg(0x10) | CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
++		.exit_latency = 59,
++		.target_residency = 300,
++		.enter = &intel_idle },
++	{
++		.name = "C6-IVT-4S",
++		.desc = "MWAIT 0x20",
++		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
++		.exit_latency = 84,
++		.target_residency = 400,
++		.enter = &intel_idle },
++	{
++		.enter = NULL }
++};
++
++static struct cpuidle_state ivt_cstates_8s[] = {
++	{
++		.name = "C1-IVT-8S",
++		.desc = "MWAIT 0x00",
++		.flags = MWAIT2flg(0x00) | CPUIDLE_FLAG_TIME_VALID,
++		.exit_latency = 1,
++		.target_residency = 1,
++		.enter = &intel_idle },
++	{
++		.name = "C1E-IVT-8S",
++		.desc = "MWAIT 0x01",
++		.flags = MWAIT2flg(0x01) | CPUIDLE_FLAG_TIME_VALID,
++		.exit_latency = 10,
++		.target_residency = 500,
++		.enter = &intel_idle },
++	{
++		.name = "C3-IVT-8S",
++		.desc = "MWAIT 0x10",
++		.flags = MWAIT2flg(0x10) | CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
++		.exit_latency = 59,
++		.target_residency = 600,
++		.enter = &intel_idle },
++	{
++		.name = "C6-IVT-8S",
++		.desc = "MWAIT 0x20",
++		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TIME_VALID | CPUIDLE_FLAG_TLB_FLUSHED,
++		.exit_latency = 88,
++		.target_residency = 700,
++		.enter = &intel_idle },
++	{
++		.enter = NULL }
++};
++
+ static struct cpuidle_state hsw_cstates[CPUIDLE_STATE_MAX] = {
+ 	{
+ 		.name = "C1-HSW",
+@@ -476,6 +575,11 @@ static const struct idle_cpu idle_cpu_iv
+ 	.disable_promotion_to_c1e = true,
+ };
+ 
++static const struct idle_cpu idle_cpu_ivt = {
++	.state_table = ivt_cstates,
++	.disable_promotion_to_c1e = true,
++};
++
+ static const struct idle_cpu idle_cpu_hsw = {
+ 	.state_table = hsw_cstates,
+ 	.disable_promotion_to_c1e = true,
+@@ -502,7 +606,7 @@ static const struct x86_cpu_id intel_idl
+ 	ICPU(0x2a, idle_cpu_snb),
+ 	ICPU(0x2d, idle_cpu_snb),
+ 	ICPU(0x3a, idle_cpu_ivb),
+-	ICPU(0x3e, idle_cpu_ivb),
++	ICPU(0x3e, idle_cpu_ivt),
+ 	ICPU(0x3c, idle_cpu_hsw),
+ 	ICPU(0x3f, idle_cpu_hsw),
+ 	ICPU(0x45, idle_cpu_hsw),
+@@ -579,6 +683,40 @@ static void intel_idle_cpuidle_devices_u
+ 	free_percpu(intel_idle_cpuidle_devices);
+ 	return;
+ }
++
++/*
++ * intel_idle_state_table_update()
++ *
++ * Update the default state_table for this CPU-id
++ *
++ * Currently used to access tuned IVT multi-socket targets
++ * Assumption: num_sockets == (max_package_num + 1)
++ */
++void intel_idle_state_table_update(void)
++{
++	/* IVT uses a different table for 1-2, 3-4, and > 4 sockets */
++	if (boot_cpu_data.x86_model == 0x3e) { /* IVT */
++		int cpu, package_num, num_sockets = 1;
++
++		for_each_online_cpu(cpu) {
++			package_num = topology_physical_package_id(cpu);
++			if (package_num + 1 > num_sockets) {
++				num_sockets = package_num + 1;
++
++				if (num_sockets > 4) {
++					cpuidle_state_table = ivt_cstates_8s;
++					return;
++				}
++			}
++		}
++
++		if (num_sockets > 2)
++			cpuidle_state_table = ivt_cstates_4s;
++		/* else, 1 and 2 socket systems use default ivt_cstates */
++	}
++	return;
++}
++
+ /*
+  * intel_idle_cpuidle_driver_init()
+  * allocate, initialize cpuidle_states
+@@ -588,6 +726,8 @@ static int intel_idle_cpuidle_driver_ini
+ 	int cstate;
+ 	struct cpuidle_driver *drv = &intel_idle_driver;
+ 
++	intel_idle_state_table_update();
++
+ 	drv->state_count = 1;
+ 
+ 	for (cstate = 0; cstate < CPUIDLE_STATE_MAX; ++cstate) {
