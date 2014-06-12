@@ -1,0 +1,112 @@
+From: Roman Gushchin <klamm@yandex-team.ru>
+Date: Mon, 19 May 2014 15:10:09 +0400
+Subject: [PATCH] sched/fair: Fix tg_set_cfs_bandwidth() deadlock on rq->lock
+Git-commit: 09dc4ab03936df5c5aa711d27c81283c6d09f495
+Patch-mainline: v3.15-rc8
+References:
+
+tg_set_cfs_bandwidth() sets cfs_b->timer_active to 0 to
+force the period timer restart. It's not safe, because
+can lead to deadlock, described in commit 927b54fccbf0:
+"__start_cfs_bandwidth calls hrtimer_cancel while holding rq->lock,
+waiting for the hrtimer to finish. However, if sched_cfs_period_timer
+runs for another loop iteration, the hrtimer can attempt to take
+rq->lock, resulting in deadlock."
+
+Three CPUs must be involved:
+
+  CPU0               CPU1                         CPU2
+  take rq->lock      period timer fired
+  ...                take cfs_b lock
+  ...                ...                          tg_set_cfs_bandwidth()
+  throttle_cfs_rq()  release cfs_b lock           take cfs_b lock
+  ...                distribute_cfs_runtime()     timer_active = 0
+  take cfs_b->lock   wait for rq->lock            ...
+  __start_cfs_bandwidth()
+  {wait for timer callback
+   break if timer_active == 1}
+
+So, CPU0 and CPU1 are deadlocked.
+
+Instead of resetting cfs_b->timer_active, tg_set_cfs_bandwidth can
+wait for period timer callbacks (ignoring cfs_b->timer_active) and
+restart the timer explicitly.
+
+Signed-off-by: Roman Gushchin <klamm@yandex-team.ru>
+Reviewed-by: Ben Segall <bsegall@google.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/87wqdi9g8e.wl\%klamm@yandex-team.ru
+Cc: pjt@google.com
+Cc: chris.j.arges@canonical.com
+Cc: gregkh@linuxfoundation.org
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+---
+ kernel/sched/core.c  |    3 +--
+ kernel/sched/fair.c  |    8 ++++----
+ kernel/sched/sched.h |    2 +-
+ 3 files changed, 6 insertions(+), 7 deletions(-)
+
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -7525,8 +7525,7 @@ static int tg_set_cfs_bandwidth(struct t
+ 	/* restart the period timer (if active) to handle new period expiry */
+ 	if (runtime_enabled && cfs_b->timer_active) {
+ 		/* force a reprogram */
+-		cfs_b->timer_active = 0;
+-		__start_cfs_bandwidth(cfs_b);
++		__start_cfs_bandwidth(cfs_b, true);
+ 	}
+ 	raw_spin_unlock_irq(&cfs_b->lock);
+ 
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -2959,7 +2959,7 @@ static int assign_cfs_rq_runtime(struct
+ 		 */
+ 		if (!cfs_b->timer_active) {
+ 			__refill_cfs_bandwidth_runtime(cfs_b);
+-			__start_cfs_bandwidth(cfs_b);
++			__start_cfs_bandwidth(cfs_b, false);
+ 		}
+ 
+ 		if (cfs_b->runtime > 0) {
+@@ -3138,7 +3138,7 @@ static void throttle_cfs_rq(struct cfs_r
+ 	raw_spin_lock(&cfs_b->lock);
+ 	list_add_tail_rcu(&cfs_rq->throttled_list, &cfs_b->throttled_cfs_rq);
+ 	if (!cfs_b->timer_active)
+-		__start_cfs_bandwidth(cfs_b);
++		__start_cfs_bandwidth(cfs_b, false);
+ 	raw_spin_unlock(&cfs_b->lock);
+ }
+ 
+@@ -3519,7 +3519,7 @@ static void init_cfs_rq_runtime(struct c
+ }
+ 
+ /* requires cfs_b->lock, may release to reprogram timer */
+-void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
++void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b, bool force)
+ {
+ 	/*
+ 	 * The timer may be active because we're trying to set a new bandwidth
+@@ -3534,7 +3534,7 @@ void __start_cfs_bandwidth(struct cfs_ba
+ 		cpu_relax();
+ 		raw_spin_lock(&cfs_b->lock);
+ 		/* if someone else restarted the timer then we're done */
+-		if (cfs_b->timer_active)
++		if (!force && cfs_b->timer_active)
+ 			return;
+ 	}
+ 
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -219,7 +219,7 @@ extern void init_cfs_bandwidth(struct cf
+ extern int sched_group_set_shares(struct task_group *tg, unsigned long shares);
+ 
+ extern void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b);
+-extern void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b);
++extern void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b, bool force);
+ extern void unthrottle_cfs_rq(struct cfs_rq *cfs_rq);
+ 
+ extern void free_rt_sched_group(struct task_group *tg);

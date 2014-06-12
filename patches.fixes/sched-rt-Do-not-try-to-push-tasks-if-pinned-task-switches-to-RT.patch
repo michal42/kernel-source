@@ -1,0 +1,37 @@
+From: Kirill V Tkhai <tkhai@yandex.ru>
+Date: Wed, 12 Mar 2014 06:18:33 -0400
+Subject: [PATCH] sched/rt: Do not try to push tasks if pinned task switches to RT
+Git-commit: 10447917551e0fffb8d1892d46e633c3e0a9c1ec
+Patch-mainline: v3.15-rc8
+References:
+
+Just switched pinned task is not able to be pushed. If the rq had had
+several RT tasks before they have already been considered as candidates
+to be pushed (or pulled).
+
+Signed-off-by: Kirill V Tkhai <tkhai@yandex.ru>
+Acked-by: Steven Rostedt <rostedt@goodmis.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/20140312061833.3a43aa64@gandalf.local.home
+Cc: linux-kernel@vger.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+---
+ kernel/sched/rt.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/kernel/sched/rt.c
++++ b/kernel/sched/rt.c
+@@ -1888,9 +1888,9 @@ static void switched_to_rt(struct rq *rq
+ 	 */
+ 	if (p->on_rq && rq->curr != p) {
+ #ifdef CONFIG_SMP
+-		if (rq->rt.overloaded && push_rt_task(rq) &&
++		if (p->nr_cpus_allowed > 1 && rq->rt.overloaded &&
+ 		    /* Don't resched if we changed runqueues */
+-		    rq != task_rq(p))
++		    push_rt_task(rq) && rq != task_rq(p))
+ 			check_resched = 0;
+ #endif /* CONFIG_SMP */
+ 		if (check_resched && p->prio < rq->curr->prio)

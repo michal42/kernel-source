@@ -1,0 +1,89 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Mon, 18 Nov 2013 18:27:06 +0100
+Subject: [PATCH] math64: Add mul_u64_u32_shr()
+Git-commit: be5e610c0fd6ef772cafb9e0bd4128134804aef3
+Patch-mainline: v3.13-rc5
+References: bnc#880357
+
+Introduce mul_u64_u32_shr() as proposed by Andy a while back; it
+allows using 64x64->128 muls on 64bit archs and recent GCC
+which defines __SIZEOF_INT128__ and __int128.
+
+(This new method will be used by the scheduler.)
+
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: fweisbec@gmail.com
+Cc: Andy Lutomirski <luto@amacapital.net>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/n/tip-hxjoeuzmrcaumR0uZwjpe2pv@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+---
+ arch/x86/Kconfig       |    1 +
+ include/linux/math64.h |   30 ++++++++++++++++++++++++++++++
+ init/Kconfig           |    6 ++++++
+ 3 files changed, 37 insertions(+)
+
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -25,6 +25,7 @@ config X86
+ 	select HAVE_AOUT if X86_32
+ 	select HAVE_UNSTABLE_SCHED_CLOCK
+ 	select ARCH_SUPPORTS_NUMA_BALANCING
++	select ARCH_SUPPORTS_INT128 if X86_64
+ 	select ARCH_WANTS_PROT_NUMA_PROT_NONE
+ 	select HAVE_IDE
+ 	select HAVE_OPROFILE
+--- a/include/linux/math64.h
++++ b/include/linux/math64.h
+@@ -133,4 +133,34 @@ __iter_div_u64_rem(u64 dividend, u32 div
+ 	return ret;
+ }
+ 
++#if defined(CONFIG_ARCH_SUPPORTS_INT128) && defined(__SIZEOF_INT128__)
++
++#ifndef mul_u64_u32_shr
++static inline u64 mul_u64_u32_shr(u64 a, u32 mul, unsigned int shift)
++{
++	return (u64)(((unsigned __int128)a * mul) >> shift);
++}
++#endif /* mul_u64_u32_shr */
++
++#else
++
++#ifndef mul_u64_u32_shr
++static inline u64 mul_u64_u32_shr(u64 a, u32 mul, unsigned int shift)
++{
++	u32 ah, al;
++	u64 ret;
++
++	al = a;
++	ah = a >> 32;
++
++	ret = ((u64)al * mul) >> shift;
++	if (ah)
++		ret += ((u64)ah * mul) << (32 - shift);
++
++	return ret;
++}
++#endif /* mul_u64_u32_shr */
++
++#endif
++
+ #endif /* _LINUX_MATH64_H */
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -854,6 +854,12 @@ config GENERIC_SCHED_CLOCK
+ config ARCH_SUPPORTS_NUMA_BALANCING
+ 	bool
+ 
++#
++# For architectures that know their GCC __int128 support is sound
++#
++config ARCH_SUPPORTS_INT128
++	bool
++
+ # For architectures that (ab)use NUMA to represent different memory regions
+ # all cpu-local but of different latencies, such as SuperH.
+ #

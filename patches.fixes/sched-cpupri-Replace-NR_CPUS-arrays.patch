@@ -1,0 +1,70 @@
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Wed, 14 May 2014 16:04:26 +0200
+Subject: [PATCH] sched/cpupri: Replace NR_CPUS arrays
+Git-commit: 4dac0b638310d2e92f6e19958b73d4c97c9734bb
+Patch-mainline: v3.15-rc8
+References:
+
+Tejun reported that his resume was failing due to order-3 allocations
+from sched_domain building.
+
+Replace the NR_CPUS arrays in there with a dynamically allocated
+array.
+
+Reported-by: Tejun Heo <tj@kernel.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Steven Rostedt <rostedt@goodmis.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/n/tip-7cysnkw1gik45r864t1nkudh@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+---
+ kernel/sched/cpupri.c |    7 +++++++
+ kernel/sched/cpupri.h |    2 +-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+--- a/kernel/sched/cpupri.c
++++ b/kernel/sched/cpupri.c
+@@ -30,6 +30,7 @@
+ #include <linux/gfp.h>
+ #include <linux/sched.h>
+ #include <linux/sched/rt.h>
++#include <linux/slab.h>
+ #include "cpupri.h"
+ 
+ /* Convert between a 140 based task->prio, and our 102 based cpupri */
+@@ -218,8 +219,13 @@ int cpupri_init(struct cpupri *cp)
+ 			goto cleanup;
+ 	}
+ 
++	cp->cpu_to_pri = kcalloc(nr_cpu_ids, sizeof(int), GFP_KERNEL);
++	if (!cp->cpu_to_pri)
++		goto cleanup;
++
+ 	for_each_possible_cpu(i)
+ 		cp->cpu_to_pri[i] = CPUPRI_INVALID;
++
+ 	return 0;
+ 
+ cleanup:
+@@ -236,6 +242,7 @@ void cpupri_cleanup(struct cpupri *cp)
+ {
+ 	int i;
+ 
++	kfree(cp->cpu_to_pri);
+ 	for (i = 0; i < CPUPRI_NR_PRIORITIES; i++)
+ 		free_cpumask_var(cp->pri_to_cpu[i].mask);
+ }
+--- a/kernel/sched/cpupri.h
++++ b/kernel/sched/cpupri.h
+@@ -17,7 +17,7 @@ struct cpupri_vec {
+ 
+ struct cpupri {
+ 	struct cpupri_vec pri_to_cpu[CPUPRI_NR_PRIORITIES];
+-	int               cpu_to_pri[NR_CPUS];
++	int *cpu_to_pri;
+ };
+ 
+ #ifdef CONFIG_SMP

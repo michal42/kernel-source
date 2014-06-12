@@ -1,0 +1,80 @@
+From: Mike Galbraith <mgalbraith@suse.de>
+Date: Mon, 5 Dec 2011 10:01:47 +0100
+Subject: [PATCH] sched, nohz: Exclude isolated cores from load balancing
+Git-commit: d987fc7f3228bf94cb6b21313ebab1d64ee637ad Mon Sep 17 00:00:00 2001
+Patch-mainline: v3.15-rc1
+References:
+
+The user explicitly disabled load balancing, else this core would not be
+disconnected.  Don't add these to nohz.idle_cpus_mask.
+
+Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Lei Wen <leiwen@marvell.com>
+Link: http://lkml.kernel.org/n/tip-vmme4f49psirp966pklm5l9j@git.kernel.org
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+---
+ kernel/sched/fair.c |   28 +++++++++++++++++++---------
+ 1 file changed, 19 insertions(+), 9 deletions(-)
+
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -6543,6 +6543,11 @@ static int active_load_balance_cpu_stop(
+ 	return 0;
+ }
+ 
++static inline int on_null_domain(int cpu)
++{
++	return !rcu_dereference_sched(cpu_rq(cpu)->sd);
++}
++
+ #ifdef CONFIG_NO_HZ_COMMON
+ /*
+  * idle load balancing details
+@@ -6597,8 +6602,13 @@ static void nohz_balancer_kick(int cpu)
+ static inline void nohz_balance_exit_idle(int cpu)
+ {
+ 	if (unlikely(test_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu)))) {
+-		cpumask_clear_cpu(cpu, nohz.idle_cpus_mask);
+-		atomic_dec(&nohz.nr_cpus);
++		/*
++		 * Completely isolated CPUs don't ever set, so we must test.
++		 */
++		if (likely(cpumask_test_cpu(cpu, nohz.idle_cpus_mask))) {
++			cpumask_clear_cpu(cpu, nohz.idle_cpus_mask);
++			atomic_dec(&nohz.nr_cpus);
++		}
+ 		clear_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu));
+ 	}
+ }
+@@ -6652,8 +6662,13 @@ void nohz_balance_enter_idle(int cpu)
+ 	if (test_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu)))
+ 		return;
+ 
+-	cpumask_set_cpu(cpu, nohz.idle_cpus_mask);
+-	atomic_inc(&nohz.nr_cpus);
++	/*
++	 * If we're a completely isolated CPU, we don't play.
++	 */
++	if (likely(!on_null_domain(cpu))) {
++		cpumask_set_cpu(cpu, nohz.idle_cpus_mask);
++		atomic_inc(&nohz.nr_cpus);
++	}
+ 	set_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu));
+ }
+ 
+@@ -6915,11 +6930,6 @@ static void run_rebalance_domains(struct
+ 	nohz_idle_balance(this_cpu, idle);
+ }
+ 
+-static inline int on_null_domain(int cpu)
+-{
+-	return !rcu_dereference_sched(cpu_rq(cpu)->sd);
+-}
+-
+ /*
+  * Trigger the SCHED_SOFTIRQ if it is time to do periodic load balancing.
+  */
