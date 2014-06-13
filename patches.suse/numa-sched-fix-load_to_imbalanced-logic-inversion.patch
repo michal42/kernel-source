@@ -1,0 +1,41 @@
+From 0e9a0e168bf5af44027bbd7c2f27b06c7e1b54cd Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Sun, 8 Jun 2014 16:55:57 -0400
+Subject: [PATCH] numa,sched: fix load_to_imbalanced logic inversion
+
+References: Scheduler scalability
+Patch-mainline: Yes
+Git-commit: 1662867a9b2574bfdb9d4e97186aa131218d7210
+
+This function is supposed to return true if the new load imbalance is
+worse than the old one.  It didn't.  I can only hope brown paper bags
+are in style.
+
+Now things converge much better on both the 4 node and 8 node systems.
+
+I am not sure why this did not seem to impact specjbb performance on the
+4 node system, which is the system I have full-time access to.
+
+This bug was introduced recently, with commit e63da03639cc ("sched/numa:
+Allow task switch if load imbalance improves")
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 9b55934..0571bc9 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1167,7 +1167,7 @@ static bool load_too_imbalanced(long orig_src_load, long orig_dst_load,
+ 	old_imb = orig_dst_load * 100 - orig_src_load * env->imbalance_pct;
+ 
+ 	/* Would this change make things worse? */
+-	return (old_imb > imb);
++	return (imb > old_imb);
+ }
+ 
+ /*
