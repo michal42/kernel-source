@@ -1,0 +1,39 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Fri, 13 Jun 2014 09:06:02 +0200
+Subject: scsi_error: set DID_TIME_OUT correctly
+Patch-Mainline: submitted to linux-scsi
+References: bnc#875415
+
+Any callbacks in scsi_timeout_out() might return BLK_EH_RESET_TIMER,
+in which case we should leave the result alone and not set
+DID_TIME_OUT, as the command didn't actually timeout.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/scsi_error.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index b664200..ed2e8fd 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -291,11 +291,11 @@ enum blk_eh_timer_return scsi_times_out(struct request *req)
+ 		if (scsi_abort_command(scmd) == SUCCESS)
+ 			return BLK_EH_NOT_HANDLED;
+ 
+-	scmd->result |= DID_TIME_OUT << 16;
+-
+-	if (unlikely(rtn == BLK_EH_NOT_HANDLED &&
+-		     !scsi_eh_scmd_add(scmd, SCSI_EH_CANCEL_CMD)))
+-		rtn = BLK_EH_HANDLED;
++	if (unlikely(rtn == BLK_EH_NOT_HANDLED)) {
++		scmd->result |= DID_TIME_OUT << 16;
++		if (!scsi_eh_scmd_add(scmd, SCSI_EH_CANCEL_CMD))
++			rtn = BLK_EH_HANDLED;
++	}
+ 
+ 	return rtn;
+ }
+-- 
+1.7.12.4
+
