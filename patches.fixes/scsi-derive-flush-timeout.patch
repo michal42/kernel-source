@@ -1,0 +1,71 @@
+From: James Bottomley <jbottomley@parallels.com>
+Date: Fri, 4 Oct 2013 21:42:24 +0000
+Subject: [PATCH] [SCSI] Derive the FLUSH_TIMEOUT from the basic I/O timeout
+Git-commit: 7e660100d85af860e7ad763202fff717adcdaacd
+Patch-Mainline: v3.17
+References: bnc#881409
+
+Rather than having a separate constant for specifying the timeout on FLUSH
+operations, use the basic I/O timeout value that is already configurable
+on a per target basis to derive the FLUSH timeout. Looking at the current
+definitions of these timeout values, the FLUSH operation is supposed to have
+a value that is twice the normal timeout value. This patch preserves this
+relationship while leveraging the flexibility of specifying the I/O timeout.
+
+Based on a prior patch by KY Srinivasan <kys@microsoft.com>
+
+Reviewed-by: KY Srinivasan <kys@microsoft.com>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: "Luis R. Rodriguez" <mcgrof@suse.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index 3824e75..fd874b8 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -830,7 +830,7 @@ static int sd_setup_write_same_cmnd(struct scsi_device *sdp, struct request *rq)
+ 
+ static int scsi_setup_flush_cmnd(struct scsi_device *sdp, struct request *rq)
+ {
+-	rq->timeout = SD_FLUSH_TIMEOUT;
++	rq->timeout *= SD_FLUSH_TIMEOUT_MULTIPLIER;
+ 	rq->retries = SD_MAX_RETRIES;
+ 	rq->cmd[0] = SYNCHRONIZE_CACHE;
+ 	rq->cmd_len = 10;
+@@ -1434,6 +1434,8 @@ static int sd_sync_cache(struct scsi_disk *sdkp)
+ {
+ 	int retries, res;
+ 	struct scsi_device *sdp = sdkp->device;
++	const int timeout = sdp->request_queue->rq_timeout
++		* SD_FLUSH_TIMEOUT_MULTIPLIER;
+ 	struct scsi_sense_hdr sshdr;
+ 
+ 	if (!scsi_device_online(sdp))
+@@ -1448,8 +1450,8 @@ static int sd_sync_cache(struct scsi_disk *sdkp)
+ 		 * flush everything.
+ 		 */
+ 		res = scsi_execute_req_flags(sdp, cmd, DMA_NONE, NULL, 0,
+-					     &sshdr, SD_FLUSH_TIMEOUT,
+-					     SD_MAX_RETRIES, NULL, REQ_PM);
++					     &sshdr, timeout, SD_MAX_RETRIES,
++					     NULL, REQ_PM);
+ 		if (res == 0)
+ 			break;
+ 	}
+diff --git a/drivers/scsi/sd.h b/drivers/scsi/sd.h
+index 7a049de..26895ff 100644
+--- a/drivers/scsi/sd.h
++++ b/drivers/scsi/sd.h
+@@ -13,7 +13,11 @@
+  */
+ #define SD_TIMEOUT		(30 * HZ)
+ #define SD_MOD_TIMEOUT		(75 * HZ)
+-#define SD_FLUSH_TIMEOUT	(60 * HZ)
++/*
++ * Flush timeout is a multiplier over the standard device timeout which is
++ * user modifiable via sysfs but initially set to SD_TIMEOUT
++ */
++#define SD_FLUSH_TIMEOUT_MULTIPLIER	2
+ #define SD_WRITE_SAME_TIMEOUT	(120 * HZ)
+ 
+ /*
