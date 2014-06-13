@@ -1,0 +1,103 @@
+From: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
+Subject: Move precessing of MCE queued event out from syscall exit path.
+Git-commit: 30c826358d10c1d6f8147de3310b97488daec830
+Patch-mainline: v3.14-rc1
+References: bnc#878240 
+
+    Huge Dickins reported an issue that b5ff4211a829
+    "powerpc/book3s: Queue up and process delayed MCE events" breaks the
+    PowerMac G5 boot. This patch fixes it by moving the mce even processing
+    away from syscall exit, which was wrong to do that in first place, and
+    using irq work framework to delay processing of mce event.
+    
+    Reported-by: Hugh Dickins <hughd@google.com
+Signed-off-by: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+ arch/powerpc/include/asm/mce.h |  1 -
+ arch/powerpc/kernel/entry_64.S |  5 -----
+ arch/powerpc/kernel/mce.c      | 13 ++++++++++---
+ 3 files changed, 10 insertions(+), 9 deletions(-)
+Index: linux-3.12-SLE12/arch/powerpc/include/asm/mce.h
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/include/asm/mce.h
++++ linux-3.12-SLE12/arch/powerpc/include/asm/mce.h
+@@ -191,7 +191,6 @@ extern void save_mce_event(struct pt_reg
+ extern int get_mce_event(struct machine_check_event *mce, bool release);
+ extern void release_mce_event(void);
+ extern void machine_check_queue_event(void);
+-extern void machine_check_process_queued_event(void);
+ extern void machine_check_print_event_info(struct machine_check_event *evt);
+ 
+ #endif /* __ASM_PPC64_MCE_H__ */
+Index: linux-3.12-SLE12/arch/powerpc/kernel/entry_64.S
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/kernel/entry_64.S
++++ linux-3.12-SLE12/arch/powerpc/kernel/entry_64.S
+@@ -184,11 +184,6 @@ syscall_exit:
+ 	bl	.do_show_syscall_exit
+ 	ld	r3,RESULT(r1)
+ #endif
+-#ifdef CONFIG_PPC_BOOK3S_64
+-BEGIN_FTR_SECTION
+-	bl	.machine_check_process_queued_event
+-END_FTR_SECTION_IFSET(CPU_FTR_HVMODE)
+-#endif
+ 	CURRENT_THREAD_INFO(r12, r1)
+ 
+ 	ld	r8,_MSR(r1)
+Index: linux-3.12-SLE12/arch/powerpc/kernel/mce.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/kernel/mce.c
++++ linux-3.12-SLE12/arch/powerpc/kernel/mce.c
+@@ -26,6 +26,7 @@
+ #include <linux/ptrace.h>
+ #include <linux/percpu.h>
+ #include <linux/export.h>
++#include <linux/irq_work.h>
+ #include <asm/mce.h>
+ 
+ static DEFINE_PER_CPU(int, mce_nest_count);
+@@ -35,6 +36,11 @@ static DEFINE_PER_CPU(struct machine_che
+ static DEFINE_PER_CPU(int, mce_queue_count);
+ static DEFINE_PER_CPU(struct machine_check_event[MAX_MC_EVT], mce_event_queue);
+ 
++static void machine_check_process_queued_event(struct irq_work *work);
++struct irq_work mce_event_process_work = {
++        .func = machine_check_process_queued_event,
++};
++
+ static void mce_set_error_info(struct machine_check_event *mce,
+ 			       struct mce_error_info *mce_err)
+ {
+@@ -185,17 +191,19 @@ void machine_check_queue_event(void)
+ 		return;
+ 	}
+ 	__get_cpu_var(mce_event_queue[index]) = evt;
++
++	/* Queue irq work to process this event later. */
++	irq_work_queue(&mce_event_process_work);
+ }
+ 
+ /*
+  * process pending MCE event from the mce event queue. This function will be
+  * called during syscall exit.
+  */
+-void machine_check_process_queued_event(void)
++static void machine_check_process_queued_event(struct irq_work *work)
+ {
+ 	int index;
+ 
+-	preempt_disable();
+ 	/*
+ 	 * For now just print it to console.
+ 	 * TODO: log this error event to FSP or nvram.
+@@ -206,7 +214,6 @@ void machine_check_process_queued_event(
+ 				&__get_cpu_var(mce_event_queue[index]));
+ 		__get_cpu_var(mce_queue_count)--;
+ 	}
+-	preempt_enable();
+ }
+ 
+ void machine_check_print_event_info(struct machine_check_event *evt)
