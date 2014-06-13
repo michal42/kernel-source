@@ -1,0 +1,36 @@
+From: James Bottomley <JBottomley@Parallels.com>
+Date: Thu, 10 Apr 2014 13:36:11 -0700
+Subject: More USB deadlock fixes
+Git-commit: c69e6f812bab0d5442b40e2f1bfbca48d40bc50b
+Patch-Mainline: v3.16
+References: bnc#875415
+
+This patch fixes a corner case in the previous USB Deadlock fix patch (12023e7
+[SCSI] Fix USB deadlock caused by SCSI error handling).
+
+The scenario is abort command, set flag, abort completes, send TUR, TUR
+doesn't return, so we now try to abort the TUR, but scsi_abort_eh_cmnd()
+will skip the abort because the flag is set and move straight to reset.
+
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/scsi_error.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index 0c843be..efe6f73 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -942,6 +942,7 @@ void scsi_eh_prep_cmnd(struct scsi_cmnd *scmd, struct scsi_eh_save *ses,
+ 	ses->prot_op = scmd->prot_op;
+ 
+ 	scmd->prot_op = SCSI_PROT_NORMAL;
++	scmd->eh_eflags = 0;
+ 	scmd->cmnd = ses->eh_cmnd;
+ 	memset(scmd->cmnd, 0, BLK_MAX_CDB);
+ 	memset(&scmd->sdb, 0, sizeof(scmd->sdb));
+-- 
+1.7.12.4
+
