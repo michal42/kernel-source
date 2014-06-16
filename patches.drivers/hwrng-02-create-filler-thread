@@ -1,6 +1,7 @@
 From: Torsten Duwe <duwe@suse.de>
 Subject: [Patch 02/03]: hwrng: create filler thread
-Patch-mainline: not yet
+Patch-mainline: kernel/git/tytso/random.git
+Git-commit: b77e62203be23c0770756f0cc199738c3b584b44
 References: fate#316346
 
 This can be viewed as the in-kernel equivalent of hwrngd;
@@ -15,13 +16,13 @@ is used to bias the entropy estimation and to disable this
 mechanism entirely when set to zero.
 
 Signed-off-by: Torsten Duwe <duwe@suse.de>
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+Acked-by: H. Peter Anvin <hpa@zytor.com>
 
----
- drivers/char/hw_random/core.c |   65 ++++++++++++++++++++++++++++++++++++++++--
- 1 file changed, 62 insertions(+), 3 deletions(-)
-
---- linux/drivers/char/hw_random/core.c.orig
-+++ linux/drivers/char/hw_random/core.c
+Index: linux-3.12-SLE12/drivers/char/hw_random/core.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/char/hw_random/core.c
++++ linux-3.12-SLE12/drivers/char/hw_random/core.c
 @@ -39,6 +39,7 @@
  #include <linux/sched.h>
  #include <linux/init.h>
@@ -40,10 +41,10 @@ Signed-off-by: Torsten Duwe <duwe@suse.de>
  static int data_avail;
 -static u8 *rng_buffer;
 +static u8 *rng_buffer, *rng_fillbuf;
-+static unsigned short derating_current = 700; /* an arbitrary 70% */
++static unsigned short current_quality = 700; /* an arbitrary 70% */
 +
-+module_param(derating_current, ushort, 0644);
-+MODULE_PARM_DESC(derating_current,
++module_param(current_quality, ushort, 0644);
++MODULE_PARM_DESC(current_quality,
 +		 "current hwrng entropy estimation per mill");
 +
 +static void start_khwrngd(void);
@@ -54,16 +55,18 @@ Signed-off-by: Torsten Duwe <duwe@suse.de>
  
  static inline int hwrng_init(struct hwrng *rng)
  {
+-	if (!rng->init)
+-		return 0;
+-	return rng->init(rng);
 +	int err;
 +
- 	if (!rng->init)
- 		return 0;
--	return rng->init(rng);
-+	err = rng->init(rng);
-+	if (err)
-+		return err;
++	if (rng->init) {
++		err = rng->init(rng);
++		if (err)
++			return err;
++	}
 +
-+	if (derating_current > 0 && !hwrng_fill)
++	if (current_quality > 0 && !hwrng_fill)
 +		start_khwrngd();
 +
 +	return 0;
@@ -89,7 +92,7 @@ Signed-off-by: Torsten Duwe <duwe@suse.de>
 +			continue;
 +		}
 +		add_hwgenerator_randomness((void *)rng_fillbuf, rc,
-+					   (rc*derating_current)>>10);
++					   (rc*current_quality)>>10);
 +	}
 +	hwrng_fill = 0;
 +	return 0;
