@@ -1,13 +1,15 @@
 From: Haiyang Zhang <haiyangz@microsoft.com>
 Date: Wed, 21 May 2014 12:55:39 -0700
-Patch-mainline: submitted (net-next)
-Subject: Add hash value into RNDIS Per-packet info
+Patch-mainline: v3.16-rc1
+Subject: hyperv: Add hash value into RNDIS Per-packet info
+Git-commit: 307f099520b66504cf6c5638f3f404c48b9fb45b
 
 It passes the hash value as the RNDIS Per-packet info to the Hyper-V host,
 so that the send completion notices can be spread across multiple channels.
 MS-TFS: 140273
 
 Signed-off-by: Haiyang Zhang <haiyangz@microsoft.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: <ohering@suse.de>
 ---
  drivers/net/hyperv/hyperv_net.h |  4 ++++
@@ -15,10 +17,10 @@ Acked-by: <ohering@suse.de>
  2 files changed, 18 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/net/hyperv/hyperv_net.h b/drivers/net/hyperv/hyperv_net.h
-index ac7dbe9..e4e68cb 100644
+index 4b7df5a..6cc37c1 100644
 --- a/drivers/net/hyperv/hyperv_net.h
 +++ b/drivers/net/hyperv/hyperv_net.h
-@@ -792,6 +792,7 @@ enum ndis_per_pkt_info_type {
+@@ -791,6 +791,7 @@ enum ndis_per_pkt_info_type {
  	IEEE_8021Q_INFO,
  	ORIGINAL_PKTINFO,
  	PACKET_CANCEL_ID,
@@ -26,7 +28,7 @@ index ac7dbe9..e4e68cb 100644
  	ORIGINAL_NET_BUFLIST,
  	CACHED_NET_BUFLIST,
  	SHORT_PKT_PADINFO,
-@@ -938,6 +939,9 @@ struct ndis_tcp_lso_info {
+@@ -937,6 +938,9 @@ struct ndis_tcp_lso_info {
  #define NDIS_LSO_PPI_SIZE (sizeof(struct rndis_per_packet_info) + \
  		sizeof(struct ndis_tcp_lso_info))
  
@@ -37,10 +39,10 @@ index ac7dbe9..e4e68cb 100644
  /* OID_GEN_RNDIS_CONFIG_PARAMETER. */
  struct rndis_config_parameter_info {
 diff --git a/drivers/net/hyperv/netvsc_drv.c b/drivers/net/hyperv/netvsc_drv.c
-index f13bd56..f048ca9 100644
+index 2e967a7..4fd71b7 100644
 --- a/drivers/net/hyperv/netvsc_drv.c
 +++ b/drivers/net/hyperv/netvsc_drv.c
-@@ -226,9 +226,11 @@ static u16 netvsc_select_queue(struct net_device *ndev, struct sk_buff *skb,
+@@ -224,9 +224,11 @@ static u16 netvsc_select_queue(struct net_device *ndev, struct sk_buff *skb,
  	if (nvsc_dev == NULL || ndev->real_num_tx_queues <= 1)
  		return 0;
  
@@ -53,7 +55,7 @@ index f13bd56..f048ca9 100644
  
  	return q_idx;
  }
-@@ -386,6 +388,7 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
+@@ -384,6 +386,7 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
  	struct ndis_tcp_lso_info *lso_info;
  	int  hdr_offset;
  	u32 net_trans_info;
@@ -61,7 +63,7 @@ index f13bd56..f048ca9 100644
  
  
  	/* We will atmost need two pages to describe the rndis
-@@ -404,9 +407,8 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
+@@ -402,9 +405,8 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
  	packet = kzalloc(sizeof(struct hv_netvsc_packet) +
  			 (num_data_pgs * sizeof(struct hv_page_buffer)) +
  			 sizeof(struct rndis_message) +
@@ -73,7 +75,7 @@ index f13bd56..f048ca9 100644
  	if (!packet) {
  		/* out of memory, drop packet */
  		netdev_err(net, "unable to allocate hv_netvsc_packet\n");
-@@ -445,6 +447,14 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
+@@ -443,6 +445,14 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
  
  	rndis_msg_size = RNDIS_MESSAGE_SIZE(struct rndis_packet);
  

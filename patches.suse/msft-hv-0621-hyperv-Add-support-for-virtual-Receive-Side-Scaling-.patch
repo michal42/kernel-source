@@ -1,7 +1,8 @@
 From: Haiyang Zhang <haiyangz@microsoft.com>
-Date: Thu, 20 Mar 2014 15:28:41 -0700
-Patch-mainline: submitted (lmkl)
+Date: Mon, 21 Apr 2014 10:20:28 -0700
+Patch-mainline: v3.16-rc1
 Subject: hyperv: Add support for virtual Receive Side Scaling (vRSS)
+Git-commit: 5b54dac856cb5bd6f33f4159012773e4a33704f7
 
 This feature allows multiple channels to be used by each virtual NIC.
 It is available on Hyper-V host 2012 R2.
@@ -11,6 +12,7 @@ an API change.
 
 Signed-off-by: Haiyang Zhang <haiyangz@microsoft.com>
 Reviewed-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: <ohering@suse.de>
 ---
  drivers/net/hyperv/hyperv_net.h   | 110 +++++++++++++++++++++-
@@ -20,10 +22,10 @@ Acked-by: <ohering@suse.de>
  4 files changed, 504 insertions(+), 34 deletions(-)
 
 diff --git a/drivers/net/hyperv/hyperv_net.h b/drivers/net/hyperv/hyperv_net.h
-index b035b69..ad358cf 100644
+index d18f711d..57eb3f9 100644
 --- a/drivers/net/hyperv/hyperv_net.h
 +++ b/drivers/net/hyperv/hyperv_net.h
-@@ -29,6 +29,96 @@
+@@ -28,6 +28,96 @@
  #include <linux/hyperv.h>
  #include <linux/rndis.h>
  
@@ -120,7 +122,7 @@ index b035b69..ad358cf 100644
  /* Fwd declaration */
  struct hv_netvsc_packet;
  struct ndis_tcp_ip_checksum_info;
-@@ -40,6 +130,8 @@ struct xferpage_packet {
+@@ -39,6 +129,8 @@ struct xferpage_packet {
  
  	/* # of netvsc packets this xfer packet contains */
  	u32 count;
@@ -129,7 +131,7 @@ index b035b69..ad358cf 100644
  };
  
  /*
-@@ -55,6 +147,9 @@ struct hv_netvsc_packet {
+@@ -54,6 +146,9 @@ struct hv_netvsc_packet {
  	bool is_data_pkt;
  	u16 vlan_tci;
  
@@ -139,7 +141,7 @@ index b035b69..ad358cf 100644
  	/*
  	 * Valid only for receives when we break a xfer page packet
  	 * into multiple netvsc packets
-@@ -121,6 +216,7 @@ void netvsc_linkstatus_callback(struct hv_device *device_obj,
+@@ -120,6 +215,7 @@ void netvsc_linkstatus_callback(struct hv_device *device_obj,
  int netvsc_recv_callback(struct hv_device *device_obj,
  			struct hv_netvsc_packet *packet,
  			struct ndis_tcp_ip_checksum_info *csum_info);
@@ -147,7 +149,7 @@ index b035b69..ad358cf 100644
  int rndis_filter_open(struct hv_device *dev);
  int rndis_filter_close(struct hv_device *dev);
  int rndis_filter_device_add(struct hv_device *dev,
-@@ -523,6 +619,8 @@ struct nvsp_message {
+@@ -522,6 +618,8 @@ struct nvsp_message {
  
  #define NETVSC_PACKET_SIZE                      2048
  
@@ -156,7 +158,7 @@ index b035b69..ad358cf 100644
  /* Per netvsc channel-specific */
  struct netvsc_device {
  	struct hv_device *dev;
-@@ -556,10 +654,20 @@ struct netvsc_device {
+@@ -555,10 +653,20 @@ struct netvsc_device {
  
  	struct net_device *ndev;
  
@@ -179,10 +181,10 @@ index b035b69..ad358cf 100644
  
  /* NdisInitialize message */
 diff --git a/drivers/net/hyperv/netvsc.c b/drivers/net/hyperv/netvsc.c
-index 356b80a..c237d65 100644
+index f7629ec..e7e77f1 100644
 --- a/drivers/net/hyperv/netvsc.c
 +++ b/drivers/net/hyperv/netvsc.c
-@@ -423,6 +423,9 @@ int netvsc_device_remove(struct hv_device *device)
+@@ -422,6 +422,9 @@ int netvsc_device_remove(struct hv_device *device)
  		kfree(netvsc_packet);
  	}
  
@@ -192,7 +194,7 @@ index 356b80a..c237d65 100644
  	kfree(net_device);
  	return 0;
  }
-@@ -462,7 +465,9 @@ static void netvsc_send_completion(struct netvsc_device *net_device,
+@@ -461,7 +464,9 @@ static void netvsc_send_completion(struct netvsc_device *net_device,
  	    (nvsp_packet->hdr.msg_type ==
  	     NVSP_MSG1_TYPE_SEND_RECV_BUF_COMPLETE) ||
  	    (nvsp_packet->hdr.msg_type ==
@@ -203,7 +205,7 @@ index 356b80a..c237d65 100644
  		/* Copy the response back */
  		memcpy(&net_device->channel_init_pkt, nvsp_packet,
  		       sizeof(struct nvsp_message));
-@@ -470,28 +475,37 @@ static void netvsc_send_completion(struct netvsc_device *net_device,
+@@ -469,28 +474,37 @@ static void netvsc_send_completion(struct netvsc_device *net_device,
  	} else if (nvsp_packet->hdr.msg_type ==
  		   NVSP_MSG1_TYPE_SEND_RNDIS_PKT_COMPLETE) {
  		int num_outstanding_sends;
@@ -247,7 +249,7 @@ index 356b80a..c237d65 100644
  	} else {
  		netdev_err(ndev, "Unknown send completion packet type- "
  			   "%d received!!\n", nvsp_packet->hdr.msg_type);
-@@ -506,6 +520,7 @@ int netvsc_send(struct hv_device *device,
+@@ -505,6 +519,7 @@ int netvsc_send(struct hv_device *device,
  	int ret = 0;
  	struct nvsp_message sendMessage;
  	struct net_device *ndev;
@@ -255,7 +257,7 @@ index 356b80a..c237d65 100644
  	u64 req_id;
  
  	net_device = get_outbound_net_device(device);
-@@ -532,15 +547,20 @@ int netvsc_send(struct hv_device *device,
+@@ -531,15 +546,20 @@ int netvsc_send(struct hv_device *device,
  	else
  		req_id = 0;
  
@@ -278,7 +280,7 @@ index 356b80a..c237d65 100644
  				sizeof(struct nvsp_message),
  				req_id,
  				VM_PKT_DATA_INBAND,
-@@ -549,17 +569,24 @@ int netvsc_send(struct hv_device *device,
+@@ -548,17 +568,24 @@ int netvsc_send(struct hv_device *device,
  
  	if (ret == 0) {
  		atomic_inc(&net_device->num_outstanding_sends);
@@ -310,7 +312,7 @@ index 356b80a..c237d65 100644
  			ret = -ENOSPC;
  		}
  	} else {
-@@ -571,6 +598,7 @@ int netvsc_send(struct hv_device *device,
+@@ -570,6 +597,7 @@ int netvsc_send(struct hv_device *device,
  }
  
  static void netvsc_send_recv_completion(struct hv_device *device,
@@ -318,7 +320,7 @@ index 356b80a..c237d65 100644
  					struct netvsc_device *net_device,
  					u64 transaction_id, u32 status)
  {
-@@ -588,7 +616,7 @@ static void netvsc_send_recv_completion(struct hv_device *device,
+@@ -587,7 +615,7 @@ static void netvsc_send_recv_completion(struct hv_device *device,
  
  retry_send_cmplt:
  	/* Send the completion */
@@ -327,7 +329,7 @@ index 356b80a..c237d65 100644
  			       sizeof(struct nvsp_message), transaction_id,
  			       VM_PKT_COMP, 0);
  	if (ret == 0) {
-@@ -619,6 +647,7 @@ static void netvsc_receive_completion(void *context)
+@@ -618,6 +646,7 @@ static void netvsc_receive_completion(void *context)
  {
  	struct hv_netvsc_packet *packet = context;
  	struct hv_device *device = packet->device;
@@ -335,7 +337,7 @@ index 356b80a..c237d65 100644
  	struct netvsc_device *net_device;
  	u64 transaction_id = 0;
  	bool fsend_receive_comp = false;
-@@ -650,6 +679,7 @@ static void netvsc_receive_completion(void *context)
+@@ -649,6 +678,7 @@ static void netvsc_receive_completion(void *context)
  	 */
  	if (packet->xfer_page_pkt->count == 0) {
  		fsend_receive_comp = true;
@@ -343,7 +345,7 @@ index 356b80a..c237d65 100644
  		transaction_id = packet->completion.recv.recv_completion_tid;
  		status = packet->xfer_page_pkt->status;
  		list_add_tail(&packet->xfer_page_pkt->list_ent,
-@@ -663,12 +693,13 @@ static void netvsc_receive_completion(void *context)
+@@ -662,12 +692,13 @@ static void netvsc_receive_completion(void *context)
  
  	/* Send a receive completion for the xfer page packet */
  	if (fsend_receive_comp)
@@ -359,7 +361,7 @@ index 356b80a..c237d65 100644
  			struct hv_device *device,
  			struct vmpacket_descriptor *packet)
  {
-@@ -749,7 +780,7 @@ static void netvsc_receive(struct netvsc_device *net_device,
+@@ -748,7 +779,7 @@ static void netvsc_receive(struct netvsc_device *net_device,
  		spin_unlock_irqrestore(&net_device->recv_pkt_list_lock,
  				       flags);
  
@@ -368,7 +370,7 @@ index 356b80a..c237d65 100644
  					    vmxferpage_packet->d.trans_id,
  					    NVSP_STAT_FAIL);
  
-@@ -760,6 +791,7 @@ static void netvsc_receive(struct netvsc_device *net_device,
+@@ -759,6 +790,7 @@ static void netvsc_receive(struct netvsc_device *net_device,
  	xferpage_packet = (struct xferpage_packet *)listHead.next;
  	list_del(&xferpage_packet->list_ent);
  	xferpage_packet->status = NVSP_STAT_SUCCESS;
@@ -376,7 +378,7 @@ index 356b80a..c237d65 100644
  
  	/* This is how much we can satisfy */
  	xferpage_packet->count = count - 1;
-@@ -801,10 +833,45 @@ static void netvsc_receive(struct netvsc_device *net_device,
+@@ -800,10 +832,45 @@ static void netvsc_receive(struct netvsc_device *net_device,
  
  }
  
@@ -424,7 +426,7 @@ index 356b80a..c237d65 100644
  	struct netvsc_device *net_device;
  	u32 bytes_recvd;
  	u64 request_id;
-@@ -813,14 +880,19 @@ static void netvsc_channel_cb(void *context)
+@@ -812,14 +879,19 @@ static void netvsc_channel_cb(void *context)
  	int bufferlen = NETVSC_PACKET_SIZE;
  	struct net_device *ndev;
  
@@ -446,7 +448,7 @@ index 356b80a..c237d65 100644
  					   &bytes_recvd, &request_id);
  		if (ret == 0) {
  			if (bytes_recvd > 0) {
-@@ -832,8 +904,12 @@ static void netvsc_channel_cb(void *context)
+@@ -831,8 +903,12 @@ static void netvsc_channel_cb(void *context)
  					break;
  
  				case VM_PKT_DATA_USING_XFER_PAGES:
@@ -461,7 +463,7 @@ index 356b80a..c237d65 100644
  					break;
  
  				default:
-@@ -894,6 +970,8 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
+@@ -893,6 +969,8 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
  		goto cleanup;
  	}
  
@@ -470,7 +472,7 @@ index 356b80a..c237d65 100644
  	/*
  	 * Coming into this function, struct net_device * is
  	 * registered as the driver private data.
-@@ -918,10 +996,12 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
+@@ -917,10 +995,12 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
  	}
  	init_completion(&net_device->channel_init_wait);
  
@@ -484,7 +486,7 @@ index 356b80a..c237d65 100644
  
  	if (ret != 0) {
  		netdev_err(ndev, "unable to open channel: %d\n", ret);
-@@ -931,6 +1011,8 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
+@@ -930,6 +1010,8 @@ int netvsc_device_add(struct hv_device *device, void *additional_info)
  	/* Channel is opened */
  	pr_info("hv_netvsc channel opened successfully\n");
  
@@ -494,10 +496,10 @@ index 356b80a..c237d65 100644
  	ret = netvsc_connect_vsp(device);
  	if (ret != 0) {
 diff --git a/drivers/net/hyperv/netvsc_drv.c b/drivers/net/hyperv/netvsc_drv.c
-index 199a093..3ff87e0 100644
+index 31e55fb..093cf3f 100644
 --- a/drivers/net/hyperv/netvsc_drv.c
 +++ b/drivers/net/hyperv/netvsc_drv.c
-@@ -102,7 +102,7 @@ static int netvsc_open(struct net_device *net)
+@@ -101,7 +101,7 @@ static int netvsc_open(struct net_device *net)
  		return ret;
  	}
  
@@ -506,7 +508,7 @@ index 199a093..3ff87e0 100644
  
  	nvdev = hv_get_drvdata(device_obj);
  	rdev = nvdev->extension;
-@@ -150,6 +150,88 @@ static void *init_ppi_data(struct rndis_message *msg, u32 ppi_size,
+@@ -149,6 +149,88 @@ static void *init_ppi_data(struct rndis_message *msg, u32 ppi_size,
  	return ppi;
  }
  
@@ -595,7 +597,7 @@ index 199a093..3ff87e0 100644
  static void netvsc_xmit_completion(void *context)
  {
  	struct hv_netvsc_packet *packet = (struct hv_netvsc_packet *)context;
-@@ -332,6 +414,8 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
+@@ -333,6 +415,8 @@ static int netvsc_start_xmit(struct sk_buff *skb, struct net_device *net)
  
  	packet->vlan_tci = skb->vlan_tci;
  
@@ -604,7 +606,7 @@ index 199a093..3ff87e0 100644
  	packet->is_data_pkt = true;
  	packet->total_data_buflen = skb->len;
  
-@@ -529,6 +613,10 @@ int netvsc_recv_callback(struct hv_device *device_obj,
+@@ -554,6 +638,10 @@ int netvsc_recv_callback(struct hv_device *device_obj,
  		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
  				       packet->vlan_tci);
  
@@ -615,7 +617,7 @@ index 199a093..3ff87e0 100644
  	net->stats.rx_packets++;
  	net->stats.rx_bytes += packet->total_data_buflen;
  
-@@ -577,7 +665,7 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
+@@ -602,7 +690,7 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
  	hv_set_drvdata(hdev, ndev);
  	device_info.ring_size = ring_size;
  	rndis_filter_device_add(hdev, &device_info);
@@ -624,7 +626,7 @@ index 199a093..3ff87e0 100644
  
  	return 0;
  }
-@@ -623,6 +711,7 @@ static const struct net_device_ops device_ops = {
+@@ -648,6 +736,7 @@ static const struct net_device_ops device_ops = {
  	.ndo_change_mtu =		netvsc_change_mtu,
  	.ndo_validate_addr =		eth_validate_addr,
  	.ndo_set_mac_address =		netvsc_set_mac_addr,
@@ -632,7 +634,7 @@ index 199a093..3ff87e0 100644
  };
  
  /*
-@@ -669,9 +758,11 @@ static int netvsc_probe(struct hv_device *dev,
+@@ -694,9 +783,11 @@ static int netvsc_probe(struct hv_device *dev,
  	struct net_device *net = NULL;
  	struct net_device_context *net_device_ctx;
  	struct netvsc_device_info device_info;
@@ -645,7 +647,7 @@ index 199a093..3ff87e0 100644
  	if (!net)
  		return -ENOMEM;
  
-@@ -704,6 +795,12 @@ static int netvsc_probe(struct hv_device *dev,
+@@ -729,6 +820,12 @@ static int netvsc_probe(struct hv_device *dev,
  	}
  	memcpy(net->dev_addr, device_info.mac_adr, ETH_ALEN);
  
@@ -659,10 +661,10 @@ index 199a093..3ff87e0 100644
  	if (ret != 0) {
  		pr_err("Unable to register netdev.\n");
 diff --git a/drivers/net/hyperv/rndis_filter.c b/drivers/net/hyperv/rndis_filter.c
-index 65bbd9a..bc4fb93 100644
+index 143a98c..d92cfbe 100644
 --- a/drivers/net/hyperv/rndis_filter.c
 +++ b/drivers/net/hyperv/rndis_filter.c
-@@ -32,7 +32,7 @@
+@@ -31,7 +31,7 @@
  #include "hyperv_net.h"
  
  
@@ -671,7 +673,7 @@ index 65bbd9a..bc4fb93 100644
  struct rndis_request {
  	struct list_head list_ent;
  	struct completion  wait_event;
-@@ -95,6 +95,8 @@ static struct rndis_request *get_rndis_request(struct rndis_device *dev,
+@@ -94,6 +94,8 @@ static struct rndis_request *get_rndis_request(struct rndis_device *dev,
  	rndis_msg->ndis_msg_type = msg_type;
  	rndis_msg->msg_len = msg_len;
  
@@ -680,7 +682,7 @@ index 65bbd9a..bc4fb93 100644
  	/*
  	 * Set the request id. This field is always after the rndis header for
  	 * request/response packet types so we just used the SetRequest as a
-@@ -510,6 +512,19 @@ static int rndis_filter_query_device(struct rndis_device *dev, u32 oid,
+@@ -509,6 +511,19 @@ static int rndis_filter_query_device(struct rndis_device *dev, u32 oid,
  	query->info_buflen = 0;
  	query->dev_vc_handle = 0;
  
@@ -700,7 +702,7 @@ index 65bbd9a..bc4fb93 100644
  	ret = rndis_filter_send_request(dev, request);
  	if (ret != 0)
  		goto cleanup;
-@@ -686,6 +701,89 @@ cleanup:
+@@ -695,6 +710,89 @@ cleanup:
  	return ret;
  }
  
@@ -790,7 +792,7 @@ index 65bbd9a..bc4fb93 100644
  static int rndis_filter_query_device_link_status(struct rndis_device *dev)
  {
  	u32 size = sizeof(u32);
-@@ -877,6 +975,28 @@ static int rndis_filter_close_device(struct rndis_device *dev)
+@@ -886,6 +984,28 @@ static int rndis_filter_close_device(struct rndis_device *dev)
  	return ret;
  }
  
@@ -819,7 +821,7 @@ index 65bbd9a..bc4fb93 100644
  int rndis_filter_device_add(struct hv_device *dev,
  				  void *additional_info)
  {
-@@ -885,6 +1005,10 @@ int rndis_filter_device_add(struct hv_device *dev,
+@@ -894,6 +1014,10 @@ int rndis_filter_device_add(struct hv_device *dev,
  	struct rndis_device *rndis_device;
  	struct netvsc_device_info *device_info = additional_info;
  	struct ndis_offload_params offloads;
@@ -830,7 +832,7 @@ index 65bbd9a..bc4fb93 100644
  
  	rndis_device = get_rndis_device();
  	if (!rndis_device)
-@@ -904,6 +1028,7 @@ int rndis_filter_device_add(struct hv_device *dev,
+@@ -913,6 +1037,7 @@ int rndis_filter_device_add(struct hv_device *dev,
  
  	/* Initialize the rndis device */
  	net_device = hv_get_drvdata(dev);
@@ -838,7 +840,7 @@ index 65bbd9a..bc4fb93 100644
  
  	net_device->extension = rndis_device;
  	rndis_device->net_dev = net_device;
-@@ -943,7 +1068,6 @@ int rndis_filter_device_add(struct hv_device *dev,
+@@ -952,7 +1077,6 @@ int rndis_filter_device_add(struct hv_device *dev,
  	if (ret)
  		goto err_dev_remv;
  
@@ -846,7 +848,7 @@ index 65bbd9a..bc4fb93 100644
  	rndis_filter_query_device_link_status(rndis_device);
  
  	device_info->link_state = rndis_device->link_state;
-@@ -952,7 +1076,66 @@ int rndis_filter_device_add(struct hv_device *dev,
+@@ -961,7 +1085,66 @@ int rndis_filter_device_add(struct hv_device *dev,
  		 rndis_device->hw_mac_adr,
  		 device_info->link_state ? "down" : "up");
  

@@ -1,7 +1,8 @@
 From: "K. Y. Srinivasan" <kys@microsoft.com>
 Date: Tue, 8 Apr 2014 18:45:54 -0700
-Patch-mainline: submitted (lmkl)
+Patch-mainline: v3.16-rc1
 Subject: Drivers: hv: vmbus: Implement per-CPU mapping of relid to channel
+Git-commit: 3a28fa35d6658703cd26f9c16aaea0eae06afd40
 
 Currently the mapping of the relID to channel is done under the protection of a
 single spin lock. Starting with ws2012, each channel is bound to a specific VCPU
@@ -10,6 +11,7 @@ per-cpu state for mapping relId to the channel.
 
 Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
 Reviewed-by: Haiyang Zhang <haiyangz@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Acked-by: <ohering@suse.de>
 ---
  drivers/hv/channel_mgmt.c | 41 ++++++++++++++++++++++++++++++++++++++++-
@@ -155,10 +157,10 @@ index df2363e..7f10c15 100644
  	if (!channel) {
  		pr_err("channel not found for relid - %u\n", relid);
 diff --git a/drivers/hv/hv.c b/drivers/hv/hv.c
-index e062366..23ea3f1 100644
+index bcb4950..edfc848 100644
 --- a/drivers/hv/hv.c
 +++ b/drivers/hv/hv.c
-@@ -385,6 +385,8 @@ void hv_synic_init(void *arg)
+@@ -383,6 +383,8 @@ void hv_synic_init(void *arg)
  	 */
  	rdmsrl(HV_X64_MSR_VP_INDEX, vp_index);
  	hv_context.vp_index[cpu] = (u32)vp_index;
@@ -168,7 +170,7 @@ index e062366..23ea3f1 100644
  }
  
 diff --git a/drivers/hv/hyperv_vmbus.h b/drivers/hv/hyperv_vmbus.h
-index 1544609..62faf63 100644
+index 860134d..18d1a84 100644
 --- a/drivers/hv/hyperv_vmbus.h
 +++ b/drivers/hv/hyperv_vmbus.h
 @@ -510,6 +510,11 @@ struct hv_context {
@@ -184,10 +186,10 @@ index 1544609..62faf63 100644
  
  extern struct hv_context hv_context;
 diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
-index 217ae93..61c7d15 100644
+index a274e08..08cfaff 100644
 --- a/include/linux/hyperv.h
 +++ b/include/linux/hyperv.h
-@@ -1097,6 +1097,11 @@ struct vmbus_channel {
+@@ -734,6 +734,11 @@ struct vmbus_channel {
  	 * Support per-channel state for use by vmbus drivers.
  	 */
  	void *per_channel_state;
