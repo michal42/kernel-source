@@ -1,0 +1,79 @@
+From 49c30ac65264b4585c78080350a3bae4d93bf79c Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Tue, 28 Jan 2014 18:29:24 +0100
+Subject: [PATCH 05/11] fanotify: Fix use after free in mask checking
+Git-commit: 13116dfd13c8c9d60ea04ece13419af2de8e2e37
+Patch-mainline: v3.14-rc1
+References: bnc#865838
+
+We cannot use the event structure returned from
+fsnotify_add_notify_event() because that event can be freed by the time
+that function returns. Use the mask argument passed into the event
+handler directly instead. This also fixes a possible problem when we
+could unnecessarily wait for permission response for a normal fanotify
+event which got merged with a permission event.
+
+We also disallow merging of permission event with any other event so
+that we know the permission event which we just created is the one on
+which we should wait for permission response.
+
+Reported-and-tested-by: Jiri Kosina <jkosina@suse.cz>
+Reported-and-tested-by: Dave Jones <davej@fedoraproject.org>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/notify/fanotify/fanotify.c | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/fs/notify/fanotify/fanotify.c b/fs/notify/fanotify/fanotify.c
+index 58772623f02a..cc78e2fbc8e4 100644
+--- a/fs/notify/fanotify/fanotify.c
++++ b/fs/notify/fanotify/fanotify.c
+@@ -16,12 +16,6 @@ static bool should_merge(struct fsnotify_event *old_fsn,
+ {
+ 	struct fanotify_event_info *old, *new;
+ 
+-#ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+-	/* dont merge two permission events */
+-	if ((old_fsn->mask & FAN_ALL_PERM_EVENTS) &&
+-	    (new_fsn->mask & FAN_ALL_PERM_EVENTS))
+-		return false;
+-#endif
+ 	pr_debug("%s: old=%p new=%p\n", __func__, old_fsn, new_fsn);
+ 	old = FANOTIFY_E(old_fsn);
+ 	new = FANOTIFY_E(new_fsn);
+@@ -42,6 +36,16 @@ static struct fsnotify_event *fanotify_merge(struct list_head *list,
+ 
+ 	pr_debug("%s: list=%p event=%p\n", __func__, list, event);
+ 
++#ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
++	/*
++	 * Don't merge a permission event with any other event so that we know
++	 * the event structure we have created in fanotify_handle_event() is the
++	 * one we should check for permission response.
++	 */
++	if (event->mask & FAN_ALL_PERM_EVENTS)
++		return NULL;
++#endif
++
+ 	list_for_each_entry_reverse(test_event, list, list) {
+ 		if (should_merge(test_event, event)) {
+ 			do_merge = true;
+@@ -195,13 +199,10 @@ static int fanotify_handle_event(struct fsnotify_group *group,
+ 		fsnotify_destroy_event(group, fsn_event);
+ 		if (IS_ERR(notify_fsn_event))
+ 			return PTR_ERR(notify_fsn_event);
+-		/* We need to ask about a different events after a merge... */
+-		event = FANOTIFY_E(notify_fsn_event);
+-		fsn_event = notify_fsn_event;
+ 	}
+ 
+ #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+-	if (fsn_event->mask & FAN_ALL_PERM_EVENTS)
++	if (mask & FAN_ALL_PERM_EVENTS)
+ 		ret = fanotify_get_response_from_access(group, event);
+ #endif
+ 	return ret;
+-- 
+1.8.1.4
+
