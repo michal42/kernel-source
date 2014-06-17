@@ -1,0 +1,87 @@
+From 30314b571a900aaec73f5b9875da2ff1e8d20d7f Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Tue, 28 Jan 2014 21:38:06 +0100
+Subject: [PATCH 07/11] fanotify: Fix use after free for permission events
+Git-commit: 85816794240b9659e66e4d9b0df7c6e814e5f603
+Patch-mainline: v3.14-rc1
+References: bnc#865838
+
+Currently struct fanotify_event_info has been destroyed immediately
+after reporting its contents to userspace. However that is wrong for
+permission events because those need to stay around until userspace
+provides response which is filled back in fanotify_event_info. So change
+to code to free permission events only after we have got the response
+from userspace.
+
+Reported-and-tested-by: Jiri Kosina <jkosina@suse.cz>
+Reported-and-tested-by: Dave Jones <davej@fedoraproject.org>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/notify/fanotify/fanotify.c      | 5 ++++-
+ fs/notify/fanotify/fanotify.h      | 7 +++++++
+ fs/notify/fanotify/fanotify_user.c | 7 ++++++-
+ 3 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/fs/notify/fanotify/fanotify.c b/fs/notify/fanotify/fanotify.c
+index c7e5e8f54748..0e792f5e3147 100644
+--- a/fs/notify/fanotify/fanotify.c
++++ b/fs/notify/fanotify/fanotify.c
+@@ -192,14 +192,17 @@ static int fanotify_handle_event(struct fsnotify_group *group,
+ 
+ 	ret = fsnotify_add_notify_event(group, fsn_event, fanotify_merge);
+ 	if (ret) {
++		BUG_ON(mask & FAN_ALL_PERM_EVENTS);
+ 		/* Our event wasn't used in the end. Free it. */
+ 		fsnotify_destroy_event(group, fsn_event);
+ 		ret = 0;
+ 	}
+ 
+ #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+-	if (mask & FAN_ALL_PERM_EVENTS)
++	if (mask & FAN_ALL_PERM_EVENTS) {
+ 		ret = fanotify_get_response_from_access(group, event);
++		fsnotify_destroy_event(group, fsn_event);
++	}
+ #endif
+ 	return ret;
+ }
+diff --git a/fs/notify/fanotify/fanotify.h b/fs/notify/fanotify/fanotify.h
+index 0e90174a116a..32a2f034fb94 100644
+--- a/fs/notify/fanotify/fanotify.h
++++ b/fs/notify/fanotify/fanotify.h
+@@ -4,6 +4,13 @@
+ 
+ extern struct kmem_cache *fanotify_event_cachep;
+ 
++/*
++ * Lifetime of the structure differs for normal and permission events. In both
++ * cases the structure is allocated in fanotify_handle_event(). For normal
++ * events the structure is freed immediately after reporting it to userspace.
++ * For permission events we free it only after we receive response from
++ * userspace.
++ */
+ struct fanotify_event_info {
+ 	struct fsnotify_event fse;
+ 	/*
+diff --git a/fs/notify/fanotify/fanotify_user.c b/fs/notify/fanotify/fanotify_user.c
+index 57d7c083cb4b..3900255310b9 100644
+--- a/fs/notify/fanotify/fanotify_user.c
++++ b/fs/notify/fanotify/fanotify_user.c
+@@ -319,7 +319,12 @@ static ssize_t fanotify_read(struct file *file, char __user *buf,
+ 			if (IS_ERR(kevent))
+ 				break;
+ 			ret = copy_event_to_user(group, kevent, buf);
+-			fsnotify_destroy_event(group, kevent);
++			/*
++			 * Permission events get destroyed after we
++			 * receive response
++			 */
++			if (!(kevent->mask & FAN_ALL_PERM_EVENTS))
++				fsnotify_destroy_event(group, kevent);
+ 			if (ret < 0)
+ 				break;
+ 			buf += ret;
+-- 
+1.8.1.4
+
