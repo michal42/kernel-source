@@ -1,0 +1,95 @@
+From 2b1eebad2ae82a6f49ce8d0229b80fee517f82d9 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Wed, 7 May 2014 08:05:45 +1000
+Subject: [PATCH] xfs: truncate_setsize should be outside transactions
+Git-commit: 49abc3a8f84146f74daadbaa7cde7d34f2bb40a8
+Patch-mainline: v3.16-rc1
+
+truncate_setsize() removes pages from the page cache, and hence
+requires page locks to be held. It is not valid to lock a page cache
+page inside a transaction context as we can hold page locks when we
+we reserve space for a transaction. If we do, then we expose an ABBA
+deadlock between log space reservation and page locks.
+
+That is, both the write path and writeback lock a page, then start a
+transaction for block allocation, which means they can block waiting
+for a log reservation with the page lock held. If we hold a log
+reservation and then do something that locks a page (e.g.
+truncate_setsize in xfs_setattr_size) then that page lock can block
+on the page locked and waiting for a log reservation. If the
+transaction that is waiting for the page lock is the only active
+transaction in the system that can free log space via a commit,
+then writeback will never make progress and so log space will never
+free up.
+
+This issue with xfs_setattr_size() was introduced back in 2010 by
+commit fa9b227 ("xfs: new truncate sequence") which moved the page
+cache truncate from outside the transaction context (what was
+xfs_itruncate_data()) to inside the transaction context as a call to
+truncate_setsize().
+
+The reason truncate_setsize() was located where in this place was
+that we can't shouldn't change the file size until after we are in
+the transaction context and the operation will either succeed or
+shut down the filesystem on failure. However, block_truncate_page()
+already modifies the file contents before we enter the transaction
+context, so we can't really fulfill this guarantee in any way. Hence
+we may as well ensure that on success or failure, the in-memory
+inode and data is truncated away and that the application cleans up
+the mess appropriately.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_iops.c |   20 ++++++++++++++++----
+ 1 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/fs/xfs/xfs_iops.c b/fs/xfs/xfs_iops.c
+index 174351e..0f8ab3d 100644
+--- a/fs/xfs/xfs_iops.c
++++ b/fs/xfs/xfs_iops.c
+@@ -842,22 +842,34 @@ xfs_setattr_size(
+ 	 */
+ 	inode_dio_wait(inode);
+ 
++	/*
++	 * Do all the page cache truncate work outside the transaction context
++	 * as the "lock" order is page lock->log space reservation.  i.e.
++	 * locking pages inside the transaction can ABBA deadlock with
++	 * writeback. We have to do the VFS inode size update before we truncate
++	 * the pagecache, however, to avoid racing with page faults beyond the
++	 * new EOF they are not serialised against truncate operations except by
++	 * page locks and size updates.
++	 *
++	 * Hence we are in a situation where a truncate can fail with ENOMEM
++	 * from xfs_trans_reserve(), but having already truncated the in-memory
++	 * version of the file (i.e. made user visible changes). There's not
++	 * much we can do about this, except to hope that the caller sees ENOMEM
++	 * and retries the truncate operation.
++	 */
+ 	error = -block_truncate_page(inode->i_mapping, newsize, xfs_get_blocks);
+ 	if (error)
+ 		goto out_unlock;
++	truncate_setsize(inode, newsize);
+ 
+ 	tp = xfs_trans_alloc(mp, XFS_TRANS_SETATTR_SIZE);
+ 	error = xfs_trans_reserve(tp, &M_RES(mp)->tr_itruncate, 0, 0);
+ 	if (error)
+ 		goto out_trans_cancel;
+ 
+-	truncate_setsize(inode, newsize);
+-
+ 	commit_flags = XFS_TRANS_RELEASE_LOG_RES;
+ 	lock_flags |= XFS_ILOCK_EXCL;
+-
+ 	xfs_ilock(ip, XFS_ILOCK_EXCL);
+-
+ 	xfs_trans_ijoin(tp, ip, 0);
+ 
+ 	/*
+-- 
+1.6.0.2
+
