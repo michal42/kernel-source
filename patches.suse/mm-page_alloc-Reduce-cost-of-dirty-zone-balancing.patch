@@ -1,0 +1,151 @@
+From 5c296f61160915a0dee385128da631419df0267c Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Mon, 16 Jun 2014 11:50:29 +0100
+Subject: [PATCH] mm: page_alloc: Reduce cost of dirty zone balancing
+
+References: VM/FS Performance
+Patch-mainline: No (Expected 3.17)
+
+When allocating a page cache page for writing the allocator makes an attempt
+to proportionally distribute dirty pages between populated zones. The call
+to zone_dirty_ok is more expensive than expected because of the number of
+vmstats it examines. This patch caches some of that information to reduce
+the cost. It means the proportional allocation is based on stale data but
+the heuristic should not need perfectly accurate information.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/mmzone.h    |  2 ++
+ include/linux/writeback.h |  1 +
+ mm/internal.h             |  1 +
+ mm/page-writeback.c       | 15 +++++++++------
+ mm/page_alloc.c           | 15 ++++++++++++---
+ 5 files changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 699fb58..6aec04c 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -391,6 +391,8 @@ struct zone {
+ 	int			compact_order_failed;
+ #endif
+ 
++	unsigned long		dirty_limit_cached;
++
+ 	ZONE_PADDING(_pad1_)
+ 
+ 	/* Fields commonly accessed by the page reclaim scanner */
+diff --git a/include/linux/writeback.h b/include/linux/writeback.h
+index 021b8a3..b2d7fff 100644
+--- a/include/linux/writeback.h
++++ b/include/linux/writeback.h
+@@ -121,6 +121,7 @@ static inline void laptop_sync_completion(void) { }
+ #endif
+ void throttle_vm_writeout(gfp_t gfp_mask);
+ bool zone_dirty_ok(struct zone *zone);
++unsigned long zone_dirty_limit(struct zone *zone);
+ 
+ extern unsigned long global_dirty_limit;
+ 
+diff --git a/mm/internal.h b/mm/internal.h
+index c8415af..1940665 100644
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -375,5 +375,6 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
+ #define ALLOC_CPUSET		0x40 /* check for correct cpuset */
+ #define ALLOC_CMA		0x80 /* allow allocations from CMA areas */
+ #define ALLOC_FAIR		0x100 /* fair zone allocation */
++#define ALLOC_DIRTY		0x200 /* spread GFP_WRITE allocations */
+ 
+ #endif	/* __MM_INTERNAL_H */
+diff --git a/mm/page-writeback.c b/mm/page-writeback.c
+index 8f6daa6..b10955e 100644
+--- a/mm/page-writeback.c
++++ b/mm/page-writeback.c
+@@ -316,10 +316,9 @@ void global_dirty_limits(unsigned long *pbackground, unsigned long *pdirty)
+  * Returns the maximum number of dirty pages allowed in a zone, based
+  * on the zone's dirtyable memory.
+  */
+-static unsigned long zone_dirty_limit(struct zone *zone)
++unsigned long zone_dirty_limit(struct zone *zone)
+ {
+ 	unsigned long zone_memory = zone_dirtyable_memory(zone);
+-	struct task_struct *tsk = current;
+ 	unsigned long dirty;
+ 
+ 	if (vm_dirty_bytes)
+@@ -328,9 +327,6 @@ static unsigned long zone_dirty_limit(struct zone *zone)
+ 	else
+ 		dirty = vm_dirty_ratio * zone_memory / 100;
+ 
+-	if (tsk->flags & PF_LESS_THROTTLE || rt_task(tsk))
+-		dirty += dirty / 4;
+-
+ 	return dirty;
+ }
+ 
+@@ -343,7 +339,14 @@ static unsigned long zone_dirty_limit(struct zone *zone)
+  */
+ bool zone_dirty_ok(struct zone *zone)
+ {
+-	unsigned long limit = zone_dirty_limit(zone);
++	unsigned long limit = zone->dirty_limit_cached;
++	struct task_struct *tsk = current;
++
++	if (tsk->flags & PF_LESS_THROTTLE || rt_task(tsk)) {
++		limit = zone_dirty_limit(zone);
++		zone->dirty_limit_cached = limit;
++		limit += limit / 4;
++	}
+ 
+ 	return zone_page_state(zone, NR_FILE_DIRTY) +
+ 	       zone_page_state(zone, NR_UNSTABLE_NFS) +
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 247062f..ac4daa2 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1927,9 +1927,8 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
+ 	nodemask_t *allowednodes = NULL;/* zonelist_cache approximation */
+ 	int zlc_active = 0;		/* set if using zonelist_cache */
+ 	int did_zlc_setup = 0;		/* just call zlc_setup() one time */
+-	bool consider_zone_dirty = (alloc_flags & ALLOC_WMARK_LOW) &&
+-				(gfp_mask & __GFP_WRITE);
+ 	int nr_fair_skipped = 0, nr_fair_eligible = 0, nr_fail_watermark = 0;
++	int nr_fail_dirty = 0;
+ 	bool zonelist_rescan;
+ 
+ zonelist_scan:
+@@ -1991,8 +1990,11 @@ zonelist_scan:
+ 		 * will require awareness of zones in the
+ 		 * dirty-throttling and the flusher threads.
+ 		 */
+-		if (consider_zone_dirty && !zone_dirty_ok(zone))
++		if ((alloc_flags & ALLOC_DIRTY) && !zone_dirty_ok(zone)) {
++			nr_fail_dirty++;
++			zone->dirty_limit_cached = zone_dirty_limit(zone);
+ 			continue;
++		}
+ 
+ 		mark = zone->watermark[alloc_flags & ALLOC_WMARK_MASK];
+ 		if (!zone_watermark_ok(zone, order, mark,
+@@ -2106,6 +2108,11 @@ this_zone_full:
+ 		}
+ 	}
+ 
++	if ((alloc_flags & ALLOC_DIRTY) && nr_fail_dirty) {
++		alloc_flags &= ~ALLOC_DIRTY;
++		zonelist_rescan = true;
++	}
++
+ 	if (zonelist_rescan)
+ 		goto zonelist_scan;
+ 
+@@ -2765,6 +2772,8 @@ retry_cpuset:
+ 
+ 	if (preferred_zoneref->fair_enabled)
+ 		alloc_flags |= ALLOC_FAIR;
++	if (gfp_mask & __GFP_WRITE)
++		alloc_flags |= ALLOC_DIRTY;
+ #ifdef CONFIG_CMA
+ 	if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+ 		alloc_flags |= ALLOC_CMA;
