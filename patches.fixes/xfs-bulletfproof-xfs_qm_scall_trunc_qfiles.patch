@@ -1,0 +1,47 @@
+From 9973a125eb3a31d435fd472b5a493b8c02433253 Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 5 May 2014 17:27:06 +1000
+Subject: [PATCH] xfs: bulletfproof xfs_qm_scall_trunc_qfiles()
+Git-commit: f58522c5a47a1862c6b3fad97ea9285c5d68199d
+Patch-mainline: v3.16-rc1
+
+Coverity noticed that if we sent junk into
+xfs_qm_scall_trunc_qfiles(), we could get back an
+uninitialized error value.  So sanitize the flags we
+will accept, and initialize error anyway for good measure.
+
+(This bug may have been introduced via c61a9e39).
+
+Should resolve Coverity CID 1163872.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Jie Liu <jeff.liu@oracle.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_qm_syscalls.c |    5 +++--
+ 1 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/fs/xfs/xfs_qm_syscalls.c b/fs/xfs/xfs_qm_syscalls.c
+index a492150..0bf43ab 100644
+--- a/fs/xfs/xfs_qm_syscalls.c
++++ b/fs/xfs/xfs_qm_syscalls.c
+@@ -284,9 +284,10 @@ xfs_qm_scall_trunc_qfiles(
+ 	xfs_mount_t	*mp,
+ 	uint		flags)
+ {
+-	int		error;
++	int		error = EINVAL;
+ 
+-	if (!xfs_sb_version_hasquota(&mp->m_sb) || flags == 0) {
++	if (!xfs_sb_version_hasquota(&mp->m_sb) || flags == 0 ||
++	    (flags & ~XFS_DQ_ALLTYPES)) {
+ 		xfs_debug(mp, "%s: flags=%x m_qflags=%x",
+ 			__func__, flags, mp->m_qflags);
+ 		return XFS_ERROR(EINVAL);
+-- 
+1.6.0.2
+
