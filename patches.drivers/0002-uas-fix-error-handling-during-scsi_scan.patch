@@ -1,0 +1,48 @@
+From 8bb8cac19352ccfe761891867764376a22006cbd Mon Sep 17 00:00:00 2001
+From: Oliver Neukum <oneukum@suse.de>
+Date: Fri, 28 Mar 2014 11:29:25 +0100
+Subject: [PATCH 2/3] uas: fix error handling during scsi_scan()
+References: FATE#315595
+Git-Commit: c637f1fa7b0452b71eebd35d00906d371c04714e
+Patch-Mainline: v3.15
+
+intfdata is set only after scsi_scan(). uas_pre_reset() however
+needs intfdata to be valid and will follow the NULL pointer
+killing khubd. intfdata must be preemptively set before the
+host is registered and undone in the error case.
+
+Signed-off-by: Oliver Neukum <oliver@neukum.org>
+Reviewed-by: Hans de Goede <hdegoede@redhat.com>
+Acked-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/storage/uas.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index 8f42226..fcab9b7 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -1096,16 +1096,17 @@ static int uas_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ 	if (result)
+ 		goto free_streams;
+ 
++	usb_set_intfdata(intf, shost);
+ 	result = scsi_add_host(shost, &intf->dev);
+ 	if (result)
+ 		goto free_streams;
+ 
+ 	scsi_scan_host(shost);
+-	usb_set_intfdata(intf, shost);
+ 	return result;
+ 
+ free_streams:
+ 	uas_free_streams(devinfo);
++	usb_set_intfdata(intf, NULL);
+ set_alt0:
+ 	usb_set_interface(udev, intf->altsetting[0].desc.bInterfaceNumber, 0);
+ 	if (shost)
+-- 
+1.8.4.5
+

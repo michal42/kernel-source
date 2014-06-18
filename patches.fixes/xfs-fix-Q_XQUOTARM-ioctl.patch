@@ -1,0 +1,137 @@
+From fe6b09e2ceee15394aa160266373f62b65efee56 Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@sandeen.net>
+Date: Mon, 5 May 2014 17:25:50 +1000
+Subject: [PATCH] xfs: fix Q_XQUOTARM ioctl
+Git-commit: 9da93f9b7cdf8ab28da6b364cdc1fafc8670b4dc
+Patch-mainline: v3.16-rc1
+
+The Q_XQUOTARM quotactl was not working properly, because
+we weren't passing around proper flags.  The xfs_fs_set_xstate()
+ioctl handler used the same flags for Q_XQUOTAON/OFF as
+well as for Q_XQUOTARM, but Q_XQUOTAON/OFF look for
+XFS_UQUOTA_ACCT, XFS_UQUOTA_ENFD, XFS_GQUOTA_ACCT etc,
+i.e. quota type + state, while Q_XQUOTARM looks only for
+the type of quota, i.e. XFS_DQ_USER, XFS_DQ_GROUP etc.
+
+Unfortunately these flag spaces overlap a bit, so we
+got semi-random results for Q_XQUOTARM; i.e. the value
+for XFS_DQ_USER == XFS_UQUOTA_ACCT, etc.  yeargh.
+
+Add a new quotactl op vector specifically for the QUOTARM
+operation, since it operates with a different flag space.
+
+This has been broken more or less forever, AFAICT.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Acked-by: Jan Kara <jack@suse.cz>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/quota/quota.c      |   14 +++++++++++++-
+ fs/xfs/xfs_quotaops.c |   29 +++++++++++++++++++++++++----
+ include/linux/quota.h |    1 +
+ 3 files changed, 39 insertions(+), 5 deletions(-)
+
+diff --git a/fs/quota/quota.c b/fs/quota/quota.c
+index dea86e8..ab6f362 100644
+--- a/fs/quota/quota.c
++++ b/fs/quota/quota.c
+@@ -277,6 +277,17 @@ static int quota_getxquota(struct super_block *sb, int type, qid_t id,
+ 	return ret;
+ }
+ 
++static int quota_rmxquota(struct super_block *sb, void __user *addr)
++{
++	__u32 flags;
++
++	if (copy_from_user(&flags, addr, sizeof(flags)))
++		return -EFAULT;
++	if (!sb->s_qcop->rm_xquota)
++		return -ENOSYS;
++	return sb->s_qcop->rm_xquota(sb, flags);
++}
++
+ /* Copy parameters and call proper function */
+ static int do_quotactl(struct super_block *sb, int type, int cmd, qid_t id,
+ 		       void __user *addr, struct path *path)
+@@ -315,8 +326,9 @@ static int do_quotactl(struct super_block *sb, int type, int cmd, qid_t id,
+ 		return sb->s_qcop->quota_sync(sb, type);
+ 	case Q_XQUOTAON:
+ 	case Q_XQUOTAOFF:
+-	case Q_XQUOTARM:
+ 		return quota_setxstate(sb, cmd, addr);
++	case Q_XQUOTARM:
++		return quota_rmxquota(sb, addr);
+ 	case Q_XGETQSTAT:
+ 		return quota_getxstate(sb, addr);
+ 	case Q_XGETQSTATV:
+diff --git a/fs/xfs/xfs_quotaops.c b/fs/xfs/xfs_quotaops.c
+index 1326d81..6dcb020 100644
+--- a/fs/xfs/xfs_quotaops.c
++++ b/fs/xfs/xfs_quotaops.c
+@@ -101,16 +101,36 @@ xfs_fs_set_xstate(
+ 		if (!XFS_IS_QUOTA_ON(mp))
+ 			return -EINVAL;
+ 		return -xfs_qm_scall_quotaoff(mp, flags);
+-	case Q_XQUOTARM:
+-		if (XFS_IS_QUOTA_ON(mp))
+-			return -EINVAL;
+-		return -xfs_qm_scall_trunc_qfiles(mp, flags);
+ 	}
+ 
+ 	return -EINVAL;
+ }
+ 
+ STATIC int
++xfs_fs_rm_xquota(
++	struct super_block	*sb,
++	unsigned int		uflags)
++{
++	struct xfs_mount	*mp = XFS_M(sb);
++	unsigned int		flags = 0;
++	
++	if (sb->s_flags & MS_RDONLY)
++		return -EROFS;
++
++	if (XFS_IS_QUOTA_ON(mp))
++		return -EINVAL;
++
++	if (uflags & FS_USER_QUOTA)
++		flags |= XFS_DQ_USER;
++	if (uflags & FS_GROUP_QUOTA)
++		flags |= XFS_DQ_GROUP;
++	if (uflags & FS_USER_QUOTA)
++		flags |= XFS_DQ_PROJ;
++
++	return -xfs_qm_scall_trunc_qfiles(mp, flags);
++}	
++
++STATIC int
+ xfs_fs_get_dqblk(
+ 	struct super_block	*sb,
+ 	struct kqid		qid,
+@@ -150,6 +170,7 @@ const struct quotactl_ops xfs_quotactl_operations = {
+ 	.get_xstatev		= xfs_fs_get_xstatev,
+ 	.get_xstate		= xfs_fs_get_xstate,
+ 	.set_xstate		= xfs_fs_set_xstate,
++	.rm_xquota		= xfs_fs_rm_xquota,
+ 	.get_dqblk		= xfs_fs_get_dqblk,
+ 	.set_dqblk		= xfs_fs_set_dqblk,
+ };
+diff --git a/include/linux/quota.h b/include/linux/quota.h
+index cc7494a..0f3c5d3 100644
+--- a/include/linux/quota.h
++++ b/include/linux/quota.h
+@@ -329,6 +329,7 @@ struct quotactl_ops {
+ 	int (*get_xstate)(struct super_block *, struct fs_quota_stat *);
+ 	int (*set_xstate)(struct super_block *, unsigned int, int);
+ 	int (*get_xstatev)(struct super_block *, struct fs_quota_statv *);
++	int (*rm_xquota)(struct super_block *, unsigned int);
+ };
+ 
+ struct quota_format_type {
+-- 
+1.6.0.2
+
