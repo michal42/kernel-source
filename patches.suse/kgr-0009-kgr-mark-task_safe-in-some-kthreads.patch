@@ -4,9 +4,25 @@ Subject: kgr: mark task_safe in some kthreads
 Patch-mainline: submitted for review
 References: fate#313296
 
-Some threads do not use kthread_should_stop. Before we enable a
-kthread support in kgr, we must make sure all those mark themselves
-safe explicitly.
+Before we enable a kthread support in kGraft, we must make sure all
+kthreads mark themselves as kGraft-safe at some point explicitly.
+
+We do this by injecting kgr_task_safe to the freezer test. There, we
+assume that kthreads are in some predefined state and can expect
+something bad to happen. Hence we switch the kGraft worlds there from
+the old one to the new one. The optimal solution would be to convert
+most of kthreads (that need not be kthreads actually) to workqeues as
+suggested by Tejun. This is an upcoming work that will appear next.
+But until we get there, we use freezer for kGraft that way as is
+presented here.
+
+Note that there are also some kthreads that do not utilize freezer, so
+we use kgr_task_safe in them explicitly. This happens at locations
+that appear to be safe for the kthreads to switch the worlds.
+
+The end result after we migrate kthreads (that need not be kthreads)
+to workqueues is: have only kthreads that contain kgr_task_safe
+explicitly (or using some helper) and nothing else.
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Acked-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org> [devtmpfs]
@@ -18,15 +34,21 @@ Cc: "Theodore Ts'o" <tytso@mit.edu>
 Cc: Dipankar Sarma <dipankar@in.ibm.com>
 Cc: Tejun Heo <tj@kernel.org>
 ---
- drivers/base/devtmpfs.c |    1 +
- fs/jbd2/journal.c       |    2 ++
- fs/notify/mark.c        |    5 ++++-
- kernel/hung_task.c      |    5 ++++-
- kernel/kthread.c        |    3 +++
- kernel/rcutree.c        |    6 ++++--
- kernel/rcutree_plugin.h |    9 +++++++--
- kernel/workqueue.c      |    1 +
- 8 files changed, 26 insertions(+), 6 deletions(-)
+ drivers/base/devtmpfs.c     |    1 +
+ drivers/scsi/scsi_error.c   |    2 ++
+ drivers/usb/core/hub.c      |    4 ++--
+ fs/jbd2/journal.c           |    2 ++
+ fs/notify/mark.c            |    5 ++++-
+ include/linux/freezer.h     |    2 ++
+ kernel/hung_task.c          |    5 ++++-
+ kernel/kthread.c            |    3 +++
+ kernel/rcutree.c            |    6 ++++--
+ kernel/rcutree_plugin.h     |   10 ++++++++--
+ kernel/smpboot.c            |    2 ++
+ kernel/workqueue.c          |    3 +++
+ mm/huge_memory.c            |    1 +
+ net/bluetooth/rfcomm/core.c |    2 ++
+ 14 files changed, 40 insertions(+), 8 deletions(-)
 
 --- a/drivers/base/devtmpfs.c
 +++ b/drivers/base/devtmpfs.c
@@ -38,6 +60,31 @@ Cc: Tejun Heo <tj@kernel.org>
  		spin_lock(&req_lock);
  		while (requests) {
  			struct req *req = requests;
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -1905,6 +1905,8 @@ int scsi_error_handler(void *data)
+ 	 * disables signal delivery for the created thread.
+ 	 */
+ 	while (!kthread_should_stop()) {
++		kgr_task_safe(current);
++
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		if ((shost->host_failed == 0 && shost->host_eh_scheduled == 0) ||
+ 		    shost->host_failed != shost->host_busy) {
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -4886,9 +4886,9 @@ static int hub_thread(void *__unused)
+ 
+ 	do {
+ 		hub_events();
+-		wait_event_freezable(khubd_wait,
++		wait_event_freezable(khubd_wait, ({ kgr_task_safe(current);
+ 				!list_empty(&hub_event_list) ||
+-				kthread_should_stop());
++				kthread_should_stop(); }));
+ 	} while (!kthread_should_stop() || !list_empty(&hub_event_list));
+ 
+ 	pr_debug("%s: khubd exiting\n", usbcore_name);
 --- a/fs/jbd2/journal.c
 +++ b/fs/jbd2/journal.c
 @@ -43,6 +43,7 @@
@@ -77,6 +124,17 @@ Cc: Tejun Heo <tj@kernel.org>
  	}
  
  	return 0;
+--- a/include/linux/freezer.h
++++ b/include/linux/freezer.h
+@@ -61,6 +61,8 @@ static inline bool try_to_freeze_unsafe(
+ 
+ static inline bool try_to_freeze(void)
+ {
++	kgr_task_safe(current);
++
+ 	if (!(current->flags & PF_NOFREEZE))
+ 		debug_check_no_locks_held();
+ 	return try_to_freeze_unsafe();
 --- a/kernel/hung_task.c
 +++ b/kernel/hung_task.c
 @@ -14,6 +14,7 @@
@@ -101,15 +159,15 @@ Cc: Tejun Heo <tj@kernel.org>
  	}
 --- a/kernel/kthread.c
 +++ b/kernel/kthread.c
-@@ -78,6 +78,8 @@ static struct kthread *to_live_kthread(s
-  */
- bool kthread_should_stop(void)
+@@ -111,6 +111,8 @@ bool kthread_freezable_should_stop(bool
  {
+ 	bool frozen = false;
+ 
 +	kgr_task_safe(current);
 +
- 	return test_bit(KTHREAD_SHOULD_STOP, &to_kthread(current)->flags);
- }
- EXPORT_SYMBOL(kthread_should_stop);
+ 	might_sleep();
+ 
+ 	if (unlikely(freezing(current)))
 @@ -479,6 +481,7 @@ int kthreadd(void *unused)
  		if (list_empty(&kthread_create_list))
  			schedule();
@@ -161,11 +219,12 @@ Cc: Tejun Heo <tj@kernel.org>
  		trace_rcu_utilization(TPS("Start boost kthread@rcu_wait"));
  		rnp->boost_kthread_status = RCU_KTHREAD_RUNNING;
  		more2boost = rcu_boost(rnp);
-@@ -2236,9 +2238,12 @@ static int rcu_nocb_kthread(void *arg)
+@@ -2236,9 +2238,13 @@ static int rcu_nocb_kthread(void *arg)
  
  	/* Each pass through this loop invokes one batch of callbacks */
  	for (;;) {
 +		kgr_task_safe(current);
++
  		/* If not polling, wait for next batch of callbacks. */
  		if (!rcu_nocb_poll)
 -			wait_event_interruptible(rdp->nocb_wq, rdp->nocb_head);
@@ -175,13 +234,54 @@ Cc: Tejun Heo <tj@kernel.org>
  		list = ACCESS_ONCE(rdp->nocb_head);
  		if (!list) {
  			schedule_timeout_interruptible(1);
+--- a/kernel/smpboot.c
++++ b/kernel/smpboot.c
+@@ -107,6 +107,8 @@ static int smpboot_thread_fn(void *data)
+ 	struct smp_hotplug_thread *ht = td->ht;
+ 
+ 	while (1) {
++		kgr_task_safe(current);
++
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		preempt_disable();
+ 		if (kthread_should_stop()) {
 --- a/kernel/workqueue.c
 +++ b/kernel/workqueue.c
-@@ -2375,6 +2375,7 @@ sleep:
+@@ -2381,6 +2381,7 @@ sleep:
  	__set_current_state(TASK_INTERRUPTIBLE);
  	spin_unlock_irq(&pool->lock);
  	schedule();
 +	kgr_task_safe(current);
  	goto woke_up;
  }
+ 
+@@ -2422,6 +2423,8 @@ static int rescuer_thread(void *__rescue
+ repeat:
+ 	set_current_state(TASK_INTERRUPTIBLE);
+ 
++	kgr_task_safe(current);
++
+ 	/*
+ 	 * By the time the rescuer is requested to stop, the workqueue
+ 	 * shouldn't have any work pending, but @wq->maydays may still have
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -2765,6 +2765,7 @@ static void khugepaged_do_scan(void)
+ 			break;
+ 
+ 		cond_resched();
++		kgr_task_safe(current);
+ 
+ 		if (unlikely(kthread_should_stop() || freezing(current)))
+ 			break;
+--- a/net/bluetooth/rfcomm/core.c
++++ b/net/bluetooth/rfcomm/core.c
+@@ -2042,6 +2042,8 @@ static int rfcomm_run(void *unused)
+ 		if (kthread_should_stop())
+ 			break;
+ 
++		kgr_task_safe(current);
++
+ 		/* Process stuff */
+ 		rfcomm_process_sessions();
  

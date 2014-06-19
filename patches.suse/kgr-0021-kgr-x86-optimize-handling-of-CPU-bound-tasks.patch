@@ -1,0 +1,96 @@
+From: Jiri Kosina <jkosina@suse.cz>
+Date: Thu, 19 Jun 2014 14:10:27 +0200
+Subject: kgr: x86: optimize handling of CPU-bound tasks
+Patch-mainline: submitted for review
+References: fate#313296
+
+Processes which are running in userspace at the time of patching can
+be immediately marked as "migrated" to the new universe, as they are
+provably outside the kernel and would have their 'in_progress' flag
+cleared upon (eventual) kernel entry anyway.
+
+This eliminates the need to send a SIGSTOP/SIGCONT signal (or perform
+any kind of alternative handling that would force the tasks to go
+through the kernel) to such tasks. This allows the tasks to run
+completely undisturbed by the patching.
+
+Signed-off-by: Jiri Kosina <jkosina@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/x86/include/asm/kgraft.h | 41 +++++++++++++++++++++++++++++++++++++++++
+ kernel/kgraft.c               |  3 +++
+ 2 files changed, 44 insertions(+)
+
+diff --git a/arch/x86/include/asm/kgraft.h b/arch/x86/include/asm/kgraft.h
+index 6fc57a85d12c..165a6292c7e4 100644
+--- a/arch/x86/include/asm/kgraft.h
++++ b/arch/x86/include/asm/kgraft.h
+@@ -22,10 +22,51 @@
+ #endif
+ 
+ #include <asm/ptrace.h>
++#include <asm/uaccess.h>
++#include <linux/stacktrace.h>
++#include <linux/slab.h>
+ 
+ static inline void kgr_set_regs_ip(struct pt_regs *regs, unsigned long ip)
+ {
+ 	regs->ip = ip;
+ }
+ 
++#ifdef CONFIG_STACKTRACE
++/*
++ * Tasks which are running in userspace after the patching has been started
++ * can immediately be marked as migrated to the new universe.
++ *
++ * If this function returns non-zero (i.e. also when error happens), the task
++ * needs to be migrated using kgraft lazy mechanism.
++ */
++static inline int kgr_needs_lazy_migration(struct task_struct *p)
++{
++	struct stack_trace t;
++	unsigned long *s;
++	int ret;
++
++	s = kzalloc(3 * sizeof(*s), GFP_KERNEL);
++	if (!s)
++		return -ENOMEM;
++
++	t.nr_entries = 0;
++	t.skip = 0;
++	t.max_entries = 3;
++	t.entries = s;
++
++	save_stack_trace_tsk(p, &t);
++	if (t.nr_entries > 2)
++		ret = 1;
++	else
++		ret = 0;
++	kfree(s);
++	return ret;
++}
++#else
++static inline int kgr_needs_lazy_migration(struct task_struct *p)
++{
++	return 1;
++}
++#endif
++
+ #endif
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index 90ef7fba6d0a..151e00648ffc 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -150,6 +150,9 @@ static void kgr_handle_processes(void)
+ 			 */
+ 			wake_up_process(p);
+ 		}
++		/* mark tasks wandering in userspace as already migrated */
++		if (!kgr_needs_lazy_migration(p))
++			kgr_task_safe(p);
+ 	}
+ 	read_unlock(&tasklist_lock);
+ }
+-- 
+2.0.0
+
