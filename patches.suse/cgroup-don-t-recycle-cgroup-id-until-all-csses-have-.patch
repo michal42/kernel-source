@@ -1,0 +1,104 @@
+From c1a71504e9715812a2d15e7c03b5aa147ae70ded Mon Sep 17 00:00:00 2001
+From: Li Zefan <lizefan@huawei.com>
+Date: Tue, 17 Dec 2013 11:13:39 +0800
+Subject: [PATCH] cgroup: don't recycle cgroup id until all csses' have been
+ destroyed
+Git-commit: c1a71504e9715812a2d15e7c03b5aa147ae70ded
+Patch-mainline: 3.13-rc6
+References: memcg changes
+
+Hugh reported this bug:
+
+> CONFIG_MEMCG_SWAP is broken in 3.13-rc.  Try something like this:
+>
+> mkdir -p /tmp/tmpfs /tmp/memcg
+> mount -t tmpfs -o size=1G tmpfs /tmp/tmpfs
+> mount -t cgroup -o memory memcg /tmp/memcg
+> mkdir /tmp/memcg/old
+> echo 512M >/tmp/memcg/old/memory.limit_in_bytes
+> echo $$ >/tmp/memcg/old/tasks
+> cp /dev/zero /tmp/tmpfs/zero 2>/dev/null
+> echo $$ >/tmp/memcg/tasks
+> rmdir /tmp/memcg/old
+> sleep 1	# let rmdir work complete
+> mkdir /tmp/memcg/new
+> umount /tmp/tmpfs
+> dmesg | grep WARNING
+> rmdir /tmp/memcg/new
+> umount /tmp/memcg
+>
+> Shows lots of WARNING: CPU: 1 PID: 1006 at kernel/res_counter.c:91
+>                            res_counter_uncharge_locked+0x1f/0x2f()
+>
+> Breakage comes from 34c00c319ce7 ("memcg: convert to use cgroup id").
+>
+> The lifetime of a cgroup id is different from the lifetime of the
+> css id it replaced: memsw's css_get()s do nothing to hold on to the
+> old cgroup id, it soon gets recycled to a new cgroup, which then
+> mysteriously inherits the old's swap, without any charge for it.
+
+Instead of removing cgroup id right after all the csses have been
+offlined, we should do that after csses have been destroyed.
+
+To make sure an invalid css pointer won't be returned after the css
+is destroyed, make sure css_from_id() returns NULL in this case.
+
+Tj: Updated comment to note planned changes for cgrp->id.
+
+Reported-by: Hugh Dickins <hughd@google.com>
+Signed-off-by: Li Zefan <lizefan@huawei.com>
+Reviewed-by: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Tejun Heo <tj@kernel.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+
+---
+ kernel/cgroup.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/kernel/cgroup.c b/kernel/cgroup.c
+index bcb1755f410a..bc1dcabe9217 100644
+--- a/kernel/cgroup.c
++++ b/kernel/cgroup.c
+@@ -890,6 +890,16 @@ static void cgroup_diput(struct dentry *dentry, struct inode *inode)
+ 		struct cgroup *cgrp = dentry->d_fsdata;
+ 
+ 		BUG_ON(!(cgroup_is_dead(cgrp)));
++
++		/*
++		 * XXX: cgrp->id is only used to look up css's.  As cgroup
++		 * and css's lifetimes will be decoupled, it should be made
++		 * per-subsystem and moved to css->id so that lookups are
++		 * successful until the target css is released.
++		 */
++		idr_remove(&cgrp->root->cgroup_idr, cgrp->id);
++		cgrp->id = -1;
++
+ 		call_rcu(&cgrp->rcu_head, cgroup_free_rcu);
+ 	} else {
+ 		struct cfent *cfe = __d_cfe(dentry);
+@@ -4268,6 +4278,7 @@ static void css_release(struct percpu_ref *ref)
+ 	struct cgroup_subsys_state *css =
+ 		container_of(ref, struct cgroup_subsys_state, refcnt);
+ 
++	rcu_assign_pointer(css->cgroup->subsys[css->ss->subsys_id], NULL);
+ 	call_rcu(&css->rcu_head, css_free_rcu_fn);
+ }
+ 
+@@ -4733,14 +4744,6 @@ static void cgroup_destroy_css_killed(struct cgroup *cgrp)
+ 	/* delete this cgroup from parent->children */
+ 	list_del_rcu(&cgrp->sibling);
+ 
+-	/*
+-	 * We should remove the cgroup object from idr before its grace
+-	 * period starts, so we won't be looking up a cgroup while the
+-	 * cgroup is being freed.
+-	 */
+-	idr_remove(&cgrp->root->cgroup_idr, cgrp->id);
+-	cgrp->id = -1;
+-
+ 	dput(d);
+ 
+ 	set_bit(CGRP_RELEASABLE, &parent->flags);
+-- 
+1.8.4.5
+
