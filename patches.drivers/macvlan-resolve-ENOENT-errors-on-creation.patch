@@ -30,10 +30,6 @@ Date:   Wed Sep 25 09:20:32 2013 +0200
 
     net: create sysfs symlinks for neighbour devices
 
-SLE12: the removal of "dev->priv_flags |= IFF_MACVLAN;" line is
-intentional as we accidentally did two partial backports of
-mainline commit a6cc0cfa7 and each of them added one copy.
-
 CC: Veaceslav Falico <vfalico@redhat.com>
 CC: Neil Horman <nhorman@tuxdriver.com>
 Signed-off-by: John Fastabend <john.r.fastabend@intel.com>
@@ -41,38 +37,35 @@ Acked-by: Veaceslav Falico <vfalico@redhat.com>
 Acked-by: Neil Horman <nhorman@tuxdriver.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: Michal Kubecek <mkubecek@suse.cz>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
 
 Conflicts:
 	drivers/net/macvlan.c
 
 ---
- drivers/net/macvlan.c | 13 +++++--------
- 1 file changed, 5 insertions(+), 8 deletions(-)
+ drivers/net/macvlan.c |   11 +++++------
+ 1 file changed, 5 insertions(+), 6 deletions(-)
 
-diff --git a/drivers/net/macvlan.c b/drivers/net/macvlan.c
-index e70772e..baf488c 100644
 --- a/drivers/net/macvlan.c
 +++ b/drivers/net/macvlan.c
-@@ -866,25 +866,22 @@ int macvlan_common_newlink(struct net *src_net, struct net_device *dev,
+@@ -876,23 +876,22 @@ int macvlan_common_newlink(struct net *s
  		eth_hw_addr_inherit(dev, lowerdev);
  	}
  
--	dev->priv_flags |= IFF_MACVLAN;
--	err = netdev_upper_dev_link(lowerdev, dev);
--	if (err)
--		goto destroy_port;
--
- 	port->count += 1;
- 	err = register_netdevice(dev);
- 	if (err < 0)
--		goto upper_dev_unlink;
-+		goto destroy_port;
- 
- 	dev->priv_flags |= IFF_MACVLAN;
-+	err = netdev_upper_dev_link(lowerdev, dev);
-+	if (err)
++	port->count += 1;
++	err = register_netdevice(dev);
++	if (err < 0)
 +		goto destroy_port;
 +
+ 	dev->priv_flags |= IFF_MACVLAN;
+ 	err = netdev_upper_dev_link(lowerdev, dev);
+ 	if (err)
+ 		goto destroy_port;
+ 
+-	port->count += 1;
+-	err = register_netdevice(dev);
+-	if (err < 0)
+-		goto upper_dev_unlink;
  
  	list_add_tail_rcu(&vlan->list, &port->vlans);
  	netif_stacked_transfer_operstate(lowerdev, dev);
@@ -84,6 +77,3 @@ index e70772e..baf488c 100644
  destroy_port:
  	port->count -= 1;
  	if (!port->count)
--- 
-1.8.4.5
-
