@@ -1,0 +1,32 @@
+From: Li RongQing <roy.qing.li@gmail.com>
+Date: Fri, 20 Dec 2013 17:20:12 +0800
+Subject: [3/3] ipv6: release dst properly in ipip6_tunnel_xmit
+Patch-mainline: v3.13-rc7
+Git-commit: 6a9eadccff2926e392173a989042f14c867cffbf
+References: bnc#853494 FATE#315918
+
+if a dst is not attached to anywhere, it should be released before
+exit ipip6_tunnel_xmit, otherwise cause dst memory leakage.
+
+Fixes: 61c1db7fae21 ("ipv6: sit: add GSO/TSO support")
+Signed-off-by: Li RongQing <roy.qing.li@gmail.com>
+Acked-by: Eric Dumazet <edumazet@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ net/ipv6/sit.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+--- a/net/ipv6/sit.c
++++ b/net/ipv6/sit.c
+@@ -934,8 +934,10 @@ static netdev_tx_t ipip6_tunnel_xmit(str
+ 	tos = INET_ECN_encapsulate(tos, ipv6_get_dsfield(iph6));
+ 
+ 	skb = iptunnel_handle_offloads(skb, false, SKB_GSO_SIT);
+-	if (IS_ERR(skb))
++	if (IS_ERR(skb)) {
++		ip_rt_put(rt);
+ 		goto out;
++	}
+ 
+ 	err = iptunnel_xmit(rt, skb, fl4.saddr, fl4.daddr, IPPROTO_IPV6, tos,
+ 			    ttl, df, !net_eq(tunnel->net, dev_net(dev)));
