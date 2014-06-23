@@ -2,7 +2,7 @@ From: Mark Fasheh <mfasheh@suse.de>
 Date:   Wed Jun 4 15:47:31 2014 -0700
 Subject: [PATCH] btrfs: qgroup: account shared subtrees during snapshot delete
 References: bnc#865621
-Patch-mainline: pending, will send upstream soon
+Patch-mainline: pending, submitted
 
 During it's tree walk, btrfs_drop_snapshot() will skip any shared
 subtrees it encounters. This is incorrect when we have qgroups
@@ -23,12 +23,13 @@ only one reference left, we go ahead and do the math on it's
 exclusive counts.
 
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+Reviewed-by: Josef Bacik <jbacik@fb.com>
 
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
+Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/extent-tree.c
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/extent-tree.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
-@@ -7222,6 +7222,237 @@ reada:
+--- linux-3.12-btrfs-qgroup-fixes-refresh.orig/fs/btrfs/extent-tree.c
++++ linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/extent-tree.c
+@@ -7222,6 +7222,229 @@ reada:
  	wc->reada_slot = slot;
  }
  
@@ -158,11 +159,6 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
 +		if (ret)
 +			goto out;
 +	}
-+	/* XXX: Is this check necessary? */
-+	if (!extent_buffer_uptodate(root_eb)) {
-+		ret = -EIO;
-+		goto out;
-+	}
 +
 +	if (root_level == 0) {
 +		ret = account_leaf_items(trans, root, root_eb);
@@ -254,11 +250,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
 +	if (ret)
 +		goto out;
 +
-+	ret = 0;
 +out:
-+
-+	if (path)
-+		btrfs_free_path(path);
++	btrfs_free_path(path);
 +
 +	return ret;
 +}
@@ -266,20 +259,26 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  /*
   * helper to process tree block while walking down the tree.
   *
-@@ -7370,6 +7601,9 @@ static noinline int do_walk_down(struct
+@@ -7370,6 +7593,15 @@ static noinline int do_walk_down(struct
  
  	if (wc->stage == DROP_REFERENCE) {
  		if (wc->refs[level - 1] > 1) {
-+			account_shared_subtree(trans, root, next, generation,
-+					       level - 1);
++			ret = account_shared_subtree(trans, root, next,
++						     generation, level - 1);
++			if (ret) {
++				printk_ratelimited(KERN_ERR "BTRFS: %s Error "
++					"%d accounting shared subtree. Quota "
++					"is out of sync, rescan required.\n",
++					root->fs_info->sb->s_id, ret);
++			}
 +
  			if (level == 1 &&
  			    (wc->flags[0] & BTRFS_BLOCK_FLAG_FULL_BACKREF))
  				goto skip;
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
+Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.c
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/qgroup.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
+--- linux-3.12-btrfs-qgroup-fixes-refresh.orig/fs/btrfs/qgroup.c
++++ linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.c
 @@ -1202,7 +1202,7 @@ out:
  	return ret;
  }
@@ -340,7 +339,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
  		if (cmp < 0) {
  			p = &(*p)->rb_right;
  		} else if (cmp) {
-@@ -1290,7 +1317,25 @@ int btrfs_qgroup_record_ref(struct btrfs
+@@ -1290,7 +1317,21 @@ int btrfs_qgroup_record_ref(struct btrfs
  	oper->seq = atomic_inc_return(&fs_info->qgroup_op_seq);
  	INIT_LIST_HEAD(&oper->elem.list);
  	oper->elem.seq = 0;
@@ -352,10 +351,6 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
 +		 * If any operation for this bytenr/ref_root combo
 +		 * exists, then we know it's not exclusively owned and
 +		 * shouldn't be queued up.
-+		 *
-+		 * XXX: Do other operations need to search for
-+		 * SUB_SHARED opers queued up on this bytenr? What do
-+		 * they do in that case?
 +		 */
 +		if (qgroup_oper_exists(fs_info, oper)) {
 +			kfree(oper);
@@ -366,7 +361,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
  	ret = insert_qgroup_oper(fs_info, oper);
  	if (ret) {
  		/* Shouldn't happen so have an assert for developers */
-@@ -1883,6 +1928,76 @@ out:
+@@ -1883,6 +1924,106 @@ out:
  }
  
  /*
@@ -381,11 +376,16 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
 +	struct ulist *roots = NULL;
 +	struct ulist_node *unode;
 +	struct ulist_iterator uiter;
++	struct btrfs_qgroup_list *glist;
++	struct ulist *parents;
 +	int ret = 0;
-+	int found;
 +	struct btrfs_qgroup *qg;
 +	u64 root_obj = 0;
 +	struct seq_list elem = {};
++
++	parents = ulist_alloc(GFP_NOFS);
++	if (!parents)
++		return -ENOMEM;
 +
 +	btrfs_get_tree_mod_seq(fs_info, &elem);
 +	ret = btrfs_find_all_roots(trans, fs_info, oper->bytenr,
@@ -394,48 +394,73 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
 +	if (ret < 0)
 +		return ret;
 +
-+	found = 0;
-+	ULIST_ITER_INIT(&uiter);
-+	while ((unode = ulist_next(roots, &uiter))) {
-+		/*
-+		 * If we find our ref root then that means all refs
-+		 * this extent has to the root have not yet been
-+		 * deleted. In that case, we do nothing and let the
-+		 * last ref for this bytenr drive our update.
-+		 *
-+		 * This can happen for example if an extent is
-+		 * referenced multiple times in a snapshot (clone,
-+		 * etc). If we are in the middle of snapshot removal,
-+		 * queued updates for such an extent will find the
-+		 * root if we have not yet finished removing the
-+		 * snapshot.
-+		 */
-+		if (unode->val == oper->ref_root)
-+			goto out;
++	if (roots->nnodes != 1)
++		goto out;
 +
-+		if (!found)
-+			root_obj = unode->val;
-+		found++;
++	ULIST_ITER_INIT(&uiter);
++	unode = ulist_next(roots, &uiter); /* Only want 1 so no need to loop */
++	/*
++	 * If we find our ref root then that means all refs
++	 * this extent has to the root have not yet been
++	 * deleted. In that case, we do nothing and let the
++	 * last ref for this bytenr drive our update.
++	 *
++	 * This can happen for example if an extent is
++	 * referenced multiple times in a snapshot (clone,
++	 * etc). If we are in the middle of snapshot removal,
++	 * queued updates for such an extent will find the
++	 * root if we have not yet finished removing the
++	 * snapshot.
++	 */
++	if (unode->val == oper->ref_root)
++		goto out;
++
++	root_obj = unode->val;
++	BUG_ON(!root_obj);
++
++	spin_lock(&fs_info->qgroup_lock);
++	qg = find_qgroup_rb(fs_info, root_obj);
++	if (!qg)
++		goto out_unlock;
++
++	qg->excl += oper->num_bytes;
++	qg->excl_cmpr += oper->num_bytes;
++	qgroup_dirty(fs_info, qg);
++
++	/*
++	 * Adjust counts for parent groups. First we find all
++	 * parents, then in the 2nd loop we do the adjustment
++	 * while adding parents of the parents to our ulist.
++	 */
++	list_for_each_entry(glist, &qg->groups, next_group) {
++		ret = ulist_add(parents, glist->group->qgroupid,
++				ptr_to_u64(glist->group), GFP_ATOMIC);
++		if (ret < 0)
++			goto out_unlock;
 +	}
 +
-+	if (found == 1) {
-+		BUG_ON(!root_obj);
-+		spin_lock(&fs_info->qgroup_lock);
-+		qg = find_qgroup_rb(fs_info, root_obj);
-+		if (!qg) {
-+			spin_unlock(&fs_info->qgroup_lock);
-+			goto out;
-+		}
-+
++	ULIST_ITER_INIT(&uiter);
++	while ((unode = ulist_next(parents, &uiter))) {
++		qg = u64_to_ptr(unode->aux);
 +		qg->excl += oper->num_bytes;
 +		qg->excl_cmpr += oper->num_bytes;
 +		qgroup_dirty(fs_info, qg);
-+		spin_unlock(&fs_info->qgroup_lock);
++
++		/* Add any parents of the parents */
++		list_for_each_entry(glist, &qg->groups, next_group) {
++			ret = ulist_add(parents, glist->group->qgroupid,
++					ptr_to_u64(glist->group), GFP_ATOMIC);
++			if (ret < 0)
++				goto out_unlock;
++		}
 +	}
++
++out_unlock:
++	spin_unlock(&fs_info->qgroup_lock);
 +
 +out:
 +	ulist_free(roots);
-+
++	ulist_free(parents);
 +	return ret;
 +}
 +
@@ -443,7 +468,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
   * btrfs_qgroup_account_ref is called for every ref that is added to or deleted
   * from the fs. First, all roots referencing the extent are searched, and
   * then the space is accounted accordingly to the different roots. The
-@@ -1921,6 +2036,9 @@ static int btrfs_qgroup_account(struct b
+@@ -1921,6 +2062,9 @@ static int btrfs_qgroup_account(struct b
  	case BTRFS_QGROUP_OPER_SUB_SHARED:
  		ret = qgroup_shared_accounting(trans, fs_info, oper);
  		break;
@@ -453,10 +478,10 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
  	default:
  		ASSERT(0);
  	}
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
+Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.h
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/qgroup.h
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
+--- linux-3.12-btrfs-qgroup-fixes-refresh.orig/fs/btrfs/qgroup.h
++++ linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.h
 @@ -44,6 +44,7 @@ enum btrfs_qgroup_operation_type {
  	BTRFS_QGROUP_OPER_ADD_SHARED,
  	BTRFS_QGROUP_OPER_SUB_EXCL,
@@ -465,3 +490,17 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
  };
  
  struct btrfs_qgroup_operation {
+Index: linux-3.12-btrfs-qgroup-fixes-refresh/include/trace/events/btrfs.h
+===================================================================
+--- linux-3.12-btrfs-qgroup-fixes-refresh.orig/include/trace/events/btrfs.h
++++ linux-3.12-btrfs-qgroup-fixes-refresh/include/trace/events/btrfs.h
+@@ -987,7 +987,8 @@ TRACE_EVENT(free_extent_state,
+ 		{ BTRFS_QGROUP_OPER_ADD_EXCL, 	"OPER_ADD_EXCL" },	\
+ 		{ BTRFS_QGROUP_OPER_ADD_SHARED, "OPER_ADD_SHARED" },	\
+ 		{ BTRFS_QGROUP_OPER_SUB_EXCL, 	"OPER_SUB_EXCL" },	\
+-		{ BTRFS_QGROUP_OPER_SUB_SHARED,	"OPER_SUB_SHARED" })
++		{ BTRFS_QGROUP_OPER_SUB_SHARED,	"OPER_SUB_SHARED" },	\
++		{ BTRFS_QGROUP_OPER_SUB_SUBTREE,"OPER_SUB_SUBTREE" })
+ 
+ DECLARE_EVENT_CLASS(btrfs_qgroup_oper,
+ 
