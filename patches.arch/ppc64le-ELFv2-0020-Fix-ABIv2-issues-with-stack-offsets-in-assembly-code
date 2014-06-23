@@ -1,29 +1,20 @@
-From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
-Subject: [15/33] powerpc: Fix ABIv2 issues with stack offsets in assembly code
+From: Anton Blanchard <anton@samba.org>
+Subject: powerpc: Fix ABIv2 issues with stack offsets in assembly code
 Git-commit: b37c10d128a2fa3256d4e67c184177270eac4b86
-Patch-mainline: git.kernel.org/cgit/linux/kernel/git/benh/powerpc.git
-References: bnc#863764 fate#315275, LTC#103998
-X-Patchwork-Id: 333412
-
-Summary: Novell863764 - SLES 12 - Enable POWER LE kernel build with ELFv2
-Description: Enable POWER LE kernel build with ELFv2
-
-Upstream-Description:
+Patch-mainline: v3.16-rc1
+References: bnc#863764 fate#315275, LTC#103998 
 
     Fix STK_PARAM and use it instead of hardcoding ABIv1 offsets.
     
 Signed-off-by: Anton Blanchard <anton@samba.org>
-
-Signed-off-by: Philippe Bergheaud <felix@linux.vnet.ibm.com>
 Acked-by: Torsten Duwe <duwe@suse.de>
----
+
  arch/powerpc/include/asm/ppc_asm.h |  4 ++++
  arch/powerpc/lib/copypage_power7.S |  8 ++++----
  arch/powerpc/lib/copyuser_power7.S | 24 ++++++++++++------------
  arch/powerpc/lib/memcpy_64.S       |  8 ++++----
  arch/powerpc/lib/memcpy_power7.S   | 20 ++++++++++----------
  5 files changed, 34 insertions(+), 30 deletions(-)
-
 Index: linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/include/asm/ppc_asm.h
@@ -40,6 +31,30 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
  #define STK_PARAM(i)	__STK_PARAM(__REG_##i)
  
  #if defined(_CALL_ELF) && _CALL_ELF == 2
+Index: linux-3.12-SLE12/arch/powerpc/lib/copypage_power7.S
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/lib/copypage_power7.S
++++ linux-3.12-SLE12/arch/powerpc/lib/copypage_power7.S
+@@ -56,15 +56,15 @@ _GLOBAL(copypage_power7)
+ 
+ #ifdef CONFIG_ALTIVEC
+ 	mflr	r0
+-	std	r3,48(r1)
+-	std	r4,56(r1)
++	std	r3,STK_PARAM(R3)(r1)
++	std	r4,STK_PARAM(R4)(r1)
+ 	std	r0,16(r1)
+ 	stdu	r1,-STACKFRAMESIZE(r1)
+ 	bl	enter_vmx_copy
+ 	cmpwi	r3,0
+ 	ld	r0,STACKFRAMESIZE+16(r1)
+-	ld	r3,STACKFRAMESIZE+48(r1)
+-	ld	r4,STACKFRAMESIZE+56(r1)
++	ld	r3,STACKFRAMESIZE+STK_PARAM(R3)(r1)
++	ld	r4,STACKFRAMESIZE+STK_PARAM(R4)(r1)
+ 	mtlr	r0
+ 
+ 	li	r0,(PAGE_SIZE/128)
 Index: linux-3.12-SLE12/arch/powerpc/lib/copyuser_power7.S
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/lib/copyuser_power7.S
