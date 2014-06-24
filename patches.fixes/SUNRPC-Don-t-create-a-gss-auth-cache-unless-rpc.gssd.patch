@@ -1,0 +1,37 @@
+From: Trond Myklebust <trond.myklebust@primarydata.com>
+Date: Mon, 10 Feb 2014 16:28:52 -0500
+Subject: [PATCH] SUNRPC: Don't create a gss auth cache unless rpc.gssd is
+ running
+Git-commit: a699d65ec4ff82245d2c4fdfb8ed1d64776d756e
+Patch-mainline: v3.14
+
+An infinite loop is caused when nfs4_establish_lease() fails
+with -EACCES. This causes nfs4_handle_reclaim_lease_error()
+to sleep a bit and resets the NFS4CLNT_LEASE_EXPIRED bit.
+This in turn causes nfs4_state_manager() to try and
+reestablished the lease, again, again, again...
+
+The problem is a valid RPCSEC_GSS client is being created when
+rpc.gssd is not running.
+
+Link: http://lkml.kernel.org/r/1392066375-16502-1-git-send-email-steved@redhat.com
+Fixes: 0ea9de0ea6a4 (sunrpc: turn warn_gssd() log message into a dprintk())
+Reported-by: Steve Dickson <steved@redhat.com>
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/auth_gss/auth_gss.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/auth_gss/auth_gss.c
++++ linux-3.12-SLE12/net/sunrpc/auth_gss/auth_gss.c
+@@ -976,6 +976,8 @@ gss_create_new(struct rpc_auth_create_ar
+ 	gss_auth->service = gss_pseudoflavor_to_service(gss_auth->mech, flavor);
+ 	if (gss_auth->service == 0)
+ 		goto err_put_mech;
++	if (!gssd_running(gss_auth->net))
++		goto err_put_mech;
+ 	auth = &gss_auth->rpc_auth;
+ 	auth->au_cslack = GSS_CRED_SLACK >> 2;
+ 	auth->au_rslack = GSS_VERF_SLACK >> 2;
