@@ -1,7 +1,7 @@
 From: Mark Fasheh <mfasheh@suse.de>
 Date:   Wed Jun 4 15:47:31 2014 -0700
 Subject: [PATCH] btrfs: qgroup: account shared subtrees during snapshot delete
-References: bnc#865621
+References: bnc#865621, bnc#884001
 Patch-mainline: pending, submitted
 
 During it's tree walk, btrfs_drop_snapshot() will skip any shared
@@ -25,10 +25,10 @@ exclusive counts.
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 Reviewed-by: Josef Bacik <jbacik@fb.com>
 
-Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/extent-tree.c
+Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh.orig/fs/btrfs/extent-tree.c
-+++ linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/extent-tree.c
+--- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/fs/btrfs/extent-tree.c
++++ linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
 @@ -7222,6 +7222,229 @@ reada:
  	wc->reada_slot = slot;
  }
@@ -275,10 +275,50 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/extent-tree.c
  			if (level == 1 &&
  			    (wc->flags[0] & BTRFS_BLOCK_FLAG_FULL_BACKREF))
  				goto skip;
-Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.c
+@@ -7769,6 +8001,24 @@ int btrfs_drop_snapshot(struct btrfs_roo
+ 				goto out_end_trans;
+ 			}
+ 
++			/*
++			 * Qgroup update accounting is run from
++			 * delayed ref handling. This usually works
++			 * out because delayed refs are normally the
++			 * only way qgroup updates are added. However,
++			 * we may have added updates during our tree
++			 * walk so run qgroups here to make sure we
++			 * don't lose any updates.
++			 */
++			ret = btrfs_delayed_qgroup_accounting(trans,
++							      root->fs_info);
++			if (ret)
++				printk_ratelimited(KERN_ERR "BTRFS: Failure %d "
++						   "running qgroup updates "
++						   "during snapshot delete. "
++						   "Quota is out of sync, "
++						   "rescan required.\n", ret);
++
+ 			btrfs_end_transaction_throttle(trans, tree_root);
+ 			if (!for_reloc && btrfs_need_cleaner_sleep(root)) {
+ 				pr_debug("BTRFS: drop snapshot early exit\n");
+@@ -7822,6 +8072,14 @@ int btrfs_drop_snapshot(struct btrfs_roo
+ 	}
+ 	root_dropped = true;
+ out_end_trans:
++	ret = btrfs_delayed_qgroup_accounting(trans, root->fs_info);
++	if (ret)
++		printk_ratelimited(KERN_ERR "BTRFS: Failure %d "
++				   "running qgroup updates "
++				   "during snapshot delete. "
++				   "Quota is out of sync, "
++				   "rescan required.\n", ret);
++
+ 	btrfs_end_transaction_throttle(trans, tree_root);
+ out_free:
+ 	kfree(wc);
+Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh.orig/fs/btrfs/qgroup.c
-+++ linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.c
+--- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/fs/btrfs/qgroup.c
++++ linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
 @@ -1202,7 +1202,7 @@ out:
  	return ret;
  }
@@ -478,10 +518,10 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.c
  	default:
  		ASSERT(0);
  	}
-Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.h
+Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.h
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh.orig/fs/btrfs/qgroup.h
-+++ linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.h
+--- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/fs/btrfs/qgroup.h
++++ linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.h
 @@ -44,6 +44,7 @@ enum btrfs_qgroup_operation_type {
  	BTRFS_QGROUP_OPER_ADD_SHARED,
  	BTRFS_QGROUP_OPER_SUB_EXCL,
@@ -490,10 +530,10 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh/fs/btrfs/qgroup.h
  };
  
  struct btrfs_qgroup_operation {
-Index: linux-3.12-btrfs-qgroup-fixes-refresh/include/trace/events/btrfs.h
+Index: linux-3.12-btrfs-qgroup-fixes-refresh2/include/trace/events/btrfs.h
 ===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh.orig/include/trace/events/btrfs.h
-+++ linux-3.12-btrfs-qgroup-fixes-refresh/include/trace/events/btrfs.h
+--- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/include/trace/events/btrfs.h
++++ linux-3.12-btrfs-qgroup-fixes-refresh2/include/trace/events/btrfs.h
 @@ -987,7 +987,8 @@ TRACE_EVENT(free_extent_state,
  		{ BTRFS_QGROUP_OPER_ADD_EXCL, 	"OPER_ADD_EXCL" },	\
  		{ BTRFS_QGROUP_OPER_ADD_SHARED, "OPER_ADD_SHARED" },	\
