@@ -1,0 +1,54 @@
+From ef379aead29c861501e41d23e093cdf1b0e9da4b Mon Sep 17 00:00:00 2001
+From: Valentine Barshak <valentine.barshak@cogentembedded.com>
+Date: Wed, 4 Dec 2013 01:42:22 +0400
+Subject: [PATCH 38/68] usb: hcd: Initialize USB phy if needed
+References: FATE#315518
+Git-Commit: 1ae5799ef63176cc75ec10e545cb65f620a82747
+Patch-Mainline: v3.14
+
+This adds external USB phy support to USB HCD driver that
+allows to find and initialize external USB phy, bound to
+the HCD, when the HCD is added.
+The usb_add_hcd function returns -EPROBE_DEFER if the USB
+phy, bound to the HCD, is not ready.
+If no USB phy is bound, the HCD is initialized as usual.
+
+Signed-off-by: Valentine Barshak <valentine.barshak@cogentembedded.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/core/hcd.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/usb/core/hcd.c b/drivers/usb/core/hcd.c
+index 0cb7772..26dc0f7 100644
+--- a/drivers/usb/core/hcd.c
++++ b/drivers/usb/core/hcd.c
+@@ -2618,6 +2618,24 @@ int usb_add_hcd(struct usb_hcd *hcd,
+ 	int retval;
+ 	struct usb_device *rhdev;
+ 
++	if (IS_ENABLED(CONFIG_USB_PHY) && !hcd->phy) {
++		struct usb_phy *phy = usb_get_phy_dev(hcd->self.controller, 0);
++
++		if (IS_ERR(phy)) {
++			retval = PTR_ERR(phy);
++			if (retval == -EPROBE_DEFER)
++				return retval;
++		} else {
++			retval = usb_phy_init(phy);
++			if (retval) {
++				usb_put_phy(phy);
++				return retval;
++			}
++			hcd->phy = phy;
++			hcd->remove_phy = 1;
++		}
++	}
++
+ 	dev_info(hcd->self.controller, "%s\n", hcd->product_desc);
+ 
+ 	/* Keep old behaviour if authorized_default is not in [0, 1]. */
+-- 
+1.8.4.5
+

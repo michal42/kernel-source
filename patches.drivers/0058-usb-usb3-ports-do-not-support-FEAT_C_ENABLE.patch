@@ -1,36 +1,37 @@
-From 3e79af5353417f2ccf059abd5fd4b943a159b082 Mon Sep 17 00:00:00 2001
+From b2f791060ddd2a9b7a8420c721c0ffffbe0d66cd Mon Sep 17 00:00:00 2001
 From: Dan Williams <dan.j.williams@intel.com>
-Date: Mon, 6 Jan 2014 12:11:27 -0800
-Git-Commit: 68d6e5f4554536a2b90d4cc14d7b2ea4c1fb0975
-Patch-Mainline: v3.15
+Date: Tue, 20 May 2014 18:09:10 -0700
+Subject: [PATCH 58/68] usb: usb3 ports do not support FEAT_C_ENABLE
 References: FATE#315518
-Subject: [PATCH 06/12] usb: usb3 ports do not support FEAT_C_ENABLE
-
+Git-Commit: 6908058469e3253637894d1cb3e2581870c77e1d
+Patch-Mainline: v3.16-rc1
 The port pm_runtime implementation unconditionally clears FEAT_C_ENABLE
 after clearing PORT_POWER, but the bit is reserved on usb3 hub ports.
-We expect khubd to be suspended at this time so we need to clear any
-errors for usb2 ports.
+We expect khubd to be prevented from running because the port state is
+not RPM_ACTIVE, so we need to clear any errors for usb2 ports.
 
+Acked-by: Alan Stern <stern@rowland.harvard.edu>
 Signed-off-by: Dan Williams <dan.j.williams@intel.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
  drivers/usb/core/port.c | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/usb/core/port.c b/drivers/usb/core/port.c
-index f01c560..e2410e0 100644
+index f41f051..fb83c2c 100644
 --- a/drivers/usb/core/port.c
 +++ b/drivers/usb/core/port.c
-@@ -154,7 +154,8 @@ static int usb_port_runtime_suspend(struct device *dev)
+@@ -142,7 +142,8 @@ static int usb_port_runtime_suspend(struct device *dev)
  	set_bit(port1, hub->busy_bits);
  	retval = usb_hub_set_port_power(hdev, hub, port1, false);
  	usb_clear_port_feature(hdev, port1, USB_PORT_FEAT_C_CONNECTION);
 -	usb_clear_port_feature(hdev, port1,	USB_PORT_FEAT_C_ENABLE);
-+	if (!hub_is_superspeed(hdev))
++	if (!port_dev->is_superspeed)
 +		usb_clear_port_feature(hdev, port1, USB_PORT_FEAT_C_ENABLE);
  	clear_bit(port1, hub->busy_bits);
  	usb_autopm_put_interface(intf);
  
 -- 
-1.8.4
+1.8.4.5
 

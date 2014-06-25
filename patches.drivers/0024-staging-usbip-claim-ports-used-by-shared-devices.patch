@@ -1,0 +1,145 @@
+From 9d237b1c04249e8959193fd4b340120c89af5502 Mon Sep 17 00:00:00 2001
+From: Valentina Manea <valentina.manea.m@gmail.com>
+Date: Sat, 8 Mar 2014 14:53:34 +0200
+Subject: [PATCH 24/68] staging: usbip: claim ports used by shared devices
+References: FATE#315518
+Git-Commit: 6080cd0e9239469524d2aa07250ad4b9f383960d
+Patch-Mainline: v3.15
+
+A device should not be able to be used concurrently both by
+the server and the client. Claiming the port used by the
+shared device ensures no interface drivers bind to it and
+that it is not usable from the server.
+
+Signed-off-by: Valentina Manea <valentina.manea.m@gmail.com>
+Acked-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+Conflicts:
+	drivers/staging/usbip/stub_dev.c
+---
+ drivers/staging/usbip/stub_dev.c | 24 +++++++++++++++++++++++-
+ drivers/usb/core/hub.c           |  2 ++
+ drivers/usb/core/usb.h           |  4 ----
+ include/linux/usb.h              |  7 +++++++
+ 4 files changed, 32 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/staging/usbip/stub_dev.c b/drivers/staging/usbip/stub_dev.c
+index d8957a5..2470ad5 100644
+--- a/drivers/staging/usbip/stub_dev.c
++++ b/drivers/staging/usbip/stub_dev.c
+@@ -350,6 +350,7 @@ static int stub_probe(struct usb_interface *interface,
+ 	const char *udev_busid = dev_name(interface->dev.parent);
+ 	int err = 0;
+ 	struct bus_id_priv *busid_priv;
++	int rc;
+ 
+ 	dev_dbg(&interface->dev, "Enter\n");
+ 
+@@ -424,7 +425,19 @@ static int stub_probe(struct usb_interface *interface,
+ 	busid_priv->interf_count++;
+ 	busid_priv->sdev = sdev;
+ 
+-	err = stub_add_files(&interface->dev);
++	/*
++	 * Claim this hub port.
++	 * It doesn't matter what value we pass as owner
++	 * (struct dev_state) as long as it is unique.
++	 */
++	rc = usb_hub_claim_port(udev->parent, udev->portnum,
++			(struct dev_state *) udev);
++	if (rc) {
++		dev_dbg(&udev->dev, "unable to claim port\n");
++		return rc;
++	}
++
++	err = stub_add_files(&udev->dev);
+ 	if (err) {
+ 		dev_err(&interface->dev, "stub_add_files for %s\n", udev_busid);
+ 		usb_set_intfdata(interface, NULL);
+@@ -462,6 +475,7 @@ static void stub_disconnect(struct usb_interface *interface)
+ 	struct stub_device *sdev;
+ 	const char *udev_busid = dev_name(interface->dev.parent);
+ 	struct bus_id_priv *busid_priv;
++	int rc;
+ 
+ 	dev_dbg(&interface->dev, "Enter\n");
+ 
+@@ -486,6 +500,14 @@ static void stub_disconnect(struct usb_interface *interface)
+ 	 */
+ 	stub_remove_files(&interface->dev);
+ 
++	/* release port */
++	rc = usb_hub_release_port(udev->parent, udev->portnum,
++				  (struct dev_state *) udev);
++	if (rc) {
++		dev_dbg(&udev->dev, "unable to release port\n");
++		return;
++	}
++
+ 	/* If usb reset is called from event handler */
+ 	if (busid_priv->sdev->ud.eh == current) {
+ 		busid_priv->interf_count--;
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index a27b7ad..4903a10 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -1830,6 +1830,7 @@ int usb_hub_claim_port(struct usb_device *hdev, unsigned port1,
+ 	*powner = owner;
+ 	return rc;
+ }
++EXPORT_SYMBOL_GPL(usb_hub_claim_port);
+ 
+ int usb_hub_release_port(struct usb_device *hdev, unsigned port1,
+ 			 struct dev_state *owner)
+@@ -1845,6 +1846,7 @@ int usb_hub_release_port(struct usb_device *hdev, unsigned port1,
+ 	*powner = NULL;
+ 	return rc;
+ }
++EXPORT_SYMBOL_GPL(usb_hub_release_port);
+ 
+ void usb_hub_release_all_ports(struct usb_device *hdev, struct dev_state *owner)
+ {
+diff --git a/drivers/usb/core/usb.h b/drivers/usb/core/usb.h
+index 0923add7..f6e0f0a 100644
+--- a/drivers/usb/core/usb.h
++++ b/drivers/usb/core/usb.h
+@@ -57,10 +57,6 @@ extern int usb_match_device(struct usb_device *dev,
+ extern void usb_forced_unbind_intf(struct usb_interface *intf);
+ extern void usb_unbind_and_rebind_marked_interfaces(struct usb_device *udev);
+ 
+-extern int usb_hub_claim_port(struct usb_device *hdev, unsigned port,
+-		struct dev_state *owner);
+-extern int usb_hub_release_port(struct usb_device *hdev, unsigned port,
+-		struct dev_state *owner);
+ extern void usb_hub_release_all_ports(struct usb_device *hdev,
+ 		struct dev_state *owner);
+ extern bool usb_device_is_owned(struct usb_device *udev);
+diff --git a/include/linux/usb.h b/include/linux/usb.h
+index 5cc76ad..d7c876a 100644
+--- a/include/linux/usb.h
++++ b/include/linux/usb.h
+@@ -370,6 +370,8 @@ struct usb_bus {
+ #endif
+ };
+ 
++struct dev_state;
++
+ /* ----------------------------------------------------------------------- */
+ 
+ struct usb_tt;
+@@ -753,6 +755,11 @@ extern struct usb_host_interface *usb_find_alt_setting(
+ 		unsigned int iface_num,
+ 		unsigned int alt_num);
+ 
++/* port claiming functions */
++int usb_hub_claim_port(struct usb_device *hdev, unsigned port1,
++		struct dev_state *owner);
++int usb_hub_release_port(struct usb_device *hdev, unsigned port1,
++		struct dev_state *owner);
+ 
+ /**
+  * usb_make_path - returns stable device path in the usb tree
+-- 
+1.8.4.5
+

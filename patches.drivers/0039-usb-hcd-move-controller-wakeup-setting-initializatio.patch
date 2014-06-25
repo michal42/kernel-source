@@ -1,0 +1,917 @@
+From 8c310b45c879bd16d64e00f8ea7e8b8612cabf61 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Tue, 5 Nov 2013 10:46:02 +0800
+Subject: [PATCH 39/68] usb: hcd: move controller wakeup setting initialization
+ to individual driver
+References: FATE#315518
+Git-Commit: 3c9740a117d40a74412775b5d3fe2b88a7635a0e
+Patch-Mainline: v3.14
+
+Individual controller driver has different requirement for wakeup
+setting, so move it from core to itself. In order to align with
+current etting the default wakeup setting is enabled (except for
+chipidea host).
+
+Pass compile test with below commands:
+	make O=outout/all allmodconfig
+	make -j$CPU_NUM O=outout/all drivers/usb
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+Acked-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+Conflicts:
+	drivers/usb/host/ohci-exynos.c
+	drivers/usb/host/ohci-omap.c
+---
+ drivers/staging/dwc2/hcd.c              | 2 ++
+ drivers/staging/octeon-usb/octeon-hcd.c | 1 +
+ drivers/staging/ozwpan/ozhcd.c          | 2 ++
+ drivers/usb/c67x00/c67x00-hcd.c         | 2 ++
+ drivers/usb/core/hcd-pci.c              | 1 +
+ drivers/usb/core/hcd.c                  | 6 ------
+ drivers/usb/host/ehci-atmel.c           | 1 +
+ drivers/usb/host/ehci-fsl.c             | 1 +
+ drivers/usb/host/ehci-grlib.c           | 1 +
+ drivers/usb/host/ehci-mv.c              | 1 +
+ drivers/usb/host/ehci-mxc.c             | 1 +
+ drivers/usb/host/ehci-octeon.c          | 1 +
+ drivers/usb/host/ehci-omap.c            | 1 +
+ drivers/usb/host/ehci-orion.c           | 1 +
+ drivers/usb/host/ehci-platform.c        | 1 +
+ drivers/usb/host/ehci-pmcmsp.c          | 4 +++-
+ drivers/usb/host/ehci-ppc-of.c          | 1 +
+ drivers/usb/host/ehci-ps3.c             | 1 +
+ drivers/usb/host/ehci-s5p.c             | 1 +
+ drivers/usb/host/ehci-sead3.c           | 1 +
+ drivers/usb/host/ehci-sh.c              | 1 +
+ drivers/usb/host/ehci-spear.c           | 1 +
+ drivers/usb/host/ehci-tegra.c           | 1 +
+ drivers/usb/host/ehci-tilegx.c          | 1 +
+ drivers/usb/host/ehci-w90x900.c         | 1 +
+ drivers/usb/host/ehci-xilinx-of.c       | 4 +++-
+ drivers/usb/host/fhci-hcd.c             | 2 ++
+ drivers/usb/host/fotg210-hcd.c          | 1 +
+ drivers/usb/host/fusbh200-hcd.c         | 1 +
+ drivers/usb/host/hwa-hc.c               | 1 +
+ drivers/usb/host/imx21-hcd.c            | 1 +
+ drivers/usb/host/isp116x-hcd.c          | 2 ++
+ drivers/usb/host/isp1362-hcd.c          | 2 ++
+ drivers/usb/host/isp1760-hcd.c          | 1 +
+ drivers/usb/host/ohci-at91.c            | 4 +++-
+ drivers/usb/host/ohci-da8xx.c           | 2 ++
+ drivers/usb/host/ohci-exynos.c          | 1 +
+ drivers/usb/host/ohci-jz4740.c          | 1 +
+ drivers/usb/host/ohci-nxp.c             | 4 +++-
+ drivers/usb/host/ohci-octeon.c          | 2 ++
+ drivers/usb/host/ohci-omap.c            | 1 +
+ drivers/usb/host/ohci-omap3.c           | 1 +
+ drivers/usb/host/ohci-platform.c        | 2 ++
+ drivers/usb/host/ohci-ppc-of.c          | 4 +++-
+ drivers/usb/host/ohci-ps3.c             | 1 +
+ drivers/usb/host/ohci-pxa27x.c          | 4 +++-
+ drivers/usb/host/ohci-s3c2410.c         | 1 +
+ drivers/usb/host/ohci-sa1111.c          | 4 +++-
+ drivers/usb/host/ohci-sm501.c           | 1 +
+ drivers/usb/host/ohci-spear.c           | 4 +++-
+ drivers/usb/host/ohci-tilegx.c          | 1 +
+ drivers/usb/host/ohci-tmio.c            | 1 +
+ drivers/usb/host/oxu210hp-hcd.c         | 1 +
+ drivers/usb/host/r8a66597-hcd.c         | 1 +
+ drivers/usb/host/sl811-hcd.c            | 2 ++
+ drivers/usb/host/u132-hcd.c             | 1 +
+ drivers/usb/host/uhci-grlib.c           | 1 +
+ drivers/usb/host/uhci-platform.c        | 1 +
+ drivers/usb/host/whci/hcd.c             | 1 +
+ drivers/usb/host/xhci-plat.c            | 1 +
+ drivers/usb/musb/musb_host.c            | 1 +
+ drivers/usb/phy/phy-msm-usb.c           | 1 +
+ drivers/usb/phy/phy-mv-usb.c            | 6 ++++--
+ drivers/usb/renesas_usbhs/mod_host.c    | 1 +
+ 64 files changed, 92 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/staging/dwc2/hcd.c b/drivers/staging/dwc2/hcd.c
+index da0d35c..e58c4e9 100644
+--- a/drivers/staging/dwc2/hcd.c
++++ b/drivers/staging/dwc2/hcd.c
+@@ -2893,6 +2893,8 @@ int dwc2_hcd_init(struct dwc2_hsotg *hsotg, int irq,
+ 	if (retval < 0)
+ 		goto error3;
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	dwc2_hcd_dump_state(hsotg);
+ 
+ 	dwc2_enable_global_interrupts(hsotg);
+diff --git a/drivers/staging/octeon-usb/octeon-hcd.c b/drivers/staging/octeon-usb/octeon-hcd.c
+index 5dbbd14..8129c13 100644
+--- a/drivers/staging/octeon-usb/octeon-hcd.c
++++ b/drivers/staging/octeon-usb/octeon-hcd.c
+@@ -725,6 +725,7 @@ static int octeon_usb_driver_probe(struct device *dev)
+ 		kfree(hcd);
+ 		return -1;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	dev_dbg(dev, "Registered HCD for port %d on irq %d\n", usb_num, irq);
+ 
+diff --git a/drivers/staging/ozwpan/ozhcd.c b/drivers/staging/ozwpan/ozhcd.c
+index d9c43c3..efaf26f 100644
+--- a/drivers/staging/ozwpan/ozhcd.c
++++ b/drivers/staging/ozwpan/ozhcd.c
+@@ -2270,6 +2270,8 @@ static int oz_plat_probe(struct platform_device *dev)
+ 		usb_put_hcd(hcd);
+ 		return -1;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
++
+ 	spin_lock_bh(&g_hcdlock);
+ 	g_ozhcd = ozhcd;
+ 	spin_unlock_bh(&g_hcdlock);
+diff --git a/drivers/usb/c67x00/c67x00-hcd.c b/drivers/usb/c67x00/c67x00-hcd.c
+index 75e47b8..20ec4ee 100644
+--- a/drivers/usb/c67x00/c67x00-hcd.c
++++ b/drivers/usb/c67x00/c67x00-hcd.c
+@@ -384,6 +384,8 @@ int c67x00_hcd_probe(struct c67x00_sie *sie)
+ 		goto err2;
+ 	}
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	spin_lock_irqsave(&sie->lock, flags);
+ 	sie->private_data = c67x00;
+ 	sie->irq = c67x00_hcd_irq;
+diff --git a/drivers/usb/core/hcd-pci.c b/drivers/usb/core/hcd-pci.c
+index 94f3b68..82044b5 100644
+--- a/drivers/usb/core/hcd-pci.c
++++ b/drivers/usb/core/hcd-pci.c
+@@ -281,6 +281,7 @@ int usb_hcd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
+ 
+ 	if (retval != 0)
+ 		goto unmap_registers;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	if (pci_dev_run_wake(dev))
+ 		pm_runtime_put_noidle(&dev->dev);
+diff --git a/drivers/usb/core/hcd.c b/drivers/usb/core/hcd.c
+index 26dc0f7..7d114fc 100644
+--- a/drivers/usb/core/hcd.c
++++ b/drivers/usb/core/hcd.c
+@@ -2741,12 +2741,6 @@ int usb_add_hcd(struct usb_hcd *hcd,
+ 	if (hcd->uses_new_polling && HCD_POLL_RH(hcd))
+ 		usb_hcd_poll_rh_status(hcd);
+ 
+-	/*
+-	 * Host controllers don't generate their own wakeup requests;
+-	 * they only forward requests from the root hub.  Therefore
+-	 * controllers should always be enabled for remote wakeup.
+-	 */
+-	device_wakeup_enable(hcd->self.controller);
+ 	return retval;
+ 
+ error_create_attr_group:
+diff --git a/drivers/usb/host/ehci-atmel.c b/drivers/usb/host/ehci-atmel.c
+index 3b645ff..3f20fb2 100644
+--- a/drivers/usb/host/ehci-atmel.c
++++ b/drivers/usb/host/ehci-atmel.c
+@@ -140,6 +140,7 @@ static int ehci_atmel_drv_probe(struct platform_device *pdev)
+ 	retval = usb_add_hcd(hcd, irq, IRQF_SHARED);
+ 	if (retval)
+ 		goto fail_add_hcd;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return retval;
+ 
+diff --git a/drivers/usb/host/ehci-fsl.c b/drivers/usb/host/ehci-fsl.c
+index 87a7426..854a68f 100644
+--- a/drivers/usb/host/ehci-fsl.c
++++ b/drivers/usb/host/ehci-fsl.c
+@@ -138,6 +138,7 @@ static int usb_hcd_fsl_probe(const struct hc_driver *driver,
+ 	retval = usb_add_hcd(hcd, irq, IRQF_SHARED);
+ 	if (retval != 0)
+ 		goto err4;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ #ifdef CONFIG_USB_OTG
+ 	if (pdata->operating_mode == FSL_USB2_DR_OTG) {
+diff --git a/drivers/usb/host/ehci-grlib.c b/drivers/usb/host/ehci-grlib.c
+index b52a66c..054792c 100644
+--- a/drivers/usb/host/ehci-grlib.c
++++ b/drivers/usb/host/ehci-grlib.c
+@@ -140,6 +140,7 @@ static int ehci_hcd_grlib_probe(struct platform_device *op)
+ 	if (rv)
+ 		goto err_ioremap;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ err_ioremap:
+diff --git a/drivers/usb/host/ehci-mv.c b/drivers/usb/host/ehci-mv.c
+index 417c10d..528fbf0 100644
+--- a/drivers/usb/host/ehci-mv.c
++++ b/drivers/usb/host/ehci-mv.c
+@@ -257,6 +257,7 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 				"failed to add hcd with err %d\n", retval);
+ 			goto err_set_vbus;
+ 		}
++		device_wakeup_enable(hcd->self.controller);
+ 	}
+ 
+ 	if (pdata->private_init)
+diff --git a/drivers/usb/host/ehci-mxc.c b/drivers/usb/host/ehci-mxc.c
+index 0528dc4..dbe5e4e 100644
+--- a/drivers/usb/host/ehci-mxc.c
++++ b/drivers/usb/host/ehci-mxc.c
+@@ -155,6 +155,7 @@ static int ehci_mxc_drv_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_add;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ err_add:
+diff --git a/drivers/usb/host/ehci-octeon.c b/drivers/usb/host/ehci-octeon.c
+index ab0397e..ba4b542 100644
+--- a/drivers/usb/host/ehci-octeon.c
++++ b/drivers/usb/host/ehci-octeon.c
+@@ -156,6 +156,7 @@ static int ehci_octeon_drv_probe(struct platform_device *pdev)
+ 		dev_dbg(&pdev->dev, "failed to add hcd with err %d\n", ret);
+ 		goto err3;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	platform_set_drvdata(pdev, hcd);
+ 
+diff --git a/drivers/usb/host/ehci-omap.c b/drivers/usb/host/ehci-omap.c
+index 78b01fa..4ac8a44 100644
+--- a/drivers/usb/host/ehci-omap.c
++++ b/drivers/usb/host/ehci-omap.c
+@@ -215,6 +215,7 @@ static int ehci_hcd_omap_probe(struct platform_device *pdev)
+ 		dev_err(dev, "failed to add hcd with err %d\n", ret);
+ 		goto err_pm_runtime;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	/*
+ 	 * Bring PHYs out of reset for non PHY modes.
+diff --git a/drivers/usb/host/ehci-orion.c b/drivers/usb/host/ehci-orion.c
+index d1dfb9d..a1529ec 100644
+--- a/drivers/usb/host/ehci-orion.c
++++ b/drivers/usb/host/ehci-orion.c
+@@ -253,6 +253,7 @@ static int ehci_orion_drv_probe(struct platform_device *pdev)
+ 	if (err)
+ 		goto err4;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ err4:
+diff --git a/drivers/usb/host/ehci-platform.c b/drivers/usb/host/ehci-platform.c
+index f6b790c..d8895e7 100644
+--- a/drivers/usb/host/ehci-platform.c
++++ b/drivers/usb/host/ehci-platform.c
+@@ -132,6 +132,7 @@ static int ehci_platform_probe(struct platform_device *dev)
+ 	if (err)
+ 		goto err_put_hcd;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	platform_set_drvdata(dev, hcd);
+ 
+ 	return err;
+diff --git a/drivers/usb/host/ehci-pmcmsp.c b/drivers/usb/host/ehci-pmcmsp.c
+index 893b707..af3974a 100644
+--- a/drivers/usb/host/ehci-pmcmsp.c
++++ b/drivers/usb/host/ehci-pmcmsp.c
+@@ -210,8 +210,10 @@ int usb_hcd_msp_probe(const struct hc_driver *driver,
+ 
+ 
+ 	retval = usb_add_hcd(hcd, res->start, IRQF_SHARED);
+-	if (retval == 0)
++	if (retval == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return 0;
++	}
+ 
+ 	usb_remove_hcd(hcd);
+ err3:
+diff --git a/drivers/usb/host/ehci-ppc-of.c b/drivers/usb/host/ehci-ppc-of.c
+index 6cc5567..55ad82c 100644
+--- a/drivers/usb/host/ehci-ppc-of.c
++++ b/drivers/usb/host/ehci-ppc-of.c
+@@ -167,6 +167,7 @@ static int ehci_hcd_ppc_of_probe(struct platform_device *op)
+ 	if (rv)
+ 		goto err_ioremap;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ err_ioremap:
+diff --git a/drivers/usb/host/ehci-ps3.c b/drivers/usb/host/ehci-ps3.c
+index 8188542..7934ff9 100644
+--- a/drivers/usb/host/ehci-ps3.c
++++ b/drivers/usb/host/ehci-ps3.c
+@@ -189,6 +189,7 @@ static int ps3_ehci_probe(struct ps3_system_bus_device *dev)
+ 		goto fail_add_hcd;
+ 	}
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return result;
+ 
+ fail_add_hcd:
+diff --git a/drivers/usb/host/ehci-s5p.c b/drivers/usb/host/ehci-s5p.c
+index 7c3de95..56b0bdb 100644
+--- a/drivers/usb/host/ehci-s5p.c
++++ b/drivers/usb/host/ehci-s5p.c
+@@ -181,6 +181,7 @@ skip_phy:
+ 		dev_err(&pdev->dev, "Failed to add USB HCD\n");
+ 		goto fail_add_hcd;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	platform_set_drvdata(pdev, hcd);
+ 
+diff --git a/drivers/usb/host/ehci-sead3.c b/drivers/usb/host/ehci-sead3.c
+index 8a73449..cf12676 100644
+--- a/drivers/usb/host/ehci-sead3.c
++++ b/drivers/usb/host/ehci-sead3.c
+@@ -126,6 +126,7 @@ static int ehci_hcd_sead3_drv_probe(struct platform_device *pdev)
+ 			  IRQF_SHARED);
+ 	if (ret == 0) {
+ 		platform_set_drvdata(pdev, hcd);
++		device_wakeup_enable(hcd->self.controller);
+ 		return ret;
+ 	}
+ 
+diff --git a/drivers/usb/host/ehci-sh.c b/drivers/usb/host/ehci-sh.c
+index dc899eb..9b9b9f5 100644
+--- a/drivers/usb/host/ehci-sh.c
++++ b/drivers/usb/host/ehci-sh.c
+@@ -151,6 +151,7 @@ static int ehci_hcd_sh_probe(struct platform_device *pdev)
+ 		dev_err(&pdev->dev, "Failed to add hcd");
+ 		goto fail_add_hcd;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	priv->hcd = hcd;
+ 	platform_set_drvdata(pdev, priv);
+diff --git a/drivers/usb/host/ehci-spear.c b/drivers/usb/host/ehci-spear.c
+index 1cf0adb..601d367 100644
+--- a/drivers/usb/host/ehci-spear.c
++++ b/drivers/usb/host/ehci-spear.c
+@@ -131,6 +131,7 @@ static int spear_ehci_hcd_drv_probe(struct platform_device *pdev)
+ 	if (retval)
+ 		goto err_stop_ehci;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return retval;
+ 
+ err_stop_ehci:
+diff --git a/drivers/usb/host/ehci-tegra.c b/drivers/usb/host/ehci-tegra.c
+index 78fa76d..40b65b5 100644
+--- a/drivers/usb/host/ehci-tegra.c
++++ b/drivers/usb/host/ehci-tegra.c
+@@ -456,6 +456,7 @@ static int tegra_ehci_probe(struct platform_device *pdev)
+ 		dev_err(&pdev->dev, "Failed to add USB HCD\n");
+ 		goto cleanup_otg_set_host;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return err;
+ 
+diff --git a/drivers/usb/host/ehci-tilegx.c b/drivers/usb/host/ehci-tilegx.c
+index 67026ff..f3713d3 100644
+--- a/drivers/usb/host/ehci-tilegx.c
++++ b/drivers/usb/host/ehci-tilegx.c
+@@ -170,6 +170,7 @@ static int ehci_hcd_tilegx_drv_probe(struct platform_device *pdev)
+ 	ret = usb_add_hcd(hcd, pdata->irq, IRQF_SHARED);
+ 	if (ret == 0) {
+ 		platform_set_drvdata(pdev, hcd);
++		device_wakeup_enable(hcd->self.controller);
+ 		return ret;
+ 	}
+ 
+diff --git a/drivers/usb/host/ehci-w90x900.c b/drivers/usb/host/ehci-w90x900.c
+index 1c370df..87a85b7 100644
+--- a/drivers/usb/host/ehci-w90x900.c
++++ b/drivers/usb/host/ehci-w90x900.c
+@@ -79,6 +79,7 @@ static int usb_w90x900_probe(const struct hc_driver *driver,
+ 	if (retval != 0)
+ 		goto err4;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return retval;
+ err4:
+ 	iounmap(hcd->regs);
+diff --git a/drivers/usb/host/ehci-xilinx-of.c b/drivers/usb/host/ehci-xilinx-of.c
+index 95979f9..3cd2efa 100644
+--- a/drivers/usb/host/ehci-xilinx-of.c
++++ b/drivers/usb/host/ehci-xilinx-of.c
+@@ -191,8 +191,10 @@ static int ehci_hcd_xilinx_of_probe(struct platform_device *op)
+ 	ehci->caps = hcd->regs + 0x100;
+ 
+ 	rv = usb_add_hcd(hcd, irq, 0);
+-	if (rv == 0)
++	if (rv == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return 0;
++	}
+ 
+ err_irq:
+ 	usb_put_hcd(hcd);
+diff --git a/drivers/usb/host/fhci-hcd.c b/drivers/usb/host/fhci-hcd.c
+index 0b4654259..126eb90 100644
+--- a/drivers/usb/host/fhci-hcd.c
++++ b/drivers/usb/host/fhci-hcd.c
+@@ -752,6 +752,8 @@ static int of_fhci_probe(struct platform_device *ofdev)
+ 	if (ret < 0)
+ 		goto err_add_hcd;
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	fhci_dfs_create(fhci);
+ 
+ 	return 0;
+diff --git a/drivers/usb/host/fotg210-hcd.c b/drivers/usb/host/fotg210-hcd.c
+index 97d6939..98a89d1 100644
+--- a/drivers/usb/host/fotg210-hcd.c
++++ b/drivers/usb/host/fotg210-hcd.c
+@@ -5889,6 +5889,7 @@ static int fotg210_hcd_probe(struct platform_device *pdev)
+ 		dev_err(dev, "failed to add hcd with err %d\n", retval);
+ 		goto fail_add_hcd;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return retval;
+ 
+diff --git a/drivers/usb/host/fusbh200-hcd.c b/drivers/usb/host/fusbh200-hcd.c
+index 9ea85b6..ba94990 100644
+--- a/drivers/usb/host/fusbh200-hcd.c
++++ b/drivers/usb/host/fusbh200-hcd.c
+@@ -5798,6 +5798,7 @@ static int fusbh200_hcd_probe(struct platform_device *pdev)
+ 		dev_err(dev, "failed to add hcd with err %d\n", retval);
+ 		goto fail_add_hcd;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return retval;
+ 
+diff --git a/drivers/usb/host/hwa-hc.c b/drivers/usb/host/hwa-hc.c
+index ada0a52..34b2fc9 100644
+--- a/drivers/usb/host/hwa-hc.c
++++ b/drivers/usb/host/hwa-hc.c
+@@ -791,6 +791,7 @@ static int hwahc_probe(struct usb_interface *usb_iface,
+ 		dev_err(dev, "Cannot add HCD: %d\n", result);
+ 		goto error_add_hcd;
+ 	}
++	device_wakeup_enable(usb_hcd->self.controller);
+ 	result = wusbhc_b_create(&hwahc->wusbhc);
+ 	if (result < 0) {
+ 		dev_err(dev, "Cannot setup phase B of WUSBHC: %d\n", result);
+diff --git a/drivers/usb/host/imx21-hcd.c b/drivers/usb/host/imx21-hcd.c
+index cb6d608..45a9a41 100644
+--- a/drivers/usb/host/imx21-hcd.c
++++ b/drivers/usb/host/imx21-hcd.c
+@@ -1910,6 +1910,7 @@ static int imx21_probe(struct platform_device *pdev)
+ 		dev_err(imx21->dev, "usb_add_hcd() returned %d\n", ret);
+ 		goto failed_add_hcd;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return 0;
+ 
+diff --git a/drivers/usb/host/isp116x-hcd.c b/drivers/usb/host/isp116x-hcd.c
+index c7d0f8f..fc0041b 100644
+--- a/drivers/usb/host/isp116x-hcd.c
++++ b/drivers/usb/host/isp116x-hcd.c
+@@ -1645,6 +1645,8 @@ static int isp116x_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err6;
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	ret = create_debug_file(isp116x);
+ 	if (ret) {
+ 		ERR("Couldn't create debugfs entry\n");
+diff --git a/drivers/usb/host/isp1362-hcd.c b/drivers/usb/host/isp1362-hcd.c
+index 935a2dd..6e8b779 100644
+--- a/drivers/usb/host/isp1362-hcd.c
++++ b/drivers/usb/host/isp1362-hcd.c
+@@ -2746,6 +2746,8 @@ static int isp1362_probe(struct platform_device *pdev)
+ 	retval = usb_add_hcd(hcd, irq, irq_flags | IRQF_SHARED);
+ 	if (retval != 0)
+ 		goto err6;
++	device_wakeup_enable(hcd->self.controller);
++
+ 	pr_info("%s, irq %d\n", hcd->product_desc, irq);
+ 
+ 	create_debug_file(isp1362_hcd);
+diff --git a/drivers/usb/host/isp1760-hcd.c b/drivers/usb/host/isp1760-hcd.c
+index 2facee5..51a0ae9 100644
+--- a/drivers/usb/host/isp1760-hcd.c
++++ b/drivers/usb/host/isp1760-hcd.c
+@@ -2250,6 +2250,7 @@ struct usb_hcd *isp1760_register(phys_addr_t res_start, resource_size_t res_len,
+ 	ret = usb_add_hcd(hcd, irq, irqflags);
+ 	if (ret)
+ 		goto err_unmap;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return hcd;
+ 
+diff --git a/drivers/usb/host/ohci-at91.c b/drivers/usb/host/ohci-at91.c
+index caa3764..1b3967f 100644
+--- a/drivers/usb/host/ohci-at91.c
++++ b/drivers/usb/host/ohci-at91.c
+@@ -181,8 +181,10 @@ static int usb_hcd_at91_probe(const struct hc_driver *driver,
+ 	ohci_hcd_init(hcd_to_ohci(hcd));
+ 
+ 	retval = usb_add_hcd(hcd, pdev->resource[1].start, IRQF_SHARED);
+-	if (retval == 0)
++	if (retval == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return retval;
++	}
+ 
+ 	/* Error handling */
+ 	at91_stop_hc(pdev);
+diff --git a/drivers/usb/host/ohci-da8xx.c b/drivers/usb/host/ohci-da8xx.c
+index 9be59f1..45cd482 100644
+--- a/drivers/usb/host/ohci-da8xx.c
++++ b/drivers/usb/host/ohci-da8xx.c
+@@ -348,6 +348,8 @@ static int usb_hcd_da8xx_probe(const struct hc_driver *driver,
+ 	if (error)
+ 		goto err4;
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	if (hub->ocic_notify) {
+ 		error = hub->ocic_notify(ohci_da8xx_ocic_handler);
+ 		if (!error)
+diff --git a/drivers/usb/host/ohci-exynos.c b/drivers/usb/host/ohci-exynos.c
+index dc6ee9a..e69de87 100644
+--- a/drivers/usb/host/ohci-exynos.c
++++ b/drivers/usb/host/ohci-exynos.c
+@@ -206,6 +206,7 @@ skip_phy:
+ 
+ 	platform_set_drvdata(pdev, exynos_ohci);
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ fail_add_hcd:
+diff --git a/drivers/usb/host/ohci-jz4740.c b/drivers/usb/host/ohci-jz4740.c
+index d4ef539..efe31f3 100644
+--- a/drivers/usb/host/ohci-jz4740.c
++++ b/drivers/usb/host/ohci-jz4740.c
+@@ -217,6 +217,7 @@ static int jz4740_ohci_probe(struct platform_device *pdev)
+ 		dev_err(&pdev->dev, "Failed to add hcd: %d\n", ret);
+ 		goto err_disable;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return 0;
+ 
+diff --git a/drivers/usb/host/ohci-nxp.c b/drivers/usb/host/ohci-nxp.c
+index 7d7d507..e0dfb4b 100644
+--- a/drivers/usb/host/ohci-nxp.c
++++ b/drivers/usb/host/ohci-nxp.c
+@@ -320,8 +320,10 @@ static int usb_hcd_nxp_probe(struct platform_device *pdev)
+ 
+ 	dev_info(&pdev->dev, "at 0x%p, irq %d\n", hcd->regs, hcd->irq);
+ 	ret = usb_add_hcd(hcd, irq, 0);
+-	if (ret == 0)
++	if (ret == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return ret;
++	}
+ 
+ 	nxp_stop_hc();
+ fail_resource:
+diff --git a/drivers/usb/host/ohci-octeon.c b/drivers/usb/host/ohci-octeon.c
+index 342dc7e..9dd89b5 100644
+--- a/drivers/usb/host/ohci-octeon.c
++++ b/drivers/usb/host/ohci-octeon.c
+@@ -170,6 +170,8 @@ static int ohci_octeon_drv_probe(struct platform_device *pdev)
+ 		goto err3;
+ 	}
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	platform_set_drvdata(pdev, hcd);
+ 
+ 	return 0;
+diff --git a/drivers/usb/host/ohci-omap.c b/drivers/usb/host/ohci-omap.c
+index 31d3a12..9ea6154 100644
+--- a/drivers/usb/host/ohci-omap.c
++++ b/drivers/usb/host/ohci-omap.c
+@@ -374,6 +374,7 @@ static int usb_hcd_omap_probe (const struct hc_driver *driver,
+ 	if (!host_enabled)
+ 		omap_ohci_clock_power(0);
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ err3:
+ 	iounmap(hcd->regs);
+diff --git a/drivers/usb/host/ohci-omap3.c b/drivers/usb/host/ohci-omap3.c
+index a09af26..4df1a3e 100644
+--- a/drivers/usb/host/ohci-omap3.c
++++ b/drivers/usb/host/ohci-omap3.c
+@@ -192,6 +192,7 @@ static int ohci_hcd_omap3_probe(struct platform_device *pdev)
+ 		dev_dbg(dev, "failed to add hcd with err %d\n", ret);
+ 		goto err_add_hcd;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return 0;
+ 
+diff --git a/drivers/usb/host/ohci-platform.c b/drivers/usb/host/ohci-platform.c
+index a4c6410..0ce0914 100644
+--- a/drivers/usb/host/ohci-platform.c
++++ b/drivers/usb/host/ohci-platform.c
+@@ -108,6 +108,8 @@ static int ohci_platform_probe(struct platform_device *dev)
+ 	if (err)
+ 		goto err_put_hcd;
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	platform_set_drvdata(dev, hcd);
+ 
+ 	return err;
+diff --git a/drivers/usb/host/ohci-ppc-of.c b/drivers/usb/host/ohci-ppc-of.c
+index 75f5a1e..0bfdf0a 100644
+--- a/drivers/usb/host/ohci-ppc-of.c
++++ b/drivers/usb/host/ohci-ppc-of.c
+@@ -145,8 +145,10 @@ static int ohci_hcd_ppc_of_probe(struct platform_device *op)
+ 	ohci_hcd_init(ohci);
+ 
+ 	rv = usb_add_hcd(hcd, irq, 0);
+-	if (rv == 0)
++	if (rv == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return 0;
++	}
+ 
+ 	/* by now, 440epx is known to show usb_23 erratum */
+ 	np = of_find_compatible_node(NULL, NULL, "ibm,usb-ehci-440epx");
+diff --git a/drivers/usb/host/ohci-ps3.c b/drivers/usb/host/ohci-ps3.c
+index 7d35cd9..71d8bc4 100644
+--- a/drivers/usb/host/ohci-ps3.c
++++ b/drivers/usb/host/ohci-ps3.c
+@@ -173,6 +173,7 @@ static int ps3_ohci_probe(struct ps3_system_bus_device *dev)
+ 		goto fail_add_hcd;
+ 	}
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return result;
+ 
+ fail_add_hcd:
+diff --git a/drivers/usb/host/ohci-pxa27x.c b/drivers/usb/host/ohci-pxa27x.c
+index 93371a2..aceda90 100644
+--- a/drivers/usb/host/ohci-pxa27x.c
++++ b/drivers/usb/host/ohci-pxa27x.c
+@@ -428,8 +428,10 @@ int usb_hcd_pxa27x_probe (const struct hc_driver *driver, struct platform_device
+ 	ohci_hcd_init(hcd_to_ohci(hcd));
+ 
+ 	retval = usb_add_hcd(hcd, irq, 0);
+-	if (retval == 0)
++	if (retval == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return retval;
++	}
+ 
+ 	pxa27x_stop_hc(ohci, &pdev->dev);
+  err3:
+diff --git a/drivers/usb/host/ohci-s3c2410.c b/drivers/usb/host/ohci-s3c2410.c
+index 4919afa..f1e36e6 100644
+--- a/drivers/usb/host/ohci-s3c2410.c
++++ b/drivers/usb/host/ohci-s3c2410.c
+@@ -380,6 +380,7 @@ static int usb_hcd_s3c2410_probe(const struct hc_driver *driver,
+ 	if (retval != 0)
+ 		goto err_ioremap;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+  err_ioremap:
+diff --git a/drivers/usb/host/ohci-sa1111.c b/drivers/usb/host/ohci-sa1111.c
+index 17b2a7d..baabfb8 100644
+--- a/drivers/usb/host/ohci-sa1111.c
++++ b/drivers/usb/host/ohci-sa1111.c
+@@ -205,8 +205,10 @@ static int ohci_hcd_sa1111_probe(struct sa1111_dev *dev)
+ 		goto err2;
+ 
+ 	ret = usb_add_hcd(hcd, dev->irq[1], 0);
+-	if (ret == 0)
++	if (ret == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return ret;
++	}
+ 
+ 	sa1111_stop_hc(dev);
+  err2:
+diff --git a/drivers/usb/host/ohci-sm501.c b/drivers/usb/host/ohci-sm501.c
+index d479d5d..0726387 100644
+--- a/drivers/usb/host/ohci-sm501.c
++++ b/drivers/usb/host/ohci-sm501.c
+@@ -168,6 +168,7 @@ static int ohci_hcd_sm501_drv_probe(struct platform_device *pdev)
+ 	retval = usb_add_hcd(hcd, irq, IRQF_SHARED);
+ 	if (retval)
+ 		goto err5;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	/* enable power and unmask interrupts */
+ 
+diff --git a/drivers/usb/host/ohci-spear.c b/drivers/usb/host/ohci-spear.c
+index cc9dd9e..9966337 100644
+--- a/drivers/usb/host/ohci-spear.c
++++ b/drivers/usb/host/ohci-spear.c
+@@ -157,8 +157,10 @@ static int spear_ohci_hcd_drv_probe(struct platform_device *pdev)
+ 	ohci_hcd_init(hcd_to_ohci(hcd));
+ 
+ 	retval = usb_add_hcd(hcd, platform_get_irq(pdev, 0), 0);
+-	if (retval == 0)
++	if (retval == 0) {
++		device_wakeup_enable(hcd->self.controller);
+ 		return retval;
++	}
+ 
+ 	spear_stop_ohci(ohci_p);
+ err_put_hcd:
+diff --git a/drivers/usb/host/ohci-tilegx.c b/drivers/usb/host/ohci-tilegx.c
+index 22540ab..0b183e0 100644
+--- a/drivers/usb/host/ohci-tilegx.c
++++ b/drivers/usb/host/ohci-tilegx.c
+@@ -159,6 +159,7 @@ static int ohci_hcd_tilegx_drv_probe(struct platform_device *pdev)
+ 	ret = usb_add_hcd(hcd, pdata->irq, IRQF_SHARED);
+ 	if (ret == 0) {
+ 		platform_set_drvdata(pdev, hcd);
++		device_wakeup_enable(hcd->self.controller);
+ 		return ret;
+ 	}
+ 
+diff --git a/drivers/usb/host/ohci-tmio.c b/drivers/usb/host/ohci-tmio.c
+index ecb09a5..9c44093 100644
+--- a/drivers/usb/host/ohci-tmio.c
++++ b/drivers/usb/host/ohci-tmio.c
+@@ -250,6 +250,7 @@ static int ohci_hcd_tmio_drv_probe(struct platform_device *dev)
+ 	if (ret)
+ 		goto err_add_hcd;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	if (ret == 0)
+ 		return ret;
+ 
+diff --git a/drivers/usb/host/oxu210hp-hcd.c b/drivers/usb/host/oxu210hp-hcd.c
+index 4a05148..778eeaf 100644
+--- a/drivers/usb/host/oxu210hp-hcd.c
++++ b/drivers/usb/host/oxu210hp-hcd.c
+@@ -3751,6 +3751,7 @@ static struct usb_hcd *oxu_create(struct platform_device *pdev,
+ 	if (ret < 0)
+ 		return ERR_PTR(ret);
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return hcd;
+ }
+ 
+diff --git a/drivers/usb/host/r8a66597-hcd.c b/drivers/usb/host/r8a66597-hcd.c
+index 2ad004a..2cf5b46 100644
+--- a/drivers/usb/host/r8a66597-hcd.c
++++ b/drivers/usb/host/r8a66597-hcd.c
+@@ -2514,6 +2514,7 @@ static int r8a66597_probe(struct platform_device *pdev)
+ 		dev_err(&pdev->dev, "Failed to add hcd\n");
+ 		goto clean_up3;
+ 	}
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	return 0;
+ 
+diff --git a/drivers/usb/host/sl811-hcd.c b/drivers/usb/host/sl811-hcd.c
+index 79620c3..0115e7f 100644
+--- a/drivers/usb/host/sl811-hcd.c
++++ b/drivers/usb/host/sl811-hcd.c
+@@ -1732,6 +1732,8 @@ sl811h_probe(struct platform_device *dev)
+ 	if (retval != 0)
+ 		goto err6;
+ 
++	device_wakeup_enable(hcd->self.controller);
++
+ 	create_debug_file(sl811);
+ 	return retval;
+ 
+diff --git a/drivers/usb/host/u132-hcd.c b/drivers/usb/host/u132-hcd.c
+index e402beb..bf0dcb7 100644
+--- a/drivers/usb/host/u132-hcd.c
++++ b/drivers/usb/host/u132-hcd.c
+@@ -3133,6 +3133,7 @@ static int u132_probe(struct platform_device *pdev)
+ 			u132_u132_put_kref(u132);
+ 			return retval;
+ 		} else {
++			device_wakeup_enable(hcd->self.controller);
+ 			u132_monitor_queue_work(u132, 100);
+ 			return 0;
+ 		}
+diff --git a/drivers/usb/host/uhci-grlib.c b/drivers/usb/host/uhci-grlib.c
+index 53c23ff..ab25dc3 100644
+--- a/drivers/usb/host/uhci-grlib.c
++++ b/drivers/usb/host/uhci-grlib.c
+@@ -141,6 +141,7 @@ static int uhci_hcd_grlib_probe(struct platform_device *op)
+ 	if (rv)
+ 		goto err_uhci;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ err_uhci:
+diff --git a/drivers/usb/host/uhci-platform.c b/drivers/usb/host/uhci-platform.c
+index d033a0e..2afcc2d 100644
+--- a/drivers/usb/host/uhci-platform.c
++++ b/drivers/usb/host/uhci-platform.c
+@@ -110,6 +110,7 @@ static int uhci_hcd_platform_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_uhci;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ 
+ err_uhci:
+diff --git a/drivers/usb/host/whci/hcd.c b/drivers/usb/host/whci/hcd.c
+index 1b0888f..d7b363a 100644
+--- a/drivers/usb/host/whci/hcd.c
++++ b/drivers/usb/host/whci/hcd.c
+@@ -293,6 +293,7 @@ static int whc_probe(struct umc_dev *umc)
+ 		dev_err(dev, "cannot add HCD: %d\n", ret);
+ 		goto error_usb_add_hcd;
+ 	}
++	device_wakeup_enable(usb_hcd->self.controller);
+ 
+ 	ret = wusbhc_b_create(wusbhc);
+ 	if (ret) {
+diff --git a/drivers/usb/host/xhci-plat.c b/drivers/usb/host/xhci-plat.c
+index ba35e0c..6cfe026 100644
+--- a/drivers/usb/host/xhci-plat.c
++++ b/drivers/usb/host/xhci-plat.c
+@@ -139,6 +139,7 @@ static int xhci_plat_probe(struct platform_device *pdev)
+ 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
+ 	if (ret)
+ 		goto unmap_registers;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	/* USB 2.0 roothub is stored in the platform_device now. */
+ 	hcd = platform_get_drvdata(pdev);
+diff --git a/drivers/usb/musb/musb_host.c b/drivers/usb/musb/musb_host.c
+index 6582a20..e208375 100644
+--- a/drivers/usb/musb/musb_host.c
++++ b/drivers/usb/musb/musb_host.c
+@@ -2657,6 +2657,7 @@ int musb_host_setup(struct musb *musb, int power_budget)
+ 	if (ret < 0)
+ 		return ret;
+ 
++	device_wakeup_enable(hcd->self.controller);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/usb/phy/phy-msm-usb.c b/drivers/usb/phy/phy-msm-usb.c
+index e9d4cd9..3775283 100644
+--- a/drivers/usb/phy/phy-msm-usb.c
++++ b/drivers/usb/phy/phy-msm-usb.c
+@@ -669,6 +669,7 @@ static void msm_otg_start_host(struct usb_phy *phy, int on)
+ 			pdata->setup_gpio(OTG_STATE_A_HOST);
+ #ifdef CONFIG_USB
+ 		usb_add_hcd(hcd, hcd->irq, IRQF_SHARED);
++		device_wakeup_enable(hcd->self.controller);
+ #endif
+ 	} else {
+ 		dev_dbg(phy->dev, "host off\n");
+diff --git a/drivers/usb/phy/phy-mv-usb.c b/drivers/usb/phy/phy-mv-usb.c
+index 98f6ac6..44f316e 100644
+--- a/drivers/usb/phy/phy-mv-usb.c
++++ b/drivers/usb/phy/phy-mv-usb.c
+@@ -213,10 +213,12 @@ static void mv_otg_start_host(struct mv_otg *mvotg, int on)
+ 
+ 	hcd = bus_to_hcd(otg->host);
+ 
+-	if (on)
++	if (on) {
+ 		usb_add_hcd(hcd, hcd->irq, IRQF_SHARED);
+-	else
++		device_wakeup_enable(hcd->self.controller);
++	} else {
+ 		usb_remove_hcd(hcd);
++	}
+ #endif /* CONFIG_USB */
+ }
+ 
+diff --git a/drivers/usb/renesas_usbhs/mod_host.c b/drivers/usb/renesas_usbhs/mod_host.c
+index e40f565..10e1ded 100644
+--- a/drivers/usb/renesas_usbhs/mod_host.c
++++ b/drivers/usb/renesas_usbhs/mod_host.c
+@@ -1469,6 +1469,7 @@ static int usbhsh_start(struct usbhs_priv *priv)
+ 	ret = usb_add_hcd(hcd, 0, 0);
+ 	if (ret < 0)
+ 		return 0;
++	device_wakeup_enable(hcd->self.controller);
+ 
+ 	/*
+ 	 * pipe initialize and enable DCP
+-- 
+1.8.4.5
+

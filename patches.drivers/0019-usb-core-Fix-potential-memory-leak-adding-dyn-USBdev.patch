@@ -1,0 +1,85 @@
+From 97639a754b3d7bd63321a6bb95aa25bc46e7162c Mon Sep 17 00:00:00 2001
+From: Christian Engelmayer <cengelma@gmx.at>
+Date: Tue, 28 Jan 2014 22:22:27 +0100
+Subject: [PATCH 19/68] usb: core: Fix potential memory leak adding dyn
+ USBdevice IDs
+References: FATE#315518
+Git-Commit: 7f196caffbf2dc96cc145bf5d2ef5ef8a7b4f687
+Patch-Mainline: v3.14
+
+Fix a memory leak in the usb_store_new_id() error paths. When bailing out
+due to sanity checks, the function left the already allocated usb_dynid
+struct in place. This regression was introduced by the following commits:
+
+c63fe8f6 (usb: core: add sanity checks when using bInterfaceClass with new_id)
+1b9fb31f (usb: core: check for valid id_table when using the RefId feature)
+52a6966c (usb: core: bail out if user gives an unknown RefId when using new_id)
+
+Detected by Coverity: CID 1162604.
+
+Signed-off-by: Christian Engelmayer <cengelma@gmx.at>
+Acked-by: Wolfram Sang <wsa@the-dreams.de>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/core/driver.c | 24 +++++++++++++++++-------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/core/driver.c b/drivers/usb/core/driver.c
+index 1a254bc..5bb961d 100644
+--- a/drivers/usb/core/driver.c
++++ b/drivers/usb/core/driver.c
+@@ -63,8 +63,10 @@ ssize_t usb_store_new_id(struct usb_dynids *dynids,
+ 	dynid->id.idProduct = idProduct;
+ 	dynid->id.match_flags = USB_DEVICE_ID_MATCH_DEVICE;
+ 	if (fields > 2 && bInterfaceClass) {
+-		if (bInterfaceClass > 255)
+-			return -EINVAL;
++		if (bInterfaceClass > 255) {
++			retval = -EINVAL;
++			goto fail;
++		}
+ 
+ 		dynid->id.bInterfaceClass = (u8)bInterfaceClass;
+ 		dynid->id.match_flags |= USB_DEVICE_ID_MATCH_INT_CLASS;
+@@ -73,17 +75,21 @@ ssize_t usb_store_new_id(struct usb_dynids *dynids,
+ 	if (fields > 4) {
+ 		const struct usb_device_id *id = id_table;
+ 
+-		if (!id)
+-			return -ENODEV;
++		if (!id) {
++			retval = -ENODEV;
++			goto fail;
++		}
+ 
+ 		for (; id->match_flags; id++)
+ 			if (id->idVendor == refVendor && id->idProduct == refProduct)
+ 				break;
+ 
+-		if (id->match_flags)
++		if (id->match_flags) {
+ 			dynid->id.driver_info = id->driver_info;
+-		else
+-			return -ENODEV;
++		} else {
++			retval = -ENODEV;
++			goto fail;
++		}
+ 	}
+ 
+ 	spin_lock(&dynids->lock);
+@@ -95,6 +101,10 @@ ssize_t usb_store_new_id(struct usb_dynids *dynids,
+ 	if (retval)
+ 		return retval;
+ 	return count;
++
++fail:
++	kfree(dynid);
++	return retval;
+ }
+ EXPORT_SYMBOL_GPL(usb_store_new_id);
+ 
+-- 
+1.8.4.5
+

@@ -1,0 +1,64 @@
+From b8afc5520098c1f84494dffec5937924ac5aa00b Mon Sep 17 00:00:00 2001
+From: Valentina Manea <valentina.manea.m@gmail.com>
+Date: Sat, 8 Mar 2014 14:53:34 +0200
+Subject: [PATCH 45/68] staging: usbip: claim ports used by shared devices
+References: FATE#315518
+Git-Commit: 6080cd0e9239469524d2aa07250ad4b9f383960d
+Patch-Mainline: v3.15
+
+A device should not be able to be used concurrently both by
+the server and the client. Claiming the port used by the
+shared device ensures no interface drivers bind to it and
+that it is not usable from the server.
+
+Signed-off-by: Valentina Manea <valentina.manea.m@gmail.com>
+Acked-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+Conflicts:
+	include/linux/usb.h
+---
+ drivers/staging/usbip/stub_dev.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/staging/usbip/stub_dev.c b/drivers/staging/usbip/stub_dev.c
+index 3ebd2ba..e1c1c41 100644
+--- a/drivers/staging/usbip/stub_dev.c
++++ b/drivers/staging/usbip/stub_dev.c
+@@ -437,6 +437,18 @@ static int stub_probe(struct usb_interface *interface,
+ 		return rc;
+ 	}
+ 
++	/*
++	 * Claim this hub port.
++	 * It doesn't matter what value we pass as owner
++	 * (struct dev_state) as long as it is unique.
++	 */
++	rc = usb_hub_claim_port(udev->parent, udev->portnum,
++			(struct dev_state *) udev);
++	if (rc) {
++		dev_dbg(&udev->dev, "unable to claim port\n");
++		return rc;
++	}
++
+ 	err = stub_add_files(&udev->dev);
+ 	if (err) {
+ 		dev_err(&interface->dev, "stub_add_files for %s\n", udev_busid);
+@@ -508,6 +520,14 @@ static void stub_disconnect(struct usb_interface *interface)
+ 		return;
+ 	}
+ 
++	/* release port */
++	rc = usb_hub_release_port(udev->parent, udev->portnum,
++				  (struct dev_state *) udev);
++	if (rc) {
++		dev_dbg(&udev->dev, "unable to release port\n");
++		return;
++	}
++
+ 	/* If usb reset is called from event handler */
+ 	if (busid_priv->sdev->ud.eh == current) {
+ 		busid_priv->interf_count--;
+-- 
+1.8.4.5
+

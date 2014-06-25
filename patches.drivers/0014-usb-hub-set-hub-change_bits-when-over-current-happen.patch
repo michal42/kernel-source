@@ -1,0 +1,44 @@
+From 40918ef1eb94766ac82cf14048d7e6f709f7108b Mon Sep 17 00:00:00 2001
+From: Shen Guang <shenguang10@gmail.com>
+Date: Wed, 8 Jan 2014 14:45:42 +0800
+Subject: [PATCH 14/68] usb:hub set hub->change_bits when over-current happens
+References: FATE#315518
+Git-Commit: 08d1dec6f4054e3613f32051d9b149d4203ce0d2
+Patch-Mainline: v3.14
+
+When we are doing compliance test with xHCI, we found that if we
+enable CONFIG_USB_SUSPEND and plug in a bad device which causes
+over-current condition to the root port, software will not be noticed.
+The reason is that current code don't set hub->change_bits in
+hub_activate() when over-current happens, and then hub_events() will
+not check the port status because it thinks nothing changed.
+If CONFIG_USB_SUSPEND is disabled, the interrupt pipe of the hub will
+report the change and set hub->event_bits, and then hub_events() will
+check what events happened.In this case over-current can be detected.
+
+Signed-off-by: Shen Guang <shenguang10@gmail.com>
+Acked-by: Alan Stern <stern@rowland.harvard.edu>
+Acked-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/core/hub.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 30cf7a1..2dc9016 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -1149,7 +1149,8 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
+ 			/* Tell khubd to disconnect the device or
+ 			 * check for a new connection
+ 			 */
+-			if (udev || (portstatus & USB_PORT_STAT_CONNECTION))
++			if (udev || (portstatus & USB_PORT_STAT_CONNECTION) ||
++			    (portstatus & USB_PORT_STAT_OVERCURRENT))
+ 				set_bit(port1, hub->change_bits);
+ 
+ 		} else if (portstatus & USB_PORT_STAT_ENABLE) {
+-- 
+1.8.4.5
+
