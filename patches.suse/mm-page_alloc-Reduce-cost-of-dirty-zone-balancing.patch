@@ -1,9 +1,9 @@
-From 5c296f61160915a0dee385128da631419df0267c Mon Sep 17 00:00:00 2001
+From d2a017a32a78acc0c166759667b7dff8ec1c0038 Mon Sep 17 00:00:00 2001
 From: Mel Gorman <mgorman@suse.de>
 Date: Mon, 16 Jun 2014 11:50:29 +0100
 Subject: [PATCH] mm: page_alloc: Reduce cost of dirty zone balancing
 
-References: VM/FS Performance
+References: VM Performance
 Patch-mainline: No (Expected 3.17)
 
 When allocating a page cache page for writing the allocator makes an attempt
@@ -11,7 +11,19 @@ to proportionally distribute dirty pages between populated zones. The call
 to zone_dirty_ok is more expensive than expected because of the number of
 vmstats it examines. This patch caches some of that information to reduce
 the cost. It means the proportional allocation is based on stale data but
-the heuristic should not need perfectly accurate information.
+the heuristic should not need perfectly accurate information. As before,
+the benefit is marginal but cumulative and depends on the size of the
+machine. For a very small machine the effect is visible in system CPU time
+for a tiobench test but it'll vary between workloads.
+
+          3.16.0-rc2  3.16.0-rc2
+            fairzone   lessdirty
+User          393.76      389.03
+System        391.50      388.64
+Elapsed      5182.86     5186.28
+
+Even though the benefit is small it's generally worthwhile reducing overhead
+in the page allocator as it has a tendency to creep up over time.
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
@@ -19,22 +31,22 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  include/linux/writeback.h |  1 +
  mm/internal.h             |  1 +
  mm/page-writeback.c       | 15 +++++++++------
- mm/page_alloc.c           | 15 ++++++++++++---
- 5 files changed, 25 insertions(+), 9 deletions(-)
+ mm/page_alloc.c           | 16 ++++++++++++----
+ 5 files changed, 25 insertions(+), 10 deletions(-)
 
 diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
-index 699fb58..6aec04c 100644
+index 3de857a..49eccca 100644
 --- a/include/linux/mmzone.h
 +++ b/include/linux/mmzone.h
-@@ -391,6 +391,8 @@ struct zone {
- 	int			compact_order_failed;
- #endif
+@@ -473,6 +473,8 @@ struct zone {
+ 	/* zone flags, see below */
+ 	unsigned long		flags;
  
 +	unsigned long		dirty_limit_cached;
 +
- 	ZONE_PADDING(_pad1_)
+ 	ZONE_PADDING(_pad2_)
  
- 	/* Fields commonly accessed by the page reclaim scanner */
+ 	/* Write-intensive fields used by page reclaim */
 diff --git a/include/linux/writeback.h b/include/linux/writeback.h
 index 021b8a3..b2d7fff 100644
 --- a/include/linux/writeback.h
@@ -101,21 +113,21 @@ index 8f6daa6..b10955e 100644
  	return zone_page_state(zone, NR_FILE_DIRTY) +
  	       zone_page_state(zone, NR_UNSTABLE_NFS) +
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index 247062f..ac4daa2 100644
+index c729ae6..1da7b5e 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -1927,9 +1927,8 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
+@@ -1928,9 +1928,7 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
  	nodemask_t *allowednodes = NULL;/* zonelist_cache approximation */
  	int zlc_active = 0;		/* set if using zonelist_cache */
  	int did_zlc_setup = 0;		/* just call zlc_setup() one time */
 -	bool consider_zone_dirty = (alloc_flags & ALLOC_WMARK_LOW) &&
 -				(gfp_mask & __GFP_WRITE);
- 	int nr_fair_skipped = 0, nr_fair_eligible = 0, nr_fail_watermark = 0;
-+	int nr_fail_dirty = 0;
+-	int nr_fair_skipped = 0;
++	int nr_fair_skipped = 0, nr_fail_dirty = 0;
+ 	struct zone *fair_zone = NULL;
  	bool zonelist_rescan;
  
- zonelist_scan:
-@@ -1991,8 +1990,11 @@ zonelist_scan:
+@@ -1993,8 +1991,11 @@ zonelist_scan:
  		 * will require awareness of zones in the
  		 * dirty-throttling and the flusher threads.
  		 */
@@ -128,8 +140,8 @@ index 247062f..ac4daa2 100644
  
  		mark = zone->watermark[alloc_flags & ALLOC_WMARK_MASK];
  		if (!zone_watermark_ok(zone, order, mark,
-@@ -2106,6 +2108,11 @@ this_zone_full:
- 		}
+@@ -2120,6 +2121,11 @@ this_zone_full:
+ 		zonelist_rescan = true;
  	}
  
 +	if ((alloc_flags & ALLOC_DIRTY) && nr_fail_dirty) {
@@ -140,7 +152,7 @@ index 247062f..ac4daa2 100644
  	if (zonelist_rescan)
  		goto zonelist_scan;
  
-@@ -2765,6 +2772,8 @@ retry_cpuset:
+@@ -2779,6 +2785,8 @@ retry_cpuset:
  
  	if (preferred_zoneref->fair_enabled)
  		alloc_flags |= ALLOC_FAIR;
