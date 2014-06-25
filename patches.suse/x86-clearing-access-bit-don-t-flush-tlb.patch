@@ -1,43 +1,52 @@
-From 5da5535cbff2a925f60549d7d883410cbbd328f0 Mon Sep 17 00:00:00 2001
 From: Shaohua Li <shli@kernel.org>
-Date: Wed, 2 Apr 2014 13:57:45 +0100
-Subject: [PATCH] x86: clearing access bit don't flush tlb
+Subject: [PATCH] x86/mm: In the PTE swapout page reclaim case clear the accessed bit instead of flushing the TLB
 
 References: VM Performance
-Patch-mainline: No (Expected 3.15)
+Patch-mainline: v3.16
+Git-commit: b13b1d2d8692b437203de7a404c6b809d2cc4d99
 
-We use access bit to age a page at page reclaim. When clearing pte access bit,
-we could skip tlb flush in X86. The side effect is if the pte is in tlb and pte
-access bit is unset in page table, when cpu access the page again, cpu will not
-set page table pte's access bit. Next time page reclaim will think this hot
-page is old and reclaim it wrongly, but this doesn't corrupt data.
+We use the accessed bit to age a page at page reclaim time,
+and currently we also flush the TLB when doing so.
 
-And according to intel manual, tlb has less than 1k entries, which covers < 4M
-memory. In today's system, several giga byte memory is normal. After page
-reclaim clears pte access bit and before cpu access the page again, it's quite
-unlikely this page's pte is still in TLB. And context swich will flush tlb too.
-The chance skiping tlb flush to impact page reclaim should be very rare.
+But in some workloads TLB flush overhead is very heavy. In my
+simple multithreaded app with a lot of swap to several pcie
+SSDs, removing the tlb flush gives about 20% ~ 30% swapout
+speedup.
 
-Originally (in 2.5 kernel maybe), we didn't do tlb flush after clear access bit.
-Hugh added it to fix some ARM and sparc issues. Since I only change this for
-x86, there should be no risk.
+Fortunately just removing the TLB flush is a valid optimization:
+on x86 CPUs, clearing the accessed bit without a TLB flush
+doesn't cause data corruption.
 
-And in some workloads, TLB flush overhead is very heavy. In my simple
-multithread app with a lot of swap to several pcie SSD, removing the tlb flush
-gives about 20% ~ 30% swapout speedup.
+It could cause incorrect page aging and the (mistaken) reclaim of
+hot pages, but the chance of that should be relatively low.
 
+So as a performance optimization don't flush the TLB when
+clearing the accessed bit, it will eventually be flushed by
+a context switch or a VM operation anyway. [ In the rare
+event of it not getting flushed for a long time the delay
+shouldn't really matter because there's no real memory
+pressure for swapout to react to. ]
+
+Suggested-by: Linus Torvalds <torvalds@linux-foundation.org>
 Signed-off-by: Shaohua Li <shli@fusionio.com>
 Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Hugh Dickins <hughd@google.com>
+Acked-by: Johannes Weiner <hannes@cmpxchg.org>
+Cc: linux-mm@kvack.org
+Cc: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Link: http://lkml.kernel.org/r/20140408075809.GA1764@kernel.org
+[ Rewrote the changelog and the code comments. ]
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- arch/x86/mm/pgtable.c | 13 ++++++-------
- 1 file changed, 6 insertions(+), 7 deletions(-)
+ arch/x86/mm/pgtable.c | 21 ++++++++++++++-------
+ 1 file changed, 14 insertions(+), 7 deletions(-)
 
 diff --git a/arch/x86/mm/pgtable.c b/arch/x86/mm/pgtable.c
-index a7cccb6..3eab144 100644
+index c96314a..0004ac7 100644
 --- a/arch/x86/mm/pgtable.c
 +++ b/arch/x86/mm/pgtable.c
-@@ -397,13 +397,12 @@ int pmdp_test_and_clear_young(struct vm_area_struct *vma,
+@@ -399,13 +399,20 @@ int pmdp_test_and_clear_young(struct vm_area_struct *vma,
  int ptep_clear_flush_young(struct vm_area_struct *vma,
  			   unsigned long address, pte_t *ptep)
  {
@@ -49,9 +58,17 @@ index a7cccb6..3eab144 100644
 -
 -	return young;
 +	/*
-+	 * In X86, clearing access bit without TLB flush doesn't cause data
-+	 * corruption. Doing this could cause wrong page aging and so hot pages
-+	 * are reclaimed, but the chance should be very rare.
++	 * On x86 CPUs, clearing the accessed bit without a TLB flush
++	 * doesn't cause data corruption. [ It could cause incorrect
++	 * page aging and the (mistaken) reclaim of hot pages, but the
++	 * chance of that should be relatively low. ]
++	 *
++	 * So as a performance optimization don't flush the TLB when
++	 * clearing the accessed bit, it will eventually be flushed by
++	 * a context switch or a VM operation anyway. [ In the rare
++	 * event of it not getting flushed for a long time the delay
++	 * shouldn't really matter because there's no real memory
++	 * pressure for swapout to react to. ]
 +	 */
 +	return ptep_test_and_clear_young(vma, address, ptep);
  }

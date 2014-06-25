@@ -1,31 +1,42 @@
 From bbf0473679ff36f26ce39fd1e6855ef5c8de05ec Mon Sep 17 00:00:00 2001
 From: Mel Gorman <mgorman@suse.de>
 Date: Wed, 9 Apr 2014 10:24:31 +0100
-Subject: [PATCH] mm: vmscan: Do not throttle based on pfmemalloc reserves if
- node has no ZONE_NORMAL
+Subject: mm: vmscan: do not throttle based on pfmemalloc reserves if node has no ZONE_NORMAL
 
 References: bnc#870496
-Patch-mainline: No, needs to be upstreamed
+Patch-mainline: v3.16
+Git-commit: 675becce15f320337499bc1a9356260409a5ba29
 
-throttle_direct_reclaim() is meant to trigger for swap-over-network where the
-min watermark is treated as a pfmemalloc reserve. It bases this throttling on
-the first node in the pgdat but this is flawed.
+throttle_direct_reclaim() is meant to trigger during swap-over-network
+during which the min watermark is treated as a pfmemalloc reserve.  It
+throttes on the first node in the zonelist but this is flawed.
 
-On a 32-bit NUMA machine, allocations from node 1 would appear to have
-no pfmemalloc reserves (no ZONE_NORMAL or lower zone) and the process
-gets throttled. Address this by throttling based on the first node in the
-zonelist that has a usable ZONE_NORMAL.
+The user-visible impact is that a process running on CPU whose local
+memory node has no ZONE_NORMAL will stall for prolonged periods of time,
+possibly indefintely.  This is due to throttle_direct_reclaim thinking the
+pfmemalloc reserves are depleted when in fact they don't exist on that
+node.
 
+On a NUMA machine running a 32-bit kernel (I know) allocation requests
+from CPUs on node 1 would detect no pfmemalloc reserves and the process
+gets throttled.  This patch adjusts throttling of direct reclaim to
+throttle based on the first node in the zonelist that has a usable
+ZONE_NORMAL or lower zone.
+
+[akpm@linux-foundation.org: coding-style fixes]
 Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 ---
- mm/vmscan.c | 33 +++++++++++++++++++++++++++------
- 1 file changed, 27 insertions(+), 6 deletions(-)
+ mm/vmscan.c | 43 +++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 37 insertions(+), 6 deletions(-)
 
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 4835f27..dd31c2b 100644
+index fbcf460..53e4534 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
-@@ -2445,10 +2445,17 @@ static bool pfmemalloc_watermark_ok(pg_data_t *pgdat)
+@@ -2537,10 +2537,17 @@ static bool pfmemalloc_watermark_ok(pg_data_t *pgdat)
  
  	for (i = 0; i <= ZONE_NORMAL; i++) {
  		zone = &pgdat->node_zones[i];
@@ -43,7 +54,7 @@ index 4835f27..dd31c2b 100644
  	wmark_ok = free_pages > pfmemalloc_reserve / 2;
  
  	/* kswapd must be awake if processes are being throttled */
-@@ -2473,9 +2480,9 @@ static bool pfmemalloc_watermark_ok(pg_data_t *pgdat)
+@@ -2565,9 +2572,9 @@ static bool pfmemalloc_watermark_ok(pg_data_t *pgdat)
  static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
  					nodemask_t *nodemask)
  {
@@ -55,7 +66,7 @@ index 4835f27..dd31c2b 100644
  
  	/*
  	 * Kernel threads should not be throttled as they may be indirectly
-@@ -2494,10 +2501,24 @@ static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
+@@ -2586,10 +2593,34 @@ static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
  	if (fatal_signal_pending(current))
  		goto out;
  
@@ -65,10 +76,20 @@ index 4835f27..dd31c2b 100644
 -	if (pfmemalloc_watermark_ok(pgdat))
 +	/*
 +	 * Check if the pfmemalloc reserves are ok by finding the first node
-+	 * with a usable ZONE_NORMAL or lower zone
++	 * with a usable ZONE_NORMAL or lower zone. The expectation is that
++	 * GFP_KERNEL will be required for allocating network buffers when
++	 * swapping over the network so ZONE_HIGHMEM is unusable.
++	 *
++	 * Throttling is based on the first usable node and throttled processes
++	 * wait on a queue until kswapd makes progress and wakes them. There
++	 * is an affinity then between processes waking up and where reclaim
++	 * progress has been made assuming the process wakes on the same node.
++	 * More importantly, processes running on remote nodes will not compete
++	 * for remote pfmemalloc reserves and processes on different nodes
++	 * should make reasonable progress.
 +	 */
-+        for_each_zone_zonelist_nodemask(zone, z, zonelist,
-+                                        gfp_mask, nodemask) {
++	for_each_zone_zonelist_nodemask(zone, z, zonelist,
++					gfp_mask, nodemask) {
 +		if (zone_idx(zone) > ZONE_NORMAL)
 +			continue;
 +
