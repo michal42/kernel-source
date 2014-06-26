@@ -1,0 +1,46 @@
+From ab62f9cd7b5ecdf853f1612fe1e983cb7cbbac3e Mon Sep 17 00:00:00 2001
+From: "Rafael J. Wysocki" <rafael.j.wysocki@intel.com>
+Date: Sat, 15 Feb 2014 01:29:06 +0100
+Subject: [PATCH] ACPI / dock: Make 'docked' sysfs attribute work as documented
+
+Git-commit: ab62f9cd7b5ecdf853f1612fe1e983cb7cbbac3e
+Patch-mainline: v3.14-rc4
+Reference: fate#316836
+Target: sle12
+
+After recent ACPI core changes acpi_bus_get_device() will always
+succeed for dock station ACPI device objects, so show_docked()
+should not use that function's return value as an indicator of
+whether or not the dock device is present.
+
+Make it use acpi_device_enumerated() for this purpose.
+
+Fixes: 202317a573b2 (ACPI / scan: Add acpi_device objects for all device nodes in the namespace)
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/dock.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/dock.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/dock.c
++++ linux-3.12-SLE12/drivers/acpi/dock.c
+@@ -715,13 +715,11 @@ static acpi_status __init find_dock_devi
+ static ssize_t show_docked(struct device *dev,
+ 			   struct device_attribute *attr, char *buf)
+ {
+-	struct acpi_device *tmp;
+-
+ 	struct dock_station *dock_station = dev->platform_data;
++	struct acpi_device *adev = NULL;
+ 
+-	if (!acpi_bus_get_device(dock_station->handle, &tmp))
+-		return snprintf(buf, PAGE_SIZE, "1\n");
+-	return snprintf(buf, PAGE_SIZE, "0\n");
++	acpi_bus_get_device(dock_station->handle, &adev);
++	return snprintf(buf, PAGE_SIZE, "%u\n", acpi_device_enumerated(adev));
+ }
+ static DEVICE_ATTR(docked, S_IRUGO, show_docked, NULL);
+ 
