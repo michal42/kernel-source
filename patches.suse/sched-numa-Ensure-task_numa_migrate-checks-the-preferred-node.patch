@@ -1,0 +1,54 @@
+From e258a49e33c050fc4e8c998a716cf4ca962ca639 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Wed, 4 Jun 2014 16:09:42 -0400
+Subject: [PATCH] sched/numa: Ensure task_numa_migrate() checks the preferred
+ node
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No, expected 3.17
+
+The first thing task_numa_migrate() does is check to see if there is
+CPU capacity available on the preferred node, in order to move the
+task there.
+
+However, if the preferred node is all busy, we would skip considering
+that node for tasks swaps in the subsequent loop. This prevents NUMA
+convergence of tasks on busy systems.
+
+However, swapping locations with a task on our preferred nid, when
+the preferred nid is busy, is perfectly fine.
+
+The fix is to also look for a CPU on our preferred nid when it is
+totally busy.
+
+This changes "perf bench numa mem -p 4 -t 20 -m -0 -P 1000" from
+not converging in 15 minutes on my 4 node system, to converging in
+10-20 seconds.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: mgorman@suse.de
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20140604160942.6969b101@cuia.bos.redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 8c8d8b2..ba3478d 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1327,9 +1327,8 @@ static int task_numa_migrate(struct task_struct *p)
+ 	groupimp = group_weight(p, env.dst_nid) - groupweight;
+ 	update_numa_stats(&env.dst_stats, env.dst_nid);
+ 
+-	/* If the preferred nid has free capacity, try to use it. */
+-	if (env.dst_stats.has_free_capacity)
+-		task_numa_find_cpu(&env, taskimp, groupimp);
++	/* Try to find a spot on the preferred nid. */
++	task_numa_find_cpu(&env, taskimp, groupimp);
+ 
+ 	/* No space available on the preferred nid. Look elsewhere. */
+ 	if (env.best_cpu == -1) {
