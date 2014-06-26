@@ -1,0 +1,63 @@
+From 8fcfb99c8e29c73dd8945b6105ef54ca4eeb171e Mon Sep 17 00:00:00 2001
+From: Toshi Kani <toshi.kani@hp.com>
+Date: Tue, 4 Feb 2014 17:48:28 -0700
+Subject: [PATCH] ACPI / hotplug: Fix panic on eject to ejected device
+
+Git-commit: 8fcfb99c8e29c73dd8945b6105ef54ca4eeb171e
+Patch-mainline: v3.14-rc2
+Reference: fate#316836
+Target: sle12
+
+When an eject request is sent to an ejected ACPI device, the following
+panic occurs:
+
+ ACPI: \_SB_.SCK3.CPU3: ACPI_NOTIFY_EJECT_REQUEST event
+ BUG: unable to handle kernel NULL pointer dereference at 0000000000000070
+ IP: [<ffffffff813a7cfe>] acpi_device_hotplug+0x10b/0x33b
+	:
+ Call Trace:
+ [<ffffffff813a24da>] acpi_hotplug_work_fn+0x1c/0x27
+ [<ffffffff8109cbe5>] process_one_work+0x175/0x430
+ [<ffffffff8109d7db>] worker_thread+0x11b/0x3a0
+
+This is becase device->handler is NULL in acpi_device_hotplug().
+This case was used to fail in acpi_hotplug_notify_cb() as the target
+had no acpi_deivce.  However, acpi_device now exists after ejection.
+
+Added a check to verify if acpi_device->handler is valid for an
+eject request in acpi_hotplug_notify_cb().  Note that handler passed
+from an argument is still valid while acpi_device->handler is NULL.
+
+Fixes: 202317a573b2 (ACPI / scan: Add acpi_device objects for all device nodes in the namespace)
+Signed-off-by: Toshi Kani <toshi.kani@hp.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/scan.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/scan.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/scan.c
++++ linux-3.12-SLE12/drivers/acpi/scan.c
+@@ -392,7 +392,6 @@ static void acpi_device_hotplug(void *da
+ static void acpi_hotplug_notify_cb(acpi_handle handle, u32 type, void *data)
+ {
+ 	u32 ost_code = ACPI_OST_SC_NON_SPECIFIC_FAILURE;
+-	struct acpi_scan_handler *handler = data;
+ 	struct acpi_device *adev;
+ 	acpi_status status;
+ 
+@@ -408,7 +407,10 @@ static void acpi_hotplug_notify_cb(acpi_
+ 		break;
+ 	case ACPI_NOTIFY_EJECT_REQUEST:
+ 		acpi_handle_debug(handle, "ACPI_NOTIFY_EJECT_REQUEST event\n");
+-		if (!handler->hotplug.enabled) {
++		if (!adev->handler)
++			goto err_out;
++
++		if (!adev->handler->hotplug.enabled) {
+ 			acpi_handle_err(handle, "Eject disabled\n");
+ 			ost_code = ACPI_OST_SC_EJECT_NOT_SUPPORTED;
+ 			goto err_out;
