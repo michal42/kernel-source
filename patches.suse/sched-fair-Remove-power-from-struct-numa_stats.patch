@@ -1,0 +1,78 @@
+From d93f7eede4f8b83464cd6f0dc21c6aa21282dd3e Mon Sep 17 00:00:00 2001
+From: Nicolas Pitre <nicolas.pitre@linaro.org>
+Date: Mon, 26 May 2014 18:19:34 -0400
+Subject: [PATCH] sched/fair: Remove "power" from 'struct numa_stats'
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v3.16
+Git-commit: 5ef20ca181ec592e4684a45f4d5f1385f6055534
+
+It is better not to think about compute capacity as being equivalent
+to "CPU power".  The upcoming "power aware" scheduler work may create
+confusion with the notion of energy consumption if "power" is used too
+liberally.
+
+To make things explicit and not create more confusion with the existing
+"capacity" member, let's rename things as follows:
+
+	power    -> compute_capacity
+	capacity -> task_capacity
+
+Note: none of those fields are actually used outside update_numa_stats().
+
+Signed-off-by: Nicolas Pitre <nico@linaro.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Vincent Guittot <vincent.guittot@linaro.org>
+Cc: Daniel Lezcano <daniel.lezcano@linaro.org>
+Cc: Morten Rasmussen <morten.rasmussen@arm.com>
+Cc: "Rafael J. Wysocki" <rjw@rjwysocki.net>
+Cc: linaro-kernel@lists.linaro.org
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: linux-kernel@vger.kernel.org
+Link: http://lkml.kernel.org/n/tip-2e2ndymj5gyshyjq8am79f20@git.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index e7afcb2..cefb552 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1051,10 +1051,10 @@ struct numa_stats {
+ 	unsigned long load;
+ 
+ 	/* Total compute capacity of CPUs on a node */
+-	unsigned long power;
++	unsigned long compute_capacity;
+ 
+ 	/* Approximate capacity in terms of runnable tasks on a node */
+-	unsigned long capacity;
++	unsigned long task_capacity;
+ 	int has_capacity;
+ };
+ 
+@@ -1071,7 +1071,7 @@ static void update_numa_stats(struct numa_stats *ns, int nid)
+ 
+ 		ns->nr_running += rq->nr_running;
+ 		ns->load += weighted_cpuload(cpu);
+-		ns->power += power_of(cpu);
++		ns->compute_capacity += power_of(cpu);
+ 
+ 		cpus++;
+ 	}
+@@ -1087,9 +1087,10 @@ static void update_numa_stats(struct numa_stats *ns, int nid)
+ 	if (!cpus)
+ 		return;
+ 
+-	ns->load = (ns->load * SCHED_POWER_SCALE) / ns->power;
+-	ns->capacity = DIV_ROUND_CLOSEST(ns->power, SCHED_POWER_SCALE);
+-	ns->has_capacity = (ns->nr_running < ns->capacity);
++	ns->load = (ns->load * SCHED_POWER_SCALE) / ns->compute_capacity;
++	ns->task_capacity =
++		DIV_ROUND_CLOSEST(ns->compute_capacity, SCHED_POWER_SCALE);
++	ns->has_capacity = (ns->nr_running < ns->task_capacity);
+ }
+ 
+ struct task_numa_env {
