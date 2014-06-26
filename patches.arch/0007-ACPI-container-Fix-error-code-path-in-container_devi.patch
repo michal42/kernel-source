@@ -1,0 +1,41 @@
+From 0f6aa09e40c38d734f5d70762056116ca4a76126 Mon Sep 17 00:00:00 2001
+From: "Rafael J. Wysocki" <rafael.j.wysocki@intel.com>
+Date: Wed, 12 Feb 2014 00:52:49 +0100
+Subject: [PATCH] ACPI / container: Fix error code path in
+ container_device_attach()
+
+Git-commit: 0f6aa09e40c38d734f5d70762056116ca4a76126
+Patch-mainline: v3.14-rc3
+Reference: fate#316836
+Target: sle12
+
+To avoid leaking memory on errors from device_register(), do a
+put_device() on the device object in question in the error code
+path of container_device_attach().
+
+Fixes: caa73ea158de (ACPI / hotplug / driver core: Handle containers in a special way)
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Reviewed-by: Yasuaki Ishimatsu <isimatu.yasuaki@jp.fujitsu.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/acpi/container.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/acpi/container.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/acpi/container.c
++++ linux-3.12-SLE12/drivers/acpi/container.c
+@@ -79,9 +79,10 @@ static int container_device_attach(struc
+ 	ACPI_COMPANION_SET(dev, adev);
+ 	dev->release = acpi_container_release;
+ 	ret = device_register(dev);
+-	if (ret)
++	if (ret) {
++		put_device(dev);
+ 		return ret;
+-
++	}
+ 	adev->driver_data = dev;
+ 	return 1;
+ }
