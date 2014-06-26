@@ -1,0 +1,58 @@
+From f443d65dc7a25a80d9e585ece174cc2d88d7ce68 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Wed, 25 Jun 2014 12:13:15 +0100
+Subject: [PATCH] sched,numa: rework best node setting in task_numa_migrate
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No, expected 3.17
+
+Fix up the best node setting in task_numa_migrate to deal with a task
+in a pseudo-interleaved NUMA group, which is already running in the
+best location.
+
+Set the task's preferred nid to the current nid, so task migration is
+not retried at a high rate.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 97e54f80..8e7bb15 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1371,10 +1371,6 @@ static int task_numa_migrate(struct task_struct *p)
+ 		}
+ 	}
+ 
+-	/* No better CPU than the current one was found. */
+-	if (env.best_cpu == -1)
+-		return -EAGAIN;
+-
+ 	/*
+ 	 * If the task is part of a workload that spans multiple NUMA nodes,
+ 	 * and is migrating into one of the workload's active nodes, remember
+@@ -1383,8 +1379,19 @@ static int task_numa_migrate(struct task_struct *p)
+ 	 * A task that migrated to a second choice node will be better off
+ 	 * trying for a better one later. Do not set the preferred node here.
+ 	 */
+-	if (p->numa_group && node_isset(env.dst_nid, p->numa_group->active_nodes))
+-		sched_setnuma(p, env.dst_nid);
++	if (p->numa_group) {
++		if (env.best_cpu == -1)
++			nid = env.src_nid;
++		else
++			nid = env.dst_nid;
++
++		if (node_isset(nid, p->numa_group->active_nodes))
++			sched_setnuma(p, env.dst_nid);
++	}
++
++	/* No better CPU than the current one was found. */
++	if (env.best_cpu == -1)
++		return -EAGAIN;
+ 
+ 	/*
+ 	 * Reset the scan period if the task is being rescheduled on an
