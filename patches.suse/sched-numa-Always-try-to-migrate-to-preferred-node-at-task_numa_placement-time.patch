@@ -1,0 +1,50 @@
+From d6f08c0c56d9c3e9d123c67f0a92f1b91cc2c8e3 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Wed, 4 Jun 2014 16:33:15 -0400
+Subject: [PATCH] sched/numa: Always try to migrate to preferred node at
+ task_numa_placement() time
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No, expected 3.17
+
+It is possible that at task_numa_placement() time, the task's
+numa_preferred_nid does not change, but the task is not
+actually running on the preferred node at the time.
+
+In that case, we still want to attempt migration to the
+preferred node.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: mgorman@suse.de
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20140604163315.1dbc7b56@cuia.bos.redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index ba3478d..f2949d8 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1638,11 +1638,13 @@ static void task_numa_placement(struct task_struct *p)
+ 		spin_unlock_irq(group_lock);
+ 	}
+ 
+-	/* Preferred node as the node with the most faults */
+-	if (max_faults && max_nid != p->numa_preferred_nid) {
+-		/* Update the preferred nid and migrate task if possible */
+-		sched_setnuma(p, max_nid);
+-		numa_migrate_preferred(p);
++	if (max_faults) {
++		/* Set the new preferred node */
++		if (max_nid != p->numa_preferred_nid)
++			sched_setnuma(p, max_nid);
++
++		if (task_node(p) != p->numa_preferred_nid)
++			numa_migrate_preferred(p);
+ 	}
+ }
+ 
