@@ -1,0 +1,50 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Fri, 13 Jun 2014 14:01:45 +0200
+Subject: scsi_error: set DID_TIME_OUT correctly
+Patch-Mainline: Submitted
+Git-repo: git://git.infradead.org/users/hch/scsi-queue.git
+Git-commit: a33c070bced8b283e22e8dbae35177a033b810bf
+References: bnc#884925
+
+Any callbacks in scsi_timeout_out() might return BLK_EH_RESET_TIMER,
+in which case we should leave the result alone and not set
+DID_TIME_OUT, as the command didn't actually timeout.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Ewan D. Milne <emilne@redhat.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/scsi_error.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index 34a0187..63004b3 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -287,15 +287,15 @@ enum blk_eh_timer_return scsi_times_out(struct request *req)
+ 	else if (host->hostt->eh_timed_out)
+ 		rtn = host->hostt->eh_timed_out(scmd);
+ 
+-	if (rtn == BLK_EH_NOT_HANDLED && !host->hostt->no_async_abort)
+-		if (scsi_abort_command(scmd) == SUCCESS)
++	if (rtn == BLK_EH_NOT_HANDLED) {
++		if (!host->hostt->no_async_abort &&
++		    scsi_abort_command(scmd) == SUCCESS)
+ 			return BLK_EH_NOT_HANDLED;
+ 
+-	set_host_byte(scmd, DID_TIME_OUT);
+-
+-	if (unlikely(rtn == BLK_EH_NOT_HANDLED &&
+-		     !scsi_eh_scmd_add(scmd, SCSI_EH_CANCEL_CMD)))
+-		rtn = BLK_EH_HANDLED;
++		set_host_byte(scmd, DID_TIME_OUT);
++		if (!scsi_eh_scmd_add(scmd, SCSI_EH_CANCEL_CMD))
++			rtn = BLK_EH_HANDLED;
++	}
+ 
+ 	return rtn;
+ }
+-- 
+1.7.12.4
+
