@@ -1,0 +1,44 @@
+From: Christoph Hellwig <hch@lst.de>
+Date: Tue, 15 Apr 2014 12:24:56 +0200
+Subject: [SCSI] don't reference freed command in scsi_prep_return
+References: bnc#884925
+Patch-Mainline: v3.16
+Git-commit: 68c03d9193f55dad93036f439b94912c5003a173
+
+Patch
+
+commit 0479633686d370303e3430256ace4bd5f7f138dc
+Author: Christoph Hellwig <hch@infradead.org>
+Date:   Thu Feb 20 14:20:55 2014 -0800
+
+    [SCSI] do not manipulate device reference counts in scsi_get/put_command
+
+Introduced a use after free:I in the kill case of scsi_prep_return we have to
+release our device reference, but we do this trying to reference the just
+freed command.  Use the local sdev pointer instead.
+
+Fixes: 0479633686d370303e3430256ace4bd5f7f138dc
+Reported-by: Joe Lawrence <joe.lawrence@stratus.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/scsi_lib.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index 0ea5516..6a7892f 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -1273,7 +1273,7 @@ int scsi_prep_return(struct request_queue *q, struct request *req, int ret)
+ 			struct scsi_cmnd *cmd = req->special;
+ 			scsi_release_buffers(cmd);
+ 			scsi_put_command(cmd);
+-			put_device(&cmd->device->sdev_gendev);
++			put_device(&sdev->sdev_gendev);
+ 			req->special = NULL;
+ 		}
+ 		break;
+-- 
+1.7.12.4
+
