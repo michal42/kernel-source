@@ -1,0 +1,62 @@
+From: Steven Rostedt <rostedt@goodmis.org>
+Date: Tue, 27 May 2014 17:02:04 -0400
+Subject: [PATCH] sched/numa: Fix use of spin_{un}lock_irq() when interrupts are disabled
+Git-commit: e9dd685ce81815811fb4da72e6ab10a694ac8468
+Patch-mainline: v3.15
+References: Automatic NUMA Balancing (fate#315482)
+
+As Peter Zijlstra told me, we have the following path:
+
+do_exit()
+  exit_itimers()
+    itimer_delete()
+      spin_lock_irqsave(&timer->it_lock, &flags);
+      timer_delete_hook(timer);
+        kc->timer_del(timer) := posix_cpu_timer_del()
+          put_task_struct()
+            __put_task_struct()
+              task_numa_free()
+                spin_lock(&grp->lock);
+
+Which means that task_numa_free() can be called with interrupts
+disabled, which means that we should not be using spin_lock_irq() but
+spin_lock_irqsave() instead. Otherwise we are enabling interrupts while
+holding an interrupt unsafe lock!
+
+Signed-off-by: Steven Rostedt <rostedt@goodmis.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner<tglx@linutronix.de>
+Cc: Mike Galbraith <umgwanakikbuti@gmail.com>
+Cc: Eric Dumazet <eric.dumazet@gmail.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20140527182541.GH11096@twins.programming.kicks-ass.net
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 0fdb96de81a5..b4768c069392 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1707,18 +1707,19 @@ static void task_numa_group(struct task_struct *p, int cpupid, int flags,
+ void task_numa_free(struct task_struct *p)
+ {
+ 	struct numa_group *grp = p->numa_group;
+-	int i;
+ 	void *numa_faults = p->numa_faults_memory;
++	unsigned long flags;
++	int i;
+ 
+ 	if (grp) {
+-		spin_lock_irq(&grp->lock);
++		spin_lock_irqsave(&grp->lock, flags);
+ 		for (i = 0; i < NR_NUMA_HINT_FAULT_STATS * nr_node_ids; i++)
+ 			grp->faults[i] -= p->numa_faults_memory[i];
+ 		grp->total_faults -= p->total_numa_faults;
+ 
+ 		list_del(&p->numa_entry);
+ 		grp->nr_tasks--;
+-		spin_unlock_irq(&grp->lock);
++		spin_unlock_irqrestore(&grp->lock, flags);
+ 		rcu_assign_pointer(p->numa_group, NULL);
+ 		put_numa_group(grp);
+ 	}
