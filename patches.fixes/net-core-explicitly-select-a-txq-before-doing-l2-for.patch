@@ -1,6 +1,6 @@
 From: Jason Wang <jasowang@redhat.com>
 Date: Fri, 10 Jan 2014 16:18:26 +0800
-Subject: net: core: explicitly select a txq before doing l2 forwarding
+Subject: [1/1] net: core: explicitly select a txq before doing l2 forwarding
 Patch-mainline: v3.13-rc8
 Git-commit: f663dd9aaf9ed124f25f0f8452edf238f087ad50
 References: bnc#857401 FATE#315668
@@ -48,7 +48,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  drivers/net/ethernet/mellanox/mlx4/en_tx.c      |    3 +-
  drivers/net/ethernet/mellanox/mlx4/mlx4_en.h    |    3 +-
  drivers/net/ethernet/tile/tilegx.c              |    3 +-
- drivers/net/macvlan.c                           |    6 +---
+ drivers/net/macvlan.c                           |    9 ++----
  drivers/net/team/team.c                         |    3 +-
  drivers/net/tun.c                               |    3 +-
  drivers/net/virtio_net.c                        |    3 +-
@@ -62,10 +62,11 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  net/core/netpoll.c                              |    2 -
  net/mac80211/iface.c                            |    6 ++--
  net/sched/sch_generic.c                         |    2 -
- 22 files changed, 81 insertions(+), 62 deletions(-)
+ 22 files changed, 82 insertions(+), 64 deletions(-)
+
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -3826,7 +3826,8 @@ static inline int bond_slave_override(st
+@@ -3802,7 +3802,8 @@ static inline int bond_slave_override(st
  }
  
  
@@ -199,7 +200,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	u16 rings_p_up = priv->num_tx_rings_p_up;
 --- a/drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
 +++ b/drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
-@@ -714,7 +714,8 @@ int mlx4_en_set_cq_moder(struct mlx4_en_
+@@ -713,7 +713,8 @@ int mlx4_en_set_cq_moder(struct mlx4_en_
  int mlx4_en_arm_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq);
  
  void mlx4_en_tx_irq(struct mlx4_cq *mcq);
@@ -223,7 +224,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  }
 --- a/drivers/net/macvlan.c
 +++ b/drivers/net/macvlan.c
-@@ -299,7 +299,7 @@ netdev_tx_t macvlan_start_xmit(struct sk
+@@ -296,7 +296,7 @@ netdev_tx_t macvlan_start_xmit(struct sk
  
  	if (vlan->fwd_priv) {
  		skb->dev = vlan->lowerdev;
@@ -232,7 +233,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	} else {
  		ret = macvlan_queue_xmit(skb, dev);
  	}
-@@ -362,10 +362,8 @@ static int macvlan_open(struct net_devic
+@@ -359,10 +359,8 @@ static int macvlan_open(struct net_devic
  		 */
  		if (IS_ERR_OR_NULL(vlan->fwd_priv)) {
  			vlan->fwd_priv = NULL;
@@ -244,6 +245,16 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	}
  
  	err = -EBUSY;
+@@ -698,8 +696,7 @@ static netdev_features_t macvlan_fix_fea
+ 	features = netdev_increment_features(vlan->lowerdev->features,
+ 					     features,
+ 					     mask);
+-	if (!vlan->fwd_priv)
+-		features |= NETIF_F_LLTX;
++	features |= NETIF_F_LLTX;
+ 
+ 	return features;
+ }
 --- a/drivers/net/team/team.c
 +++ b/drivers/net/team/team.c
 @@ -1647,7 +1647,8 @@ static netdev_tx_t team_xmit(struct sk_b
@@ -364,7 +375,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  extern void		dev_disable_lro(struct net_device *dev);
  extern int		dev_loopback_xmit(struct sk_buff *newskb);
  extern int		dev_queue_xmit(struct sk_buff *skb);
-+int dev_queue_xmit_accel(struct sk_buff *skb, void *accel_priv);
++extern int		dev_queue_xmit_accel(struct sk_buff *skb, void *accel_priv);
  extern int		register_netdevice(struct net_device *dev);
  extern void		unregister_netdevice_queue(struct net_device *dev,
  						   struct list_head *head);
@@ -380,7 +391,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -2538,7 +2538,7 @@ static inline int skb_needs_linearize(st
+@@ -2542,7 +2542,7 @@ static inline int skb_needs_linearize(st
  }
  
  int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
@@ -389,7 +400,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  {
  	const struct net_device_ops *ops = dev->netdev_ops;
  	int rc = NETDEV_TX_OK;
-@@ -2604,13 +2604,10 @@ int dev_hard_start_xmit(struct sk_buff *
+@@ -2608,13 +2608,10 @@ int dev_hard_start_xmit(struct sk_buff *
  			dev_queue_xmit_nit(skb, dev);
  
  		skb_len = skb->len;
@@ -404,7 +415,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  			txq_trans_update(txq);
  		return rc;
  	}
-@@ -2626,10 +2623,7 @@ gso:
+@@ -2630,10 +2627,7 @@ gso:
  			dev_queue_xmit_nit(nskb, dev);
  
  		skb_len = nskb->len;
@@ -416,7 +427,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		trace_net_dev_xmit(nskb, rc, dev, skb_len);
  		if (unlikely(rc != NETDEV_TX_OK)) {
  			if (rc & ~NETDEV_TX_MASK)
-@@ -2810,7 +2804,7 @@ EXPORT_SYMBOL(dev_loopback_xmit);
+@@ -2814,7 +2808,7 @@ EXPORT_SYMBOL(dev_loopback_xmit);
   *      the BH enable code must have IRQs enabled so that it will not deadlock.
   *          --BLG
   */
@@ -425,7 +436,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  {
  	struct net_device *dev = skb->dev;
  	struct netdev_queue *txq;
-@@ -2826,7 +2820,7 @@ int dev_queue_xmit(struct sk_buff *skb)
+@@ -2830,7 +2824,7 @@ int dev_queue_xmit(struct sk_buff *skb)
  
  	skb_update_prio(skb);
  
@@ -434,7 +445,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	q = rcu_dereference_bh(txq->qdisc);
  
  #ifdef CONFIG_NET_CLS_ACT
-@@ -2862,7 +2856,7 @@ int dev_queue_xmit(struct sk_buff *skb)
+@@ -2866,7 +2860,7 @@ int dev_queue_xmit(struct sk_buff *skb)
  
  			if (!netif_xmit_stopped(txq)) {
  				__this_cpu_inc(xmit_recursion);
@@ -443,7 +454,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  				__this_cpu_dec(xmit_recursion);
  				if (dev_xmit_complete(rc)) {
  					HARD_TX_UNLOCK(dev, txq);
-@@ -2891,8 +2885,19 @@ out:
+@@ -2895,8 +2889,19 @@ out:
  	rcu_read_unlock_bh();
  	return rc;
  }
