@@ -69,11 +69,11 @@ Signed-off-by: Petr Mladek <pmladek@suse.cz>
  kernel/printk/printk.c | 353 ++++++++++++++++++++++++++++++++-----------------
  1 file changed, 229 insertions(+), 124 deletions(-)
 
-diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
-index f6afc53fa55e..acd4a56c23ca 100644
---- a/kernel/printk/printk.c
-+++ b/kernel/printk/printk.c
-@@ -151,6 +151,13 @@ EXPORT_SYMBOL(console_set_on_cmdline);
+Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
+===================================================================
+--- linux-3.12-printk-auto-size.orig/kernel/printk/printk.c
++++ linux-3.12-printk-auto-size/kernel/printk/printk.c
+@@ -169,6 +169,13 @@ EXPORT_SYMBOL(console_set_on_cmdline);
  static int console_may_schedule;
  
  /*
@@ -87,7 +87,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
   * The printk log buffer consists of a chain of concatenated variable
   * length records. Every record starts with a record header, containing
   * the overall length of the record.
-@@ -224,6 +231,11 @@ enum log_flags {
+@@ -242,6 +249,11 @@ enum log_flags {
  	LOG_CONT	= 8,	/* text is a fragment of a continuation line */
  };
  
@@ -99,7 +99,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  struct printk_log {
  	u64 ts_nsec;		/* timestamp in nanoseconds */
  	u16 len;		/* length of entire record */
-@@ -234,15 +246,27 @@ struct printk_log {
+@@ -252,15 +264,27 @@ struct printk_log {
  	u8 level:3;		/* syslog level */
  };
  
@@ -132,9 +132,9 @@ index f6afc53fa55e..acd4a56c23ca 100644
  /* the next printk record to read by syslog(READ) or /proc/kmsg */
  static u64 syslog_seq;
  static u32 syslog_idx;
-@@ -277,9 +301,62 @@ static u32 clear_idx;
- #endif
+@@ -296,9 +320,62 @@ static u32 clear_idx;
  #define __LOG_BUF_LEN (1 << CONFIG_LOG_BUF_SHIFT)
+ #define __LOG_CPU_MAX_BUF_LEN (1 << CONFIG_LOG_CPU_MAX_BUF_SHIFT)
  static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
 +static char __main_cont_buf[LOG_LINE_MAX];
  static char *log_buf = __log_buf;
@@ -195,7 +195,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  /*
   * How many characters can we print in one call of printk before asking
   * other cpus to continue printing. 0 means infinity. Tunable via
-@@ -306,23 +383,23 @@ static char *log_dict(const struct printk_log *msg)
+@@ -325,23 +402,23 @@ static char *log_dict(const struct print
  }
  
  /* get record by index; idx must point to valid msg */
@@ -224,7 +224,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  
  	/* length == 0 indicates the end of the buffer; wrap */
  	/*
-@@ -331,12 +408,41 @@ static u32 log_next(u32 idx)
+@@ -350,12 +427,41 @@ static u32 log_next(u32 idx)
  	 * return the one after that.
  	 */
  	if (!msg->len) {
@@ -267,7 +267,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  /*
   * Check whether there is enough free space for the given message.
   *
-@@ -346,14 +452,15 @@ static u32 log_next(u32 idx)
+@@ -365,14 +471,15 @@ static u32 log_next(u32 idx)
   * If the buffer is empty, we must respect the position of the indexes.
   * They cannot be reset to the beginning of the buffer.
   */
@@ -287,7 +287,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  
  	/*
  	 * We need space also for an empty header that signalizes wrapping
-@@ -362,18 +469,17 @@ static int logbuf_has_space(u32 msg_size, bool empty)
+@@ -381,18 +488,17 @@ static int logbuf_has_space(u32 msg_size
  	return free >= msg_size + sizeof(struct printk_log);
  }
  
@@ -311,7 +311,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		return 0;
  
  	return -ENOMEM;
-@@ -399,14 +505,15 @@ static u32 msg_used_size(u16 text_len, u16 dict_len, u32 *pad_len)
+@@ -418,14 +524,15 @@ static u32 msg_used_size(u16 text_len, u
  #define MAX_LOG_TAKE_PART 4
  static const char trunc_msg[] = "<truncated>";
  
@@ -329,7 +329,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	if (*text_len > max_text_len)
  		*text_len = max_text_len;
  	/* enable the warning message */
-@@ -418,7 +525,7 @@ static u32 truncate_msg(u16 *text_len, u16 *trunc_msg_len,
+@@ -437,7 +544,7 @@ static u32 truncate_msg(u16 *text_len, u
  }
  
  /* insert record into the buffer, discard old ones, update heads */
@@ -338,7 +338,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		     enum log_flags flags, u64 ts_nsec,
  		     const char *dict, u16 dict_len,
  		     const char *text, u16 text_len)
-@@ -430,27 +537,29 @@ static int log_store(int facility, int level,
+@@ -449,27 +556,29 @@ static int log_store(int facility, int l
  	/* number of '\0' padding bytes to next message */
  	size = msg_used_size(text_len, dict_len, &pad_len);
  
@@ -375,7 +375,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	memcpy(log_text(msg), text, text_len);
  	msg->text_len = text_len;
  	if (trunc_msg_len) {
-@@ -470,8 +579,7 @@ static int log_store(int facility, int level,
+@@ -489,8 +598,7 @@ static int log_store(int facility, int l
  	msg->len = size;
  
  	/* insert message */
@@ -385,7 +385,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  
  	return msg->text_len;
  }
-@@ -637,7 +745,7 @@ static ssize_t devkmsg_read(struct file *file, char __user *buf,
+@@ -649,7 +757,7 @@ static ssize_t devkmsg_read(struct file
  		goto out;
  	}
  
@@ -394,7 +394,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	ts_usec = msg->ts_nsec;
  	do_div(ts_usec, 1000);
  
-@@ -698,7 +806,7 @@ static ssize_t devkmsg_read(struct file *file, char __user *buf,
+@@ -710,7 +818,7 @@ static ssize_t devkmsg_read(struct file
  		user->buf[len++] = '\n';
  	}
  
@@ -403,7 +403,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	user->seq++;
  	raw_spin_unlock_irq(&logbuf_lock);
  
-@@ -1119,12 +1227,12 @@ static int syslog_print(char __user *buf, int size)
+@@ -1165,12 +1273,12 @@ static int syslog_print(char __user *buf
  		}
  
  		skip = syslog_partial;
@@ -418,7 +418,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  			syslog_seq++;
  			syslog_prev = msg->flags;
  			n -= syslog_partial;
-@@ -1185,11 +1293,11 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
+@@ -1231,11 +1339,11 @@ static int syslog_print_all(char __user
  		idx = clear_idx;
  		prev = 0;
  		while (seq < log_next_seq) {
@@ -432,7 +432,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  			seq++;
  		}
  
-@@ -1198,11 +1306,11 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
+@@ -1244,11 +1352,11 @@ static int syslog_print_all(char __user
  		idx = clear_idx;
  		prev = 0;
  		while (len > size && seq < log_next_seq) {
@@ -446,7 +446,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  			seq++;
  		}
  
-@@ -1211,7 +1319,7 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
+@@ -1257,7 +1365,7 @@ static int syslog_print_all(char __user
  
  		len = 0;
  		while (len >= 0 && seq < next_seq) {
@@ -455,7 +455,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  			int textlen;
  
  			textlen = msg_print_text(msg, prev, true, text,
-@@ -1220,7 +1328,7 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
+@@ -1266,7 +1374,7 @@ static int syslog_print_all(char __user
  				len = textlen;
  				break;
  			}
@@ -464,7 +464,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  			seq++;
  			prev = msg->flags;
  
-@@ -1357,10 +1465,10 @@ int do_syslog(int type, char __user *buf, int len, bool from_file)
+@@ -1403,10 +1511,10 @@ int do_syslog(int type, char __user *buf
  
  			error = 0;
  			while (seq < log_next_seq) {
@@ -477,7 +477,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  				seq++;
  				prev = msg->flags;
  			}
-@@ -1500,106 +1608,98 @@ static inline void printk_delay(void)
+@@ -1546,106 +1654,98 @@ static inline void printk_delay(void)
  	}
  }
  
@@ -629,7 +629,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	}
  	return textlen;
  }
-@@ -1608,6 +1708,8 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1654,6 +1754,8 @@ asmlinkage int vprintk_emit(int facility
  			    const char *dict, size_t dictlen,
  			    const char *fmt, va_list args)
  {
@@ -638,7 +638,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	static int recursion_bug;
  	static char textbuf[LOG_LINE_MAX];
  	char *text = textbuf;
-@@ -1662,7 +1764,7 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1708,7 +1810,7 @@ asmlinkage int vprintk_emit(int facility
  		recursion_bug = 0;
  		text_len = strlen(recursion_msg);
  		/* emit KERN_CRIT message */
@@ -647,7 +647,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  					 NULL, 0, recursion_msg, text_len);
  	}
  
-@@ -1714,14 +1816,15 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1760,14 +1862,15 @@ asmlinkage int vprintk_emit(int facility
  		 * Flush the conflicting buffer. An earlier newline was missing,
  		 * or another task also prints continuation lines.
  		 */
@@ -667,7 +667,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  						 lflags | LOG_CONT, 0,
  						 dict, dictlen, text, text_len);
  	} else {
-@@ -1735,18 +1838,19 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1781,18 +1884,19 @@ asmlinkage int vprintk_emit(int facility
  		 * If the preceding printk was from a different task and missed
  		 * a newline, flush and append the newline.
  		 */
@@ -693,7 +693,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	}
  
  	logbuf_cpu = UINT_MAX;
-@@ -1860,7 +1964,7 @@ static struct cont {
+@@ -1906,7 +2010,7 @@ static struct cont {
  	bool flushed:1;
  } cont;
  static struct printk_log *log_from_idx(u32 idx) { return NULL; }
@@ -702,7 +702,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  static void call_console_drivers(int level, const char *text, size_t len) {}
  static size_t msg_print_text(const struct printk_log *msg, enum log_flags prev,
  			     bool syslog, char *buf, size_t size) { return 0; }
-@@ -2145,6 +2249,7 @@ int is_console_locked(void)
+@@ -2158,6 +2262,7 @@ int is_console_locked(void)
  	return console_locked;
  }
  
@@ -710,7 +710,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  static void console_cont_flush(char *text, size_t size)
  {
  	unsigned long flags;
-@@ -2152,7 +2257,7 @@ static void console_cont_flush(char *text, size_t size)
+@@ -2165,7 +2270,7 @@ static void console_cont_flush(char *tex
  
  	raw_spin_lock_irqsave(&logbuf_lock, flags);
  
@@ -719,7 +719,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		goto out;
  
  	/*
-@@ -2160,13 +2265,13 @@ static void console_cont_flush(char *text, size_t size)
+@@ -2173,13 +2278,13 @@ static void console_cont_flush(char *tex
  	 * busy. The earlier ones need to be printed before this one, we
  	 * did not flush any fragment so far, so just let it queue up.
  	 */
@@ -735,7 +735,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	start_critical_timings();
  	local_irq_restore(flags);
  	return;
-@@ -2265,13 +2370,13 @@ skip:
+@@ -2278,13 +2383,13 @@ skip:
  			break;
  		}
  
@@ -751,7 +751,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  			console_seq++;
  			/*
  			 * We will get here again when we register a new
-@@ -2286,7 +2391,7 @@ skip:
+@@ -2299,7 +2404,7 @@ skip:
  		level = msg->level;
  		len = msg_print_text(msg, console_prev, false,
  				     text, sizeof(text));
@@ -760,7 +760,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		console_seq++;
  		console_prev = msg->flags;
  		raw_spin_unlock(&logbuf_lock);
-@@ -2951,10 +3056,10 @@ bool kmsg_dump_get_line_nolock(struct kmsg_dumper *dumper, bool syslog,
+@@ -2955,10 +3060,10 @@ bool kmsg_dump_get_line_nolock(struct km
  	if (dumper->cur_seq >= log_next_seq)
  		goto out;
  
@@ -773,7 +773,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  	dumper->cur_seq++;
  	ret = true;
  out:
-@@ -3046,10 +3151,10 @@ bool kmsg_dump_get_buffer(struct kmsg_dumper *dumper, bool syslog,
+@@ -3050,10 +3155,10 @@ bool kmsg_dump_get_buffer(struct kmsg_du
  	idx = dumper->cur_idx;
  	prev = 0;
  	while (seq < dumper->next_seq) {
@@ -786,7 +786,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		seq++;
  		prev = msg->flags;
  	}
-@@ -3059,10 +3164,10 @@ bool kmsg_dump_get_buffer(struct kmsg_dumper *dumper, bool syslog,
+@@ -3063,10 +3168,10 @@ bool kmsg_dump_get_buffer(struct kmsg_du
  	idx = dumper->cur_idx;
  	prev = 0;
  	while (l > size && seq < dumper->next_seq) {
@@ -799,7 +799,7 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		seq++;
  		prev = msg->flags;
  	}
-@@ -3073,10 +3178,10 @@ bool kmsg_dump_get_buffer(struct kmsg_dumper *dumper, bool syslog,
+@@ -3077,10 +3182,10 @@ bool kmsg_dump_get_buffer(struct kmsg_du
  
  	l = 0;
  	while (seq < dumper->next_seq) {
@@ -812,6 +812,3 @@ index f6afc53fa55e..acd4a56c23ca 100644
  		seq++;
  		prev = msg->flags;
  	}
--- 
-1.8.4
-
