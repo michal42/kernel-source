@@ -1,0 +1,35 @@
+From: Wei Yongjun <yongjun_wei@trendmicro.com.cn>
+Date: Thu, 16 Jan 2014 16:28:13 +0800
+Subject: IB/cm: Fix missing unlock on error in cm_init_qp_rtr_attr()
+Patch-mainline: v3.14-rc1
+Git-commit: 990acea616e99355703b503c1e50fb9c7ddff6b9
+References: bnc#868011
+
+Add the missing unlock before return from function cm_init_qp_rtr_attr()
+in the error handling case.
+
+Fixes: dd5f03beb4f7 ("IB/core: Ethernet L2 attributes in verbs/cm structures")
+Signed-off-by: Wei Yongjun <yongjun_wei@trendmicro.com.cn>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+  990acea6 (IB/cm: Fix missing unlock on error in cm_init_qp_rtr_attr())
+    references
+  dd5f03be (patches.drivers/0009-IB-core-Ethernet-L2-attributes-in-verbs-cm-structure.patch: IB/core: Ethernet L2 attributes in verbs/cm structures)
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ drivers/infiniband/core/cm.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/core/cm.c
++++ b/drivers/infiniband/core/cm.c
+@@ -3529,8 +3529,10 @@ static int cm_init_qp_rtr_attr(struct cm
+ 		*qp_attr_mask = IB_QP_STATE | IB_QP_AV | IB_QP_PATH_MTU |
+ 				IB_QP_DEST_QPN | IB_QP_RQ_PSN;
+ 		qp_attr->ah_attr = cm_id_priv->av.ah_attr;
+-		if (!cm_id_priv->av.valid)
++		if (!cm_id_priv->av.valid) {
++			spin_unlock_irqrestore(&cm_id_priv->lock, flags);
+ 			return -EINVAL;
++		}
+ 		if (cm_id_priv->av.ah_attr.vlan_id != 0xffff) {
+ 			qp_attr->vlan_id = cm_id_priv->av.ah_attr.vlan_id;
+ 			*qp_attr_mask |= IB_QP_VID;
