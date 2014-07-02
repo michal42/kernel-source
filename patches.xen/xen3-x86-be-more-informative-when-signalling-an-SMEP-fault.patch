@@ -1,0 +1,44 @@
+From: Jiri Kosina <jkosina@suse.cz>
+Subject: x86/smep:  Be more informative when signalling an SMEP fault
+Patch-mainline: Queued in subsystem maintainer repository
+
+x86/smep: Be more informative when signalling an SMEP fault
+
+If pagefault triggers due to SMEP triggering, it can't be really easily
+distinguished from any other oops-causing pagefault, which might lead to quite
+some confusion when trying to understand the reason for the oops.
+
+Print an explanatory message in case the fault happened during instruction
+fetch for _PAGE_USER page which is present and executable on SMEP-enabled CPUs.
+
+This is consistent with what we are doing for NX already; in addition to
+immediately seeing from the oops what might be happening, it can even easily
+give a good indication to sysadmins who are carefully monitoring their kernel
+logs that someone might be trying to pwn them.
+
+Signed-off-by: Jiri Kosina <jkosina@suse.cz>
+Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+Automatically created from "patches.arch/x86-be-more-informative-when-signalling-an-SMEP-fault.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/mm/fault-xen.c	2014-03-31 14:01:42.000000000 +0200
++++ sle12/arch/x86/mm/fault-xen.c	2014-06-27 14:41:33.000000000 +0200
+@@ -580,6 +580,8 @@ static int is_f00f_bug(struct pt_regs *r
+ 
+ static const char nx_warning[] = KERN_CRIT
+ "kernel tried to execute NX-protected page - exploit attempt? (uid: %d)\n";
++static const char smep_warning[] = KERN_CRIT
++"unable to execute userspace code (SMEP?) (uid: %d)\n";
+ 
+ static void
+ show_fault_oops(struct pt_regs *regs, unsigned long error_code,
+@@ -595,6 +597,10 @@ show_fault_oops(struct pt_regs *regs, un
+ 
+ 		if (pte && pte_present(*pte) && !pte_exec(*pte))
+ 			printk(nx_warning, from_kuid(&init_user_ns, current_uid()));
++		if (pte && pte_present(*pte) && pte_exec(*pte) &&
++				(pgd_flags(*pgd) & _PAGE_USER) &&
++				(read_cr4() & X86_CR4_SMEP))
++			printk(smep_warning, from_kuid(&init_user_ns, current_uid()));
+ 	}
+ 
+ 	printk(KERN_ALERT "BUG: unable to handle kernel ");

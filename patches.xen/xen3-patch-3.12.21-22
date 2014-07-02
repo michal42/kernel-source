@@ -1,0 +1,51 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: Linux 3.12.22
+Patch-mainline: 3.12.22
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Automatically created from "patches.kernel.org/patch-3.12.21-22" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/ldt-xen.c	2014-05-26 14:26:52.000000000 +0200
++++ sle12/arch/x86/kernel/ldt-xen.c	2014-06-27 14:24:44.000000000 +0200
+@@ -20,6 +20,8 @@
+ #include <asm/mmu_context.h>
+ #include <asm/syscalls.h>
+ 
++int sysctl_ldt16 = 0;
++
+ #ifdef CONFIG_SMP
+ static void flush_ldt(void *current_mm)
+ {
+@@ -239,7 +241,7 @@ static int write_ldt(void __user *ptr, u
+ 	 * IRET leaking the high bits of the kernel stack address.
+ 	 */
+ #ifdef CONFIG_X86_64
+-	if (!ldt_info.seg_32bit) {
++	if (!ldt_info.seg_32bit && !sysctl_ldt16) {
+ 		error = -EINVAL;
+ 		goto out_unlock;
+ 	}
+--- sle12.orig/arch/x86/vdso/vdso32-setup-xen.c	2013-08-12 13:23:01.000000000 +0200
++++ sle12/arch/x86/vdso/vdso32-setup-xen.c	2014-06-27 14:24:44.000000000 +0200
+@@ -43,6 +43,7 @@ enum {
+ #ifdef CONFIG_X86_64
+ #define vdso_enabled			sysctl_vsyscall32
+ #define arch_setup_additional_pages	syscall32_setup_pages
++extern int sysctl_ldt16;
+ #endif
+ 
+ /*
+@@ -428,6 +429,13 @@ static struct ctl_table abi_table2[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
++	{
++		.procname	= "ldt16",
++		.data		= &sysctl_ldt16,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec
++	},
+ 	{}
+ };
+ 
