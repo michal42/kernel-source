@@ -1,0 +1,66 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Thu, 7 Nov 2013 18:32:06 -0800
+Subject: inet: fix a UFO regression
+Patch-mainline: v3.13-rc1
+Git-commit: dcd607718385d02ce3741de225927a57f528f93b
+
+While testing virtio_net and skb_segment() changes, Hannes reported
+that UFO was sending wrong frames.
+
+It appears this was introduced by a recent commit :
+8c3a897bfab1 ("inet: restore gso for vxlan")
+
+The old condition to perform IP frag was :
+
+tunnel = !!skb->encapsulation;
+...
+        if (!tunnel && proto == IPPROTO_UDP) {
+
+So the new one should be :
+
+udpfrag = !skb->encapsulation && proto == IPPROTO_UDP;
+...
+        if (udpfrag) {
+
+Initialization of udpfrag must be done before call
+to ops->callbacks.gso_segment(skb, features), as
+skb_udp_tunnel_segment() clears skb->encapsulation
+
+(We want udpfrag to be true for UFO, false for VXLAN)
+
+With help from Alexei Starovoitov
+
+Reported-by: Hannes Frederic Sowa <hannes@stressinduktion.org>
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Alexei Starovoitov <ast@plumgrid.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+  91a48a2e (ipv4: ipv6: better estimate tunnel header cut for correct ufo handling)
+    references
+  916e4cf4 (patches.kernel.org/patch-3.12.14-15: ipv6: reuse ip6_frag_id from ip6_ufo_append_data)
+    which depends on
+  dcd6077 inet: fix a UFO regression
+Acked-by: Benjamin Poirier <bpoirier@suse.de>
+---
+ net/ipv4/af_inet.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -1326,6 +1326,9 @@ static struct sk_buff *inet_gso_segment(
+ 
+ 	segs = ERR_PTR(-EPROTONOSUPPORT);
+ 
++	/* Note : following gso_segment() might change skb->encapsulation */
++	udpfrag = !skb->encapsulation && proto == IPPROTO_UDP;
++
+ 	ops = rcu_dereference(inet_offloads[proto]);
+ 	if (likely(ops && ops->callbacks.gso_segment))
+ 		segs = ops->callbacks.gso_segment(skb, features);
+@@ -1333,7 +1336,6 @@ static struct sk_buff *inet_gso_segment(
+ 	if (IS_ERR_OR_NULL(segs))
+ 		goto out;
+ 
+-	udpfrag = !!skb->encapsulation && proto == IPPROTO_UDP;
+ 	skb = segs;
+ 	do {
+ 		iph = (struct iphdr *)(skb_mac_header(skb) + nhoff);
