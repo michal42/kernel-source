@@ -26,11 +26,11 @@ Acked-by: Takashi Iwai <tiwai@suse.de>
 ---
  drivers/misc/mei/hbm.c       |  200 ++++++++++++++++++++++++++-----------------
  drivers/misc/mei/hbm.h       |    6 -
- drivers/misc/mei/hw-me.c     |   32 +++---
+ drivers/misc/mei/hw-me.c     |   25 ++---
  drivers/misc/mei/init.c      |   92 +++++++++++++------
  drivers/misc/mei/interrupt.c |    9 +
  drivers/misc/mei/mei_dev.h   |    1 
- 6 files changed, 210 insertions(+), 130 deletions(-)
+ 6 files changed, 208 insertions(+), 125 deletions(-)
 
 --- a/drivers/misc/mei/hbm.c
 +++ b/drivers/misc/mei/hbm.c
@@ -450,7 +450,7 @@ Acked-by: Takashi Iwai <tiwai@suse.de>
  {
 --- a/drivers/misc/mei/hw-me.c
 +++ b/drivers/misc/mei/hw-me.c
-@@ -469,7 +469,7 @@ irqreturn_t mei_me_irq_thread_handler(in
+@@ -483,7 +483,7 @@ irqreturn_t mei_me_irq_thread_handler(in
  	struct mei_device *dev = (struct mei_device *) dev_id;
  	struct mei_cl_cb complete_list;
  	s32 slots;
@@ -459,7 +459,7 @@ Acked-by: Takashi Iwai <tiwai@suse.de>
  
  	dev_dbg(&dev->pdev->dev, "function called after ISR to handle the interrupt processing.\n");
  	/* initialize our complete list */
-@@ -487,10 +487,9 @@ irqreturn_t mei_me_irq_thread_handler(in
+@@ -501,10 +501,9 @@ irqreturn_t mei_me_irq_thread_handler(in
  	    dev->dev_state != MEI_DEV_INITIALIZING &&
  	    dev->dev_state != MEI_DEV_POWER_DOWN &&
  	    dev->dev_state != MEI_DEV_POWER_UP) {
@@ -473,25 +473,7 @@ Acked-by: Takashi Iwai <tiwai@suse.de>
  	}
  
  	/*  check if we need to start the dev */
-@@ -500,15 +499,12 @@ irqreturn_t mei_me_irq_thread_handler(in
- 
- 			dev->recvd_hw_ready = true;
- 			wake_up_interruptible(&dev->wait_hw_ready);
--
--			mutex_unlock(&dev->device_lock);
--			return IRQ_HANDLED;
- 		} else {
-+
- 			dev_dbg(&dev->pdev->dev, "Reset Completed.\n");
- 			mei_me_hw_reset_release(dev);
--			mutex_unlock(&dev->device_lock);
--			return IRQ_HANDLED;
- 		}
-+		goto end;
- 	}
- 	/* check slots available for reading */
- 	slots = mei_count_full_read_slots(dev);
-@@ -516,21 +512,23 @@ irqreturn_t mei_me_irq_thread_handler(in
+@@ -526,21 +525,23 @@ irqreturn_t mei_me_irq_thread_handler(in
  		/* we have urgent data to send so break the read */
  		if (dev->wr_ext_msg.hdr.length)
  			break;
@@ -647,16 +629,6 @@ Acked-by: Takashi Iwai <tiwai@suse.de>
 +}
 +EXPORT_SYMBOL_GPL(mei_device_init);
 +
---- a/drivers/misc/mei/mei_dev.h
-+++ b/drivers/misc/mei/mei_dev.h
-@@ -426,6 +426,7 @@ struct mei_device {
- 	bool iamthif_canceled;
- 
- 	struct work_struct init_work;
-+	struct work_struct reset_work;
- 
- 	/* List of bus devices */
- 	struct list_head device_list;
 --- a/drivers/misc/mei/interrupt.c
 +++ b/drivers/misc/mei/interrupt.c
 @@ -345,9 +345,12 @@ int mei_irq_read_handler(struct mei_devi
@@ -675,3 +647,13 @@ Acked-by: Takashi Iwai <tiwai@suse.de>
  	} else if (mei_hdr->host_addr == dev->iamthif_cl.host_client_id &&
  		   (MEI_FILE_CONNECTED == dev->iamthif_cl.state) &&
  		   (dev->iamthif_state == MEI_IAMTHIF_READING)) {
+--- a/drivers/misc/mei/mei_dev.h
++++ b/drivers/misc/mei/mei_dev.h
+@@ -426,6 +426,7 @@ struct mei_device {
+ 	bool iamthif_canceled;
+ 
+ 	struct work_struct init_work;
++	struct work_struct reset_work;
+ 
+ 	/* List of bus devices */
+ 	struct list_head device_list;

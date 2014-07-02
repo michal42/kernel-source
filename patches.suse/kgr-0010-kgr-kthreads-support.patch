@@ -5,7 +5,7 @@ Patch-mainline: submitted for review
 References: fate#313296
 
 Wake up kthreads so that they cycle through kgr_task_safe either
-by an explicit call to it or implicitly via kthread_should_stop. This
+by an explicit call to it or implicitly via try_to_freeze. This
 ensures nobody should use the old version of the code and kgraft core
 can push everybody to use the new version by switching to the fast
 path.
@@ -20,19 +20,19 @@ Cc: Ingo Molnar <mingo@redhat.com>
  1 file changed, 16 insertions(+), 11 deletions(-)
 
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index b0c712e8297c..d21eaad8d48d 100644
+index b3a83529c489..617c6eac26fc 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -53,7 +53,7 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+@@ -52,7 +52,7 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+ 		struct ftrace_ops *ops, struct pt_regs *regs)
  {
- 	struct kgr_loc_caches *c = ops->private;
+ 	struct kgr_patch_fun *p = ops->private;
+-	bool go_old = kgr_task_in_progress(current) && current->mm;
++	bool go_old = kgr_task_in_progress(current);
  
--	if (kgr_task_in_progress(current) && current->mm) {
-+	if (kgr_task_in_progress(current)) {
- 		pr_info("kgr: slow stub: calling old code at %lx\n",
- 				c->old);
- 		kgr_set_regs_ip(regs, c->old + MCOUNT_INSN_SIZE);
-@@ -71,11 +71,7 @@ static bool kgr_still_patching(void)
+ 	if (go_old) {
+ 		pr_debug("kgr: slow stub: calling old code at %lx\n",
+@@ -72,11 +72,7 @@ static bool kgr_still_patching(void)
  
  	read_lock(&tasklist_lock);
  	for_each_process(p) {
@@ -45,7 +45,7 @@ index b0c712e8297c..d21eaad8d48d 100644
  			pr_info("pid %d (%s) still in kernel after timeout\n",
  					p->pid, p->comm);
  			failed = true;
-@@ -123,13 +119,23 @@ static void kgr_work_fn(struct work_struct *work)
+@@ -120,13 +116,23 @@ static void kgr_work_fn(struct work_struct *work)
  	mutex_unlock(&kgr_in_progress_lock);
  }
  
@@ -71,17 +71,17 @@ index b0c712e8297c..d21eaad8d48d 100644
  	read_unlock(&tasklist_lock);
  }
  
-@@ -274,8 +280,7 @@ static int kgr_patch_code(const struct kgr_patch_fun *patch_fun, bool final)
-  * kgr_start_patching -- the entry for a kgraft patch
+@@ -252,8 +258,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+  * kgr_patch_kernel -- the entry for a kgraft patch
   * @patch: patch to be applied
   *
 - * Start patching of code that is neither running in IRQ context nor
 - * kernel thread.
 + * Start patching of code that is not running in IRQ context.
   */
- int kgr_start_patching(const struct kgr_patch *patch)
+ int kgr_patch_kernel(struct kgr_patch *patch)
  {
-@@ -314,7 +319,7 @@ int kgr_start_patching(const struct kgr_patch *patch)
+@@ -295,7 +300,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	kgr_patch = patch;
  	mutex_unlock(&kgr_in_progress_lock);
  
