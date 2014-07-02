@@ -14,24 +14,33 @@ any kind of alternative handling that would force the tasks to go
 through the kernel) to such tasks. This allows the tasks to run
 completely undisturbed by the patching.
 
+We do this by looking at the task's stack trace. This is suboptimal
+and perhaps ugly solution but we have not find any other easy way
+without interrupting the task's computation. I.e. we are aware of IPIs
+and looking at stored regs for example. If anyone can come up with an
+idea how to dig out the process' state (whether running in user space
+or not) from task_struct or such, please draw faster and shoot this
+one dead.
+
+js: remove unneeded headers
+js: cleanup
+
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- arch/x86/include/asm/kgraft.h | 41 +++++++++++++++++++++++++++++++++++++++++
+ arch/x86/include/asm/kgraft.h | 30 ++++++++++++++++++++++++++++++
  kernel/kgraft.c               |  3 +++
- 2 files changed, 44 insertions(+)
+ 2 files changed, 33 insertions(+)
 
 diff --git a/arch/x86/include/asm/kgraft.h b/arch/x86/include/asm/kgraft.h
-index 6fc57a85d12c..165a6292c7e4 100644
+index 6fc57a85d12c..3b13738f3665 100644
 --- a/arch/x86/include/asm/kgraft.h
 +++ b/arch/x86/include/asm/kgraft.h
-@@ -22,10 +22,51 @@
+@@ -22,10 +22,40 @@
  #endif
  
  #include <asm/ptrace.h>
-+#include <asm/uaccess.h>
 +#include <linux/stacktrace.h>
-+#include <linux/slab.h>
  
  static inline void kgr_set_regs_ip(struct pt_regs *regs, unsigned long ip)
  {
@@ -46,42 +55,33 @@ index 6fc57a85d12c..165a6292c7e4 100644
 + * If this function returns non-zero (i.e. also when error happens), the task
 + * needs to be migrated using kgraft lazy mechanism.
 + */
-+static inline int kgr_needs_lazy_migration(struct task_struct *p)
++static inline bool kgr_needs_lazy_migration(struct task_struct *p)
 +{
-+	struct stack_trace t;
-+	unsigned long *s;
-+	int ret;
-+
-+	s = kzalloc(3 * sizeof(*s), GFP_KERNEL);
-+	if (!s)
-+		return -ENOMEM;
-+
-+	t.nr_entries = 0;
-+	t.skip = 0;
-+	t.max_entries = 3;
-+	t.entries = s;
++	unsigned long s[3];
++	struct stack_trace t = {
++		.nr_entries = 0,
++		.skip = 0,
++		.max_entries = 3,
++		.entries = s,
++	};
 +
 +	save_stack_trace_tsk(p, &t);
-+	if (t.nr_entries > 2)
-+		ret = 1;
-+	else
-+		ret = 0;
-+	kfree(s);
-+	return ret;
++
++	return t.nr_entries > 2;
 +}
 +#else
-+static inline int kgr_needs_lazy_migration(struct task_struct *p)
++static inline bool kgr_needs_lazy_migration(struct task_struct *p)
 +{
-+	return 1;
++	return true;
 +}
 +#endif
 +
  #endif
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 90ef7fba6d0a..151e00648ffc 100644
+index 139085dbc02d..08957d88fff0 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -150,6 +150,9 @@ static void kgr_handle_processes(void)
+@@ -147,6 +147,9 @@ static void kgr_handle_processes(void)
  			 */
  			wake_up_process(p);
  		}

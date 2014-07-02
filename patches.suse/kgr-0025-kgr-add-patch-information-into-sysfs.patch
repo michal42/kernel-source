@@ -1,0 +1,203 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Tue, 1 Jul 2014 10:59:12 +0200
+Subject: kgr: add patch information into sysfs
+Patch-mainline: submitted for review
+References: fate#313296
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/kgraft.h          | 10 ++++++
+ kernel/kgraft.c                 | 15 +++++++++
+ kernel/kgraft_files.c           | 71 +++++++++++++++++++++++++++++++++++++++++
+ samples/kgraft/kgraft_patcher.c |  2 ++
+ 4 files changed, 98 insertions(+)
+
+diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
+index b9d67a42ee7b..1c4765e6b622 100644
+--- a/include/linux/kgraft.h
++++ b/include/linux/kgraft.h
+@@ -19,6 +19,7 @@
+ 
+ #include <linux/bitops.h>
+ #include <linux/compiler.h>
++#include <linux/kobject.h>
+ #include <linux/ftrace.h>
+ #include <linux/sched.h>
+ 
+@@ -65,11 +66,17 @@ struct kgr_patch_fun {
+ /**
+  * struct kgr_patch -- a kGraft patch
+  *
++ * @kobj: object representing the sysfs entry
++ * @finish: waiting till it is safe to remove the module with the patch
++ * @name: name of the patch (to appear in sysfs)
+  * @owner: module to refcount on patching
+  * @irq_use_new: per-cpu array to remember kGraft state for interrupts
+  * @patches: array of @kgr_patch_fun structures
+  */
+ struct kgr_patch {
++	struct kobject kobj;
++	struct completion finish;
++	const char *name;
+ 	struct module *owner;
+ 	bool __percpu *irq_use_new;
+ 	struct kgr_patch_fun *patches[];
+@@ -97,6 +104,9 @@ struct kgr_patch {
+ extern bool kgr_in_progress;
+ 
+ extern int kgr_patch_kernel(struct kgr_patch *);
++extern void kgr_patch_remove(struct kgr_patch *);
++extern int kgr_patch_dir_add(struct kgr_patch *patch);
++extern void kgr_patch_dir_del(struct kgr_patch *patch);
+ extern int kgr_add_files(void);
+ extern void kgr_remove_files(void);
+ 
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index 59aebc015f3a..9bc4a1d5d835 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -337,6 +337,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+ 		goto err_module_put;
+ 	}
+ 
++	init_completion(&patch->finish);
++
+ 	mutex_lock(&kgr_in_progress_lock);
+ 	if (kgr_in_progress) {
+ 		pr_err("kgr: can't patch, another patching not yet finalized\n");
+@@ -369,6 +371,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+ 	kgr_patch = patch;
+ 	mutex_unlock(&kgr_in_progress_lock);
+ 
++	kgr_patch_dir_add(patch);
++
+ 	kgr_handle_irqs();
+ 	kgr_handle_processes();
+ 
+@@ -388,6 +392,17 @@ err_module_put:
+ }
+ EXPORT_SYMBOL_GPL(kgr_patch_kernel);
+ 
++/**
++ * kgr_patch_remove -- module with this patch is leaving
++ *
++ * @patch: this patch is going away
++ */
++void kgr_patch_remove(struct kgr_patch *patch)
++{
++	kgr_patch_dir_del(patch);
++}
++EXPORT_SYMBOL_GPL(kgr_patch_remove);
++
+ static int __init kgr_init(void)
+ {
+ 	int ret;
+diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
+index 40c6cb76b386..efd204267a3e 100644
+--- a/kernel/kgraft_files.c
++++ b/kernel/kgraft_files.c
+@@ -17,10 +17,81 @@
+ #include <linux/kernel.h>
+ #include <linux/kgraft.h>
+ #include <linux/kobject.h>
++#include <linux/module.h>
+ #include <linux/sysfs.h>
+ 
+ static struct kobject *kgr_sysfs_dir;
+ 
++static inline struct kgr_patch *kobj_to_patch(struct kobject *kobj)
++{
++	return container_of(kobj, struct kgr_patch, kobj);
++}
++
++static void kgr_patch_kobj_release(struct kobject *kobj)
++{
++	struct kgr_patch *p = kobj_to_patch(kobj);
++
++	complete(&p->finish);
++}
++
++static struct kobj_type kgr_patch_kobj_ktype = {
++	.release	= kgr_patch_kobj_release,
++	.sysfs_ops	= &kobj_sysfs_ops,
++};
++
++static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
++		char *buf)
++{
++	struct kgr_patch_fun *const *patch_fun;
++	struct kgr_patch *p = kobj_to_patch(kobj);
++	ssize_t size;
++
++	size = snprintf(buf, PAGE_SIZE, "%-20s  State  Fatal\n", "Function");
++
++	for (patch_fun = p->patches; *patch_fun; patch_fun++) {
++		const struct kgr_patch_fun *pf = *patch_fun;
++
++		size += snprintf(buf + size, PAGE_SIZE - size,
++				"%-20s  %5d  %5d\n",
++				pf->name, pf->state, pf->abort_if_missing);
++	}
++	return size;
++}
++
++static struct kobj_attribute kgr_attr_state = __ATTR_RO(state);
++
++static struct attribute *kgr_patch_sysfs_entries[] = {
++	&kgr_attr_state.attr,
++	NULL
++};
++
++static struct attribute_group kgr_patch_sysfs_group = {
++	.attrs = kgr_patch_sysfs_entries,
++};
++
++int kgr_patch_dir_add(struct kgr_patch *patch)
++{
++	int ret;
++
++	ret = kobject_init_and_add(&patch->kobj, &kgr_patch_kobj_ktype,
++			kgr_sysfs_dir, patch->name);
++	if (ret)
++		return ret;
++
++	ret = sysfs_create_group(&patch->kobj, &kgr_patch_sysfs_group);
++	if (ret)
++		kobject_put(&patch->kobj);
++
++	return ret;
++}
++
++void kgr_patch_dir_del(struct kgr_patch *patch)
++{
++	sysfs_remove_group(&patch->kobj, &kgr_patch_sysfs_group);
++	kobject_put(&patch->kobj);
++	wait_for_completion(&patch->finish);
++}
++
+ static ssize_t in_progress_show(struct kobject *kobj,
+ 		struct kobj_attribute *attr, char *buf)
+ {
+diff --git a/samples/kgraft/kgraft_patcher.c b/samples/kgraft/kgraft_patcher.c
+index 26ded6887fce..fc777abe8aeb 100644
+--- a/samples/kgraft/kgraft_patcher.c
++++ b/samples/kgraft/kgraft_patcher.c
+@@ -70,6 +70,7 @@ static void new_function(unsigned long data)
+ KGR_PATCHED_FUNCTION(unknown_function, new_function, false);
+ 
+ static struct kgr_patch patch = {
++	.name = "sample_patcher",
+ 	.owner = THIS_MODULE,
+ 	.patches = {
+ 		KGR_PATCH(SyS_iopl),
+@@ -86,6 +87,7 @@ static int __init kgr_patcher_init(void)
+ 
+ static void __exit kgr_patcher_cleanup(void)
+ {
++	kgr_patch_remove(&patch);
+ 	/* extra care needs to be taken when freeing ftrace_ops->private */
+ 	pr_err("removing now buggy!\n");
+ }
+-- 
+2.0.0
+

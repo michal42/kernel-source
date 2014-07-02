@@ -1,0 +1,55 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Thu, 26 Jun 2014 09:15:29 +0200
+Subject: kgr: make ftrace ops initialization simpler
+Patch-mainline: submitted for review
+References: fate#313296
+
+Move kgr_init_ftrace_ops to the newly added switch so that it is
+called really only the first time.
+
+This allows for more readable code when revert/rmmod of patches is
+added.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ kernel/kgraft.c | 17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index 3f7a42fd09ff..7d09c6e1aab7 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -244,6 +244,15 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+ 
+ 	switch (patch_fun->state) {
+ 	case KGR_PATCH_INIT:
++		err = kgr_init_ftrace_ops(patch_fun);
++		if (err) {
++			if (err == -ENOENT && !patch_fun->abort_if_missing) {
++				patch_fun->state = KGR_PATCH_SKIPPED;
++				return 0;
++			}
++			return err;
++		}
++
+ 		next_state = KGR_PATCH_SLOW;
+ 		break;
+ 	case KGR_PATCH_SLOW:
+@@ -257,14 +266,6 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+ 
+ 	/* Choose between slow and fast stub */
+ 	if (!final) {
+-		err = kgr_init_ftrace_ops(patch_fun);
+-		if (err) {
+-			if (err == -ENOENT && !patch_fun->abort_if_missing) {
+-				patch_fun->state = KGR_PATCH_SKIPPED;
+-				return 0;
+-			}
+-			return err;
+-		}
+ 		pr_debug("kgr: patching %s to slow stub\n", patch_fun->name);
+ 		new_ops = patch_fun->ftrace_ops_slow;
+ 	} else {
+-- 
+2.0.0
+
