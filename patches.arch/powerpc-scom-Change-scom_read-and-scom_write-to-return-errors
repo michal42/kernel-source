@@ -1,0 +1,188 @@
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Subject: powerpc/scom: Change scom_read() and scom_write() to return errors
+Git-commit: aaa63093dd4c393391a3368e1c7305b0cc620571
+Patch-mainline: v3.13-rc1
+References: bnc#878240
+
+scom_read() now returns the read value via a pointer argument and
+both functions return an int error code
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/arch/powerpc/include/asm/scom.h
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/include/asm/scom.h
++++ linux-3.12-SLE12/arch/powerpc/include/asm/scom.h
+@@ -54,8 +54,8 @@ struct scom_controller {
+ 	scom_map_t (*map)(struct device_node *ctrl_dev, u64 reg, u64 count);
+ 	void (*unmap)(scom_map_t map);
+ 
+-	u64 (*read)(scom_map_t map, u64 reg);
+-	void (*write)(scom_map_t map, u64 reg, u64 value);
++	int (*read)(scom_map_t map, u64 reg, u64 *value);
++	int (*write)(scom_map_t map, u64 reg, u64 value);
+ };
+ 
+ extern const struct scom_controller *scom_controller;
+@@ -133,10 +133,18 @@ static inline void scom_unmap(scom_map_t
+  * scom_read - Read a SCOM register
+  * @map: Result of scom_map
+  * @reg: Register index within that map
++ * @value: Updated with the value read
++ *
++ * Returns 0 (success) or a negative error code
+  */
+-static inline u64 scom_read(scom_map_t map, u64 reg)
++static inline int scom_read(scom_map_t map, u64 reg, u64 *value)
+ {
+-	return scom_controller->read(map, reg);
++	int rc;
++
++	rc = scom_controller->read(map, reg, value);
++	if (rc)
++		*value = 0xfffffffffffffffful;
++	return rc;
+ }
+ 
+ /**
+@@ -144,12 +152,15 @@ static inline u64 scom_read(scom_map_t m
+  * @map: Result of scom_map
+  * @reg: Register index within that map
+  * @value: Value to write
++ *
++ * Returns 0 (success) or a negative error code
+  */
+-static inline void scom_write(scom_map_t map, u64 reg, u64 value)
++static inline int scom_write(scom_map_t map, u64 reg, u64 value)
+ {
+-	scom_controller->write(map, reg, value);
++	return scom_controller->write(map, reg, value);
+ }
+ 
++
+ #endif /* CONFIG_PPC_SCOM */
+ #endif /* __ASSEMBLY__ */
+ #endif /* __KERNEL__ */
+Index: linux-3.12-SLE12/arch/powerpc/platforms/wsp/scom_smp.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/wsp/scom_smp.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/wsp/scom_smp.c
+@@ -117,7 +117,14 @@ static int a2_scom_ram(scom_map_t scom,
+ 
+ 	scom_write(scom, SCOM_RAMIC, cmd);
+ 
+-	while (!((val = scom_read(scom, SCOM_RAMC)) & mask)) {
++	for (;;) {
++		if (scom_read(scom, SCOM_RAMC, &val) != 0) {
++			pr_err("SCOM error on instruction 0x%08x, thread %d\n",
++			       insn, thread);
++			return -1;
++		}
++		if (val & mask)
++			break;
+ 		pr_devel("Waiting on RAMC = 0x%llx\n", val);
+ 		if (++n == 3) {
+ 			pr_err("RAMC timeout on instruction 0x%08x, thread %d\n",
+@@ -152,9 +159,7 @@ static int a2_scom_getgpr(scom_map_t sco
+ 	if (rc)
+ 		return rc;
+ 
+-	*out_gpr = scom_read(scom, SCOM_RAMD);
+-
+-	return 0;
++	return scom_read(scom, SCOM_RAMD, out_gpr);
+ }
+ 
+ static int a2_scom_getspr(scom_map_t scom, int thread, int spr, u64 *out_spr)
+@@ -354,7 +359,10 @@ int a2_scom_startup_cpu(unsigned int lcp
+ 
+ 	pr_devel("Bringing up CPU%d using SCOM...\n", lcpu);
+ 
+-	pccr0 = scom_read(scom, SCOM_PCCR0);
++	if (scom_read(scom, SCOM_PCCR0, &pccr0) != 0) {
++		printk(KERN_ERR "XSCOM failure readng PCCR0 on CPU%d\n", lcpu);
++		return -1;
++	}
+ 	scom_write(scom, SCOM_PCCR0, pccr0 | SCOM_PCCR0_ENABLE_DEBUG |
+ 				     SCOM_PCCR0_ENABLE_RAM);
+ 
+Index: linux-3.12-SLE12/arch/powerpc/platforms/wsp/scom_wsp.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/wsp/scom_wsp.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/wsp/scom_wsp.c
+@@ -50,18 +50,22 @@ static void wsp_scom_unmap(scom_map_t ma
+ 	iounmap((void *)map);
+ }
+ 
+-static u64 wsp_scom_read(scom_map_t map, u64 reg)
++static int wsp_scom_read(scom_map_t map, u64 reg, u64 *value)
+ {
+ 	u64 __iomem *addr = (u64 __iomem *)map;
+ 
+-	return in_be64(addr + reg);
++	*value = in_be64(addr + reg);
++
++	return 0;
+ }
+ 
+-static void wsp_scom_write(scom_map_t map, u64 reg, u64 value)
++static int wsp_scom_write(scom_map_t map, u64 reg, u64 value)
+ {
+ 	u64 __iomem *addr = (u64 __iomem *)map;
+ 
+-	return out_be64(addr + reg, value);
++	out_be64(addr + reg, value);
++
++	return 0;
+ }
+ 
+ static const struct scom_controller wsp_scom_controller = {
+Index: linux-3.12-SLE12/arch/powerpc/platforms/wsp/wsp.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/wsp/wsp.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/wsp/wsp.c
+@@ -89,6 +89,7 @@ void wsp_halt(void)
+ 	struct device_node *dn;
+ 	struct device_node *mine;
+ 	struct device_node *me;
++	int rc;
+ 
+ 	me = of_get_cpu_node(smp_processor_id(), NULL);
+ 	mine = scom_find_parent(me);
+@@ -101,15 +102,15 @@ void wsp_halt(void)
+ 
+ 		/* read-modify-write it so the HW probe does not get
+ 		 * confused */
+-		val = scom_read(m, 0);
+-		val |= 1;
+-		scom_write(m, 0, val);
++		rc = scom_read(m, 0, &val);
++		if (rc == 0)
++			scom_write(m, 0, val | 1);
+ 		scom_unmap(m);
+ 	}
+ 	m = scom_map(mine, 0, 1);
+-	val = scom_read(m, 0);
+-	val |= 1;
+-	scom_write(m, 0, val);
++	rc = scom_read(m, 0, &val);
++	if (rc == 0)
++		scom_write(m, 0, val | 1);
+ 	/* should never return */
+ 	scom_unmap(m);
+ }
+Index: linux-3.12-SLE12/arch/powerpc/sysdev/scom.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/sysdev/scom.c
++++ linux-3.12-SLE12/arch/powerpc/sysdev/scom.c
+@@ -137,8 +137,7 @@ static int scom_val_get(void *data, u64
+ 	if (!scom_map_ok(ent->map))
+ 		return -EFAULT;
+ 
+-	*val = scom_read(ent->map, 0);
+-	return 0;
++	return scom_read(ent->map, 0, val);
+ }
+ DEFINE_SIMPLE_ATTRIBUTE(scom_val_fops, scom_val_get, scom_val_set,
+ 			"0x%llx\n");
