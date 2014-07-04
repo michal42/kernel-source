@@ -1,4 +1,4 @@
-From 2a9d1a99afc91c58160c4dab404f83bec77a75ce Mon Sep 17 00:00:00 2001
+From ed53c105606180097af5cb82d3a45c576e105755 Mon Sep 17 00:00:00 2001
 From: Mel Gorman <mgorman@suse.de>
 Date: Thu, 19 Jun 2014 11:50:02 +0100
 Subject: [PATCH] mm: Rearrange zone fields into read-only, page alloc,
@@ -19,23 +19,24 @@ o Some zone statistics share a cache line with the LRU lock so reclaim-intensive
 This patch rearranges struct zone to put read-only and read-mostly fields
 together and then splits the page allocator intensive fields, the zone
 statistics and the page reclaim intensive fields into their own cache
-lines. Note that arguably the biggest change is reducing the size of the
-lowmem_reserve type. It should still be large enough but by shrinking it
-the fields used by the page allocator fast path all fit in one cache line.
+lines. Note that the type of lowmem_reserve changes due to the watermark
+calculations being signed and avoiding a signed/unsigned conversion there.
 
 On the test configuration I used the overall size of struct zone shrunk
 by one cache line.
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/mmzone.h |  203 +++++++++++++++++++++++++------------------------
- mm/page_alloc.c        |   13 +--
- mm/vmstat.c            |    4 
- 3 files changed, 114 insertions(+), 106 deletions(-)
+ include/linux/mmzone.h | 211 +++++++++++++++++++++++++------------------------
+ mm/page_alloc.c        |   7 +-
+ mm/vmstat.c            |   4 +-
+ 3 files changed, 113 insertions(+), 109 deletions(-)
 
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 6cbd1b6..fbadc45 100644
 --- a/include/linux/mmzone.h
 +++ b/include/linux/mmzone.h
-@@ -316,19 +316,12 @@
+@@ -324,19 +324,12 @@ enum zone_type {
  #ifndef __GENERATING_BOUNDS_H
  
  struct zone {
@@ -56,7 +57,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	 * We don't know if the memory that we're going to allocate will be freeable
  	 * or/and it will be released eventually, so to avoid totally wasting several
  	 * GB of ram we must reserve some of the lower zone memory (otherwise we risk
-@@ -336,41 +329,17 @@
+@@ -344,41 +337,26 @@ struct zone {
  	 * on the higher zones). This array is recalculated at runtime if the
  	 * sysctl_lowmem_reserve_ratio sysctl changes.
  	 */
@@ -67,22 +68,29 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 -	 * considered dirtyable memory.
 -	 */
 -	unsigned long		dirty_balance_reserve;
-+	unsigned int lowmem_reserve[MAX_NR_ZONES];
++	long lowmem_reserve[MAX_NR_ZONES];
  
-+	struct per_cpu_pageset __percpu *pageset;
  #ifdef CONFIG_NUMA
  	int node;
--	/*
--	 * zone reclaim becomes active if more unmapped pages exist.
--	 */
--	unsigned long		min_unmapped_pages;
--	unsigned long		min_slab_pages;
- #endif
--	struct per_cpu_pageset __percpu *pageset;
++#endif
++
  	/*
--	 * free areas of different sizes
+-	 * zone reclaim becomes active if more unmapped pages exist.
 +	 * The target ratio of ACTIVE_ANON to INACTIVE_ANON pages on
 +	 * this zone's LRU.  Maintained by the pageout code.
+ 	 */
+-	unsigned long		min_unmapped_pages;
+-	unsigned long		min_slab_pages;
+-#endif
++	unsigned int inactive_ratio;
++
++	struct pglist_data	*zone_pgdat;
+ 	struct per_cpu_pageset __percpu *pageset;
++
+ 	/*
+-	 * free areas of different sizes
++	 * This is a per-zone reserve of pages that should not be
++	 * considered dirtyable memory.
  	 */
 -	spinlock_t		lock;
 -#if defined CONFIG_COMPACTION || defined CONFIG_CMA
@@ -99,11 +107,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 -	seqlock_t		span_seqlock;
 -#endif
 -	struct free_area	free_area[MAX_ORDER];
-+	unsigned int inactive_ratio;
++	unsigned long		dirty_balance_reserve;
  
  #ifndef CONFIG_SPARSEMEM
  	/*
-@@ -380,16 +349,6 @@
+@@ -388,74 +366,14 @@ struct zone {
  	unsigned long		*pageblock_flags;
  #endif /* CONFIG_SPARSEMEM */
  
@@ -117,13 +125,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 -	unsigned int		compact_defer_shift;
 -	int			compact_order_failed;
 -#endif
- 	/*
- 	 * This atomic counter is set when there is pagecache limit
- 	 * reclaim going on on this particular zone. Other potential
-@@ -398,62 +357,35 @@
- 	 */
- 	atomic_t		pagecache_reclaim;
- 
+-
 -	ZONE_PADDING(_pad1_)
 -
 -	/* Fields commonly accessed by the page reclaim scanner */
@@ -139,25 +141,16 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 -	/* Zone statistics */
 -	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
 -
- 	/*
+-	/*
 -	 * The target ratio of ACTIVE_ANON to INACTIVE_ANON pages on
 -	 * this zone's LRU.  Maintained by the pageout code.
-+	 * This is a per-zone reserve of pages that should not be
-+	 * considered dirtyable memory.
- 	 */
+-	 */
 -	unsigned int inactive_ratio;
 -
-+	unsigned long		dirty_balance_reserve;
- 
+-
 -	ZONE_PADDING(_pad2_)
 -	/* Rarely used or read-mostly fields */
-+	/*
-+	 * When free pages are below this point, additional steps are taken
-+	 * when reading the number of free pages to avoid per-cpu counter
-+	 * drift allowing watermarks to be breached
-+	 */
-+	unsigned long percpu_drift_mark;
- 
+-
 +#ifdef CONFIG_NUMA
  	/*
 -	 * wait_table		-- the array holding the hash table
@@ -190,22 +183,30 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 +	unsigned long		min_unmapped_pages;
 +	unsigned long		min_slab_pages;
 +#endif /* CONFIG_NUMA */
+ 
+-	/*
+-	 * Discontig memory support fields.
+-	 */
+-	struct pglist_data	*zone_pgdat;
+ 	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
+ 	unsigned long		zone_start_pfn;
+ 
+@@ -500,9 +418,11 @@ struct zone {
+ 	 * adjust_managed_page_count() should be used instead of directly
+ 	 * touching zone->managed_pages and totalram_pages.
+ 	 */
++	unsigned long		managed_pages;
+ 	unsigned long		spanned_pages;
+ 	unsigned long		present_pages;
+-	unsigned long		managed_pages;
 +
 +	const char		*name;
  
  	/*
--	 * Discontig memory support fields.
-+	 * Number of MIGRATE_RESEVE page block. To maintain for just
-+	 * optimization. Protected by zone->lock.
+ 	 * Number of MIGRATE_RESEVE page block. To maintain for just
+@@ -510,10 +430,95 @@ struct zone {
  	 */
-+	int			nr_migrate_reserve_block;
-+
- 	struct pglist_data	*zone_pgdat;
- 	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
- 	unsigned long		zone_start_pfn;
-@@ -504,16 +436,89 @@
- 	unsigned long		present_pages;
- 	unsigned long		managed_pages;
+ 	int			nr_migrate_reserve_block;
  
 +#ifdef CONFIG_MEMORY_HOTPLUG
 +	/* see spanned/present_pages for more description */
@@ -213,8 +214,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 +#endif
 +
  	/*
--	 * Number of MIGRATE_RESEVE page block. To maintain for just
--	 * optimization. Protected by zone->lock.
+-	 * rarely used fields:
 +	 * wait_table		-- the array holding the hash table
 +	 * wait_table_hash_nr_entries	-- the size of the hash table array
 +	 * wait_table_bits	-- wait_table_size == (1 << wait_table_bits)
@@ -238,7 +238,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 +	 * primary users of these fields, and in mm/page_alloc.c
 +	 * free_area_init_core() performs the initialization of them.
  	 */
--	int			nr_migrate_reserve_block;
+-	const char		*name;
 +	wait_queue_head_t	*wait_table;
 +	unsigned long		wait_table_hash_nr_entries;
 +	unsigned long		wait_table_bits;
@@ -260,12 +260,18 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 +
 +	/* Fields commonly accessed by the page reclaim scanner */
 +	spinlock_t		lru_lock;
++	unsigned long		pages_scanned;	   /* since last reclaim */
 +	struct lruvec		lruvec;
 +
 +	/* Evictions & activations on the inactive file list */
 +	atomic_long_t		inactive_age;
 +
-+	unsigned long		pages_scanned;	   /* since last reclaim */
++	/*
++	 * When free pages are below this point, additional steps are taken
++	 * when reading the number of free pages to avoid per-cpu counter
++	 * drift allowing watermarks to be breached
++	 */
++	unsigned long percpu_drift_mark;
 +
 +#if defined CONFIG_COMPACTION || defined CONFIG_CMA
 +	/* pfn where compaction free scanner should start */
@@ -273,15 +279,13 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
 +	/* pfn where async and sync compaction migration scanner should start */
 +	unsigned long		compact_cached_migrate_pfn[2];
 +#endif
- 
++
 +#ifdef CONFIG_COMPACTION
- 	/*
--	 * rarely used fields:
++	/*
 +	 * On compaction failure, 1<<compact_defer_shift compactions
 +	 * are skipped before trying again. The number attempted since
 +	 * last failure is tracked with compact_considered.
- 	 */
--	const char		*name;
++	 */
 +	unsigned int		compact_considered;
 +	unsigned int		compact_defer_shift;
 +	int			compact_order_failed;
@@ -298,9 +302,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	void *suse_kabi_padding;
  } ____cacheline_internodealigned_in_smp;
  
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 20d17f8..c607acd 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -1667,7 +1667,6 @@
+@@ -1700,7 +1700,6 @@ static bool __zone_watermark_ok(struct zone *z, unsigned int order,
  {
  	/* free_pages my go negative - that's OK */
  	long min = mark;
@@ -308,7 +314,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	int o;
  	long free_cma = 0;
  
-@@ -1682,7 +1681,7 @@
+@@ -1715,7 +1714,7 @@ static bool __zone_watermark_ok(struct zone *z, unsigned int order,
  		free_cma = zone_page_state(z, NR_FREE_CMA_PAGES);
  #endif
  
@@ -317,57 +323,38 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		return false;
  	for (o = 0; o < order; o++) {
  		/* At the next order, this order's pages become unavailable */
-@@ -3204,7 +3203,7 @@
+@@ -3246,7 +3245,7 @@ void show_free_areas(unsigned int filter)
  			);
  		printk("lowmem_reserve[]:");
  		for (i = 0; i < MAX_NR_ZONES; i++)
 -			printk(" %lu", zone->lowmem_reserve[i]);
-+			printk(" %u", zone->lowmem_reserve[i]);
++			printk(" %ld", zone->lowmem_reserve[i]);
  		printk("\n");
  	}
  
-@@ -5556,7 +5555,7 @@
+@@ -5567,7 +5566,7 @@ static void calculate_totalreserve_pages(void)
  	for_each_online_pgdat(pgdat) {
  		for (i = 0; i < MAX_NR_ZONES; i++) {
  			struct zone *zone = pgdat->node_zones + i;
 -			unsigned long max = 0;
-+			unsigned int max = 0;
++			long max = 0;
  
  			/* Find valid and maximum lowmem_reserve in the zone */
  			for (j = i; j < MAX_NR_ZONES; j++) {
-@@ -5607,6 +5606,7 @@
- 			idx = j;
- 			while (idx) {
- 				struct zone *lower_zone;
-+				unsigned long reserve;
- 
- 				idx--;
- 
-@@ -5614,8 +5614,11 @@
- 					sysctl_lowmem_reserve_ratio[idx] = 1;
- 
- 				lower_zone = pgdat->node_zones + idx;
--				lower_zone->lowmem_reserve[j] = managed_pages /
-+				reserve = managed_pages /
- 					sysctl_lowmem_reserve_ratio[idx];
-+				if (WARN_ON(reserve > UINT_MAX))
-+					reserve = UINT_MAX;
-+				lower_zone->lowmem_reserve[j] = reserve;
- 				managed_pages += lower_zone->managed_pages;
- 			}
- 		}
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index b37bd49..8267f77 100644
 --- a/mm/vmstat.c
 +++ b/mm/vmstat.c
-@@ -1068,10 +1068,10 @@
+@@ -1077,10 +1077,10 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
  				zone_page_state(zone, i));
  
  	seq_printf(m,
 -		   "\n        protection: (%lu",
-+		   "\n        protection: (%u",
++		   "\n        protection: (%ld",
  		   zone->lowmem_reserve[0]);
  	for (i = 1; i < ARRAY_SIZE(zone->lowmem_reserve); i++)
 -		seq_printf(m, ", %lu", zone->lowmem_reserve[i]);
-+		seq_printf(m, ", %u", zone->lowmem_reserve[i]);
++		seq_printf(m, ", %ld", zone->lowmem_reserve[i]);
  	seq_printf(m,
  		   ")"
  		   "\n  pagesets");
