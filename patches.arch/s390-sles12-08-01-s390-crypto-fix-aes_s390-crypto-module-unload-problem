@@ -1,0 +1,71 @@
+From: Ingo Tuchscherer <ingo.tuchscherer@de.ibm.com>
+Subject: s390/crypto: fix aes_s390 crypto module unload problem
+Git-commit: 4f57ba716b12ab939d46b7910768c3da3623fdc1
+Patch-mainline: v3.13-rc1
+References: bnc#881529, LTC#111065
+
+ s390/crypto: fix aes_s390 crypto module unload problem
+
+If a machine has no hardware support for the xts-aes or ctr-aes algorithms
+they are not registered in aes_s390_init. But aes_s390_fini unconditionally
+unregisters the algorithms which causes crypto_remove_alg to crash.
+Add two flag variables to remember if xts-aes and ctr-aes have been added.
+
+Signed-off-by: Ingo Tuchscherer <ingo.tuchscherer@de.ibm.com>
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/s390/crypto/aes_s390.c b/arch/s390/crypto/aes_s390.c
+index b4dbade..46cae13 100644
+--- a/arch/s390/crypto/aes_s390.c
++++ b/arch/s390/crypto/aes_s390.c
+@@ -725,6 +725,8 @@ static struct crypto_alg xts_aes_alg = {
+ 	}
+ };
+ 
++static int xts_aes_alg_reg;
++
+ static int ctr_aes_set_key(struct crypto_tfm *tfm, const u8 *in_key,
+ 			   unsigned int key_len)
+ {
+@@ -846,6 +848,8 @@ static struct crypto_alg ctr_aes_alg = {
+ 	}
+ };
+ 
++static int ctr_aes_alg_reg;
++
+ static int __init aes_s390_init(void)
+ {
+ 	int ret;
+@@ -884,6 +888,7 @@ static int __init aes_s390_init(void)
+ 		ret = crypto_register_alg(&xts_aes_alg);
+ 		if (ret)
+ 			goto xts_aes_err;
++		xts_aes_alg_reg = 1;
+ 	}
+ 
+ 	if (crypt_s390_func_available(KMCTR_AES_128_ENCRYPT,
+@@ -902,6 +907,7 @@ static int __init aes_s390_init(void)
+ 			free_page((unsigned long) ctrblk);
+ 			goto ctr_aes_err;
+ 		}
++		ctr_aes_alg_reg = 1;
+ 	}
+ 
+ out:
+@@ -921,9 +927,12 @@ aes_err:
+ 
+ static void __exit aes_s390_fini(void)
+ {
+-	crypto_unregister_alg(&ctr_aes_alg);
+-	free_page((unsigned long) ctrblk);
+-	crypto_unregister_alg(&xts_aes_alg);
++	if (ctr_aes_alg_reg) {
++		crypto_unregister_alg(&ctr_aes_alg);
++		free_page((unsigned long) ctrblk);
++	}
++	if (xts_aes_alg_reg)
++		crypto_unregister_alg(&xts_aes_alg);
+ 	crypto_unregister_alg(&cbc_aes_alg);
+ 	crypto_unregister_alg(&ecb_aes_alg);
+ 	crypto_unregister_alg(&aes_alg);
