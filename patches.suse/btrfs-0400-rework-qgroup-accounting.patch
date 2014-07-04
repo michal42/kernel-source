@@ -42,25 +42,23 @@ Signed-off-by: Josef Bacik <jbacik@fb.com>
 Signed-off-by: Chris Mason <clm@fb.com>
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 ---
- fs/btrfs/backref.h     |   4 +-
- fs/btrfs/ctree.c       |  45 +--
- fs/btrfs/ctree.h       |  59 +---
- fs/btrfs/delayed-ref.c |  39 ++-
- fs/btrfs/delayed-ref.h |  24 +-
- fs/btrfs/disk-io.c     |   4 +
- fs/btrfs/extent-tree.c | 206 +++++++----
- fs/btrfs/file.c        |   5 +-
- fs/btrfs/ioctl.c       |  63 +++-
- fs/btrfs/qgroup.c      | 915 ++++++++++++++++++++++++++++++++++++-------------
- fs/btrfs/qgroup.h      | 107 ++++++
- fs/btrfs/transaction.c |  52 +--
- 12 files changed, 1044 insertions(+), 479 deletions(-)
+ fs/btrfs/backref.h     |    4 
+ fs/btrfs/ctree.c       |   45 --
+ fs/btrfs/ctree.h       |   59 ---
+ fs/btrfs/delayed-ref.c |   39 +-
+ fs/btrfs/delayed-ref.h |   24 -
+ fs/btrfs/disk-io.c     |    4 
+ fs/btrfs/extent-tree.c |  206 ++++++-----
+ fs/btrfs/file.c        |    5 
+ fs/btrfs/ioctl.c       |   63 +++
+ fs/btrfs/qgroup.c      |  917 +++++++++++++++++++++++++++++++++++--------------
+ fs/btrfs/qgroup.h      |  107 +++++
+ fs/btrfs/transaction.c |   52 +-
+ 12 files changed, 1045 insertions(+), 480 deletions(-)
  create mode 100644 fs/btrfs/qgroup.h
 
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/backref.h
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/backref.h
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/backref.h
+--- a/fs/btrfs/backref.h
++++ b/fs/btrfs/backref.h
 @@ -55,8 +55,8 @@ int iterate_inodes_from_logical(u64 logi
  int paths_from_inode(u64 inum, struct inode_fs_paths *ipath);
  
@@ -72,10 +70,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/backref.h
  char *btrfs_ref_to_path(struct btrfs_root *fs_root, struct btrfs_path *path,
  			u32 name_len, unsigned long name_off,
  			struct extent_buffer *eb_in, u64 parent,
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/ctree.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.c
+--- a/fs/btrfs/ctree.c
++++ b/fs/btrfs/ctree.c
 @@ -356,44 +356,14 @@ static inline void tree_mod_log_write_un
  }
  
@@ -156,11 +152,9 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.c
  
  	tm_root = &fs_info->tree_mod_log;
  	new = &tm_root->rb_node;
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/ctree.h
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
-@@ -1642,7 +1642,10 @@ struct btrfs_fs_info {
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -1636,7 +1636,10 @@ struct btrfs_fs_info {
  
  	/* holds configuration and tracking. Protected by qgroup_lock */
  	struct rb_root qgroup_tree;
@@ -171,7 +165,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  
  	/*
  	 * used to avoid frequently calling ulist_alloc()/ulist_free()
-@@ -3265,9 +3268,9 @@ int btrfs_reserve_extent(struct btrfs_ro
+@@ -3259,9 +3262,9 @@ int btrfs_reserve_extent(struct btrfs_ro
  			 u64 min_alloc_size, u64 empty_size, u64 hint_byte,
  			 struct btrfs_key *ins, int is_data);
  int btrfs_inc_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
@@ -183,7 +177,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  int btrfs_set_disk_extent_flags(struct btrfs_trans_handle *trans,
  				struct btrfs_root *root,
  				u64 bytenr, u64 num_bytes, u64 flags,
-@@ -3275,7 +3278,7 @@ int btrfs_set_disk_extent_flags(struct b
+@@ -3269,7 +3272,7 @@ int btrfs_set_disk_extent_flags(struct b
  int btrfs_free_extent(struct btrfs_trans_handle *trans,
  		      struct btrfs_root *root,
  		      u64 bytenr, u64 num_bytes, u64 parent, u64 root_objectid,
@@ -192,7 +186,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  
  int btrfs_free_reserved_extent(struct btrfs_root *root, u64 start, u64 len);
  int btrfs_free_and_pin_reserved_extent(struct btrfs_root *root,
-@@ -3287,7 +3290,7 @@ int btrfs_finish_extent_commit(struct bt
+@@ -3281,7 +3284,7 @@ int btrfs_finish_extent_commit(struct bt
  int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
  			 struct btrfs_root *root,
  			 u64 bytenr, u64 num_bytes, u64 parent,
@@ -201,7 +195,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  
  int btrfs_write_dirty_block_groups(struct btrfs_trans_handle *trans,
  				    struct btrfs_root *root);
-@@ -3375,7 +3378,6 @@ int btrfs_init_space_info(struct btrfs_f
+@@ -3369,7 +3372,6 @@ int btrfs_init_space_info(struct btrfs_f
  int btrfs_delayed_refs_qgroup_accounting(struct btrfs_trans_handle *trans,
  					 struct btrfs_fs_info *fs_info);
  int __get_raid_index(u64 flags);
@@ -209,7 +203,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  int btrfs_start_nocow_write(struct btrfs_root *root);
  void btrfs_end_nocow_write(struct btrfs_root *root);
  /* ctree.c */
-@@ -3551,7 +3553,6 @@ u64 btrfs_get_tree_mod_seq(struct btrfs_
+@@ -3545,7 +3547,6 @@ u64 btrfs_get_tree_mod_seq(struct btrfs_
  			   struct seq_list *elem);
  void btrfs_put_tree_mod_seq(struct btrfs_fs_info *fs_info,
  			    struct seq_list *elem);
@@ -217,7 +211,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  int btrfs_old_root_level(struct btrfs_root *root, u64 time_seq);
  
  /* root-item.c */
-@@ -4062,52 +4063,6 @@ void btrfs_reada_detach(void *handle);
+@@ -4056,52 +4057,6 @@ void btrfs_reada_detach(void *handle);
  int btree_readahead_hook(struct btrfs_root *root, struct extent_buffer *eb,
  			 u64 start, int err);
  
@@ -270,10 +264,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ctree.h
  static inline int is_fstree(u64 rootid)
  {
  	if (rootid == BTRFS_FS_TREE_OBJECTID ||
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/delayed-ref.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/delayed-ref.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/delayed-ref.c
+--- a/fs/btrfs/delayed-ref.c
++++ b/fs/btrfs/delayed-ref.c
 @@ -106,6 +106,10 @@ static int comp_entry(struct btrfs_delay
  		return -1;
  	if (ref1->type > ref2->type)
@@ -402,10 +394,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/delayed-ref.c
  
  	return 0;
  }
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/delayed-ref.h
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/delayed-ref.h
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/delayed-ref.h
+--- a/fs/btrfs/delayed-ref.h
++++ b/fs/btrfs/delayed-ref.h
 @@ -52,6 +52,7 @@ struct btrfs_delayed_ref_node {
  
  	unsigned int action:8;
@@ -457,10 +447,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/delayed-ref.h
   * a node might live in a head or a regular ref, this lets you
   * test for the proper type to use.
   */
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/disk-io.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/disk-io.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/disk-io.c
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
 @@ -49,6 +49,7 @@
  #include "dev-replace.h"
  #include "raid56.h"
@@ -493,10 +481,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/disk-io.c
  	INIT_LIST_HEAD(&fs_info->dirty_qgroups);
  	fs_info->qgroup_seq = 1;
  	fs_info->quota_enabled = 0;
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/extent-tree.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
 @@ -36,6 +36,7 @@
  #include "free-space-cache.h"
  #include "math.h"
@@ -869,7 +855,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  }
  
  static int write_one_cache_group(struct btrfs_trans_handle *trans,
-@@ -5619,7 +5633,8 @@ static int __btrfs_free_extent(struct bt
+@@ -5621,7 +5635,8 @@ static int __btrfs_free_extent(struct bt
  				u64 bytenr, u64 num_bytes, u64 parent,
  				u64 root_objectid, u64 owner_objectid,
  				u64 owner_offset, int refs_to_drop,
@@ -879,7 +865,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  {
  	struct btrfs_key key;
  	struct btrfs_path *path;
-@@ -5635,9 +5650,14 @@ static int __btrfs_free_extent(struct bt
+@@ -5637,9 +5652,14 @@ static int __btrfs_free_extent(struct bt
  	int num_to_del = 1;
  	u32 item_size;
  	u64 refs;
@@ -894,7 +880,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  	path = btrfs_alloc_path();
  	if (!path)
  		return -ENOMEM;
-@@ -5685,7 +5705,7 @@ static int __btrfs_free_extent(struct bt
+@@ -5687,7 +5707,7 @@ static int __btrfs_free_extent(struct bt
  			BUG_ON(iref);
  			ret = remove_extent_backref(trans, extent_root, path,
  						    NULL, refs_to_drop,
@@ -903,7 +889,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  			if (ret) {
  				btrfs_abort_transaction(trans, extent_root, ret);
  				goto out;
-@@ -5812,6 +5832,7 @@ static int __btrfs_free_extent(struct bt
+@@ -5814,6 +5834,7 @@ static int __btrfs_free_extent(struct bt
  	refs -= refs_to_drop;
  
  	if (refs > 0) {
@@ -911,7 +897,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  		if (extent_op)
  			__run_delayed_extent_op(extent_op, leaf, ei);
  		/*
-@@ -5827,7 +5848,7 @@ static int __btrfs_free_extent(struct bt
+@@ -5829,7 +5850,7 @@ static int __btrfs_free_extent(struct bt
  		if (found_extent) {
  			ret = remove_extent_backref(trans, extent_root, path,
  						    iref, refs_to_drop,
@@ -920,7 +906,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  			if (ret) {
  				btrfs_abort_transaction(trans, extent_root, ret);
  				goto out;
-@@ -5848,6 +5869,7 @@ static int __btrfs_free_extent(struct bt
+@@ -5850,6 +5871,7 @@ static int __btrfs_free_extent(struct bt
  			}
  		}
  
@@ -928,7 +914,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  		ret = btrfs_del_items(trans, extent_root, path, path->slots[0],
  				      num_to_del);
  		if (ret) {
-@@ -5870,6 +5892,20 @@ static int __btrfs_free_extent(struct bt
+@@ -5872,6 +5894,20 @@ static int __btrfs_free_extent(struct bt
  			goto out;
  		}
  	}
@@ -949,7 +935,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  out:
  	btrfs_free_path(path);
  	return ret;
-@@ -6006,7 +6042,7 @@ out:
+@@ -6008,7 +6044,7 @@ out:
  /* Can return -ENOMEM */
  int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_root *root,
  		      u64 bytenr, u64 num_bytes, u64 parent, u64 root_objectid,
@@ -958,7 +944,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  {
  	int ret;
  	struct btrfs_fs_info *fs_info = root->fs_info;
-@@ -6026,13 +6062,13 @@ int btrfs_free_extent(struct btrfs_trans
+@@ -6028,13 +6064,13 @@ int btrfs_free_extent(struct btrfs_trans
  		ret = btrfs_add_delayed_tree_ref(fs_info, trans, bytenr,
  					num_bytes,
  					parent, root_objectid, (int)owner,
@@ -974,7 +960,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  	}
  	return ret;
  }
-@@ -6740,6 +6776,13 @@ static int alloc_reserved_file_extent(st
+@@ -6742,6 +6778,13 @@ static int alloc_reserved_file_extent(st
  	btrfs_mark_buffer_dirty(path->nodes[0]);
  	btrfs_free_path(path);
  
@@ -988,7 +974,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  	ret = update_block_group(root, ins->objectid, ins->offset, 1);
  	if (ret) { /* -ENOENT, logic error */
  		btrfs_err(fs_info, "update block group failed for %llu %llu",
-@@ -6754,7 +6797,8 @@ static int alloc_reserved_tree_block(str
+@@ -6756,7 +6799,8 @@ static int alloc_reserved_tree_block(str
  				     struct btrfs_root *root,
  				     u64 parent, u64 root_objectid,
  				     u64 flags, struct btrfs_disk_key *key,
@@ -998,7 +984,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  {
  	int ret;
  	struct btrfs_fs_info *fs_info = root->fs_info;
-@@ -6764,6 +6808,7 @@ static int alloc_reserved_tree_block(str
+@@ -6766,6 +6810,7 @@ static int alloc_reserved_tree_block(str
  	struct btrfs_path *path;
  	struct extent_buffer *leaf;
  	u32 size = sizeof(*extent_item) + sizeof(*iref);
@@ -1006,7 +992,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  	bool skinny_metadata = btrfs_fs_incompat(root->fs_info,
  						 SKINNY_METADATA);
  
-@@ -6797,6 +6842,7 @@ static int alloc_reserved_tree_block(str
+@@ -6799,6 +6844,7 @@ static int alloc_reserved_tree_block(str
  
  	if (skinny_metadata) {
  		iref = (struct btrfs_extent_inline_ref *)(extent_item + 1);
@@ -1014,7 +1000,7 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  	} else {
  		block_info = (struct btrfs_tree_block_info *)(extent_item + 1);
  		btrfs_set_tree_block_key(leaf, block_info, key);
-@@ -6818,6 +6864,14 @@ static int alloc_reserved_tree_block(str
+@@ -6820,6 +6866,14 @@ static int alloc_reserved_tree_block(str
  	btrfs_mark_buffer_dirty(leaf);
  	btrfs_free_path(path);
  
@@ -1029,10 +1015,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
  	ret = update_block_group(root, ins->objectid, root->leafsize, 1);
  	if (ret) { /* -ENOENT, logic error */
  		btrfs_err(fs_info, "update block group failed for %llu %llu",
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/file.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/file.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/file.c
+--- a/fs/btrfs/file.c
++++ b/fs/btrfs/file.c
 @@ -40,6 +40,7 @@
  #include "tree-log.h"
  #include "locking.h"
@@ -1059,10 +1043,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/file.c
  		BUG_ON(ret); /* -ENOMEM */
  
  		if (split == start) {
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ioctl.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/ioctl.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ioctl.c
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
 @@ -58,6 +58,7 @@
  #include "dev-replace.h"
  #include "props.h"
@@ -1169,10 +1151,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/ioctl.c
  					if (ret) {
  						btrfs_abort_transaction(trans,
  									root,
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/qgroup.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
 @@ -32,6 +32,7 @@
  #include "ulist.h"
  #include "backref.h"
@@ -2325,10 +2305,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
  	btrfs_free_path(path);
  
  	mutex_lock(&fs_info->qgroup_rescan_lock);
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
-===================================================================
 --- /dev/null
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
++++ b/fs/btrfs/qgroup.h
 @@ -0,0 +1,107 @@
 +/*
 + * Copyright (C) 2014 Facebook.  All rights reserved.
@@ -2437,10 +2415,8 @@ Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
 +#endif
 +
 +#endif /* __BTRFS_QGROUP__ */
-Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/transaction.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/transaction.c
-+++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/transaction.c
+--- a/fs/btrfs/transaction.c
++++ b/fs/btrfs/transaction.c
 @@ -31,6 +31,7 @@
  #include "inode-map.h"
  #include "volumes.h"

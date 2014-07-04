@@ -15,40 +15,36 @@ Signed-off-by: Josef Bacik <jbacik@fb.com>
 Signed-off-by: Chris Mason <clm@fb.com>
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 ---
- fs/btrfs/Makefile             |   2 +-
- fs/btrfs/backref.c            |   4 +
- fs/btrfs/ctree.c              |   4 +
- fs/btrfs/ctree.h              |   6 +
- fs/btrfs/disk-io.c            |  18 +-
- fs/btrfs/disk-io.h            |   1 +
- fs/btrfs/extent-tree.c        |  17 ++
- fs/btrfs/extent_io.c          |  47 +++++
- fs/btrfs/extent_io.h          |   2 +
- fs/btrfs/qgroup.c             |  23 +++
- fs/btrfs/super.c              |   3 +
- fs/btrfs/tests/btrfs-tests.c  |  97 +++++++++
- fs/btrfs/tests/btrfs-tests.h  |   9 +
- fs/btrfs/tests/inode-tests.c  |  35 +---
- fs/btrfs/tests/qgroup-tests.c | 468 ++++++++++++++++++++++++++++++++++++++++++
- fs/btrfs/transaction.h        |   1 +
+ fs/btrfs/Makefile             |    2 
+ fs/btrfs/backref.c            |    4 
+ fs/btrfs/ctree.c              |    4 
+ fs/btrfs/ctree.h              |    6 
+ fs/btrfs/disk-io.c            |   18 +
+ fs/btrfs/disk-io.h            |    1 
+ fs/btrfs/extent-tree.c        |   17 +
+ fs/btrfs/extent_io.c          |   47 ++++
+ fs/btrfs/extent_io.h          |    2 
+ fs/btrfs/qgroup.c             |   23 ++
+ fs/btrfs/super.c              |    3 
+ fs/btrfs/tests/btrfs-tests.c  |   97 ++++++++
+ fs/btrfs/tests/btrfs-tests.h  |    9 
+ fs/btrfs/tests/inode-tests.c  |   35 ---
+ fs/btrfs/tests/qgroup-tests.c |  468 ++++++++++++++++++++++++++++++++++++++++++
+ fs/btrfs/transaction.h        |    1 
  16 files changed, 700 insertions(+), 37 deletions(-)
  create mode 100644 fs/btrfs/tests/qgroup-tests.c
 
-diff --git a/fs/btrfs/Makefile b/fs/btrfs/Makefile
-index f341a98..6d1d0b9 100644
 --- a/fs/btrfs/Makefile
 +++ b/fs/btrfs/Makefile
-@@ -16,4 +16,4 @@ btrfs-$(CONFIG_BTRFS_FS_CHECK_INTEGRITY) += check-integrity.o
+@@ -16,4 +16,4 @@ btrfs-$(CONFIG_BTRFS_FS_CHECK_INTEGRITY)
  
  btrfs-$(CONFIG_BTRFS_FS_RUN_SANITY_TESTS) += tests/free-space-tests.o \
  	tests/extent-buffer-tests.o tests/btrfs-tests.o \
 -	tests/extent-io-tests.o tests/inode-tests.o
 +	tests/extent-io-tests.o tests/inode-tests.o tests/qgroup-tests.o
-diff --git a/fs/btrfs/backref.c b/fs/btrfs/backref.c
-index 10db21f..f09aa18 100644
 --- a/fs/btrfs/backref.c
 +++ b/fs/btrfs/backref.c
-@@ -900,7 +900,11 @@ again:
+@@ -895,7 +895,11 @@ again:
  		goto out;
  	BUG_ON(ret == 0);
  
@@ -60,11 +56,9 @@ index 10db21f..f09aa18 100644
  		/*
  		 * look if there are updates for this ref queued and lock the
  		 * head
-diff --git a/fs/btrfs/ctree.c b/fs/btrfs/ctree.c
-index bbbe4f1..d99d965 100644
 --- a/fs/btrfs/ctree.c
 +++ b/fs/btrfs/ctree.c
-@@ -1506,6 +1506,10 @@ static inline int should_cow_block(struct btrfs_trans_handle *trans,
+@@ -1506,6 +1506,10 @@ static inline int should_cow_block(struc
  				   struct btrfs_root *root,
  				   struct extent_buffer *buf)
  {
@@ -75,11 +69,9 @@ index bbbe4f1..d99d965 100644
  	/* ensure we can see the force_cow */
  	smp_rmb();
  
-diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
-index 06cc384..4896d7a 100644
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -1798,6 +1798,10 @@ struct btrfs_root {
+@@ -1784,6 +1784,10 @@ struct btrfs_root {
  
  	u64 highest_objectid;
  
@@ -90,7 +82,7 @@ index 06cc384..4896d7a 100644
  	u64 defrag_trans_start;
  	struct btrfs_key defrag_progress;
  	struct btrfs_key defrag_max;
-@@ -4111,6 +4115,8 @@ static inline int btrfs_defrag_cancelled(struct btrfs_fs_info *fs_info)
+@@ -4073,6 +4077,8 @@ static inline int btrfs_defrag_cancelled
  /* Sanity test specific functions */
  #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
  void btrfs_test_destroy_inode(struct inode *inode);
@@ -99,11 +91,9 @@ index 06cc384..4896d7a 100644
  #endif
  
  #endif
-diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
-index 77f92a3..0c0fa78 100644
 --- a/fs/btrfs/disk-io.c
 +++ b/fs/btrfs/disk-io.c
-@@ -1110,6 +1110,11 @@ struct extent_buffer *btrfs_find_tree_block(struct btrfs_root *root,
+@@ -1105,6 +1105,11 @@ struct extent_buffer *btrfs_find_tree_bl
  struct extent_buffer *btrfs_find_create_tree_block(struct btrfs_root *root,
  						 u64 bytenr, u32 blocksize)
  {
@@ -115,7 +105,7 @@ index 77f92a3..0c0fa78 100644
  	return alloc_extent_buffer(root->fs_info, bytenr, blocksize);
  }
  
-@@ -1288,6 +1293,7 @@ struct btrfs_root *btrfs_alloc_dummy_root(void)
+@@ -1283,6 +1288,7 @@ struct btrfs_root *btrfs_alloc_dummy_roo
  		return ERR_PTR(-ENOMEM);
  	__setup_root(4096, 4096, 4096, 4096, root, NULL, 1);
  	set_bit(BTRFS_ROOT_DUMMY_ROOT, &root->state);
@@ -123,7 +113,7 @@ index 77f92a3..0c0fa78 100644
  
  	return root;
  }
-@@ -2089,7 +2095,7 @@ static void free_root_pointers(struct btrfs_fs_info *info, int chunk_root)
+@@ -2090,7 +2096,7 @@ static void free_root_pointers(struct bt
  		free_root_extent_buffers(info->chunk_root);
  }
  
@@ -132,7 +122,7 @@ index 77f92a3..0c0fa78 100644
  {
  	int ret;
  	struct btrfs_root *gang[8];
-@@ -2969,7 +2975,7 @@ fail_qgroup:
+@@ -3003,7 +3009,7 @@ fail_qgroup:
  fail_trans_kthread:
  	kthread_stop(fs_info->transaction_kthread);
  	btrfs_cleanup_transaction(fs_info->tree_root);
@@ -141,7 +131,7 @@ index 77f92a3..0c0fa78 100644
  fail_cleaner:
  	kthread_stop(fs_info->cleaner_kthread);
  
-@@ -3504,8 +3510,10 @@ void btrfs_drop_and_free_fs_root(struct btrfs_fs_info *fs_info,
+@@ -3538,8 +3544,10 @@ void btrfs_drop_and_free_fs_root(struct
  	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state))
  		btrfs_free_log(NULL, root);
  
@@ -154,7 +144,7 @@ index 77f92a3..0c0fa78 100644
  	free_fs_root(root);
  }
  
-@@ -3655,7 +3663,7 @@ int close_ctree(struct btrfs_root *root)
+@@ -3687,7 +3695,7 @@ int close_ctree(struct btrfs_root *root)
  
  	btrfs_sysfs_remove_one(fs_info);
  
@@ -163,11 +153,9 @@ index 77f92a3..0c0fa78 100644
  
  	btrfs_put_block_group_cache(fs_info);
  
-diff --git a/fs/btrfs/disk-io.h b/fs/btrfs/disk-io.h
-index 53059df..23ce3ce 100644
 --- a/fs/btrfs/disk-io.h
 +++ b/fs/btrfs/disk-io.h
-@@ -68,6 +68,7 @@ struct btrfs_root *btrfs_read_fs_root(struct btrfs_root *tree_root,
+@@ -68,6 +68,7 @@ struct btrfs_root *btrfs_read_fs_root(st
  int btrfs_init_fs_root(struct btrfs_root *root);
  int btrfs_insert_fs_root(struct btrfs_fs_info *fs_info,
  			 struct btrfs_root *root);
@@ -175,11 +163,9 @@ index 53059df..23ce3ce 100644
  
  struct btrfs_root *btrfs_get_fs_root(struct btrfs_fs_info *fs_info,
  				     struct btrfs_key *key,
-diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
-index 343eb10..ddf16bf 100644
 --- a/fs/btrfs/extent-tree.c
 +++ b/fs/btrfs/extent-tree.c
-@@ -2992,6 +2992,10 @@ static int __btrfs_mod_ref(struct btrfs_trans_handle *trans,
+@@ -2993,6 +2993,10 @@ static int __btrfs_mod_ref(struct btrfs_
  	int (*process_func)(struct btrfs_trans_handle *, struct btrfs_root *,
  			    u64, u64, u64, u64, u64, u64, int);
  
@@ -190,7 +176,7 @@ index 343eb10..ddf16bf 100644
  	ref_root = btrfs_header_owner(buf);
  	nritems = btrfs_header_nritems(buf);
  	level = btrfs_header_level(buf);
-@@ -6151,6 +6155,10 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+@@ -6049,6 +6053,10 @@ int btrfs_free_extent(struct btrfs_trans
  	int ret;
  	struct btrfs_fs_info *fs_info = root->fs_info;
  
@@ -201,7 +187,7 @@ index 343eb10..ddf16bf 100644
  	add_pinned_bytes(root->fs_info, num_bytes, owner, root_objectid);
  
  	/*
-@@ -7157,6 +7165,15 @@ struct extent_buffer *btrfs_alloc_free_block(struct btrfs_trans_handle *trans,
+@@ -7057,6 +7065,15 @@ struct extent_buffer *btrfs_alloc_free_b
  	bool skinny_metadata = btrfs_fs_incompat(root->fs_info,
  						 SKINNY_METADATA);
  
@@ -217,11 +203,9 @@ index 343eb10..ddf16bf 100644
  	block_rsv = use_block_rsv(trans, root, blocksize);
  	if (IS_ERR(block_rsv))
  		return ERR_CAST(block_rsv);
-diff --git a/fs/btrfs/extent_io.c b/fs/btrfs/extent_io.c
-index a55580f..8285ed0 100644
 --- a/fs/btrfs/extent_io.c
 +++ b/fs/btrfs/extent_io.c
-@@ -4549,6 +4549,53 @@ struct extent_buffer *find_extent_buffer(struct btrfs_fs_info *fs_info,
+@@ -4578,6 +4578,53 @@ struct extent_buffer *find_extent_buffer
  	return NULL;
  }
  
@@ -275,11 +259,9 @@ index a55580f..8285ed0 100644
  struct extent_buffer *alloc_extent_buffer(struct btrfs_fs_info *fs_info,
  					  u64 start, unsigned long len)
  {
-diff --git a/fs/btrfs/extent_io.h b/fs/btrfs/extent_io.h
-index c488b45..8b63f2d 100644
 --- a/fs/btrfs/extent_io.h
 +++ b/fs/btrfs/extent_io.h
-@@ -350,5 +350,7 @@ noinline u64 find_lock_delalloc_range(struct inode *inode,
+@@ -350,5 +350,7 @@ noinline u64 find_lock_delalloc_range(st
  				      struct extent_io_tree *tree,
  				      struct page *locked_page, u64 *start,
  				      u64 *end, u64 max_bytes);
@@ -287,11 +269,9 @@ index c488b45..8b63f2d 100644
 +					       u64 start, unsigned long len);
  #endif
  #endif
-diff --git a/fs/btrfs/qgroup.c b/fs/btrfs/qgroup.c
-index 09b8cc8..73f706c 100644
 --- a/fs/btrfs/qgroup.c
 +++ b/fs/btrfs/qgroup.c
-@@ -246,6 +246,21 @@ static int del_relation_rb(struct btrfs_fs_info *fs_info,
+@@ -246,6 +246,21 @@ static int del_relation_rb(struct btrfs_
  	return -ENOENT;
  }
  
@@ -313,7 +293,7 @@ index 09b8cc8..73f706c 100644
  /*
   * The full config is read in one go, only called from open_ctree()
   * It doesn't use any locking, as at this point we're still single-threaded
-@@ -524,6 +539,10 @@ static int add_qgroup_item(struct btrfs_trans_handle *trans,
+@@ -524,6 +539,10 @@ static int add_qgroup_item(struct btrfs_
  	struct extent_buffer *leaf;
  	struct btrfs_key key;
  
@@ -324,7 +304,7 @@ index 09b8cc8..73f706c 100644
  	path = btrfs_alloc_path();
  	if (!path)
  		return -ENOMEM;
-@@ -673,6 +692,10 @@ static int update_qgroup_info_item(struct btrfs_trans_handle *trans,
+@@ -673,6 +692,10 @@ static int update_qgroup_info_item(struc
  	int ret;
  	int slot;
  
@@ -335,11 +315,9 @@ index 09b8cc8..73f706c 100644
  	key.objectid = 0;
  	key.type = BTRFS_QGROUP_INFO_KEY;
  	key.offset = qgroup->qgroupid;
-diff --git a/fs/btrfs/super.c b/fs/btrfs/super.c
-index 8f7c03d..d80a278 100644
 --- a/fs/btrfs/super.c
 +++ b/fs/btrfs/super.c
-@@ -1895,6 +1895,9 @@ static int btrfs_run_sanity_tests(void)
+@@ -1915,6 +1915,9 @@ static int btrfs_run_sanity_tests(void)
  	if (ret)
  		goto out;
  	ret = btrfs_test_inodes();
@@ -349,8 +327,6 @@ index 8f7c03d..d80a278 100644
  out:
  	btrfs_destroy_test_fs();
  	return ret;
-diff --git a/fs/btrfs/tests/btrfs-tests.c b/fs/btrfs/tests/btrfs-tests.c
-index 757ef00..a5dcacb 100644
 --- a/fs/btrfs/tests/btrfs-tests.c
 +++ b/fs/btrfs/tests/btrfs-tests.c
 @@ -21,6 +21,9 @@
@@ -461,8 +437,6 @@ index 757ef00..a5dcacb 100644
 +	kfree(root);
 +}
 +
-diff --git a/fs/btrfs/tests/btrfs-tests.h b/fs/btrfs/tests/btrfs-tests.h
-index 312560a..fd39542 100644
 --- a/fs/btrfs/tests/btrfs-tests.h
 +++ b/fs/btrfs/tests/btrfs-tests.h
 @@ -23,13 +23,18 @@
@@ -484,7 +458,7 @@ index 312560a..fd39542 100644
  #else
  static inline int btrfs_test_free_space_cache(void)
  {
-@@ -54,6 +59,10 @@ static inline int btrfs_test_inodes(void)
+@@ -54,6 +59,10 @@ static inline int btrfs_test_inodes(void
  {
  	return 0;
  }
@@ -495,8 +469,6 @@ index 312560a..fd39542 100644
  #endif
  
  #endif
-diff --git a/fs/btrfs/tests/inode-tests.c b/fs/btrfs/tests/inode-tests.c
-index 397d1f9..3ae0f5b 100644
 --- a/fs/btrfs/tests/inode-tests.c
 +++ b/fs/btrfs/tests/inode-tests.c
 @@ -23,33 +23,6 @@
@@ -533,7 +505,7 @@ index 397d1f9..3ae0f5b 100644
  static void insert_extent(struct btrfs_root *root, u64 start, u64 len,
  			  u64 ram_bytes, u64 offset, u64 disk_bytenr,
  			  u64 disk_len, u32 type, u8 compression, int slot)
-@@ -276,7 +249,7 @@ static noinline int test_btrfs_get_extent(void)
+@@ -276,7 +249,7 @@ static noinline int test_btrfs_get_exten
  	 * We do this since btrfs_get_extent wants to assign em->bdev to
  	 * root->fs_info->fs_devices->latest_bdev.
  	 */
@@ -569,9 +541,6 @@ index 397d1f9..3ae0f5b 100644
  	return ret;
  }
  
-diff --git a/fs/btrfs/tests/qgroup-tests.c b/fs/btrfs/tests/qgroup-tests.c
-new file mode 100644
-index 0000000..fa691b7
 --- /dev/null
 +++ b/fs/btrfs/tests/qgroup-tests.c
 @@ -0,0 +1,468 @@
@@ -1043,11 +1012,9 @@ index 0000000..fa691b7
 +	btrfs_free_dummy_root(root);
 +	return ret;
 +}
-diff --git a/fs/btrfs/transaction.h b/fs/btrfs/transaction.h
-index b57b924..7dd558e 100644
 --- a/fs/btrfs/transaction.h
 +++ b/fs/btrfs/transaction.h
-@@ -69,6 +69,7 @@ struct btrfs_transaction {
+@@ -68,6 +68,7 @@ struct btrfs_transaction {
  #define __TRANS_ATTACH		(1U << 10)
  #define __TRANS_JOIN		(1U << 11)
  #define __TRANS_JOIN_NOLOCK	(1U << 12)
@@ -1055,6 +1022,3 @@ index b57b924..7dd558e 100644
  
  #define TRANS_USERSPACE		(__TRANS_USERSPACE | __TRANS_FREEZABLE)
  #define TRANS_START		(__TRANS_START | __TRANS_FREEZABLE)
--- 
-1.8.4.5
-

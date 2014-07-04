@@ -1,12 +1,15 @@
 From: Anand Jain <Anand.Jain@oracle.com>
-Date: Mon, 26 May 2014 17:30:24 +0800
-Patch-mainline: submitted
+Date: Tue, 3 Jun 2014 11:36:01 +0800
+Patch-mainline: 3.16
+Git-commit: 0d39376aa28eba6d63d0120ccc399735842abc8e
 Subject: [PATCH] btrfs: dev add should add its sysfs entry
 
 we would need the device links to be created,
 when device is added.
 
 Signed-off-by: Anand Jain <Anand.Jain@oracle.com>
+Reviewed-by: David Sterba <dsterba@suse.cz>
+Signed-off-by: Chris Mason <clm@fb.com>
 Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
  fs/btrfs/sysfs.c   |   12 +++++++++---
@@ -16,12 +19,12 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 
 --- a/fs/btrfs/sysfs.c
 +++ b/fs/btrfs/sysfs.c
-@@ -624,14 +624,17 @@ int rm_device_membership(struct btrfs_fs
+@@ -624,14 +624,17 @@ int btrfs_kobj_rm_device(struct btrfs_fs
  	return 0;
  }
  
--static int add_device_membership(struct btrfs_fs_info *fs_info)
-+int add_device_membership(struct btrfs_fs_info *fs_info,
+-static int btrfs_kobj_add_device(struct btrfs_fs_info *fs_info)
++int btrfs_kobj_add_device(struct btrfs_fs_info *fs_info,
 +		struct btrfs_device *one_device)
  {
  	int error = 0;
@@ -36,7 +39,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	if (!fs_info->device_dir_kobj)
  		return -ENOMEM;
  
-@@ -642,6 +645,9 @@ static int add_device_membership(struct
+@@ -642,6 +645,9 @@ static int btrfs_kobj_add_device(struct
  		if (!dev->bdev)
  			continue;
  
@@ -50,8 +53,8 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	if (error)
  		goto failure;
  
--	error = add_device_membership(fs_info);
-+	error = add_device_membership(fs_info, NULL);
+-	error = btrfs_kobj_add_device(fs_info);
++	error = btrfs_kobj_add_device(fs_info, NULL);
  	if (error)
  		goto failure;
  
@@ -61,9 +64,9 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  extern const char * const btrfs_feature_set_names[3];
  extern struct kobj_type space_info_ktype;
  extern struct kobj_type btrfs_raid_ktype;
-+int add_device_membership(struct btrfs_fs_info *fs_info,
++int btrfs_kobj_add_device(struct btrfs_fs_info *fs_info,
 +		struct btrfs_device *one_device);
- int rm_device_membership(struct btrfs_fs_info *fs_info,
+ int btrfs_kobj_rm_device(struct btrfs_fs_info *fs_info,
                  struct btrfs_device *one_device);
  #endif /* _BTRFS_SYSFS_H_ */
 --- a/fs/btrfs/volumes.c
@@ -74,7 +77,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  				    total_bytes + 1);
 +
 +	/* add sysfs device entry */
-+	add_device_membership(root->fs_info, device);
++	btrfs_kobj_add_device(root->fs_info, device);
 +
  	mutex_unlock(&root->fs_info->fs_devices->device_list_mutex);
  
@@ -83,7 +86,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	unlock_chunks(root);
  	btrfs_end_transaction(trans, root);
  	rcu_string_free(device->name);
-+	rm_device_membership(root->fs_info, device);
++	btrfs_kobj_rm_device(root->fs_info, device);
  	kfree(device);
  error:
  	blkdev_put(bdev, FMODE_EXCL);
