@@ -1,0 +1,33 @@
+From: Ursula Braun <ursula.braun@de.ibm.com>
+Subject: af_iucv: recvmsg problem for SOCK_STREAM sockets
+Git-commit: 2f139a5d8225666faee9f1d3c5629c4e5ff947aa
+Patch-mainline: v3.15-rc1
+References: bnc#881529, LTC#111065
+
+ af_iucv: recvmsg problem for SOCK_STREAM sockets
+
+Commit f9c41a62bba3f3f7ef3541b2a025e3371bcbba97 introduced
+a problem for SOCK_STREAM sockets, when only part of the
+incoming iucv message is received by user space. In this
+case the remaining data of the iucv message is lost.
+This patch makes sure an incompletely received iucv message
+is queued back to the receive queue.
+
+Signed-off-by: Ursula Braun <ursula.braun@de.ibm.com>
+Signed-off-by: Frank Blaschka <frank.blaschka@de.ibm.com>
+Reported-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/net/iucv/af_iucv.c b/net/iucv/af_iucv.c
+index c4b7218..a5e0311 100644
+--- a/net/iucv/af_iucv.c
++++ b/net/iucv/af_iucv.c
+@@ -1382,6 +1382,7 @@ static int iucv_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
+ 		if (sk->sk_type == SOCK_STREAM) {
+ 			if (copied < rlen) {
+ 				IUCV_SKB_CB(skb)->offset = offset + copied;
++				skb_queue_head(&sk->sk_receive_queue, skb);
+ 				goto done;
+ 			}
+ 		}
