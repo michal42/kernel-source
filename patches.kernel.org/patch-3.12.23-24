@@ -2,6 +2,15 @@ From: Jiri Slaby <jslaby@suse.cz>
 Subject: Linux 3.12.24
 Patch-mainline: 3.12.24
 References: CVE-2014-3940 CVE-2014-4652 CVE-2014-4653 CVE-2014-4654 CVE-2014-4655 CVE-2014-4656 FATE#315054 FATE#315942 bnc#845378 bnc#856380 bnc#865310 bnc#866937 bnc#867753 bnc#872634 bnc#875242 bnc#875440 bnc#878059 bnc#879957 bnc#881091 bnc#881101 bnc#881939 bnc#882991 bnc#883081 bnc#883795 LTC#110452
+Git-commit: f9fd0135610084abef6867d984e9951c3099950d
+Git-commit: 273203699f82667296e1f14344c5a5a6c4600470
+Git-commit: bb86d21cba22a045b09d11b71decf5ca7c3d5def
+Git-commit: 643f7c4e5656bd18c769211f933190f7bb738245
+Git-commit: ad22c7a043c2cc6792820e6c5da699935933e87d
+Git-commit: 59e5a0e821d838854b3afd030d31f82cee3ecd58
+Git-commit: 31625f28ad7be67701dc4cefcf52087addd88af4
+Git-commit: 2c6e24ce1aa6b3b147c75d488c2797ee258eb22b
+Git-commit: 17ec81c15fd022842f9bc947841ba9fb9eb52591
 Git-commit: e694788d73efe139b24f78b036deb97fe57fa8cb
 Git-commit: 09da1f3463eb81d59685df723b1c5950b7570340
 Git-commit: 278f2b3e2af5f32ea1afe34fa12a2518153e6e49
@@ -5352,6 +5361,449 @@ index cfc8dcc16043..9cd5f63715c0 100644
  			spin_unlock(&dq_list_lock);
  			dqstats_inc(DQST_LOOKUPS);
  			err = sb->dq_op->write_dquot(dquot);
+diff --git a/fs/xfs/xfs_aops.c b/fs/xfs/xfs_aops.c
+index e51e581454e9..be9a1fa2721b 100644
+--- a/fs/xfs/xfs_aops.c
++++ b/fs/xfs/xfs_aops.c
+@@ -1569,8 +1569,7 @@ xfs_vm_write_begin(
+ 
+ 	ASSERT(len <= PAGE_CACHE_SIZE);
+ 
+-	page = grab_cache_page_write_begin(mapping, index,
+-					   flags | AOP_FLAG_NOFS);
++	page = grab_cache_page_write_begin(mapping, index, flags);
+ 	if (!page)
+ 		return -ENOMEM;
+ 
+diff --git a/fs/xfs/xfs_discard.c b/fs/xfs/xfs_discard.c
+index 45560ee1a4ba..19d9fd6caf8c 100644
+--- a/fs/xfs/xfs_discard.c
++++ b/fs/xfs/xfs_discard.c
+@@ -158,7 +158,7 @@ xfs_ioc_trim(
+ 	struct xfs_mount		*mp,
+ 	struct fstrim_range __user	*urange)
+ {
+-	struct request_queue	*q = mp->m_ddev_targp->bt_bdev->bd_disk->queue;
++	struct request_queue	*q = bdev_get_queue(mp->m_ddev_targp->bt_bdev);
+ 	unsigned int		granularity = q->limits.discard_granularity;
+ 	struct fstrim_range	range;
+ 	xfs_daddr_t		start, end, minlen;
+@@ -181,7 +181,8 @@ xfs_ioc_trim(
+ 	 * matter as trimming blocks is an advisory interface.
+ 	 */
+ 	if (range.start >= XFS_FSB_TO_B(mp, mp->m_sb.sb_dblocks) ||
+-	    range.minlen > XFS_FSB_TO_B(mp, XFS_ALLOC_AG_MAX_USABLE(mp)))
++	    range.minlen > XFS_FSB_TO_B(mp, XFS_ALLOC_AG_MAX_USABLE(mp)) ||
++	    range.len < mp->m_sb.sb_blocksize)
+ 		return -XFS_ERROR(EINVAL);
+ 
+ 	start = BTOBB(range.start);
+diff --git a/fs/xfs/xfs_fsops.c b/fs/xfs/xfs_fsops.c
+index c888040a1e93..20ccca12a11d 100644
+--- a/fs/xfs/xfs_fsops.c
++++ b/fs/xfs/xfs_fsops.c
+@@ -153,7 +153,7 @@ xfs_growfs_data_private(
+ 	xfs_buf_t		*bp;
+ 	int			bucket;
+ 	int			dpct;
+-	int			error;
++	int			error, saved_error = 0;
+ 	xfs_agnumber_t		nagcount;
+ 	xfs_agnumber_t		nagimax = 0;
+ 	xfs_rfsblock_t		nb, nb_mod;
+@@ -500,29 +500,33 @@ xfs_growfs_data_private(
+ 				error = ENOMEM;
+ 		}
+ 
++		/*
++		 * If we get an error reading or writing alternate superblocks,
++		 * continue.  xfs_repair chooses the "best" superblock based
++		 * on most matches; if we break early, we'll leave more
++		 * superblocks un-updated than updated, and xfs_repair may
++		 * pick them over the properly-updated primary.
++		 */
+ 		if (error) {
+ 			xfs_warn(mp,
+ 		"error %d reading secondary superblock for ag %d",
+ 				error, agno);
+-			break;
++			saved_error = error;
++			continue;
+ 		}
+ 		xfs_sb_to_disk(XFS_BUF_TO_SBP(bp), &mp->m_sb, XFS_SB_ALL_BITS);
+ 
+-		/*
+-		 * If we get an error writing out the alternate superblocks,
+-		 * just issue a warning and continue.  The real work is
+-		 * already done and committed.
+-		 */
+ 		error = xfs_bwrite(bp);
+ 		xfs_buf_relse(bp);
+ 		if (error) {
+ 			xfs_warn(mp,
+ 		"write error %d updating secondary superblock for ag %d",
+ 				error, agno);
+-			break; /* no point in continuing */
++			saved_error = error;
++			continue;
+ 		}
+ 	}
+-	return error;
++	return saved_error ? saved_error : error;
+ 
+  error0:
+ 	xfs_trans_cancel(tp, XFS_TRANS_ABORT);
+diff --git a/fs/xfs/xfs_inode.c b/fs/xfs/xfs_inode.c
+index e3d75385aa76..7a460d8ad06e 100644
+--- a/fs/xfs/xfs_inode.c
++++ b/fs/xfs/xfs_inode.c
+@@ -2370,6 +2370,33 @@ xfs_iunpin_wait(
+ 		__xfs_iunpin_wait(ip);
+ }
+ 
++/*
++ * Removing an inode from the namespace involves removing the directory entry
++ * and dropping the link count on the inode. Removing the directory entry can
++ * result in locking an AGF (directory blocks were freed) and removing a link
++ * count can result in placing the inode on an unlinked list which results in
++ * locking an AGI.
++ *
++ * The big problem here is that we have an ordering constraint on AGF and AGI
++ * locking - inode allocation locks the AGI, then can allocate a new extent for
++ * new inodes, locking the AGF after the AGI. Similarly, freeing the inode
++ * removes the inode from the unlinked list, requiring that we lock the AGI
++ * first, and then freeing the inode can result in an inode chunk being freed
++ * and hence freeing disk space requiring that we lock an AGF.
++ *
++ * Hence the ordering that is imposed by other parts of the code is AGI before
++ * AGF. This means we cannot remove the directory entry before we drop the inode
++ * reference count and put it on the unlinked list as this results in a lock
++ * order of AGF then AGI, and this can deadlock against inode allocation and
++ * freeing. Therefore we must drop the link counts before we remove the
++ * directory entry.
++ *
++ * This is still safe from a transactional point of view - it is not until we
++ * get to xfs_bmap_finish() that we have the possibility of multiple
++ * transactions in this operation. Hence as long as we remove the directory
++ * entry and drop the link count in the first transaction of the remove
++ * operation, there are no transactional constraints on the ordering here.
++ */
+ int
+ xfs_remove(
+ 	xfs_inode_t             *dp,
+@@ -2439,6 +2466,7 @@ xfs_remove(
+ 	/*
+ 	 * If we're removing a directory perform some additional validation.
+ 	 */
++	cancel_flags |= XFS_TRANS_ABORT;
+ 	if (is_dir) {
+ 		ASSERT(ip->i_d.di_nlink >= 2);
+ 		if (ip->i_d.di_nlink != 2) {
+@@ -2449,31 +2477,16 @@ xfs_remove(
+ 			error = XFS_ERROR(ENOTEMPTY);
+ 			goto out_trans_cancel;
+ 		}
+-	}
+ 
+-	xfs_bmap_init(&free_list, &first_block);
+-	error = xfs_dir_removename(tp, dp, name, ip->i_ino,
+-					&first_block, &free_list, resblks);
+-	if (error) {
+-		ASSERT(error != ENOENT);
+-		goto out_bmap_cancel;
+-	}
+-	xfs_trans_ichgtime(tp, dp, XFS_ICHGTIME_MOD | XFS_ICHGTIME_CHG);
+-
+-	if (is_dir) {
+-		/*
+-		 * Drop the link from ip's "..".
+-		 */
++		/* Drop the link from ip's "..".  */
+ 		error = xfs_droplink(tp, dp);
+ 		if (error)
+-			goto out_bmap_cancel;
++			goto out_trans_cancel;
+ 
+-		/*
+-		 * Drop the "." link from ip to self.
+-		 */
++		/* Drop the "." link from ip to self.  */
+ 		error = xfs_droplink(tp, ip);
+ 		if (error)
+-			goto out_bmap_cancel;
++			goto out_trans_cancel;
+ 	} else {
+ 		/*
+ 		 * When removing a non-directory we need to log the parent
+@@ -2482,20 +2495,24 @@ xfs_remove(
+ 		 */
+ 		xfs_trans_log_inode(tp, dp, XFS_ILOG_CORE);
+ 	}
++	xfs_trans_ichgtime(tp, dp, XFS_ICHGTIME_MOD | XFS_ICHGTIME_CHG);
+ 
+-	/*
+-	 * Drop the link from dp to ip.
+-	 */
++	/* Drop the link from dp to ip. */
+ 	error = xfs_droplink(tp, ip);
+ 	if (error)
+-		goto out_bmap_cancel;
++		goto out_trans_cancel;
+ 
+-	/*
+-	 * Determine if this is the last link while
+-	 * we are in the transaction.
+-	 */
++	/* Determine if this is the last link while the inode is locked */
+ 	link_zero = (ip->i_d.di_nlink == 0);
+ 
++	xfs_bmap_init(&free_list, &first_block);
++	error = xfs_dir_removename(tp, dp, name, ip->i_ino,
++					&first_block, &free_list, resblks);
++	if (error) {
++		ASSERT(error != ENOENT);
++		goto out_bmap_cancel;
++	}
++
+ 	/*
+ 	 * If this is a synchronous mount, make sure that the
+ 	 * remove transaction goes to disk before returning to
+@@ -2525,7 +2542,6 @@ xfs_remove(
+ 
+  out_bmap_cancel:
+ 	xfs_bmap_cancel(&free_list);
+-	cancel_flags |= XFS_TRANS_ABORT;
+  out_trans_cancel:
+ 	xfs_trans_cancel(tp, cancel_flags);
+  std_return:
+diff --git a/fs/xfs/xfs_inode_fork.c b/fs/xfs/xfs_inode_fork.c
+index 02f1083955bb..6829134de253 100644
+--- a/fs/xfs/xfs_inode_fork.c
++++ b/fs/xfs/xfs_inode_fork.c
+@@ -1031,15 +1031,14 @@ xfs_iext_add(
+ 		 * the next index needed in the indirection array.
+ 		 */
+ 		else {
+-			int	count = ext_diff;
++			uint	count = ext_diff;
+ 
+ 			while (count) {
+ 				erp = xfs_iext_irec_new(ifp, erp_idx);
+-				erp->er_extcount = count;
+-				count -= MIN(count, (int)XFS_LINEAR_EXTS);
+-				if (count) {
++				erp->er_extcount = min(count, XFS_LINEAR_EXTS);
++				count -= erp->er_extcount;
++				if (count)
+ 					erp_idx++;
+-				}
+ 			}
+ 		}
+ 	}
+@@ -1359,7 +1358,7 @@ xfs_iext_remove_indirect(
+ void
+ xfs_iext_realloc_direct(
+ 	xfs_ifork_t	*ifp,		/* inode fork pointer */
+-	int		new_size)	/* new size of extents */
++	int		new_size)	/* new size of extents after adding */
+ {
+ 	int		rnew_size;	/* real new size of extents */
+ 
+@@ -1397,13 +1396,8 @@ xfs_iext_realloc_direct(
+ 				rnew_size - ifp->if_real_bytes);
+ 		}
+ 	}
+-	/*
+-	 * Switch from the inline extent buffer to a direct
+-	 * extent list. Be sure to include the inline extent
+-	 * bytes in new_size.
+-	 */
++	/* Switch from the inline extent buffer to a direct extent list */
+ 	else {
+-		new_size += ifp->if_bytes;
+ 		if (!is_power_of_2(new_size)) {
+ 			rnew_size = roundup_pow_of_two(new_size);
+ 		}
+diff --git a/fs/xfs/xfs_iops.c b/fs/xfs/xfs_iops.c
+index 2b8952d9199b..584996c1bea7 100644
+--- a/fs/xfs/xfs_iops.c
++++ b/fs/xfs/xfs_iops.c
+@@ -1169,6 +1169,7 @@ xfs_setup_inode(
+ 	struct xfs_inode	*ip)
+ {
+ 	struct inode		*inode = &ip->i_vnode;
++	gfp_t			gfp_mask;
+ 
+ 	inode->i_ino = ip->i_ino;
+ 	inode->i_state = I_NEW;
+@@ -1229,6 +1230,14 @@ xfs_setup_inode(
+ 	}
+ 
+ 	/*
++	 * Ensure all page cache allocations are done from GFP_NOFS context to
++	 * prevent direct reclaim recursion back into the filesystem and blowing
++	 * stacks or deadlocking.
++	 */
++	gfp_mask = mapping_gfp_mask(inode->i_mapping);
++	mapping_set_gfp_mask(inode->i_mapping, (gfp_mask & ~(__GFP_FS)));
++
++	/*
+ 	 * If there is no attribute fork no ACL can exist on this inode,
+ 	 * and it can't have any file capabilities attached to it either.
+ 	 */
+diff --git a/fs/xfs/xfs_log.c b/fs/xfs/xfs_log.c
+index a2dea108071a..3c4ddc1c79a4 100644
+--- a/fs/xfs/xfs_log.c
++++ b/fs/xfs/xfs_log.c
+@@ -1000,27 +1000,34 @@ xfs_log_space_wake(
+ }
+ 
+ /*
+- * Determine if we have a transaction that has gone to disk
+- * that needs to be covered. To begin the transition to the idle state
+- * firstly the log needs to be idle (no AIL and nothing in the iclogs).
+- * If we are then in a state where covering is needed, the caller is informed
+- * that dummy transactions are required to move the log into the idle state.
++ * Determine if we have a transaction that has gone to disk that needs to be
++ * covered. To begin the transition to the idle state firstly the log needs to
++ * be idle. That means the CIL, the AIL and the iclogs needs to be empty before
++ * we start attempting to cover the log.
+  *
+- * Because this is called as part of the sync process, we should also indicate
+- * that dummy transactions should be issued in anything but the covered or
+- * idle states. This ensures that the log tail is accurately reflected in
+- * the log at the end of the sync, hence if a crash occurrs avoids replay
+- * of transactions where the metadata is already on disk.
++ * Only if we are then in a state where covering is needed, the caller is
++ * informed that dummy transactions are required to move the log into the idle
++ * state.
++ *
++ * If there are any items in the AIl or CIL, then we do not want to attempt to
++ * cover the log as we may be in a situation where there isn't log space
++ * available to run a dummy transaction and this can lead to deadlocks when the
++ * tail of the log is pinned by an item that is modified in the CIL.  Hence
++ * there's no point in running a dummy transaction at this point because we
++ * can't start trying to idle the log until both the CIL and AIL are empty.
+  */
+ int
+ xfs_log_need_covered(xfs_mount_t *mp)
+ {
+-	int		needed = 0;
+ 	struct xlog	*log = mp->m_log;
++	int		needed = 0;
+ 
+ 	if (!xfs_fs_writable(mp))
+ 		return 0;
+ 
++	if (!xlog_cil_empty(log))
++		return 0;
++
+ 	spin_lock(&log->l_icloglock);
+ 	switch (log->l_covered_state) {
+ 	case XLOG_STATE_COVER_DONE:
+@@ -1029,14 +1036,17 @@ xfs_log_need_covered(xfs_mount_t *mp)
+ 		break;
+ 	case XLOG_STATE_COVER_NEED:
+ 	case XLOG_STATE_COVER_NEED2:
+-		if (!xfs_ail_min_lsn(log->l_ailp) &&
+-		    xlog_iclogs_empty(log)) {
+-			if (log->l_covered_state == XLOG_STATE_COVER_NEED)
+-				log->l_covered_state = XLOG_STATE_COVER_DONE;
+-			else
+-				log->l_covered_state = XLOG_STATE_COVER_DONE2;
+-		}
+-		/* FALLTHRU */
++		if (xfs_ail_min_lsn(log->l_ailp))
++			break;
++		if (!xlog_iclogs_empty(log))
++			break;
++
++		needed = 1;
++		if (log->l_covered_state == XLOG_STATE_COVER_NEED)
++			log->l_covered_state = XLOG_STATE_COVER_DONE;
++		else
++			log->l_covered_state = XLOG_STATE_COVER_DONE2;
++		break;
+ 	default:
+ 		needed = 1;
+ 		break;
+@@ -3702,11 +3712,9 @@ xlog_verify_iclog(
+ 	/* check validity of iclog pointers */
+ 	spin_lock(&log->l_icloglock);
+ 	icptr = log->l_iclog;
+-	for (i=0; i < log->l_iclog_bufs; i++) {
+-		if (icptr == NULL)
+-			xfs_emerg(log->l_mp, "%s: invalid ptr", __func__);
+-		icptr = icptr->ic_next;
+-	}
++	for (i = 0; i < log->l_iclog_bufs; i++, icptr = icptr->ic_next)
++		ASSERT(icptr);
++
+ 	if (icptr != log->l_iclog)
+ 		xfs_emerg(log->l_mp, "%s: corrupt iclog ring", __func__);
+ 	spin_unlock(&log->l_icloglock);
+diff --git a/fs/xfs/xfs_log_cil.c b/fs/xfs/xfs_log_cil.c
+index cfe97973ba36..da8524e779b6 100644
+--- a/fs/xfs/xfs_log_cil.c
++++ b/fs/xfs/xfs_log_cil.c
+@@ -711,6 +711,20 @@ xlog_cil_push_foreground(
+ 	xlog_cil_push(log);
+ }
+ 
++bool
++xlog_cil_empty(
++	struct xlog	*log)
++{
++	struct xfs_cil	*cil = log->l_cilp;
++	bool		empty = false;
++
++	spin_lock(&cil->xc_push_lock);
++	if (list_empty(&cil->xc_cil))
++		empty = true;
++	spin_unlock(&cil->xc_push_lock);
++	return empty;
++}
++
+ /*
+  * Commit a transaction with the given vector to the Committed Item List.
+  *
+diff --git a/fs/xfs/xfs_log_priv.h b/fs/xfs/xfs_log_priv.h
+index 136654b9400d..f80cff26fda9 100644
+--- a/fs/xfs/xfs_log_priv.h
++++ b/fs/xfs/xfs_log_priv.h
+@@ -514,12 +514,10 @@ xlog_assign_grant_head(atomic64_t *head, int cycle, int space)
+ /*
+  * Committed Item List interfaces
+  */
+-int
+-xlog_cil_init(struct xlog *log);
+-void
+-xlog_cil_init_post_recovery(struct xlog *log);
+-void
+-xlog_cil_destroy(struct xlog *log);
++int	xlog_cil_init(struct xlog *log);
++void	xlog_cil_init_post_recovery(struct xlog *log);
++void	xlog_cil_destroy(struct xlog *log);
++bool	xlog_cil_empty(struct xlog *log);
+ 
+ /*
+  * CIL force routines
+diff --git a/fs/xfs/xfs_sb.c b/fs/xfs/xfs_sb.c
+index 039708122038..38b7df67ba7c 100644
+--- a/fs/xfs/xfs_sb.c
++++ b/fs/xfs/xfs_sb.c
+@@ -633,8 +633,9 @@ xfs_sb_read_verify(
+ 
+ out_error:
+ 	if (error) {
+-		XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW,
+-				     mp, bp->b_addr);
++		if (error != EWRONGFS)
++			XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_LOW,
++					     mp, bp->b_addr);
+ 		xfs_buf_ioerror(bp, error);
+ 	}
+ }
 diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
 index 6125579b5207..5214ff63c351 100644
 --- a/include/linux/hugetlb.h
