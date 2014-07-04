@@ -1,0 +1,127 @@
+From c95b2b7042b70cce7e8f591b856f65cb8403eca0 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 2 Jul 2014 19:49:19 +0100
+Subject: [PATCH] mm: Move zone->pages_scanned into a vmstat counter
+
+References: VM Performance
+Patch-mainline: Submitted, 2014-06-25
+
+zone->pages_scanned is a write-intensive cache line during page reclaim
+and it's also updated during page free. Move the counter into vmstat to
+take advantage of the per-cpu updates and do not update it in the free
+paths unless necessary.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/mmzone.h | 2 +-
+ mm/page_alloc.c        | 8 +++++---
+ mm/vmscan.c            | 7 ++++---
+ mm/vmstat.c            | 3 ++-
+ 4 files changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index fbadc45..c0ee2ec 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -143,6 +143,7 @@ enum zone_stat_item {
+ 	NR_SHMEM,		/* shmem pages (included tmpfs/GEM pages) */
+ 	NR_DIRTIED,		/* page dirtyings since bootup */
+ 	NR_WRITTEN,		/* page writings since bootup */
++	NR_PAGES_SCANNED,	/* pages scanned since last reclaim */
+ #ifdef CONFIG_NUMA
+ 	NUMA_HIT,		/* allocated in intended node */
+ 	NUMA_MISS,		/* allocated in non intended node */
+@@ -480,7 +481,6 @@ struct zone {
+ 
+ 	/* Fields commonly accessed by the page reclaim scanner */
+ 	spinlock_t		lru_lock;
+-	unsigned long		pages_scanned;	   /* since last reclaim */
+ 	struct lruvec		lruvec;
+ 
+ 	/*
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index c607acd..6cd7f06 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -682,7 +682,8 @@ static void free_pcppages_bulk(struct zone *zone, int count,
+ 	int to_free = count;
+ 
+ 	spin_lock(&zone->lock);
+-	zone->pages_scanned = 0;
++	if (zone_page_state(zone, NR_PAGES_SCANNED))
++		__mod_zone_page_state(zone, NR_PAGES_SCANNED, 0);
+ 
+ 	while (to_free) {
+ 		struct page *page;
+@@ -732,7 +733,8 @@ static void free_one_page(struct zone *zone,
+ 				int migratetype)
+ {
+ 	spin_lock(&zone->lock);
+-	zone->pages_scanned = 0;
++	if (zone_page_state(zone, NR_PAGES_SCANNED))
++		__mod_zone_page_state(zone, NR_PAGES_SCANNED, 0);
+ 
+ 	__free_one_page(page, pfn, zone, order, migratetype);
+ 	if (unlikely(!is_migrate_isolate(migratetype)))
+@@ -3240,7 +3242,7 @@ void show_free_areas(unsigned int filter)
+ 			K(zone_page_state(zone, NR_BOUNCE)),
+ 			K(zone_page_state(zone, NR_FREE_CMA_PAGES)),
+ 			K(zone_page_state(zone, NR_WRITEBACK_TEMP)),
+-			zone->pages_scanned,
++			K(zone_page_state(zone, NR_PAGES_SCANNED)),
+ 			(!zone_reclaimable(zone) ? "yes" : "no")
+ 			);
+ 		printk("lowmem_reserve[]:");
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 0f16ffe..645db02 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -169,7 +169,8 @@ static unsigned long zone_reclaimable_pages(struct zone *zone)
+ 
+ bool zone_reclaimable(struct zone *zone)
+ {
+-	return zone->pages_scanned < zone_reclaimable_pages(zone) * 6;
++	return zone_page_state(zone, NR_PAGES_SCANNED) <
++		zone_reclaimable_pages(zone) * 6;
+ }
+ 
+ static unsigned long get_lru_size(struct lruvec *lruvec, enum lru_list lru)
+@@ -1503,7 +1504,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 	__mod_zone_page_state(zone, NR_ISOLATED_ANON + file, nr_taken);
+ 
+ 	if (global_reclaim(sc)) {
+-		zone->pages_scanned += nr_scanned;
++		zone_page_state_add(NR_PAGES_SCANNED, zone, nr_scanned);
+ 		if (current_is_kswapd())
+ 			__count_zone_vm_events(PGSCAN_KSWAPD, zone, nr_scanned);
+ 		else
+@@ -1693,7 +1694,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
+ 	nr_taken = isolate_lru_pages(nr_to_scan, lruvec, &l_hold,
+ 				     &nr_scanned, sc, isolate_mode, lru);
+ 	if (global_reclaim(sc))
+-		zone->pages_scanned += nr_scanned;
++		zone_page_state_add(NR_PAGES_SCANNED, zone, nr_scanned);
+ 
+ 	reclaim_stat->recent_scanned[file] += nr_taken;
+ 
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index 8267f77..e574e883 100644
+--- a/mm/vmstat.c
++++ b/mm/vmstat.c
+@@ -763,6 +763,7 @@ const char * const vmstat_text[] = {
+ 	"nr_shmem",
+ 	"nr_dirtied",
+ 	"nr_written",
++	"nr_pages_scanned",
+ 
+ #ifdef CONFIG_NUMA
+ 	"numa_hit",
+@@ -1067,7 +1068,7 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
+ 		   min_wmark_pages(zone),
+ 		   low_wmark_pages(zone),
+ 		   high_wmark_pages(zone),
+-		   zone->pages_scanned,
++		   zone_page_state(zone, NR_PAGES_SCANNED),
+ 		   zone->spanned_pages,
+ 		   zone->present_pages,
+ 		   zone->managed_pages);
