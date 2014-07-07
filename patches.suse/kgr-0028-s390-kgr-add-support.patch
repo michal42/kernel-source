@@ -10,16 +10,14 @@ the syscall path in entry64.S.
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- arch/s390/Kconfig                   | 3 +++
- arch/s390/include/asm/thread_info.h | 2 ++
- arch/s390/kernel/entry64.S          | 2 ++
+ arch/s390/Kconfig                   |    3 +++
+ arch/s390/include/asm/thread_info.h |    2 ++
+ arch/s390/kernel/entry64.S          |    2 ++
  3 files changed, 7 insertions(+)
 
-diff --git a/arch/s390/Kconfig b/arch/s390/Kconfig
-index 1de14d30d33c..73138484ef96 100644
 --- a/arch/s390/Kconfig
 +++ b/arch/s390/Kconfig
-@@ -125,6 +125,7 @@ config S390
+@@ -124,6 +124,7 @@ config S390
  	select HAVE_KERNEL_LZMA
  	select HAVE_KERNEL_LZO
  	select HAVE_KERNEL_XZ
@@ -27,7 +25,7 @@ index 1de14d30d33c..73138484ef96 100644
  	select HAVE_KPROBES
  	select HAVE_KRETPROBES
  	select HAVE_KVM if 64BIT
-@@ -155,6 +156,8 @@ source "init/Kconfig"
+@@ -152,6 +153,8 @@ source "init/Kconfig"
  
  source "kernel/Kconfig.freezer"
  
@@ -36,19 +34,17 @@ index 1de14d30d33c..73138484ef96 100644
  menu "Processor type and features"
  
  config HAVE_MARCH_Z900_FEATURES
-diff --git a/arch/s390/include/asm/thread_info.h b/arch/s390/include/asm/thread_info.h
-index b833e9c0bfbf..5ad7dd274026 100644
 --- a/arch/s390/include/asm/thread_info.h
 +++ b/arch/s390/include/asm/thread_info.h
-@@ -89,6 +89,7 @@ static inline struct thread_info *current_thread_info(void)
- #define TIF_RESTORE_SIGMASK	18	/* restore signal mask in do_signal() */
- #define TIF_SINGLE_STEP		19	/* This task is single stepped */
- #define TIF_BLOCK_STEP		20	/* This task is block stepped */
+@@ -92,6 +92,7 @@ static inline struct thread_info *curren
+ #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
+ #define TIF_RESTORE_SIGMASK	19	/* restore signal mask in do_signal() */
+ #define TIF_SINGLE_STEP		20	/* This task is single stepped */
 +#define TIF_KGR_IN_PROGRESS	21	/* This task has not finished patching */
  
+ #define _TIF_SYSCALL		(1<<TIF_SYSCALL)
  #define _TIF_NOTIFY_RESUME	(1<<TIF_NOTIFY_RESUME)
- #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
-@@ -99,6 +100,7 @@ static inline struct thread_info *current_thread_info(void)
+@@ -106,6 +107,7 @@ static inline struct thread_info *curren
  #define _TIF_SYSCALL_TRACEPOINT	(1<<TIF_SYSCALL_TRACEPOINT)
  #define _TIF_31BIT		(1<<TIF_31BIT)
  #define _TIF_SINGLE_STEP	(1<<TIF_SINGLE_STEP)
@@ -56,26 +52,21 @@ index b833e9c0bfbf..5ad7dd274026 100644
  
  #ifdef CONFIG_64BIT
  #define is_32bit_task()		(test_thread_flag(TIF_31BIT))
-diff --git a/arch/s390/kernel/entry64.S b/arch/s390/kernel/entry64.S
-index f2e674c702e1..7e76fdb8bcc3 100644
 --- a/arch/s390/kernel/entry64.S
 +++ b/arch/s390/kernel/entry64.S
-@@ -216,6 +216,7 @@ sysc_vtime:
+@@ -220,6 +220,7 @@ sysc_vtime:
  	mvc	__PT_INT_CODE(4,%r11),__LC_SVC_ILC
- 	stg	%r14,__PT_FLAGS(%r11)
  sysc_do_svc:
+ 	oi	__TI_flags+7(%r12),_TIF_SYSCALL
 +	ni	__TI_flags+5(%r12),255 - (_TIF_KGR_IN_PROGRESS >> 16)
  	lg	%r10,__TI_sysc_table(%r12)	# address of system call table
  	llgh	%r8,__PT_INT_CODE+2(%r11)
  	slag	%r8,%r8,2			# shift and test for svc 0
-@@ -247,6 +248,7 @@ sysc_tif:
+@@ -248,6 +249,7 @@ sysc_tif:
+ 	tm	__TI_flags+7(%r12),_TIF_WORK_SVC
  	jnz	sysc_work			# check for work
- 	tm	__LC_CPU_FLAGS+7,_CIF_WORK
- 	jnz	sysc_work
+ 	ni	__TI_flags+7(%r12),255-_TIF_SYSCALL
 +	ni	__TI_flags+5(%r12),255 - (_TIF_KGR_IN_PROGRESS >> 16)
  sysc_restore:
  	lg	%r14,__LC_VDSO_PER_CPU
  	lmg	%r0,%r10,__PT_R0(%r11)
--- 
-2.0.0
-

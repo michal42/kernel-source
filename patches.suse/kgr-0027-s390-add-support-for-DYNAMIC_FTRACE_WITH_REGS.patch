@@ -17,24 +17,22 @@ Reviewed-by: Jiri Kosina <jkosina@suse.cz>
 Cc: Steven Rostedt <rostedt@goodmis.org>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- arch/s390/Kconfig               |  1 +
- arch/s390/include/asm/ftrace.h  |  4 +++
- arch/s390/include/asm/lowcore.h | 12 +++++---
- arch/s390/kernel/asm-offsets.c  |  1 +
- arch/s390/kernel/early.c        |  3 ++
- arch/s390/kernel/ftrace.c       | 68 ++++++++++++++++++++++++++++++++++++-----
- arch/s390/kernel/mcount.S       | 43 ++++++++++++++++++++++++++
- arch/s390/kernel/mcount64.S     | 38 +++++++++++++++++++++++
- arch/s390/kernel/setup.c        |  1 +
- arch/s390/kernel/smp.c          |  1 +
- include/linux/ftrace.h          |  1 +
- 11 files changed, 160 insertions(+), 13 deletions(-)
+ arch/s390/Kconfig               |    1 
+ arch/s390/include/asm/ftrace.h  |    4 ++
+ arch/s390/include/asm/lowcore.h |    7 ++--
+ arch/s390/kernel/asm-offsets.c  |    1 
+ arch/s390/kernel/early.c        |    3 +
+ arch/s390/kernel/ftrace.c       |   68 +++++++++++++++++++++++++++++++++++-----
+ arch/s390/kernel/mcount.S       |   43 +++++++++++++++++++++++++
+ arch/s390/kernel/mcount64.S     |   38 ++++++++++++++++++++++
+ arch/s390/kernel/setup.c        |    1 
+ arch/s390/kernel/smp.c          |    1 
+ include/linux/ftrace.h          |    1 
+ 11 files changed, 157 insertions(+), 11 deletions(-)
 
-diff --git a/arch/s390/Kconfig b/arch/s390/Kconfig
-index bb63499fc5d3..1de14d30d33c 100644
 --- a/arch/s390/Kconfig
 +++ b/arch/s390/Kconfig
-@@ -113,6 +113,7 @@ config S390
+@@ -112,6 +112,7 @@ config S390
  	select HAVE_C_RECORDMCOUNT
  	select HAVE_DEBUG_KMEMLEAK
  	select HAVE_DYNAMIC_FTRACE
@@ -42,11 +40,9 @@ index bb63499fc5d3..1de14d30d33c 100644
  	select HAVE_FTRACE_MCOUNT_RECORD
  	select HAVE_FUNCTION_GRAPH_TRACER
  	select HAVE_FUNCTION_TRACER
-diff --git a/arch/s390/include/asm/ftrace.h b/arch/s390/include/asm/ftrace.h
-index bf246dae1367..df87fd214b72 100644
 --- a/arch/s390/include/asm/ftrace.h
 +++ b/arch/s390/include/asm/ftrace.h
-@@ -17,6 +17,10 @@ static inline unsigned long ftrace_call_adjust(unsigned long addr)
+@@ -17,6 +17,10 @@ static inline unsigned long ftrace_call_
  
  #endif /* __ASSEMBLY__ */
  
@@ -57,54 +53,42 @@ index bf246dae1367..df87fd214b72 100644
  #ifdef CONFIG_64BIT
  #define MCOUNT_INSN_SIZE  12
  #else
-diff --git a/arch/s390/include/asm/lowcore.h b/arch/s390/include/asm/lowcore.h
-index 4349197ab9df..31b064a9442d 100644
 --- a/arch/s390/include/asm/lowcore.h
 +++ b/arch/s390/include/asm/lowcore.h
-@@ -142,9 +142,10 @@ struct _lowcore {
+@@ -139,7 +139,7 @@ struct _lowcore {
  	__u32	percpu_offset;			/* 0x02f0 */
  	__u32	machine_flags;			/* 0x02f4 */
  	__u32	ftrace_func;			/* 0x02f8 */
--	__u32	spinlock_lockval;		/* 0x02fc */
+-	__u8	pad_0x02fc[0x0300-0x02fc];	/* 0x02fc */
 +	__u32	ftrace_regs_func;		/* 0x02fc */
-+	__u32	spinlock_lockval;		/* 0x0300 */
  
--	__u8	pad_0x0300[0x0e00-0x0300];	/* 0x0300 */
-+	__u8	pad_0x0304[0x0e00-0x0304];	/* 0x0304 */
- 
- 	/*
- 	 * 0xe00 contains the address of the IPL Parameter Information
-@@ -287,9 +288,10 @@ struct _lowcore {
+ 	/* Interrupt response block */
+ 	__u8	irb[96];			/* 0x0300 */
+@@ -284,8 +284,9 @@ struct _lowcore {
  	__u64	vdso_per_cpu_data;		/* 0x0380 */
  	__u64	machine_flags;			/* 0x0388 */
  	__u64	ftrace_func;			/* 0x0390 */
 -	__u64	gmap;				/* 0x0398 */
--	__u32	spinlock_lockval;		/* 0x03a0 */
--	__u8	pad_0x03a0[0x0400-0x03a4];	/* 0x03a4 */
+-	__u8	pad_0x03a0[0x0400-0x03a0];	/* 0x03a0 */
 +	__u64	ftrace_regs_func;		/* 0x0398 */
 +	__u64	gmap;				/* 0x03a0 */
-+	__u32	spinlock_lockval;		/* 0x03a8 */
-+	__u8	pad_0x03ac[0x0400-0x03ac];	/* 0x03ac */
++	__u8	pad_0x03a8[0x0400-0x03a8];	/* 0x03a8 */
  
- 	/* Per cpu primary space access list */
- 	__u32	paste[16];			/* 0x0400 */
-diff --git a/arch/s390/kernel/asm-offsets.c b/arch/s390/kernel/asm-offsets.c
-index afe1715a4eb7..12ef6ce41386 100644
+ 	/* Interrupt response block. */
+ 	__u8	irb[96];			/* 0x0400 */
 --- a/arch/s390/kernel/asm-offsets.c
 +++ b/arch/s390/kernel/asm-offsets.c
-@@ -150,6 +150,7 @@ int main(void)
+@@ -141,6 +141,7 @@ int main(void)
  	DEFINE(__LC_MCCK_CLOCK, offsetof(struct _lowcore, mcck_clock));
  	DEFINE(__LC_MACHINE_FLAGS, offsetof(struct _lowcore, machine_flags));
  	DEFINE(__LC_FTRACE_FUNC, offsetof(struct _lowcore, ftrace_func));
 +	DEFINE(__LC_FTRACE_REGS_FUNC, offsetof(struct _lowcore, ftrace_regs_func));
+ 	DEFINE(__LC_IRB, offsetof(struct _lowcore, irb));
  	DEFINE(__LC_DUMP_REIPL, offsetof(struct _lowcore, ipib));
  	BLANK();
- 	DEFINE(__LC_CPU_TIMER_SAVE_AREA, offsetof(struct _lowcore, cpu_timer_save_area));
-diff --git a/arch/s390/kernel/early.c b/arch/s390/kernel/early.c
-index 0dff972a169c..2ab52d28a8ea 100644
 --- a/arch/s390/kernel/early.c
 +++ b/arch/s390/kernel/early.c
-@@ -493,5 +493,8 @@ void __init startup_init(void)
+@@ -483,5 +483,8 @@ void __init startup_init(void)
  #ifdef CONFIG_DYNAMIC_FTRACE
  	S390_lowcore.ftrace_func = (unsigned long)ftrace_caller;
  #endif
@@ -113,8 +97,6 @@ index 0dff972a169c..2ab52d28a8ea 100644
 +#endif
  	lockdep_on();
  }
-diff --git a/arch/s390/kernel/ftrace.c b/arch/s390/kernel/ftrace.c
-index 54d6493c4a56..fd94f318ee10 100644
 --- a/arch/s390/kernel/ftrace.c
 +++ b/arch/s390/kernel/ftrace.c
 @@ -21,6 +21,7 @@
@@ -155,7 +137,7 @@ index 54d6493c4a56..fd94f318ee10 100644
  
  #define FTRACE_INSN_SIZE	4
  
-@@ -119,12 +132,29 @@ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
+@@ -119,12 +132,29 @@ int ftrace_make_nop(struct module *mod,
  
  int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
  {
@@ -187,7 +169,7 @@ index 54d6493c4a56..fd94f318ee10 100644
  int ftrace_update_ftrace_func(ftrace_func_t func)
  {
  	return 0;
-@@ -173,19 +203,41 @@ out:
+@@ -175,19 +205,41 @@ out:
  int ftrace_enable_ftrace_graph_caller(void)
  {
  	unsigned short offset;
@@ -216,9 +198,7 @@ index 54d6493c4a56..fd94f318ee10 100644
  {
  	static unsigned short offset = 0x0002;
 +	int ret;
- 
--	return probe_kernel_write((void *) ftrace_graph_caller + 2,
--				  &offset, sizeof(offset));
++
 +#ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
 +	if ((ret = probe_kernel_write((void *) ftrace_regs_graph_caller + 2,
 +			  &offset, sizeof(offset))))
@@ -228,13 +208,13 @@ index 54d6493c4a56..fd94f318ee10 100644
 +	if ((ret = probe_kernel_write((void *) ftrace_graph_caller + 2,
 +			  &offset, sizeof(offset))))
 +		return ret;
-+
+ 
+-	return probe_kernel_write((void *) ftrace_graph_caller + 2,
+-				  &offset, sizeof(offset));
 +	return 0;
  }
  
  #endif /* CONFIG_DYNAMIC_FTRACE */
-diff --git a/arch/s390/kernel/mcount.S b/arch/s390/kernel/mcount.S
-index 08dcf21cb8df..466751380d96 100644
 --- a/arch/s390/kernel/mcount.S
 +++ b/arch/s390/kernel/mcount.S
 @@ -53,6 +53,49 @@ ENTRY(ftrace_graph_caller)
@@ -287,8 +267,6 @@ index 08dcf21cb8df..466751380d96 100644
  #ifdef CONFIG_FUNCTION_GRAPH_TRACER
  
  ENTRY(return_to_handler)
-diff --git a/arch/s390/kernel/mcount64.S b/arch/s390/kernel/mcount64.S
-index 1c52eae3396a..bcad958bd0b7 100644
 --- a/arch/s390/kernel/mcount64.S
 +++ b/arch/s390/kernel/mcount64.S
 @@ -49,6 +49,44 @@ ENTRY(ftrace_graph_caller)
@@ -336,8 +314,6 @@ index 1c52eae3396a..bcad958bd0b7 100644
  #ifdef CONFIG_FUNCTION_GRAPH_TRACER
  
  ENTRY(return_to_handler)
-diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
-index 1e2264b46e4c..6cdf2a1055c8 100644
 --- a/arch/s390/kernel/setup.c
 +++ b/arch/s390/kernel/setup.c
 @@ -352,6 +352,7 @@ static void __init setup_lowcore(void)
@@ -348,11 +324,9 @@ index 1e2264b46e4c..6cdf2a1055c8 100644
  
  	restart_stack = __alloc_bootmem(ASYNC_SIZE, ASYNC_SIZE, 0);
  	restart_stack += ASYNC_SIZE;
-diff --git a/arch/s390/kernel/smp.c b/arch/s390/kernel/smp.c
-index 243c7e512600..152967ac0831 100644
 --- a/arch/s390/kernel/smp.c
 +++ b/arch/s390/kernel/smp.c
-@@ -232,6 +232,7 @@ static void pcpu_prepare_secondary(struct pcpu *pcpu, int cpu)
+@@ -242,6 +242,7 @@ static void pcpu_prepare_secondary(struc
  	lc->kernel_asce = S390_lowcore.kernel_asce;
  	lc->machine_flags = S390_lowcore.machine_flags;
  	lc->ftrace_func = S390_lowcore.ftrace_func;
@@ -360,11 +334,9 @@ index 243c7e512600..152967ac0831 100644
  	lc->user_timer = lc->system_timer = lc->steal_timer = 0;
  	__ctl_store(lc->cregs_save_area, 0, 15);
  	save_access_regs((unsigned int *) lc->access_regs_save_area);
-diff --git a/include/linux/ftrace.h b/include/linux/ftrace.h
-index 7ba30d4b4909..d5d54e12aa85 100644
 --- a/include/linux/ftrace.h
 +++ b/include/linux/ftrace.h
-@@ -445,6 +445,7 @@ void ftrace_modify_all_code(int command);
+@@ -450,6 +450,7 @@ void ftrace_modify_all_code(int command)
  
  #ifdef CONFIG_FUNCTION_GRAPH_TRACER
  extern void ftrace_graph_caller(void);
@@ -372,6 +344,3 @@ index 7ba30d4b4909..d5d54e12aa85 100644
  extern int ftrace_enable_ftrace_graph_caller(void);
  extern int ftrace_disable_ftrace_graph_caller(void);
  #else
--- 
-2.0.0
-
