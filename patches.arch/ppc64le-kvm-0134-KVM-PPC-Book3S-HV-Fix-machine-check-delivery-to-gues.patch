@@ -1,0 +1,36 @@
+From 9ceab3846a8756c30a30a6b720d26fbac86382d6 Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Mon, 26 May 2014 19:48:41 +1000
+Subject: [PATCH 134/160] KVM: PPC: Book3S HV: Fix machine check delivery to
+ guest
+Git-commit: 000a25ddb7106cdcb34e7f6c7547e5b2354b6645
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+The code that delivered a machine check to the guest after handling
+it in real mode failed to load up r11 before calling kvmppc_msr_interrupt,
+which needs the old MSR value in r11 so it can see the transactional
+state there.  This adds the missing load.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 608773b..8cfc64c 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -2265,6 +2265,7 @@ machine_check_realmode:
+ 	beq	mc_cont
+ 	/* If not, deliver a machine check.  SRR0/1 are already set */
+ 	li	r10, BOOK3S_INTERRUPT_MACHINE_CHECK
++	ld	r11, VCPU_MSR(r9)
+ 	bl	kvmppc_msr_interrupt
+ 	b	fast_interrupt_c_return
+ 
+-- 
+1.8.5.2
+

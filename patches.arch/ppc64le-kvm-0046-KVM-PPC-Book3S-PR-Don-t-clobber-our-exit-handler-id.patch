@@ -1,0 +1,70 @@
+From fba73a29fe7f28649833d5d3bbc23b1182b801db Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Fri, 29 Nov 2013 02:24:18 +0100
+Subject: [PATCH 046/160] KVM: PPC: Book3S: PR: Don't clobber our exit handler
+ id
+Git-commit: d825a04387ff4ce66117306f2862c7cedca5c597
+Patch-mainline: v3.13-rc5
+References: FATE#317763
+
+We call a C helper to save all svcpu fields into our vcpu. The C
+ABI states that r12 is considered volatile. However, we keep our
+exit handler id in r12 currently.
+
+So we need to save it away into a non-volatile register instead
+that definitely does get preserved across the C call.
+
+This bug usually didn't hit anyone yet since gcc is smart enough
+to generate code that doesn't even need r12 which means it stayed
+identical throughout the call by sheer luck. But we can't rely on
+that.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_interrupts.S | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_interrupts.S b/arch/powerpc/kvm/book3s_interrupts.S
+index f4dd041..5e7cb32 100644
+--- a/arch/powerpc/kvm/book3s_interrupts.S
++++ b/arch/powerpc/kvm/book3s_interrupts.S
+@@ -132,9 +132,17 @@ kvm_start_lightweight:
+ 	 *
+ 	 */
+ 
++	PPC_LL	r3, GPR4(r1)		/* vcpu pointer */
++
++	/*
++	 * kvmppc_copy_from_svcpu can clobber volatile registers, save
++	 * the exit handler id to the vcpu and restore it from there later.
++	 */
++	stw	r12, VCPU_TRAP(r3)
++
+ 	/* Transfer reg values from shadow vcpu back to vcpu struct */
+ 	/* On 64-bit, interrupts are still off at this point */
+-	PPC_LL	r3, GPR4(r1)		/* vcpu pointer */
++
+ 	GET_SHADOW_VCPU(r4)
+ 	bl	FUNC(kvmppc_copy_from_svcpu)
+ 	nop
+@@ -151,7 +159,6 @@ kvm_start_lightweight:
+ 	 */
+ 	ld	r3, PACA_SPRG3(r13)
+ 	mtspr	SPRN_SPRG3, r3
+-
+ #endif /* CONFIG_PPC_BOOK3S_64 */
+ 
+ 	/* R7 = vcpu */
+@@ -177,7 +184,7 @@ kvm_start_lightweight:
+ 	PPC_STL	r31, VCPU_GPR(R31)(r7)
+ 
+ 	/* Pass the exit number as 3rd argument to kvmppc_handle_exit */
+-	mr	r5, r12
++	lwz	r5, VCPU_TRAP(r7)
+ 
+ 	/* Restore r3 (kvm_run) and r4 (vcpu) */
+ 	REST_2GPRS(3, r1)
+-- 
+1.8.5.2
+

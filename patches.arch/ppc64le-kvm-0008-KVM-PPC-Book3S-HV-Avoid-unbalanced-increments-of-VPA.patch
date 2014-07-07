@@ -1,0 +1,70 @@
+From 95e542cd3b80c8818c5d19e8e3d27cba391db583 Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Fri, 6 Sep 2013 13:24:35 +1000
+Subject: [PATCH 008/160] KVM: PPC: Book3S HV: Avoid unbalanced increments of
+ VPA yield count
+Git-commit: 8c2dbb79c62e9da4857b873435925d3654d9fccd
+Patch-mainline: v3.13-rc1
+References: FATE#317763
+
+The yield count in the VPA is supposed to be incremented every time
+we enter the guest, and every time we exit the guest, so that its
+value is even when the vcpu is running in the guest and odd when it
+isn't.  However, it's currently possible that we increment the yield
+count on the way into the guest but then find that other CPU threads
+are already exiting the guest, so we go back to nap mode via the
+secondary_too_late label.  In this situation we don't increment the
+yield count again, breaking the relationship between the LSB of the
+count and whether the vcpu is in the guest.
+
+To fix this, we move the increment of the yield count to a point
+after we have checked whether other CPU threads are exiting.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 6f1466a..361d00b 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -405,16 +405,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
+ 	/* Save R1 in the PACA */
+ 	std	r1, HSTATE_HOST_R1(r13)
+ 
+-	/* Increment yield count if they have a VPA */
+-	ld	r3, VCPU_VPA(r4)
+-	cmpdi	r3, 0
+-	beq	25f
+-	lwz	r5, LPPACA_YIELDCOUNT(r3)
+-	addi	r5, r5, 1
+-	stw	r5, LPPACA_YIELDCOUNT(r3)
+-	li	r6, 1
+-	stb	r6, VCPU_VPA_DIRTY(r4)
+-25:
+ 	/* Load up DAR and DSISR */
+ 	ld	r5, VCPU_DAR(r4)
+ 	lwz	r6, VCPU_DSISR(r4)
+@@ -525,6 +515,16 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_201)
+ 	mtspr	SPRN_RMOR,r8
+ 	isync
+ 
++	/* Increment yield count if they have a VPA */
++	ld	r3, VCPU_VPA(r4)
++	cmpdi	r3, 0
++	beq	25f
++	lwz	r5, LPPACA_YIELDCOUNT(r3)
++	addi	r5, r5, 1
++	stw	r5, LPPACA_YIELDCOUNT(r3)
++	li	r6, 1
++	stb	r6, VCPU_VPA_DIRTY(r4)
++25:
+ 	/* Check if HDEC expires soon */
+ 	mfspr	r3,SPRN_HDEC
+ 	cmpwi	r3,10
+-- 
+1.8.5.2
+

@@ -1,0 +1,56 @@
+From 1d3d594c5b82f25d3e62274fd3616a92c4223c60 Mon Sep 17 00:00:00 2001
+From: Bharat Bhushan <r65777@freescale.com>
+Date: Fri, 15 Nov 2013 11:01:14 +0530
+Subject: [PATCH 063/160] kvm: book3s: rename lookup_linux_pte() to
+ lookup_linux_pte_and_update()
+Git-commit: 7c85e6b39ce880869929958bd7b95f72db03a9af
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+lookup_linux_pte() is doing more than lookup, updating the pte,
+so for clarity it is renamed to lookup_linux_pte_and_update()
+
+Signed-off-by: Bharat Bhushan <bharat.bhushan@freescale.com>
+Reviewed-by: Scott Wood <scottwood@freescale.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv_rm_mmu.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_rm_mmu.c b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+index 8689e2e..37fb3ca 100644
+--- a/arch/powerpc/kvm/book3s_hv_rm_mmu.c
++++ b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+@@ -134,7 +134,7 @@ static void remove_revmap_chain(struct kvm *kvm, long pte_index,
+ 	unlock_rmap(rmap);
+ }
+ 
+-static pte_t lookup_linux_pte(pgd_t *pgdir, unsigned long hva,
++static pte_t lookup_linux_pte_and_update(pgd_t *pgdir, unsigned long hva,
+ 			      int writing, unsigned long *pte_sizep)
+ {
+ 	pte_t *ptep;
+@@ -232,7 +232,8 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
+ 
+ 		/* Look up the Linux PTE for the backing page */
+ 		pte_size = psize;
+-		pte = lookup_linux_pte(pgdir, hva, writing, &pte_size);
++		pte = lookup_linux_pte_and_update(pgdir, hva, writing,
++						  &pte_size);
+ 		if (pte_present(pte)) {
+ 			if (writing && !pte_write(pte))
+ 				/* make the actual HPTE be read-only */
+@@ -672,7 +673,8 @@ long kvmppc_h_protect(struct kvm_vcpu *vcpu, unsigned long flags,
+ 			memslot = __gfn_to_memslot(kvm_memslots(kvm), gfn);
+ 			if (memslot) {
+ 				hva = __gfn_to_hva_memslot(memslot, gfn);
+-				pte = lookup_linux_pte(pgdir, hva, 1, &psize);
++				pte = lookup_linux_pte_and_update(pgdir, hva,
++								  1, &psize);
+ 				if (pte_present(pte) && !pte_write(pte))
+ 					r = hpte_make_readonly(r);
+ 			}
+-- 
+1.8.5.2
+

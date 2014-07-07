@@ -1,0 +1,186 @@
+From ce5c28c1b9b0c0c7437b1b98627e7c6fecc6010d Mon Sep 17 00:00:00 2001
+From: Bharat Bhushan <r65777@freescale.com>
+Date: Tue, 8 Oct 2013 09:32:20 +0530
+Subject: [PATCH 057/160] kvm/powerpc: move kvm_hypercall0() and friends to
+ epapr_hypercall0()
+Git-commit: b1f0d94c26b64e814243b736f47e7ef40d96432c
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+kvm_hypercall0() and friends have nothing KVM specific so moved to
+epapr_hypercall0() and friends. Also they are moved from
+arch/powerpc/include/asm/kvm_para.h to arch/powerpc/include/asm/epapr_hcalls.h
+
+Signed-off-by: Bharat Bhushan <bharat.bhushan@freescale.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/epapr_hcalls.h | 65 +++++++++++++++++++++++++++++++
+ arch/powerpc/include/asm/kvm_para.h     | 69 +--------------------------------
+ 2 files changed, 66 insertions(+), 68 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/epapr_hcalls.h b/arch/powerpc/include/asm/epapr_hcalls.h
+index eec87f9..334459a 100644
+--- a/arch/powerpc/include/asm/epapr_hcalls.h
++++ b/arch/powerpc/include/asm/epapr_hcalls.h
+@@ -506,5 +506,70 @@ static unsigned long epapr_hypercall(unsigned long *in,
+ }
+ #endif
+ 
++static inline long epapr_hypercall0_1(unsigned int nr, unsigned long *r2)
++{
++	unsigned long in[8];
++	unsigned long out[8];
++	unsigned long r;
++
++	r = epapr_hypercall(in, out, nr);
++	*r2 = out[0];
++
++	return r;
++}
++
++static inline long epapr_hypercall0(unsigned int nr)
++{
++	unsigned long in[8];
++	unsigned long out[8];
++
++	return epapr_hypercall(in, out, nr);
++}
++
++static inline long epapr_hypercall1(unsigned int nr, unsigned long p1)
++{
++	unsigned long in[8];
++	unsigned long out[8];
++
++	in[0] = p1;
++	return epapr_hypercall(in, out, nr);
++}
++
++static inline long epapr_hypercall2(unsigned int nr, unsigned long p1,
++				    unsigned long p2)
++{
++	unsigned long in[8];
++	unsigned long out[8];
++
++	in[0] = p1;
++	in[1] = p2;
++	return epapr_hypercall(in, out, nr);
++}
++
++static inline long epapr_hypercall3(unsigned int nr, unsigned long p1,
++				    unsigned long p2, unsigned long p3)
++{
++	unsigned long in[8];
++	unsigned long out[8];
++
++	in[0] = p1;
++	in[1] = p2;
++	in[2] = p3;
++	return epapr_hypercall(in, out, nr);
++}
++
++static inline long epapr_hypercall4(unsigned int nr, unsigned long p1,
++				    unsigned long p2, unsigned long p3,
++				    unsigned long p4)
++{
++	unsigned long in[8];
++	unsigned long out[8];
++
++	in[0] = p1;
++	in[1] = p2;
++	in[2] = p3;
++	in[3] = p4;
++	return epapr_hypercall(in, out, nr);
++}
+ #endif /* !__ASSEMBLY__ */
+ #endif /* _EPAPR_HCALLS_H */
+diff --git a/arch/powerpc/include/asm/kvm_para.h b/arch/powerpc/include/asm/kvm_para.h
+index c18660e..336a91a 100644
+--- a/arch/powerpc/include/asm/kvm_para.h
++++ b/arch/powerpc/include/asm/kvm_para.h
+@@ -48,73 +48,6 @@ static inline int kvm_para_available(void)
+ 
+ #endif
+ 
+-static inline long kvm_hypercall0_1(unsigned int nr, unsigned long *r2)
+-{
+-	unsigned long in[8];
+-	unsigned long out[8];
+-	unsigned long r;
+-
+-	r = epapr_hypercall(in, out, KVM_HCALL_TOKEN(nr));
+-	*r2 = out[0];
+-
+-	return r;
+-}
+-
+-static inline long kvm_hypercall0(unsigned int nr)
+-{
+-	unsigned long in[8];
+-	unsigned long out[8];
+-
+-	return epapr_hypercall(in, out, KVM_HCALL_TOKEN(nr));
+-}
+-
+-static inline long kvm_hypercall1(unsigned int nr, unsigned long p1)
+-{
+-	unsigned long in[8];
+-	unsigned long out[8];
+-
+-	in[0] = p1;
+-	return epapr_hypercall(in, out, KVM_HCALL_TOKEN(nr));
+-}
+-
+-static inline long kvm_hypercall2(unsigned int nr, unsigned long p1,
+-				  unsigned long p2)
+-{
+-	unsigned long in[8];
+-	unsigned long out[8];
+-
+-	in[0] = p1;
+-	in[1] = p2;
+-	return epapr_hypercall(in, out, KVM_HCALL_TOKEN(nr));
+-}
+-
+-static inline long kvm_hypercall3(unsigned int nr, unsigned long p1,
+-				  unsigned long p2, unsigned long p3)
+-{
+-	unsigned long in[8];
+-	unsigned long out[8];
+-
+-	in[0] = p1;
+-	in[1] = p2;
+-	in[2] = p3;
+-	return epapr_hypercall(in, out, KVM_HCALL_TOKEN(nr));
+-}
+-
+-static inline long kvm_hypercall4(unsigned int nr, unsigned long p1,
+-				  unsigned long p2, unsigned long p3,
+-				  unsigned long p4)
+-{
+-	unsigned long in[8];
+-	unsigned long out[8];
+-
+-	in[0] = p1;
+-	in[1] = p2;
+-	in[2] = p3;
+-	in[3] = p4;
+-	return epapr_hypercall(in, out, KVM_HCALL_TOKEN(nr));
+-}
+-
+-
+ static inline unsigned int kvm_arch_para_features(void)
+ {
+ 	unsigned long r;
+@@ -122,7 +55,7 @@ static inline unsigned int kvm_arch_para_features(void)
+ 	if (!kvm_para_available())
+ 		return 0;
+ 
+-	if(kvm_hypercall0_1(KVM_HC_FEATURES, &r))
++	if(epapr_hypercall0_1(KVM_HCALL_TOKEN(KVM_HC_FEATURES), &r))
+ 		return 0;
+ 
+ 	return r;
+-- 
+1.8.5.2
+

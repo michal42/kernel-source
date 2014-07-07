@@ -1,0 +1,53 @@
+From a79015dbf7f62c3847c9431efbc7872b7247dacf Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Thu, 13 Mar 2014 20:02:48 +1100
+Subject: [PATCH 083/160] KVM: PPC: Book3S HV: Fix register usage when
+ loading/saving VRSAVE
+Git-commit: e724f080f5dd03881bc6d378750c37f7374cae7e
+Patch-mainline: v3.14-rc8
+References: FATE#317763
+
+Commit 595e4f7e697e ("KVM: PPC: Book3S HV: Use load/store_fp_state
+functions in HV guest entry/exit") changed the register usage in
+kvmppc_save_fp() and kvmppc_load_fp() but omitted changing the
+instructions that load and save VRSAVE.  The result is that the
+VRSAVE value was loaded from a constant address, and saved to a
+location past the end of the vcpu struct, causing host kernel
+memory corruption and various kinds of host kernel crashes.
+
+This fixes the problem by using register r31, which contains the
+vcpu pointer, instead of r3 and r4.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 39c07e9..4668e44 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -2137,7 +2137,7 @@ BEGIN_FTR_SECTION
+ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+ #endif
+ 	mfspr	r6,SPRN_VRSAVE
+-	stw	r6,VCPU_VRSAVE(r3)
++	stw	r6,VCPU_VRSAVE(r31)
+ 	mtlr	r30
+ 	mtmsrd	r5
+ 	isync
+@@ -2174,7 +2174,7 @@ BEGIN_FTR_SECTION
+ 	bl	.load_vr_state
+ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+ #endif
+-	lwz	r7,VCPU_VRSAVE(r4)
++	lwz	r7,VCPU_VRSAVE(r31)
+ 	mtspr	SPRN_VRSAVE,r7
+ 	mtlr	r30
+ 	mr	r4,r31
+-- 
+1.8.5.2
+

@@ -1,0 +1,92 @@
+From f36f84aa0d084980d5a70aca4b8507562875ce8e Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Wed, 8 Jan 2014 21:25:26 +1100
+Subject: [PATCH 075/160] KVM: PPC: Book3S HV: Handle guest using doorbells for
+ IPIs
+Git-commit: aa31e843225769735b79795c955426c9479046a5
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+* SRR1 wake reason field for system reset interrupt on wakeup from nap
+  is now a 4-bit field on P8, compared to 3 bits on P7.
+
+* Set PECEDP in LPCR when napping because of H_CEDE so guest doorbells
+  will wake us up.
+
+* Waking up from nap because of a guest doorbell interrupt is not a
+  reason to exit the guest.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/reg.h          |  4 +++-
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S | 19 +++++++++++++++----
+ 2 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/reg.h b/arch/powerpc/include/asm/reg.h
+index 27919bb..6113856 100644
+--- a/arch/powerpc/include/asm/reg.h
++++ b/arch/powerpc/include/asm/reg.h
+@@ -312,7 +312,9 @@
+ #define   LPCR_ILE     0x02000000      /* !HV irqs set MSR:LE */
+ #define   LPCR_AIL_0	0x00000000	/* MMU off exception offset 0x0 */
+ #define   LPCR_AIL_3	0x01800000	/* MMU on exception offset 0xc00...4xxx */
+-#define   LPCR_PECE	0x00007000	/* powersave exit cause enable */
++#define   LPCR_PECE	0x0001f000	/* powersave exit cause enable */
++#define     LPCR_PECEDP	0x00010000	/* directed priv dbells cause exit */
++#define     LPCR_PECEDH	0x00008000	/* directed hyp dbells cause exit */
+ #define     LPCR_PECE0	0x00004000	/* ext. exceptions can cause exit */
+ #define     LPCR_PECE1	0x00002000	/* decrementer can cause exit */
+ #define     LPCR_PECE2	0x00001000	/* machine check etc can cause exit */
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 3a27049..7c71471 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -1861,13 +1861,16 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_206)
+ 	bl	kvmppc_save_fp
+ 
+ 	/*
+-	 * Take a nap until a decrementer or external interrupt occurs,
+-	 * with PECE1 (wake on decr) and PECE0 (wake on external) set in LPCR
++	 * Take a nap until a decrementer or external or doobell interrupt
++	 * occurs, with PECE1, PECE0 and PECEDP set in LPCR
+ 	 */
+ 	li	r0,1
+ 	stb	r0,HSTATE_HWTHREAD_REQ(r13)
+ 	mfspr	r5,SPRN_LPCR
+ 	ori	r5,r5,LPCR_PECE0 | LPCR_PECE1
++BEGIN_FTR_SECTION
++	oris	r5,r5,LPCR_PECEDP@h
++END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+ 	mtspr	SPRN_LPCR,r5
+ 	isync
+ 	li	r0, 0
+@@ -1983,14 +1986,22 @@ machine_check_realmode:
+  */
+ kvmppc_check_wake_reason:
+ 	mfspr	r6, SPRN_SRR1
+-	rlwinm	r6, r6, 44-31, 0x7	/* extract wake reason field */
+-	cmpwi	r6, 4			/* was it an external interrupt? */
++BEGIN_FTR_SECTION
++	rlwinm	r6, r6, 45-31, 0xf	/* extract wake reason field (P8) */
++FTR_SECTION_ELSE
++	rlwinm	r6, r6, 45-31, 0xe	/* P7 wake reason field is 3 bits */
++ALT_FTR_SECTION_END_IFSET(CPU_FTR_ARCH_207S)
++	cmpwi	r6, 8			/* was it an external interrupt? */
+ 	li	r12, BOOK3S_INTERRUPT_EXTERNAL
+ 	beq	kvmppc_read_intr	/* if so, see what it was */
+ 	li	r3, 0
+ 	li	r12, 0
+ 	cmpwi	r6, 6			/* was it the decrementer? */
+ 	beq	0f
++BEGIN_FTR_SECTION
++	cmpwi	r6, 5			/* privileged doorbell? */
++	beq	0f
++END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+ 	li	r3, 1			/* anything else, return 1 */
+ 0:	blr
+ 
+-- 
+1.8.5.2
+
