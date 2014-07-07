@@ -1,0 +1,81 @@
+From: Vojtech Pavlik <vojtech@suse.cz>
+Date: Mon, 7 Jul 2014 13:25:53 +0200
+Subject: s390: kgr, add support
+Patch-mainline: no
+References: fate#313296
+
+Now, when s390 has support for DYNAMIC_FTRACE_WITH_REGS, it is easy to
+add a support for kGraft. We just add HAVE_KGRAFT to S390 and handle
+the syscall path in entry64.S.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/s390/Kconfig                   | 3 +++
+ arch/s390/include/asm/thread_info.h | 2 ++
+ arch/s390/kernel/entry64.S          | 2 ++
+ 3 files changed, 7 insertions(+)
+
+diff --git a/arch/s390/Kconfig b/arch/s390/Kconfig
+index 1de14d30d33c..73138484ef96 100644
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -125,6 +125,7 @@ config S390
+ 	select HAVE_KERNEL_LZMA
+ 	select HAVE_KERNEL_LZO
+ 	select HAVE_KERNEL_XZ
++	select HAVE_KGRAFT
+ 	select HAVE_KPROBES
+ 	select HAVE_KRETPROBES
+ 	select HAVE_KVM if 64BIT
+@@ -155,6 +156,8 @@ source "init/Kconfig"
+ 
+ source "kernel/Kconfig.freezer"
+ 
++source "kernel/Kconfig.kgraft"
++
+ menu "Processor type and features"
+ 
+ config HAVE_MARCH_Z900_FEATURES
+diff --git a/arch/s390/include/asm/thread_info.h b/arch/s390/include/asm/thread_info.h
+index b833e9c0bfbf..5ad7dd274026 100644
+--- a/arch/s390/include/asm/thread_info.h
++++ b/arch/s390/include/asm/thread_info.h
+@@ -89,6 +89,7 @@ static inline struct thread_info *current_thread_info(void)
+ #define TIF_RESTORE_SIGMASK	18	/* restore signal mask in do_signal() */
+ #define TIF_SINGLE_STEP		19	/* This task is single stepped */
+ #define TIF_BLOCK_STEP		20	/* This task is block stepped */
++#define TIF_KGR_IN_PROGRESS	21	/* This task has not finished patching */
+ 
+ #define _TIF_NOTIFY_RESUME	(1<<TIF_NOTIFY_RESUME)
+ #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
+@@ -99,6 +100,7 @@ static inline struct thread_info *current_thread_info(void)
+ #define _TIF_SYSCALL_TRACEPOINT	(1<<TIF_SYSCALL_TRACEPOINT)
+ #define _TIF_31BIT		(1<<TIF_31BIT)
+ #define _TIF_SINGLE_STEP	(1<<TIF_SINGLE_STEP)
++#define _TIF_KGR_IN_PROGRESS	(1<<TIF_KGR_IN_PROGRESS)
+ 
+ #ifdef CONFIG_64BIT
+ #define is_32bit_task()		(test_thread_flag(TIF_31BIT))
+diff --git a/arch/s390/kernel/entry64.S b/arch/s390/kernel/entry64.S
+index f2e674c702e1..7e76fdb8bcc3 100644
+--- a/arch/s390/kernel/entry64.S
++++ b/arch/s390/kernel/entry64.S
+@@ -216,6 +216,7 @@ sysc_vtime:
+ 	mvc	__PT_INT_CODE(4,%r11),__LC_SVC_ILC
+ 	stg	%r14,__PT_FLAGS(%r11)
+ sysc_do_svc:
++	ni	__TI_flags+5(%r12),255 - (_TIF_KGR_IN_PROGRESS >> 16)
+ 	lg	%r10,__TI_sysc_table(%r12)	# address of system call table
+ 	llgh	%r8,__PT_INT_CODE+2(%r11)
+ 	slag	%r8,%r8,2			# shift and test for svc 0
+@@ -247,6 +248,7 @@ sysc_tif:
+ 	jnz	sysc_work			# check for work
+ 	tm	__LC_CPU_FLAGS+7,_CIF_WORK
+ 	jnz	sysc_work
++	ni	__TI_flags+5(%r12),255 - (_TIF_KGR_IN_PROGRESS >> 16)
+ sysc_restore:
+ 	lg	%r14,__LC_VDSO_PER_CPU
+ 	lmg	%r0,%r10,__PT_R0(%r11)
+-- 
+2.0.0
+
