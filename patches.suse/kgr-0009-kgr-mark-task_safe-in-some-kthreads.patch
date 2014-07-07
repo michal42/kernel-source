@@ -34,21 +34,23 @@ Cc: "Theodore Ts'o" <tytso@mit.edu>
 Cc: Dipankar Sarma <dipankar@in.ibm.com>
 Cc: Tejun Heo <tj@kernel.org>
 ---
- drivers/base/devtmpfs.c     |    1 +
- drivers/scsi/scsi_error.c   |    2 ++
- drivers/usb/core/hub.c      |    4 ++--
- fs/jbd2/journal.c           |    2 ++
- fs/notify/mark.c            |    5 ++++-
- include/linux/freezer.h     |    2 ++
- kernel/hung_task.c          |    5 ++++-
- kernel/kthread.c            |    3 +++
- kernel/rcutree.c            |    6 ++++--
- kernel/rcutree_plugin.h     |   10 ++++++++--
- kernel/smpboot.c            |    2 ++
- kernel/workqueue.c          |    3 +++
- mm/huge_memory.c            |    6 ++++--
- net/bluetooth/rfcomm/core.c |    2 ++
- 14 files changed, 43 insertions(+), 10 deletions(-)
+ drivers/base/devtmpfs.c         |    1 +
+ drivers/scsi/scsi_error.c       |    2 ++
+ drivers/usb/core/hub.c          |    4 ++--
+ drivers/virtio/virtio_balloon.c |    5 +++--
+ fs/jbd2/journal.c               |    2 ++
+ fs/notify/mark.c                |    5 ++++-
+ include/linux/freezer.h         |    2 ++
+ kernel/hung_task.c              |    5 ++++-
+ kernel/kthread.c                |    3 +++
+ kernel/rcutree.c                |    6 ++++--
+ kernel/rcutree_plugin.h         |   10 ++++++++--
+ kernel/smpboot.c                |    2 ++
+ kernel/workqueue.c              |    3 +++
+ mm/huge_memory.c                |    6 ++++--
+ mm/ksm.c                        |    5 +++--
+ net/bluetooth/rfcomm/core.c     |    2 ++
+ 16 files changed, 49 insertions(+), 14 deletions(-)
 
 --- a/drivers/base/devtmpfs.c
 +++ b/drivers/base/devtmpfs.c
@@ -85,6 +87,23 @@ Cc: Tejun Heo <tj@kernel.org>
  	} while (!kthread_should_stop() || !list_empty(&hub_event_list));
  
  	pr_debug("%s: khubd exiting\n", usbcore_name);
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -300,11 +300,12 @@ static int balloon(void *_vballoon)
+ 		s64 diff;
+ 
+ 		try_to_freeze();
+-		wait_event_interruptible(vb->config_change,
++		wait_event_interruptible(vb->config_change, ({
++					 kgr_task_safe(current);
+ 					 (diff = towards_target(vb)) != 0
+ 					 || vb->need_stats_update
+ 					 || kthread_should_stop()
+-					 || freezing(current));
++					 || freezing(current); }));
+ 		if (vb->need_stats_update)
+ 			stats_handle_request(vb);
+ 		if (diff > 0)
 --- a/fs/jbd2/journal.c
 +++ b/fs/jbd2/journal.c
 @@ -43,6 +43,7 @@
@@ -266,7 +285,7 @@ Cc: Tejun Heo <tj@kernel.org>
  	 * shouldn't have any work pending, but @wq->maydays may still have
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -2765,6 +2765,7 @@ static void khugepaged_do_scan(void)
+@@ -2761,6 +2761,7 @@ static void khugepaged_do_scan(void)
  			break;
  
  		cond_resched();
@@ -274,7 +293,7 @@ Cc: Tejun Heo <tj@kernel.org>
  
  		if (unlikely(kthread_should_stop() || freezing(current)))
  			break;
-@@ -2793,8 +2794,9 @@ static void khugepaged_wait_work(void)
+@@ -2789,8 +2790,9 @@ static void khugepaged_wait_work(void)
  		if (!khugepaged_scan_sleep_millisecs)
  			return;
  
@@ -286,6 +305,20 @@ Cc: Tejun Heo <tj@kernel.org>
  			msecs_to_jiffies(khugepaged_scan_sleep_millisecs));
  		return;
  	}
+--- a/mm/ksm.c
++++ b/mm/ksm.c
+@@ -1729,8 +1729,9 @@ static int ksm_scan_thread(void *nothing
+ 			schedule_timeout_interruptible(
+ 				msecs_to_jiffies(ksm_thread_sleep_millisecs));
+ 		} else {
+-			wait_event_freezable(ksm_thread_wait,
+-				ksmd_should_run() || kthread_should_stop());
++			wait_event_freezable(ksm_thread_wait, ({
++				kgr_task_safe(current);
++				ksmd_should_run() || kthread_should_stop(); }));
+ 		}
+ 	}
+ 	return 0;
 --- a/net/bluetooth/rfcomm/core.c
 +++ b/net/bluetooth/rfcomm/core.c
 @@ -2042,6 +2042,8 @@ static int rfcomm_run(void *unused)
