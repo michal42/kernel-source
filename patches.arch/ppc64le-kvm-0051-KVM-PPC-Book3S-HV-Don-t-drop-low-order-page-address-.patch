@@ -1,0 +1,39 @@
+From fca983d239a49ecbab211ef5160c31996251334d Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Mon, 16 Dec 2013 13:31:46 +1100
+Subject: [PATCH 051/160] KVM: PPC: Book3S HV: Don't drop low-order page
+ address bits
+Git-commit: df9059bb64023da9f27e56a94a3e2b8f4b6336a9
+Patch-mainline: v3.13-rc5
+References: FATE#317763
+
+Commit caaa4c804fae ("KVM: PPC: Book3S HV: Fix physical address
+calculations") unfortunately resulted in some low-order address bits
+getting dropped in the case where the guest is creating a 4k HPTE
+and the host page size is 64k.  By getting the low-order bits from
+hva rather than gpa we miss out on bits 12 - 15 in this case, since
+hva is at page granularity.  This puts the missing bits back in.
+
+Reported-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv_rm_mmu.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_rm_mmu.c b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+index 1931aa3..8689e2e 100644
+--- a/arch/powerpc/kvm/book3s_hv_rm_mmu.c
++++ b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+@@ -240,6 +240,7 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
+ 			is_io = hpte_cache_bits(pte_val(pte));
+ 			pa = pte_pfn(pte) << PAGE_SHIFT;
+ 			pa |= hva & (pte_size - 1);
++			pa |= gpa & ~PAGE_MASK;
+ 		}
+ 	}
+ 
+-- 
+1.8.5.2
+

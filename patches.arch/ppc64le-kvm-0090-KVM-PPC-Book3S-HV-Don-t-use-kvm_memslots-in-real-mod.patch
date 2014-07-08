@@ -1,0 +1,92 @@
+From 69afc9acd6540a851a13c6df87344fac8b3bd7ec Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Tue, 25 Mar 2014 10:47:06 +1100
+Subject: [PATCH 090/160] KVM: PPC: Book3S HV: Don't use kvm_memslots() in real
+ mode
+Git-commit: 797f9c07eb4cbc2d0ff27fac165a0b885da38840
+Patch-mainline: v3.15-rc1
+References: FATE#317763
+
+With HV KVM, some high-frequency hypercalls such as H_ENTER are handled
+in real mode, and need to access the memslots array for the guest.
+Accessing the memslots array is safe, because we hold the SRCU read
+lock for the whole time that a guest vcpu is running.  However, the
+checks that kvm_memslots() does when lockdep is enabled are potentially
+unsafe in real mode, when only the linear mapping is available.
+Furthermore, kvm_memslots() can be called from a secondary CPU thread,
+which is an offline CPU from the point of view of the host kernel,
+and is not running the task which holds the SRCU read lock.
+
+To avoid false positives in the checks in kvm_memslots(), and to avoid
+possible side effects from doing the checks in real mode, this replaces
+kvm_memslots() with kvm_memslots_raw() in all the places that execute
+in real mode.  kvm_memslots_raw() is a new function that is like
+kvm_memslots() but uses rcu_dereference_raw_notrace() instead of
+kvm_dereference_check().
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Acked-by: Scott Wood <scottwood@freescale.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/kvm_book3s_64.h | 12 ++++++++++++
+ arch/powerpc/kvm/book3s_hv_rm_mmu.c      |  6 +++---
+ 2 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/kvm_book3s_64.h b/arch/powerpc/include/asm/kvm_book3s_64.h
+index bf0fa8b..51388be 100644
+--- a/arch/powerpc/include/asm/kvm_book3s_64.h
++++ b/arch/powerpc/include/asm/kvm_book3s_64.h
+@@ -289,6 +289,18 @@ static inline void note_hpte_modification(struct kvm *kvm,
+ 	if (atomic_read(&kvm->arch.hpte_mod_interest))
+ 		rev->guest_rpte |= HPTE_GR_MODIFIED;
+ }
++
++/*
++ * Like kvm_memslots(), but for use in real mode when we can't do
++ * any RCU stuff (since the secondary threads are offline from the
++ * kernel's point of view), and we can't print anything.
++ * Thus we use rcu_dereference_raw() rather than rcu_dereference_check().
++ */
++static inline struct kvm_memslots *kvm_memslots_raw(struct kvm *kvm)
++{
++	return rcu_dereference_raw_notrace(kvm->memslots);
++}
++
+ #endif /* CONFIG_KVM_BOOK3S_HV_POSSIBLE */
+ 
+ #endif /* __ASM_KVM_BOOK3S_64_H__ */
+diff --git a/arch/powerpc/kvm/book3s_hv_rm_mmu.c b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+index 37fb3ca..1d6c56a 100644
+--- a/arch/powerpc/kvm/book3s_hv_rm_mmu.c
++++ b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+@@ -111,7 +111,7 @@ static void remove_revmap_chain(struct kvm *kvm, long pte_index,
+ 	rcbits = hpte_r & (HPTE_R_R | HPTE_R_C);
+ 	ptel = rev->guest_rpte |= rcbits;
+ 	gfn = hpte_rpn(ptel, hpte_page_size(hpte_v, ptel));
+-	memslot = __gfn_to_memslot(kvm_memslots(kvm), gfn);
++	memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+ 	if (!memslot)
+ 		return;
+ 
+@@ -192,7 +192,7 @@ long kvmppc_do_h_enter(struct kvm *kvm, unsigned long flags,
+ 	/* Find the memslot (if any) for this address */
+ 	gpa = (ptel & HPTE_R_RPN) & ~(psize - 1);
+ 	gfn = gpa >> PAGE_SHIFT;
+-	memslot = __gfn_to_memslot(kvm_memslots(kvm), gfn);
++	memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+ 	pa = 0;
+ 	is_io = ~0ul;
+ 	rmap = NULL;
+@@ -670,7 +670,7 @@ long kvmppc_h_protect(struct kvm_vcpu *vcpu, unsigned long flags,
+ 
+ 			psize = hpte_page_size(v, r);
+ 			gfn = ((r & HPTE_R_RPN) & ~(psize - 1)) >> PAGE_SHIFT;
+-			memslot = __gfn_to_memslot(kvm_memslots(kvm), gfn);
++			memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+ 			if (memslot) {
+ 				hva = __gfn_to_hva_memslot(memslot, gfn);
+ 				pte = lookup_linux_pte_and_update(pgdir, hva,
+-- 
+1.8.5.2
+

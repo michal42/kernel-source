@@ -1,0 +1,65 @@
+From bae81a1d1cf6a5f1eacddccbab00c5a7cddf5171 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 9 Jan 2014 11:10:44 +0100
+Subject: [PATCH 065/160] KVM: PPC: Unify kvmppc_get_last_inst and sc
+Git-commit: 7a8ff56be68239bd36a2b639cb40bfbcfc58dad3
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+We had code duplication between the inline functions to get our last
+instruction on normal interrupts and system call interrupts. Unify
+both helper functions towards a single implementation.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/kvm_book3s.h | 18 +++++++-----------
+ 1 file changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/kvm_book3s.h b/arch/powerpc/include/asm/kvm_book3s.h
+index e24490e..e98db04 100644
+--- a/arch/powerpc/include/asm/kvm_book3s.h
++++ b/arch/powerpc/include/asm/kvm_book3s.h
+@@ -268,10 +268,8 @@ static inline ulong kvmppc_get_pc(struct kvm_vcpu *vcpu)
+ 	return vcpu->arch.pc;
+ }
+ 
+-static inline u32 kvmppc_get_last_inst(struct kvm_vcpu *vcpu)
++static inline u32 kvmppc_get_last_inst_internal(struct kvm_vcpu *vcpu, ulong pc)
+ {
+-	ulong pc = kvmppc_get_pc(vcpu);
+-
+ 	/* Load the instruction manually if it failed to do so in the
+ 	 * exit path */
+ 	if (vcpu->arch.last_inst == KVM_INST_FETCH_FAILED)
+@@ -280,6 +278,11 @@ static inline u32 kvmppc_get_last_inst(struct kvm_vcpu *vcpu)
+ 	return vcpu->arch.last_inst;
+ }
+ 
++static inline u32 kvmppc_get_last_inst(struct kvm_vcpu *vcpu)
++{
++	return kvmppc_get_last_inst_internal(vcpu, kvmppc_get_pc(vcpu));
++}
++
+ /*
+  * Like kvmppc_get_last_inst(), but for fetching a sc instruction.
+  * Because the sc instruction sets SRR0 to point to the following
+@@ -287,14 +290,7 @@ static inline u32 kvmppc_get_last_inst(struct kvm_vcpu *vcpu)
+  */
+ static inline u32 kvmppc_get_last_sc(struct kvm_vcpu *vcpu)
+ {
+-	ulong pc = kvmppc_get_pc(vcpu) - 4;
+-
+-	/* Load the instruction manually if it failed to do so in the
+-	 * exit path */
+-	if (vcpu->arch.last_inst == KVM_INST_FETCH_FAILED)
+-		kvmppc_ld(vcpu, &pc, sizeof(u32), &vcpu->arch.last_inst, false);
+-
+-	return vcpu->arch.last_inst;
++	return kvmppc_get_last_inst_internal(vcpu, kvmppc_get_pc(vcpu) - 4);
+ }
+ 
+ static inline ulong kvmppc_get_fault_dar(struct kvm_vcpu *vcpu)
+-- 
+1.8.5.2
+

@@ -1,0 +1,52 @@
+From d30e44b96191f9cac042f58da3cd2a15ed5ab126 Mon Sep 17 00:00:00 2001
+From: Gleb Natapov <gleb@redhat.com>
+Date: Sun, 1 Sep 2013 15:53:46 +0300
+Subject: [PATCH 055/160] KVM: PPC: fix couple of memory leaks in MPIC/XICS
+ devices
+Git-commit: 458ff3c099a1266991208f2c009afc2405e5b6bc
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+XICS failed to free xics structure on error path. MPIC destroy handler
+forgot to delete kvm_device structure.
+
+Signed-off-by: Gleb Natapov <gleb@redhat.com>
+Acked-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_xics.c | 4 +++-
+ arch/powerpc/kvm/mpic.c        | 1 +
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/kvm/book3s_xics.c b/arch/powerpc/kvm/book3s_xics.c
+index 02a17dc..d1acd32 100644
+--- a/arch/powerpc/kvm/book3s_xics.c
++++ b/arch/powerpc/kvm/book3s_xics.c
+@@ -1246,8 +1246,10 @@ static int kvmppc_xics_create(struct kvm_device *dev, u32 type)
+ 		kvm->arch.xics = xics;
+ 	mutex_unlock(&kvm->lock);
+ 
+-	if (ret)
++	if (ret) {
++		kfree(xics);
+ 		return ret;
++	}
+ 
+ 	xics_debugfs_init(xics);
+ 
+diff --git a/arch/powerpc/kvm/mpic.c b/arch/powerpc/kvm/mpic.c
+index 2861ae9..efbd996 100644
+--- a/arch/powerpc/kvm/mpic.c
++++ b/arch/powerpc/kvm/mpic.c
+@@ -1635,6 +1635,7 @@ static void mpic_destroy(struct kvm_device *dev)
+ 
+ 	dev->kvm->arch.mpic = NULL;
+ 	kfree(opp);
++	kfree(dev);
+ }
+ 
+ static int mpic_set_default_irq_routing(struct openpic *opp)
+-- 
+1.8.5.2
+

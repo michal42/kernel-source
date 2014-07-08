@@ -1,0 +1,89 @@
+From e2b70dca9ce019d488055471ce4fb1d237e864a4 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Sun, 6 Apr 2014 23:31:48 +0200
+Subject: [PATCH 097/160] KVM: PPC: Book3S: ifdef on
+ CONFIG_KVM_BOOK3S_32_HANDLER for 32bit
+Git-commit: ab78475c76bd8c54375d8a778200c59314973d30
+Patch-mainline: v3.15-rc8
+References: FATE#317763
+
+The book3s_32 target can get built as module which means we don't see the
+config define for it in code. Instead, check on the bool define
+CONFIG_KVM_BOOK3S_32_HANDLER whenever we want to know whether we're building
+for a book3s_32 host.
+
+This fixes running book3s_32 kvm as a module for me.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+Reviewed-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+
+---
+ arch/powerpc/kvm/book3s.c    | 6 +++---
+ arch/powerpc/kvm/book3s_pr.c | 6 +++---
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s.c b/arch/powerpc/kvm/book3s.c
+index 94e597e..7af190a 100644
+--- a/arch/powerpc/kvm/book3s.c
++++ b/arch/powerpc/kvm/book3s.c
+@@ -886,7 +886,7 @@ static int kvmppc_book3s_init(void)
+ 	r = kvm_init(NULL, sizeof(struct kvm_vcpu), 0, THIS_MODULE);
+ 	if (r)
+ 		return r;
+-#ifdef CONFIG_KVM_BOOK3S_32
++#ifdef CONFIG_KVM_BOOK3S_32_HANDLER
+ 	r = kvmppc_book3s_init_pr();
+ #endif
+ 	return r;
+@@ -895,7 +895,7 @@ static int kvmppc_book3s_init(void)
+ 
+ static void kvmppc_book3s_exit(void)
+ {
+-#ifdef CONFIG_KVM_BOOK3S_32
++#ifdef CONFIG_KVM_BOOK3S_32_HANDLER
+ 	kvmppc_book3s_exit_pr();
+ #endif
+ 	kvm_exit();
+@@ -905,7 +905,7 @@ module_init(kvmppc_book3s_init);
+ module_exit(kvmppc_book3s_exit);
+ 
+ /* On 32bit this is our one and only kernel module */
+-#ifdef CONFIG_KVM_BOOK3S_32
++#ifdef CONFIG_KVM_BOOK3S_32_HANDLER
+ MODULE_ALIAS_MISCDEV(KVM_MINOR);
+ MODULE_ALIAS("devname:kvm");
+ #endif
+diff --git a/arch/powerpc/kvm/book3s_pr.c b/arch/powerpc/kvm/book3s_pr.c
+index c5c052a..02f1def 100644
+--- a/arch/powerpc/kvm/book3s_pr.c
++++ b/arch/powerpc/kvm/book3s_pr.c
+@@ -1153,7 +1153,7 @@ static struct kvm_vcpu *kvmppc_core_vcpu_create_pr(struct kvm *kvm,
+ 		goto free_vcpu;
+ 	vcpu->arch.book3s = vcpu_book3s;
+ 
+-#ifdef CONFIG_KVM_BOOK3S_32
++#ifdef CONFIG_KVM_BOOK3S_32_HANDLER
+ 	vcpu->arch.shadow_vcpu =
+ 		kzalloc(sizeof(*vcpu->arch.shadow_vcpu), GFP_KERNEL);
+ 	if (!vcpu->arch.shadow_vcpu)
+@@ -1198,7 +1198,7 @@ static struct kvm_vcpu *kvmppc_core_vcpu_create_pr(struct kvm *kvm,
+ uninit_vcpu:
+ 	kvm_vcpu_uninit(vcpu);
+ free_shadow_vcpu:
+-#ifdef CONFIG_KVM_BOOK3S_32
++#ifdef CONFIG_KVM_BOOK3S_32_HANDLER
+ 	kfree(vcpu->arch.shadow_vcpu);
+ free_vcpu3s:
+ #endif
+@@ -1215,7 +1215,7 @@ static void kvmppc_core_vcpu_free_pr(struct kvm_vcpu *vcpu)
+ 
+ 	free_page((unsigned long)vcpu->arch.shared & PAGE_MASK);
+ 	kvm_vcpu_uninit(vcpu);
+-#ifdef CONFIG_KVM_BOOK3S_32
++#ifdef CONFIG_KVM_BOOK3S_32_HANDLER
+ 	kfree(vcpu->arch.shadow_vcpu);
+ #endif
+ 	vfree(vcpu_book3s);
+-- 
+1.8.5.2
+

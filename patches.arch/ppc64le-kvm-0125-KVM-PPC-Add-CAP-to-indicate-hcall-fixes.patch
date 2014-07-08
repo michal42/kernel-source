@@ -1,0 +1,64 @@
+From 7e11c793b508e65eb62f2ea1a0b71f500976fef3 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 22 May 2014 17:40:15 +0200
+Subject: [PATCH 125/160] KVM: PPC: Add CAP to indicate hcall fixes
+Git-commit: f2e91042a807cbf9b0b0d9776bf37d1ef0bd7ebe
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+We worked around some nasty KVM magic page hcall breakages:
+
+  1) NX bit not honored, so ignore NX when we detect it
+  2) LE guests swizzle hypercall instruction
+
+Without these fixes in place, there's no way it would make sense to expose kvm
+hypercalls to a guest. Chances are immensely high it would trip over and break.
+
+So add a new CAP that gives user space a hint that we have workarounds for the
+bugs above in place. It can use those as hint to disable PV hypercalls when
+the guest CPU is anything POWER7 or higher and the host does not have fixes
+in place.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+Conflicts: include/uapi/linux/kvm.h
+
+---
+ arch/powerpc/kvm/powerpc.c | 1 +
+ include/uapi/linux/kvm.h   | 8 ++++++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/arch/powerpc/kvm/powerpc.c b/arch/powerpc/kvm/powerpc.c
+index 154f352..bab20f4 100644
+--- a/arch/powerpc/kvm/powerpc.c
++++ b/arch/powerpc/kvm/powerpc.c
+@@ -416,6 +416,7 @@ int kvm_dev_ioctl_check_extension(long ext)
+ 	case KVM_CAP_SPAPR_TCE:
+ 	case KVM_CAP_PPC_ALLOC_HTAB:
+ 	case KVM_CAP_PPC_RTAS:
++	case KVM_CAP_PPC_FIXUP_HCALL:
+ #ifdef CONFIG_KVM_XICS
+ 	case KVM_CAP_IRQ_XICS:
+ #endif
+diff --git a/include/uapi/linux/kvm.h b/include/uapi/linux/kvm.h
+index aebfc11..1343619 100644
+--- a/include/uapi/linux/kvm.h
++++ b/include/uapi/linux/kvm.h
+@@ -672,6 +672,14 @@ struct kvm_ppc_smmu_info {
+ #define KVM_CAP_IRQ_XICS 92
+ #define KVM_CAP_ARM_EL1_32BIT 93
+ #define KVM_CAP_SPAPR_MULTITCE 94
++#define KVM_CAP_EXT_EMUL_CPUID 95
++#define KVM_CAP_HYPERV_TIME 96
++#define KVM_CAP_IOAPIC_POLARITY_IGNORED 97
++#define KVM_CAP_ENABLE_CAP_VM 98
++#define KVM_CAP_S390_IRQCHIP 99
++#define KVM_CAP_IOEVENTFD_NO_LENGTH 100
++#define KVM_CAP_VM_ATTRIBUTES 101
++#define KVM_CAP_PPC_FIXUP_HCALL 102
+ 
+ #ifdef KVM_CAP_IRQ_ROUTING
+ 
+-- 
+1.8.5.2
+

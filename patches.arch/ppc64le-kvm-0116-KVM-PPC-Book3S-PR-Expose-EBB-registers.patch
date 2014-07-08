@@ -1,0 +1,140 @@
+From 27d1e75ba1c086cf8ad69dfb9ba72ee37460c62c Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Tue, 29 Apr 2014 13:36:21 +0200
+Subject: [PATCH 116/160] KVM: PPC: Book3S PR: Expose EBB registers
+Git-commit: 2e23f544135e7b5fc2f0bcb6fa935c4b4f5058b2
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+POWER8 introduces a new facility called the "Event Based Branch" facility.
+It contains of a few registers that indicate where a guest should branch to
+when a defined event occurs and it's in PR mode.
+
+We don't want to really enable EBB as it will create a big mess with !PR guest
+mode while hardware is in PR and we don't really emulate the PMU anyway.
+
+So instead, let's just leave it at emulation of all its registers.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s.c         | 18 ++++++++++++++++++
+ arch/powerpc/kvm/book3s_emulate.c | 22 ++++++++++++++++++++++
+ arch/powerpc/kvm/book3s_hv.c      | 18 ------------------
+ 3 files changed, 40 insertions(+), 18 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s.c b/arch/powerpc/kvm/book3s.c
+index c5d9521..c254c27 100644
+--- a/arch/powerpc/kvm/book3s.c
++++ b/arch/powerpc/kvm/book3s.c
+@@ -637,6 +637,15 @@ int kvm_vcpu_ioctl_get_one_reg(struct kvm_vcpu *vcpu, struct kvm_one_reg *reg)
+ 		case KVM_REG_PPC_TAR:
+ 			val = get_reg_val(reg->id, vcpu->arch.tar);
+ 			break;
++		case KVM_REG_PPC_EBBHR:
++			val = get_reg_val(reg->id, vcpu->arch.ebbhr);
++			break;
++		case KVM_REG_PPC_EBBRR:
++			val = get_reg_val(reg->id, vcpu->arch.ebbrr);
++			break;
++		case KVM_REG_PPC_BESCR:
++			val = get_reg_val(reg->id, vcpu->arch.bescr);
++			break;
+ 		default:
+ 			r = -EINVAL;
+ 			break;
+@@ -732,6 +741,15 @@ int kvm_vcpu_ioctl_set_one_reg(struct kvm_vcpu *vcpu, struct kvm_one_reg *reg)
+ 		case KVM_REG_PPC_TAR:
+ 			vcpu->arch.tar = set_reg_val(reg->id, val);
+ 			break;
++		case KVM_REG_PPC_EBBHR:
++			vcpu->arch.ebbhr = set_reg_val(reg->id, val);
++			break;
++		case KVM_REG_PPC_EBBRR:
++			vcpu->arch.ebbrr = set_reg_val(reg->id, val);
++			break;
++		case KVM_REG_PPC_BESCR:
++			vcpu->arch.bescr = set_reg_val(reg->id, val);
++			break;
+ 		default:
+ 			r = -EINVAL;
+ 			break;
+diff --git a/arch/powerpc/kvm/book3s_emulate.c b/arch/powerpc/kvm/book3s_emulate.c
+index e8133e5..e1165ba 100644
+--- a/arch/powerpc/kvm/book3s_emulate.c
++++ b/arch/powerpc/kvm/book3s_emulate.c
+@@ -441,6 +441,17 @@ int kvmppc_core_emulate_mtspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
+ 	case SPRN_FSCR:
+ 		vcpu->arch.fscr = spr_val;
+ 		break;
++#ifdef CONFIG_PPC_BOOK3S_64
++	case SPRN_BESCR:
++		vcpu->arch.bescr = spr_val;
++		break;
++	case SPRN_EBBHR:
++		vcpu->arch.ebbhr = spr_val;
++		break;
++	case SPRN_EBBRR:
++		vcpu->arch.ebbrr = spr_val;
++		break;
++#endif
+ 	case SPRN_ICTC:
+ 	case SPRN_THRM1:
+ 	case SPRN_THRM2:
+@@ -551,6 +562,17 @@ int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val
+ 	case SPRN_FSCR:
+ 		*spr_val = vcpu->arch.fscr;
+ 		break;
++#ifdef CONFIG_PPC_BOOK3S_64
++	case SPRN_BESCR:
++		*spr_val = vcpu->arch.bescr;
++		break;
++	case SPRN_EBBHR:
++		*spr_val = vcpu->arch.ebbhr;
++		break;
++	case SPRN_EBBRR:
++		*spr_val = vcpu->arch.ebbrr;
++		break;
++#endif
+ 	case SPRN_THRM1:
+ 	case SPRN_THRM2:
+ 	case SPRN_THRM3:
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index ee1d8ee..3a94561 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -882,15 +882,6 @@ static int kvmppc_get_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
+ 	case KVM_REG_PPC_PSPB:
+ 		*val = get_reg_val(id, vcpu->arch.pspb);
+ 		break;
+-	case KVM_REG_PPC_EBBHR:
+-		*val = get_reg_val(id, vcpu->arch.ebbhr);
+-		break;
+-	case KVM_REG_PPC_EBBRR:
+-		*val = get_reg_val(id, vcpu->arch.ebbrr);
+-		break;
+-	case KVM_REG_PPC_BESCR:
+-		*val = get_reg_val(id, vcpu->arch.bescr);
+-		break;
+ 	case KVM_REG_PPC_DPDES:
+ 		*val = get_reg_val(id, vcpu->arch.vcore->dpdes);
+ 		break;
+@@ -1088,15 +1079,6 @@ static int kvmppc_set_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
+ 	case KVM_REG_PPC_PSPB:
+ 		vcpu->arch.pspb = set_reg_val(id, *val);
+ 		break;
+-	case KVM_REG_PPC_EBBHR:
+-		vcpu->arch.ebbhr = set_reg_val(id, *val);
+-		break;
+-	case KVM_REG_PPC_EBBRR:
+-		vcpu->arch.ebbrr = set_reg_val(id, *val);
+-		break;
+-	case KVM_REG_PPC_BESCR:
+-		vcpu->arch.bescr = set_reg_val(id, *val);
+-		break;
+ 	case KVM_REG_PPC_DPDES:
+ 		vcpu->arch.vcore->dpdes = set_reg_val(id, *val);
+ 		break;
+-- 
+1.8.5.2
+

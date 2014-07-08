@@ -1,0 +1,48 @@
+From 68eb8dd89c2283d4ed379baa4590d4e30c3cd258 Mon Sep 17 00:00:00 2001
+From: David Rientjes <rientjes@google.com>
+Date: Tue, 21 Jan 2014 15:51:12 -0800
+Subject: [PATCH] mm, page_alloc: warn for non-blockable __GFP_NOFAIL
+ allocation failure
+
+References: VM Functionality
+Patch-mainline: v3.14
+Git-commit: aed0a0e32de387da831284fda25021de32477195
+
+__GFP_NOFAIL may return NULL when coupled with GFP_NOWAIT or GFP_ATOMIC.
+
+Luckily, nothing currently does such craziness.  So instead of causing
+such allocations to loop (potentially forever), we maintain the current
+behavior and also warn about the new users of the deprecated flag.
+
+Suggested-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: David Rientjes <rientjes@google.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/page_alloc.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index c73d590..5be1505 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -2606,8 +2606,15 @@ rebalance:
+ 	}
+ 
+ 	/* Atomic allocations - we can't balance anything */
+-	if (!wait)
++	if (!wait) {
++		/*
++		 * All existing users of the deprecated __GFP_NOFAIL are
++		 * blockable, so warn of any new users that actually allow this
++		 * type of allocation to fail.
++		 */
++		WARN_ON_ONCE(gfp_mask & __GFP_NOFAIL);
+ 		goto nopage;
++	}
+ 
+ 	/* Avoid recursion of direct reclaim */
+ 	if (current->flags & PF_MEMALLOC)

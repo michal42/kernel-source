@@ -1,0 +1,89 @@
+From da9c30bebdf7b84d17db9e5eda7cdfd46ff065d5 Mon Sep 17 00:00:00 2001
+From: "Aneesh Kumar K.V" <aneesh.kumar@linux.vnet.ibm.com>
+Date: Mon, 7 Oct 2013 22:17:55 +0530
+Subject: [PATCH 034/160] kvm: powerpc: book3s: Cleanup interrupt handling code
+Git-commit: dd96b2c2dc408faf2213bc0a05897c1359f7969c
+Patch-mainline: v3.13-rc1
+References: FATE#317763
+
+With this patch if HV is included, interrupts come in to the HV version
+of the kvmppc_interrupt code, which then jumps to the PR handler,
+renamed to kvmppc_interrupt_pr, if the guest is a PR guest. This helps
+in enabling both HV and PR, which we do in later patch
+
+Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/exception-64s.h | 11 +++++++++++
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S  |  9 +++++++--
+ arch/powerpc/kvm/book3s_segment.S        |  4 ++--
+ 3 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/exception-64s.h b/arch/powerpc/include/asm/exception-64s.h
+index d7aad88..7a8a807 100644
+--- a/arch/powerpc/include/asm/exception-64s.h
++++ b/arch/powerpc/include/asm/exception-64s.h
+@@ -198,6 +198,17 @@ END_FTR_SECTION_NESTED(ftr,ftr,943)
+ 	cmpwi	r10,0;							\
+ 	bne	do_kvm_##n
+ 
++#ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
++/*
++ * If hv is possible, interrupts come into to the hv version
++ * of the kvmppc_interrupt code, which then jumps to the PR handler,
++ * kvmppc_interrupt_pr, if the guest is a PR guest.
++ */
++#define kvmppc_interrupt kvmppc_interrupt_hv
++#else
++#define kvmppc_interrupt kvmppc_interrupt_pr
++#endif
++
+ #define __KVM_HANDLER(area, h, n)					\
+ do_kvm_##n:								\
+ 	BEGIN_FTR_SECTION_NESTED(947)					\
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 88e65ed..50ab422 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -742,8 +742,8 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
+ /*
+  * We come here from the first-level interrupt handlers.
+  */
+-	.globl	kvmppc_interrupt
+-kvmppc_interrupt:
++	.globl	kvmppc_interrupt_hv
++kvmppc_interrupt_hv:
+ 	/*
+ 	 * Register contents:
+ 	 * R12		= interrupt vector
+@@ -757,6 +757,11 @@ kvmppc_interrupt:
+ 	lbz	r9, HSTATE_IN_GUEST(r13)
+ 	cmpwi	r9, KVM_GUEST_MODE_HOST_HV
+ 	beq	kvmppc_bad_host_intr
++#ifdef CONFIG_KVM_BOOK3S_PR_POSSIBLE
++	cmpwi	r9, KVM_GUEST_MODE_GUEST
++	ld	r9, HSTATE_HOST_R2(r13)
++	beq	kvmppc_interrupt_pr
++#endif
+ 	/* We're now back in the host but in guest MMU context */
+ 	li	r9, KVM_GUEST_MODE_HOST_HV
+ 	stb	r9, HSTATE_IN_GUEST(r13)
+diff --git a/arch/powerpc/kvm/book3s_segment.S b/arch/powerpc/kvm/book3s_segment.S
+index 1abe478..bc50c97 100644
+--- a/arch/powerpc/kvm/book3s_segment.S
++++ b/arch/powerpc/kvm/book3s_segment.S
+@@ -161,8 +161,8 @@ kvmppc_handler_trampoline_enter_end:
+ .global kvmppc_handler_trampoline_exit
+ kvmppc_handler_trampoline_exit:
+ 
+-.global kvmppc_interrupt
+-kvmppc_interrupt:
++.global kvmppc_interrupt_pr
++kvmppc_interrupt_pr:
+ 
+ 	/* Register usage at this point:
+ 	 *
+-- 
+1.8.5.2
+

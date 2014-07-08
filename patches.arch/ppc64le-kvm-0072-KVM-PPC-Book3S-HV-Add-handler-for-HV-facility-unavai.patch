@@ -1,0 +1,59 @@
+From 352a9cf334f3432b4da0152e3b38d37d7b384e10 Mon Sep 17 00:00:00 2001
+From: Michael Ellerman <michael@ellerman.id.au>
+Date: Wed, 8 Jan 2014 21:25:23 +1100
+Subject: [PATCH 072/160] KVM: PPC: Book3S HV: Add handler for HV facility
+ unavailable
+Git-commit: bd3048b80caace9cf0ae9ad22b2fbb8333b44a97
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+At present this should never happen, since the host kernel sets
+HFSCR to allow access to all facilities.  It's better to be prepared
+to handle it cleanly if it does ever happen, though.
+
+Signed-off-by: Michael Ellerman <michael@ellerman.id.au>
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/kvm_asm.h |  1 +
+ arch/powerpc/kvm/book3s_hv.c       | 11 ++++++++++-
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/include/asm/kvm_asm.h b/arch/powerpc/include/asm/kvm_asm.h
+index 1503d8c..fdf0627 100644
+--- a/arch/powerpc/include/asm/kvm_asm.h
++++ b/arch/powerpc/include/asm/kvm_asm.h
+@@ -100,6 +100,7 @@
+ #define BOOK3S_INTERRUPT_PERFMON	0xf00
+ #define BOOK3S_INTERRUPT_ALTIVEC	0xf20
+ #define BOOK3S_INTERRUPT_VSX		0xf40
++#define BOOK3S_INTERRUPT_H_FAC_UNAVAIL	0xf80
+ 
+ #define BOOK3S_IRQPRIO_SYSTEM_RESET		0
+ #define BOOK3S_IRQPRIO_DATA_SEGMENT		1
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index 4ab13bc..09ccae0 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -710,7 +710,16 @@ static int kvmppc_handle_exit_hv(struct kvm_run *run, struct kvm_vcpu *vcpu,
+ 	 * we don't emulate any guest instructions at this stage.
+ 	 */
+ 	case BOOK3S_INTERRUPT_H_EMUL_ASSIST:
+-		kvmppc_core_queue_program(vcpu, 0x80000);
++		kvmppc_core_queue_program(vcpu, SRR1_PROGILL);
++		r = RESUME_GUEST;
++		break;
++	/*
++	 * This occurs if the guest (kernel or userspace), does something that
++	 * is prohibited by HFSCR.  We just generate a program interrupt to
++	 * the guest.
++	 */
++	case BOOK3S_INTERRUPT_H_FAC_UNAVAIL:
++		kvmppc_core_queue_program(vcpu, SRR1_PROGILL);
+ 		r = RESUME_GUEST;
+ 		break;
+ 	default:
+-- 
+1.8.5.2
+

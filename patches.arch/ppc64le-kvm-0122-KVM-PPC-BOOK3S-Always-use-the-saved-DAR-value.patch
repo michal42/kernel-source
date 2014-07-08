@@ -1,0 +1,44 @@
+From f8625eb14d3157d7cf3147617d1634929b3f1b9a Mon Sep 17 00:00:00 2001
+From: "Aneesh Kumar K.V" <aneesh.kumar@linux.vnet.ibm.com>
+Date: Mon, 12 May 2014 17:04:05 +0530
+Subject: [PATCH 122/160] KVM: PPC: BOOK3S: Always use the saved DAR value
+Git-commit: 7310f3a5b0ecc7ac8b57e70fe395968cbe0fc40a
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+Although it's optional, IBM POWER cpus always had DAR value set on
+alignment interrupt. So don't try to compute these values.
+
+Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_emulate.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/powerpc/kvm/book3s_emulate.c b/arch/powerpc/kvm/book3s_emulate.c
+index 9bdff15..61f38eb 100644
+--- a/arch/powerpc/kvm/book3s_emulate.c
++++ b/arch/powerpc/kvm/book3s_emulate.c
+@@ -676,6 +676,12 @@ u32 kvmppc_alignment_dsisr(struct kvm_vcpu *vcpu, unsigned int inst)
+ 
+ ulong kvmppc_alignment_dar(struct kvm_vcpu *vcpu, unsigned int inst)
+ {
++#ifdef CONFIG_PPC_BOOK3S_64
++	/*
++	 * Linux's fix_alignment() assumes that DAR is valid, so can we
++	 */
++	return vcpu->arch.fault_dar;
++#else
+ 	ulong dar = 0;
+ 	ulong ra = get_ra(inst);
+ 	ulong rb = get_rb(inst);
+@@ -700,4 +706,5 @@ ulong kvmppc_alignment_dar(struct kvm_vcpu *vcpu, unsigned int inst)
+ 	}
+ 
+ 	return dar;
++#endif
+ }
+-- 
+1.8.5.2
+

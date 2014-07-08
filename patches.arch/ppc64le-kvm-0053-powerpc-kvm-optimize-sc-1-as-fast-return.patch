@@ -1,0 +1,89 @@
+From 914ab41620f647abe0aee1e02b350a88bf12da7d Mon Sep 17 00:00:00 2001
+From: Liu Ping Fan <kernelfans@gmail.com>
+Date: Tue, 19 Nov 2013 14:12:48 +0800
+Subject: [PATCH 053/160] powerpc: kvm: optimize "sc 1" as fast return
+Git-commit: 27025a602cb9d8b0fa5162b465334ef059a503b6
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+In some scene, e.g openstack CI, PR guest can trigger "sc 1" frequently,
+this patch optimizes the path by directly delivering BOOK3S_INTERRUPT_SYSCALL
+to HV guest, so powernv can return to HV guest without heavy exit, i.e,
+no need to swap TLB, HTAB,.. etc
+
+Signed-off-by: Liu Ping Fan <pingfank@linux.vnet.ibm.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv.c            | 10 ++++------
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S | 19 ++++++++++++++++++-
+ 2 files changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index 1dd3f45..8d5b287 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -676,12 +676,10 @@ static int kvmppc_handle_exit_hv(struct kvm_run *run, struct kvm_vcpu *vcpu,
+ 		/* hcall - punt to userspace */
+ 		int i;
+ 
+-		if (vcpu->arch.shregs.msr & MSR_PR) {
+-			/* sc 1 from userspace - reflect to guest syscall */
+-			kvmppc_book3s_queue_irqprio(vcpu, BOOK3S_INTERRUPT_SYSCALL);
+-			r = RESUME_GUEST;
+-			break;
+-		}
++		/* hypercall with MSR_PR has already been handled in rmode,
++		 * and never reaches here.
++		 */
++
+ 		run->papr_hcall.nr = kvmppc_get_gpr(vcpu, 3);
+ 		for (i = 0; i < 9; ++i)
+ 			run->papr_hcall.args[i] = kvmppc_get_gpr(vcpu, 4 + i);
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 7fdecf3..4ae73d7 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -689,6 +689,13 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_206)
+ 5:	mtspr	SPRN_SRR0, r6
+ 	mtspr	SPRN_SRR1, r7
+ 
++/*
++ * Required state:
++ * R4 = vcpu
++ * R10: value for HSRR0
++ * R11: value for HSRR1
++ * R13 = PACA
++ */
+ fast_guest_return:
+ 	li	r0,0
+ 	stb	r0,VCPU_CEDED(r4)	/* cancel cede */
+@@ -1474,7 +1481,8 @@ kvmppc_hisi:
+ hcall_try_real_mode:
+ 	ld	r3,VCPU_GPR(R3)(r9)
+ 	andi.	r0,r11,MSR_PR
+-	bne	guest_exit_cont
++	/* sc 1 from userspace - reflect to guest syscall */
++	bne	sc_1_fast_return
+ 	clrrdi	r3,r3,2
+ 	cmpldi	r3,hcall_real_table_end - hcall_real_table
+ 	bge	guest_exit_cont
+@@ -1495,6 +1503,15 @@ hcall_try_real_mode:
+ 	ld	r11,VCPU_MSR(r4)
+ 	b	fast_guest_return
+ 
++sc_1_fast_return:
++	mtspr	SPRN_SRR0,r10
++	mtspr	SPRN_SRR1,r11
++	li	r10, BOOK3S_INTERRUPT_SYSCALL
++	li	r11, (MSR_ME << 1) | 1  /* synthesize MSR_SF | MSR_ME */
++	rotldi	r11, r11, 63
++	mr	r4,r9
++	b	fast_guest_return
++
+ 	/* We've attempted a real mode hcall, but it's punted it back
+ 	 * to userspace.  We need to restore some clobbered volatiles
+ 	 * before resuming the pass-it-to-qemu path */
+-- 
+1.8.5.2
+

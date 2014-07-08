@@ -1,0 +1,179 @@
+From b54613ffe2850472485c4e84db27dad765255c00 Mon Sep 17 00:00:00 2001
+From: "Aneesh Kumar K.V" <aneesh.kumar@linux.vnet.ibm.com>
+Date: Thu, 5 Jun 2014 17:38:02 +0530
+Subject: [PATCH 141/160] KVM: PPC: BOOK3S: PR: Emulate virtual timebase
+ register
+Git-commit: 5831f597884c508d77eb0bab6e1323435b11c1c9
+Patch-mainline: Merged into kvm-ppc
+References: FATE#317763
+
+virtual time base register is a per VM, per cpu register that needs
+to be saved and restored on vm exit and entry. Writing to VTB is not
+allowed in the privileged mode.
+
+Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+[agraf: fix compile error]
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/kvm_host.h |  1 +
+ arch/powerpc/include/asm/reg.h      | 16 ++++++++++++++++
+ arch/powerpc/include/asm/time.h     |  9 +++++++++
+ arch/powerpc/kvm/book3s.c           |  6 ++++++
+ arch/powerpc/kvm/book3s_emulate.c   |  3 +++
+ arch/powerpc/kvm/book3s_hv.c        |  6 ------
+ arch/powerpc/kvm/book3s_pr.c        |  3 ++-
+ 7 files changed, 37 insertions(+), 7 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/kvm_host.h b/arch/powerpc/include/asm/kvm_host.h
+index 622b708..a9f0cee 100644
+--- a/arch/powerpc/include/asm/kvm_host.h
++++ b/arch/powerpc/include/asm/kvm_host.h
+@@ -521,6 +521,7 @@ struct kvm_vcpu_arch {
+ #endif
+ 	/* Time base value when we entered the guest */
+ 	u64 entry_tb;
++	u64 entry_vtb;
+ 	u32 tcr;
+ 	ulong tsr; /* we need to perform set/clr_bits() which requires ulong */
+ 	u32 ivor[64];
+diff --git a/arch/powerpc/include/asm/reg.h b/arch/powerpc/include/asm/reg.h
+index a3e8c04..90ce9e6 100644
+--- a/arch/powerpc/include/asm/reg.h
++++ b/arch/powerpc/include/asm/reg.h
+@@ -25,6 +25,7 @@
+ #ifdef CONFIG_8xx
+ #include <asm/reg_8xx.h>
+ #endif /* CONFIG_8xx */
++#include <asm/bug.h>
+ 
+ #define MSR_SF_LG	63              /* Enable 64 bit mode */
+ #define MSR_ISF_LG	61              /* Interrupt 64b mode valid on 630 */
+@@ -1180,6 +1181,21 @@
+ 				     : "r" ((unsigned long)(v)) \
+ 				     : "memory")
+ 
++static inline unsigned long mfvtb (void)
++{
++#ifdef CONFIG_PPC_BOOK3S_64
++	if (cpu_has_feature(CPU_FTR_ARCH_207S))
++		return mfspr(SPRN_VTB);
++#endif
++	/*
++	 * The above mfspr will be a no-op on anything before Power8
++	 * That can result in random values returned. We need to
++	 * capture that.
++	 */
++	BUG();
++	return 0;
++}
++
+ #ifdef __powerpc64__
+ #if defined(CONFIG_PPC_CELL) || defined(CONFIG_PPC_FSL_BOOK3E)
+ #define mftb()		({unsigned long rval;				\
+diff --git a/arch/powerpc/include/asm/time.h b/arch/powerpc/include/asm/time.h
+index 1d428e60..03cbada 100644
+--- a/arch/powerpc/include/asm/time.h
++++ b/arch/powerpc/include/asm/time.h
+@@ -102,6 +102,15 @@ static inline u64 get_rtc(void)
+ 	return (u64)hi * 1000000000 + lo;
+ }
+ 
++static inline u64 get_vtb(void)
++{
++#ifdef CONFIG_PPC_BOOK3S_64
++	if (cpu_has_feature(CPU_FTR_ARCH_207S))
++		return mfvtb();
++#endif
++	return 0;
++}
++
+ #ifdef CONFIG_PPC64
+ static inline u64 get_tb(void)
+ {
+diff --git a/arch/powerpc/kvm/book3s.c b/arch/powerpc/kvm/book3s.c
+index c254c27..ddce1ea 100644
+--- a/arch/powerpc/kvm/book3s.c
++++ b/arch/powerpc/kvm/book3s.c
+@@ -646,6 +646,9 @@ int kvm_vcpu_ioctl_get_one_reg(struct kvm_vcpu *vcpu, struct kvm_one_reg *reg)
+ 		case KVM_REG_PPC_BESCR:
+ 			val = get_reg_val(reg->id, vcpu->arch.bescr);
+ 			break;
++		case KVM_REG_PPC_VTB:
++			val = get_reg_val(reg->id, vcpu->arch.vtb);
++			break;
+ 		default:
+ 			r = -EINVAL;
+ 			break;
+@@ -750,6 +753,9 @@ int kvm_vcpu_ioctl_set_one_reg(struct kvm_vcpu *vcpu, struct kvm_one_reg *reg)
+ 		case KVM_REG_PPC_BESCR:
+ 			vcpu->arch.bescr = set_reg_val(reg->id, val);
+ 			break;
++		case KVM_REG_PPC_VTB:
++			vcpu->arch.vtb = set_reg_val(reg->id, val);
++			break;
+ 		default:
+ 			r = -EINVAL;
+ 			break;
+diff --git a/arch/powerpc/kvm/book3s_emulate.c b/arch/powerpc/kvm/book3s_emulate.c
+index 3565e77..1bb16a5 100644
+--- a/arch/powerpc/kvm/book3s_emulate.c
++++ b/arch/powerpc/kvm/book3s_emulate.c
+@@ -577,6 +577,9 @@ int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val
+ 		 */
+ 		*spr_val = vcpu->arch.spurr;
+ 		break;
++	case SPRN_VTB:
++		*spr_val = vcpu->arch.vtb;
++		break;
+ 	case SPRN_GQR0:
+ 	case SPRN_GQR1:
+ 	case SPRN_GQR2:
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index 281ca44..7dec3cd 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -897,9 +897,6 @@ static int kvmppc_get_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
+ 	case KVM_REG_PPC_IC:
+ 		*val = get_reg_val(id, vcpu->arch.ic);
+ 		break;
+-	case KVM_REG_PPC_VTB:
+-		*val = get_reg_val(id, vcpu->arch.vtb);
+-		break;
+ 	case KVM_REG_PPC_CSIGR:
+ 		*val = get_reg_val(id, vcpu->arch.csigr);
+ 		break;
+@@ -1097,9 +1094,6 @@ static int kvmppc_set_one_reg_hv(struct kvm_vcpu *vcpu, u64 id,
+ 	case KVM_REG_PPC_IC:
+ 		vcpu->arch.ic = set_reg_val(id, *val);
+ 		break;
+-	case KVM_REG_PPC_VTB:
+-		vcpu->arch.vtb = set_reg_val(id, *val);
+-		break;
+ 	case KVM_REG_PPC_CSIGR:
+ 		vcpu->arch.csigr = set_reg_val(id, *val);
+ 		break;
+diff --git a/arch/powerpc/kvm/book3s_pr.c b/arch/powerpc/kvm/book3s_pr.c
+index 671f5c92..d2deb9e 100644
+--- a/arch/powerpc/kvm/book3s_pr.c
++++ b/arch/powerpc/kvm/book3s_pr.c
+@@ -125,6 +125,7 @@ void kvmppc_copy_to_svcpu(struct kvmppc_book3s_shadow_vcpu *svcpu,
+ 	 * to find the guest purr and spurr value.
+ 	 */
+ 	vcpu->arch.entry_tb = get_tb();
++	vcpu->arch.entry_vtb = get_vtb();
+ 	svcpu->in_use = true;
+ }
+ 
+@@ -176,7 +177,7 @@ void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu,
+ 	 */
+ 	vcpu->arch.purr += get_tb() - vcpu->arch.entry_tb;
+ 	vcpu->arch.spurr += get_tb() - vcpu->arch.entry_tb;
+-
++	vcpu->arch.vtb += get_vtb() - vcpu->arch.entry_vtb;
+ 	svcpu->in_use = false;
+ 
+ out:
+-- 
+1.8.5.2
+

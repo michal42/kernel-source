@@ -1,0 +1,67 @@
+From aa01eb06d28f4ef17f4075bf1620cd9f6a9d58f9 Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Wed, 8 Jan 2014 21:25:27 +1100
+Subject: [PATCH 076/160] KVM: PPC: Book3S HV: Handle new LPCR bits on POWER8
+Git-commit: e0622bd9f2fccc8a801fa7aaf4fa6d7c728c3a78
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+POWER8 has a bit in the LPCR to enable or disable the PURR and SPURR
+registers to count when in the guest.  Set this bit.
+
+POWER8 has a field in the LPCR called AIL (Alternate Interrupt Location)
+which is used to enable relocation-on interrupts.  Allow userspace to
+set this field.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/reg.h | 2 ++
+ arch/powerpc/kvm/book3s_hv.c   | 6 ++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/arch/powerpc/include/asm/reg.h b/arch/powerpc/include/asm/reg.h
+index 6113856..d57c247 100644
+--- a/arch/powerpc/include/asm/reg.h
++++ b/arch/powerpc/include/asm/reg.h
+@@ -310,8 +310,10 @@
+ #define   LPCR_RMLS    0x1C000000      /* impl dependent rmo limit sel */
+ #define	  LPCR_RMLS_SH	(63-37)
+ #define   LPCR_ILE     0x02000000      /* !HV irqs set MSR:LE */
++#define   LPCR_AIL	0x01800000	/* Alternate interrupt location */
+ #define   LPCR_AIL_0	0x00000000	/* MMU off exception offset 0x0 */
+ #define   LPCR_AIL_3	0x01800000	/* MMU on exception offset 0xc00...4xxx */
++#define   LPCR_ONL	0x00040000	/* online - PURR/SPURR count */
+ #define   LPCR_PECE	0x0001f000	/* powersave exit cause enable */
+ #define     LPCR_PECEDP	0x00010000	/* directed priv dbells cause exit */
+ #define     LPCR_PECEDH	0x00008000	/* directed hyp dbells cause exit */
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index 382477d..dd8cc6b 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -793,8 +793,11 @@ static void kvmppc_set_lpcr(struct kvm_vcpu *vcpu, u64 new_lpcr)
+ 	/*
+ 	 * Userspace can only modify DPFD (default prefetch depth),
+ 	 * ILE (interrupt little-endian) and TC (translation control).
++	 * On POWER8 userspace can also modify AIL (alt. interrupt loc.)
+ 	 */
+ 	mask = LPCR_DPFD | LPCR_ILE | LPCR_TC;
++	if (cpu_has_feature(CPU_FTR_ARCH_207S))
++		mask |= LPCR_AIL;
+ 	vc->lpcr = (vc->lpcr & ~mask) | (new_lpcr & mask);
+ 	spin_unlock(&vc->lock);
+ }
+@@ -2170,6 +2173,9 @@ static int kvmppc_core_init_vm_hv(struct kvm *kvm)
+ 			LPCR_VPM0 | LPCR_VPM1;
+ 		kvm->arch.vrma_slb_v = SLB_VSID_B_1T |
+ 			(VRMA_VSID << SLB_VSID_SHIFT_1T);
++		/* On POWER8 turn on online bit to enable PURR/SPURR */
++		if (cpu_has_feature(CPU_FTR_ARCH_207S))
++			lpcr |= LPCR_ONL;
+ 	}
+ 	kvm->arch.lpcr = lpcr;
+ 
+-- 
+1.8.5.2
+

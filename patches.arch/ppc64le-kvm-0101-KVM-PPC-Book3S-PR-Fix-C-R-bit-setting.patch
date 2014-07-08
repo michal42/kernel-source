@@ -1,0 +1,60 @@
+From e6d07b5b04e3e3b0fc3d13f51d79da341d8396e3 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 24 Apr 2014 12:48:19 +0200
+Subject: [PATCH 101/160] KVM: PPC: Book3S: PR: Fix C/R bit setting
+Git-commit: 740f834eb2505e1883b54cfc1644af80834ab6b6
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+Commit 9308ab8e2d made C/R HTAB updates go byte-wise into the target HTAB.
+However, it didn't update the guest's copy of the HTAB, but instead the
+host local copy of it.
+
+Write to the guest's HTAB instead.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+Cc: Paul Mackerras <paulus@samba.org>
+Acked-by: Paul Mackerras <paulus@samba.org>
+
+---
+ arch/powerpc/kvm/book3s_32_mmu.c | 2 +-
+ arch/powerpc/kvm/book3s_64_mmu.c | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_32_mmu.c b/arch/powerpc/kvm/book3s_32_mmu.c
+index 76a64ce..60fc3f4 100644
+--- a/arch/powerpc/kvm/book3s_32_mmu.c
++++ b/arch/powerpc/kvm/book3s_32_mmu.c
+@@ -270,7 +270,7 @@ static int kvmppc_mmu_book3s_32_xlate_pte(struct kvm_vcpu *vcpu, gva_t eaddr,
+ 	   page */
+ 	if (found) {
+ 		u32 pte_r = pteg[i+1];
+-		char __user *addr = (char __user *) &pteg[i+1];
++		char __user *addr = (char __user *) (ptegp + (i+1) * sizeof(u32));
+ 
+ 		/*
+ 		 * Use single-byte writes to update the HPTE, to
+diff --git a/arch/powerpc/kvm/book3s_64_mmu.c b/arch/powerpc/kvm/book3s_64_mmu.c
+index 8231b83..171e5ca 100644
+--- a/arch/powerpc/kvm/book3s_64_mmu.c
++++ b/arch/powerpc/kvm/book3s_64_mmu.c
+@@ -342,14 +342,14 @@ do_second:
+ 		 * non-PAPR platforms such as mac99, and this is
+ 		 * what real hardware does.
+ 		 */
+-		char __user *addr = (char __user *) &pteg[i+1];
++                char __user *addr = (char __user *) (ptegp + (i + 1) * sizeof(u64));
+ 		r |= HPTE_R_R;
+ 		put_user(r >> 8, addr + 6);
+ 	}
+ 	if (iswrite && gpte->may_write && !(r & HPTE_R_C)) {
+ 		/* Set the dirty flag */
+ 		/* Use a single byte write */
+-		char __user *addr = (char __user *) &pteg[i+1];
++                char __user *addr = (char __user *) (ptegp + (i + 1) * sizeof(u64));
+ 		r |= HPTE_R_C;
+ 		put_user(r, addr + 7);
+ 	}
+-- 
+1.8.5.2
+
