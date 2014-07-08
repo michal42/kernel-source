@@ -21,13 +21,33 @@ hitting the slowpath.
 
 This patch reduces the overall cost by moving the batch checks out of a
 cache-write intensive line and avoiding a second pass through the lists
-if all zones were ineligible due to failing a watermark check.
+if all zones were ineligible due to failing a watermark check. On UMA
+machines the difference is negligible but on a 4-socket NUMA machine
+running tiobench there is a noticable reduction in system CPU usage.
+
+          3.16.0-rc3   3.16.0-rc3      3.16.0-rc3
+             vanilla faireligible-v5 lowercost-v5
+User          746.94          748.08       781.64
+System      65336.22        55497.70     39153.45
+Elapsed     27553.52        27439.07     27346.73
+
+As the NUMA machine in question used zone-list ordering the fair zone
+allocation policy would not be applied. On UMA machine though the fair
+zone allocation policy is still applied. These are the per-zone allocation stats
+for a UMA machine
+
+                            3.16.0-rc3   3.16.0-rc3    3.16.0-rc3       3.0.0
+                               vanilla faireligible-v5 lowercost-v5   vanilla
+DMA32 allocs                  49316010    41145827       40571913    21038511
+Normal allocs                 83347588    90982925       90354361    96750157
+
+Note that there are differences in DMA32 allocs
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
  include/linux/mmzone.h |   6 +++
- mm/page_alloc.c        | 119 ++++++++++++++++++++++++++++---------------------
- 2 files changed, 75 insertions(+), 50 deletions(-)
+ mm/page_alloc.c        | 101 ++++++++++++++++++++++++++-----------------------
+ 2 files changed, 59 insertions(+), 48 deletions(-)
 
 diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
 index c0ee2ec..08a223b 100644
@@ -54,10 +74,10 @@ index c0ee2ec..08a223b 100644
  {
  	return test_bit(ZONE_OOM_LOCKED, &zone->flags);
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index 2638b19..fbe7a0c 100644
+index 0bf384a..c81087d 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -1600,6 +1600,9 @@ again:
+@@ -1604,6 +1604,9 @@ again:
  	}
  
  	__mod_zone_page_state(zone, NR_ALLOC_BATCH, -(1 << order));
@@ -67,7 +87,7 @@ index 2638b19..fbe7a0c 100644
  
  	__count_zone_vm_events(PGALLOC, zone, 1 << order);
  	zone_statistics(preferred_zone, zone, gfp_flags);
-@@ -1911,6 +1914,20 @@ static bool zone_allows_reclaim(struct zone *local_zone, struct zone *zone)
+@@ -1915,6 +1918,18 @@ static bool zone_allows_reclaim(struct zone *local_zone, struct zone *zone)
  
  #endif	/* CONFIG_NUMA */
  
@@ -76,8 +96,6 @@ index 2638b19..fbe7a0c 100644
 +	struct zone *zone = preferred_zone->zone_pgdat->node_zones;
 +
 +	do {
-+		if (!zone_is_fair_depleted(zone))
-+			continue;
 +		mod_zone_page_state(zone, NR_ALLOC_BATCH,
 +			high_wmark_pages(zone) - low_wmark_pages(zone) -
 +			atomic_long_read(&zone->vm_stat[NR_ALLOC_BATCH]));
@@ -88,11 +106,10 @@ index 2638b19..fbe7a0c 100644
  /*
   * get_page_from_freelist goes through the zonelist trying to allocate
   * a page.
-@@ -1928,8 +1945,13 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
+@@ -1932,8 +1947,12 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
  	int did_zlc_setup = 0;		/* just call zlc_setup() one time */
  	bool consider_zone_dirty = (alloc_flags & ALLOC_WMARK_LOW) &&
  				(gfp_mask & __GFP_WRITE);
-+	int nr_fair_eligible = 0;
 +	int nr_fair_skipped = 0;
 +	bool zonelist_rescan;
  
@@ -102,26 +119,11 @@ index 2638b19..fbe7a0c 100644
  	/*
  	 * Scan zonelist, looking for a zone with enough free.
  	 * See also __cpuset_node_allowed_softwall() comment in kernel/cpuset.c.
-@@ -1952,10 +1974,23 @@ zonelist_scan:
- 		 * time the page has in memory before being reclaimed.
- 		 */
+@@ -1958,8 +1977,10 @@ zonelist_scan:
  		if (alloc_flags & ALLOC_FAIR) {
--			if (!zone_local(preferred_zone, zone))
--				break;
+ 			if (!zone_local(preferred_zone, zone))
+ 				break;
 -			if (zone_page_state(zone, NR_ALLOC_BATCH) <= 0)
-+			if (!zone_local(preferred_zone, zone)) {
-+				/*
-+				 * If this is the first non-preferred
-+				 * zone and it's not local then we can
-+				 * cancel the fair zone policy now
-+				 * instead of looping back around
-+				 */
-+				if (!nr_fair_eligible)
-+					alloc_flags &= ~ALLOC_FAIR;
-+				else
-+					break;
-+			}
-+			nr_fair_eligible++;
 +			if (zone_is_fair_depleted(zone)) {
 +				nr_fair_skipped++;
  				continue;
@@ -129,7 +131,7 @@ index 2638b19..fbe7a0c 100644
  		}
  		/*
  		 * When allocating a page cache page for writing, we
-@@ -2061,13 +2096,7 @@ this_zone_full:
+@@ -2065,13 +2086,7 @@ this_zone_full:
  			zlc_mark_zone_full(zonelist, z);
  	}
  
@@ -144,7 +146,7 @@ index 2638b19..fbe7a0c 100644
  		/*
  		 * page->pfmemalloc is set when ALLOC_NO_WATERMARKS was
  		 * necessary to allocate the page. The expectation is
-@@ -2076,8 +2105,37 @@ this_zone_full:
+@@ -2080,8 +2095,37 @@ this_zone_full:
  		 * for !PFMEMALLOC purposes.
  		 */
  		page->pfmemalloc = !!(alloc_flags & ALLOC_NO_WATERMARKS);
@@ -183,7 +185,7 @@ index 2638b19..fbe7a0c 100644
  }
  
  /*
-@@ -2398,28 +2456,6 @@ __alloc_pages_high_priority(gfp_t gfp_mask, unsigned int order,
+@@ -2402,28 +2446,6 @@ __alloc_pages_high_priority(gfp_t gfp_mask, unsigned int order,
  	return page;
  }
  
@@ -212,7 +214,7 @@ index 2638b19..fbe7a0c 100644
  static void wake_all_kswapds(unsigned int order,
  			     struct zonelist *zonelist,
  			     enum zone_type high_zoneidx,
-@@ -2755,29 +2791,12 @@ retry_cpuset:
+@@ -2759,29 +2781,12 @@ retry_cpuset:
  	if (allocflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
  		alloc_flags |= ALLOC_CMA;
  #endif
