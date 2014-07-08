@@ -11,13 +11,33 @@ and it's also updated during page free. Move the counter into vmstat to
 take advantage of the per-cpu updates and do not update it in the free
 paths unless necessary.
 
+This noticable reduces system CPU overhead. On a small UMA machine running tiobench
+there was no difference to the performance of the benchmark but overhead was reduced. This compares
+the vanilla kernel, the previous patch and this patch.
+
+          3.16.0-rc3  3.16.0-rc3  3.16.0-rc3
+             vanilla rearrange-v5  vmstat-v5
+User          383.61      386.35      400.49
+System        403.83      402.57      384.27
+Elapsed      5411.50     5433.29     5415.67
+
+There is also a reduction of overhead on a 4-node machine. Note that
+automatic NUMA balancing was disabled for this test as otherwise the system
+CPU overhead is unpredictable.
+
+          3.16.0-rc3   3.16.0-rc3  3.16.0-rc3
+             vanilla rearrange-v5 vmstat-v5r9
+User          746.94       759.78      760.22
+System      65336.22     58350.98    56166.62
+Elapsed     27553.52     27282.02    27316.75
+
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/mmzone.h | 2 +-
- mm/page_alloc.c        | 8 +++++---
- mm/vmscan.c            | 7 ++++---
- mm/vmstat.c            | 3 ++-
- 4 files changed, 12 insertions(+), 8 deletions(-)
+ include/linux/mmzone.h |  2 +-
+ mm/page_alloc.c        | 12 +++++++++---
+ mm/vmscan.c            |  7 ++++---
+ mm/vmstat.c            |  3 ++-
+ 4 files changed, 16 insertions(+), 8 deletions(-)
 
 diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
 index fbadc45..c0ee2ec 100644
@@ -40,30 +60,37 @@ index fbadc45..c0ee2ec 100644
  
  	/*
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index c607acd..6cd7f06 100644
+index c607acd..aa46f00 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -682,7 +682,8 @@ static void free_pcppages_bulk(struct zone *zone, int count,
+@@ -680,9 +680,12 @@ static void free_pcppages_bulk(struct zone *zone, int count,
+ 	int migratetype = 0;
+ 	int batch_free = 0;
  	int to_free = count;
++	unsigned long nr_scanned;
  
  	spin_lock(&zone->lock);
 -	zone->pages_scanned = 0;
-+	if (zone_page_state(zone, NR_PAGES_SCANNED))
-+		__mod_zone_page_state(zone, NR_PAGES_SCANNED, 0);
++	nr_scanned = zone_page_state(zone, NR_PAGES_SCANNED);
++	if (nr_scanned)
++		__mod_zone_page_state(zone, NR_PAGES_SCANNED, -nr_scanned);
  
  	while (to_free) {
  		struct page *page;
-@@ -732,7 +733,8 @@ static void free_one_page(struct zone *zone,
+@@ -731,8 +734,11 @@ static void free_one_page(struct zone *zone,
+ 				unsigned int order,
  				int migratetype)
  {
++	unsigned long nr_scanned;
  	spin_lock(&zone->lock);
 -	zone->pages_scanned = 0;
-+	if (zone_page_state(zone, NR_PAGES_SCANNED))
-+		__mod_zone_page_state(zone, NR_PAGES_SCANNED, 0);
++	nr_scanned = zone_page_state(zone, NR_PAGES_SCANNED);
++	if (nr_scanned)
++		__mod_zone_page_state(zone, NR_PAGES_SCANNED, -nr_scanned);
  
  	__free_one_page(page, pfn, zone, order, migratetype);
  	if (unlikely(!is_migrate_isolate(migratetype)))
-@@ -3240,7 +3242,7 @@ void show_free_areas(unsigned int filter)
+@@ -3240,7 +3246,7 @@ void show_free_areas(unsigned int filter)
  			K(zone_page_state(zone, NR_BOUNCE)),
  			K(zone_page_state(zone, NR_FREE_CMA_PAGES)),
  			K(zone_page_state(zone, NR_WRITEBACK_TEMP)),
@@ -73,7 +100,7 @@ index c607acd..6cd7f06 100644
  			);
  		printk("lowmem_reserve[]:");
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 0f16ffe..645db02 100644
+index 0f16ffe..761c628 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -169,7 +169,8 @@ static unsigned long zone_reclaimable_pages(struct zone *zone)
@@ -91,7 +118,7 @@ index 0f16ffe..645db02 100644
  
  	if (global_reclaim(sc)) {
 -		zone->pages_scanned += nr_scanned;
-+		zone_page_state_add(NR_PAGES_SCANNED, zone, nr_scanned);
++		__mod_zone_page_state(zone, NR_PAGES_SCANNED, nr_scanned);
  		if (current_is_kswapd())
  			__count_zone_vm_events(PGSCAN_KSWAPD, zone, nr_scanned);
  		else
@@ -100,7 +127,7 @@ index 0f16ffe..645db02 100644
  				     &nr_scanned, sc, isolate_mode, lru);
  	if (global_reclaim(sc))
 -		zone->pages_scanned += nr_scanned;
-+		zone_page_state_add(NR_PAGES_SCANNED, zone, nr_scanned);
++		__mod_zone_page_state(zone, NR_PAGES_SCANNED, nr_scanned);
  
  	reclaim_stat->recent_scanned[file] += nr_taken;
  
