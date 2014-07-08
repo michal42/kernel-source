@@ -1,52 +1,18 @@
-From: Philippe Bergheaud <felix@linux.vnet.ibm.com>
 From: Anton Blanchard <anton@samba.org>
-Subject: [01/33] powerpc: No need to use dot symbols when branching to a function
+Subject: powerpc: No need to use dot symbols when branching to a function
 Git-commit: b1576fec7f4dd4657694fefc97fda4cf28ec68e9
-Patch-mainline: Queued in subsystem maintainer repository
-Git-repo: git.kernel.org/cgit/linux/kernel/git/next/linux-next.git
-References: bnc#863764 fate#315275, LTC#103998
+Patch-mainline: v3.16-rc1
+References: bnc#863764 fate#315275, LTC#103998, bnc#885934
 X-Patchwork-Id: 333398
 
-Summary: Novell863764 - SLES 12 - Enable POWER LE kernel build with ELFv2
-Description: Enable POWER LE kernel build with ELFv2
+binutils is smart enough to know that a branch to a function
+descriptor is actually a branch to the functions text address.
 
-    powerpc: No need to use dot symbols when branching to a function
-    
-    binutils is smart enough to know that a branch to a function
-    descriptor is actually a branch to the functions text address.
-    
-    Alan tells me that binutils has been doing this for 9 years.
-    
+Alan tells me that binutils has been doing this for 9 years.
+
 Signed-off-by: Anton Blanchard <anton@samba.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
- arch/powerpc/boot/util.S                    |   4 +-
- arch/powerpc/include/asm/context_tracking.h |   4 +-
- arch/powerpc/include/asm/exception-64e.h    |   6 +-
- arch/powerpc/include/asm/exception-64s.h    |   2 +-
- arch/powerpc/include/asm/irqflags.h         |   4 +-
- arch/powerpc/include/asm/ppc_asm.h          |   2 +-
- arch/powerpc/kernel/cpu_setup_fsl_booke.S   |  28 +++---
- arch/powerpc/kernel/entry_64.S              |  86 ++++++++---------
- arch/powerpc/kernel/exceptions-64e.S        | 128 ++++++++++++-------------
- arch/powerpc/kernel/exceptions-64s.S        | 140 ++++++++++++++--------------
- arch/powerpc/kernel/head_64.S               |  66 ++++++-------
- arch/powerpc/kernel/idle_book3e.S           |   2 +-
- arch/powerpc/kernel/idle_power4.S           |   2 +-
- arch/powerpc/kernel/idle_power7.S           |   4 +-
- arch/powerpc/kernel/misc_64.S               |  10 +-
- arch/powerpc/kvm/book3s_hv_interrupts.S     |   2 +-
- arch/powerpc/kvm/book3s_hv_rmhandlers.S     |   6 +-
- arch/powerpc/lib/copypage_64.S              |   2 +-
- arch/powerpc/lib/copypage_power7.S          |   4 +-
- arch/powerpc/lib/copyuser_power7.S          |   8 +-
- arch/powerpc/lib/hweight_64.S               |   8 +-
- arch/powerpc/lib/mem_64.S                   |   4 +-
- arch/powerpc/lib/memcpy_power7.S            |   6 +-
- arch/powerpc/mm/hash_low_64.S               |   8 +-
- arch/powerpc/platforms/pasemi/powersave.S   |   2 +-
- arch/powerpc/platforms/pseries/hvCall.S     |   4 +-
- 26 files changed, 271 insertions(+), 271 deletions(-)
 Index: linux-3.12-SLE12/arch/powerpc/boot/util.S
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/boot/util.S
@@ -496,40 +462,46 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* This value is used to mark exception frames on the stack. */
  	.section	".toc","aw"
-@@ -317,11 +317,12 @@ interrupt_end_book3e:
+@@ -317,11 +317,16 @@ interrupt_end_book3e:
  	START_EXCEPTION(critical_input);
  	CRIT_EXCEPTION_PROLOG(0x100, BOOKE_INTERRUPT_CRITICAL,
  			      PROLOG_ADDITION_NONE)
 -//	EXCEPTION_COMMON(0x100, PACA_EXCRIT, INTS_DISABLE)
 -//	bl	special_reg_save_crit
-+//	EXCEPTION_COMMON_CRIT(0x100)
-+//	bl	save_nvgprs
-+//	bl	special_reg_save
- //	CHECK_NAPPING();
+-//	CHECK_NAPPING();
++	EXCEPTION_COMMON_CRIT(0x100)
++	bl	.save_nvgprs
++	bl	special_reg_save
++	CHECK_NAPPING();
++	EXCEPTION_COMMON_CRIT(0x100)
++	bl	save_nvgprs
++	bl	special_reg_save
++	CHECK_NAPPING();
  //	addi	r3,r1,STACK_FRAME_OVERHEAD
 -//	bl	.critical_exception
 +//	bl	critical_exception
  //	b	ret_from_crit_except
  	b	.
  
-@@ -329,11 +330,13 @@ interrupt_end_book3e:
+@@ -329,11 +334,13 @@ interrupt_end_book3e:
  	START_EXCEPTION(machine_check);
  	MC_EXCEPTION_PROLOG(0x200, BOOKE_INTERRUPT_MACHINE_CHECK,
  			    PROLOG_ADDITION_NONE)
 -//	EXCEPTION_COMMON(0x200, PACA_EXMC, INTS_DISABLE)
 -//	bl	special_reg_save_mc
-+//	EXCEPTION_COMMON_MC(0x000)
-+//	bl	save_nvgprs
-+//	bl	special_reg_save
-+//	CHECK_NAPPING();
- //	addi	r3,r1,STACK_FRAME_OVERHEAD
+-//	addi	r3,r1,STACK_FRAME_OVERHEAD
++	EXCEPTION_COMMON_MC(0x000)
++	bl	save_nvgprs
++	bl	special_reg_save
++	CHECK_NAPPING();
++	addi	r3,r1,STACK_FRAME_OVERHEAD
  //	CHECK_NAPPING();
 -//	bl	.machine_check_exception
 +//	bl	machine_check_exception
  //	b	ret_from_mc_except
  	b	.
  
-@@ -377,9 +380,9 @@ interrupt_end_book3e:
+@@ -377,9 +384,9 @@ interrupt_end_book3e:
  	std	r14,_DSISR(r1)
  	addi	r3,r1,STACK_FRAME_OVERHEAD
  	ld	r14,PACA_EXGEN+EX_R14(r13)
@@ -542,7 +514,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* Floating Point Unavailable Interrupt */
  	START_EXCEPTION(fp_unavailable);
-@@ -390,13 +393,13 @@ interrupt_end_book3e:
+@@ -390,13 +397,13 @@ interrupt_end_book3e:
  	ld	r12,_MSR(r1)
  	andi.	r0,r12,MSR_PR;
  	beq-	1f
@@ -560,7 +532,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* Altivec Unavailable Interrupt */
  	START_EXCEPTION(altivec_unavailable);
-@@ -409,32 +412,32 @@ BEGIN_FTR_SECTION
+@@ -409,32 +416,32 @@ BEGIN_FTR_SECTION
  	ld	r12,_MSR(r1)
  	andi.	r0,r12,MSR_PR;
  	beq-	1f
@@ -601,30 +573,32 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  
  /* Decrementer Interrupt */
-@@ -449,13 +452,17 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+@@ -449,13 +456,18 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
  	START_EXCEPTION(watchdog);
  	CRIT_EXCEPTION_PROLOG(0x9f0, BOOKE_INTERRUPT_WATCHDOG,
  			      PROLOG_ADDITION_NONE)
 -//	EXCEPTION_COMMON(0x9f0, PACA_EXCRIT, INTS_DISABLE)
 -//	bl	special_reg_save_crit
-+//	EXCEPTION_COMMON_CRIT(0x9f0)
-+//	bl	save_nvgprs
-+//	bl	special_reg_save
- //	CHECK_NAPPING();
+-//	CHECK_NAPPING();
++	EXCEPTION_COMMON_CRIT(0x9f0)
++	bl	save_nvgprs
++	bl	special_reg_save
++	CHECK_NAPPING();
  //	addi	r3,r1,STACK_FRAME_OVERHEAD
 -//	bl	.unknown_exception
 -//	b	ret_from_crit_except
 -	b	.
-+// #ifdef CONFIG_BOOKE_WDT
++#ifdef CONFIG_BOOKE_WDT
 +	bl	WatchdogException
 +#else
 +	bl	unknown_exception
 +#endif
 +	b	ret_from_crit_except
++
  
  /* System Call Interrupt */
  	START_EXCEPTION(system_call)
-@@ -470,10 +477,10 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+@@ -470,10 +482,10 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
  	NORMAL_EXCEPTION_PROLOG(0xf20, BOOKE_INTERRUPT_AP_UNAVAIL,
  				PROLOG_ADDITION_NONE)
  	EXCEPTION_COMMON(0xf20, PACA_EXGEN, INTS_DISABLE)
@@ -638,7 +612,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* Debug exception as a critical interrupt*/
  	START_EXCEPTION(debug_crit);
-@@ -534,9 +541,9 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
+@@ -534,9 +546,9 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
  	mr	r4,r14
  	ld	r14,PACA_EXCRIT+EX_R14(r13)
  	ld	r15,PACA_EXCRIT+EX_R15(r13)
@@ -651,7 +625,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  kernel_dbg_exc:
  	b	.	/* NYI */
-@@ -600,17 +607,17 @@ kernel_dbg_exc:
+@@ -600,17 +612,17 @@ kernel_dbg_exc:
  	mr	r4,r14
  	ld	r14,PACA_EXDBG+EX_R14(r13)
  	ld	r15,PACA_EXDBG+EX_R15(r13)
@@ -674,23 +648,24 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* Doorbell interrupt */
  	MASKABLE_EXCEPTION(0x280, BOOKE_INTERRUPT_DOORBELL,
-@@ -620,11 +627,12 @@ kernel_dbg_exc:
+@@ -620,11 +632,12 @@ kernel_dbg_exc:
  	START_EXCEPTION(doorbell_crit);
  	CRIT_EXCEPTION_PROLOG(0x2a0, BOOKE_INTERRUPT_DOORBELL_CRITICAL,
  			      PROLOG_ADDITION_NONE)
 -//	EXCEPTION_COMMON(0x2a0, PACA_EXCRIT, INTS_DISABLE)
 -//	bl	special_reg_save_crit
-+//	EXCEPTION_COMMON_CRIT(0x2a0)
-+//	bl	save_nvgprs
-+//	bl	special_reg_save
- //	CHECK_NAPPING();
+-//	CHECK_NAPPING();
++	EXCEPTION_COMMON_CRIT(0x2a0)
++	bl	save_nvgprs
++	bl	special_reg_save
++	CHECK_NAPPING();
  //	addi	r3,r1,STACK_FRAME_OVERHEAD
 -//	bl	.doorbell_critical_exception
 +//	bl	doorbell_critical_exception
  //	b	ret_from_crit_except
  	b	.
  
-@@ -637,20 +645,21 @@ kernel_dbg_exc:
+@@ -637,20 +650,21 @@ kernel_dbg_exc:
  			        PROLOG_ADDITION_NONE)
  	EXCEPTION_COMMON(0x2c0, PACA_EXGEN, INTS_KEEP)
  	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -708,17 +683,18 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  			      PROLOG_ADDITION_NONE)
 -//	EXCEPTION_COMMON(0x2e0, PACA_EXCRIT, INTS_DISABLE)
 -//	bl	special_reg_save_crit
-+//	EXCEPTION_COMMON_CRIT(0x2e0)
-+//	bl	save_nvgprs
-+//	bl	special_reg_save
- //	CHECK_NAPPING();
+-//	CHECK_NAPPING();
++	EXCEPTION_COMMON_CRIT(0x2e0)
++	bl	save_nvgprs
++	bl	special_reg_save
++	CHECK_NAPPING();
  //	addi	r3,r1,STACK_FRAME_OVERHEAD
 -//	bl	.guest_doorbell_critical_exception
 +//	bl	guest_doorbell_critical_exception
  //	b	ret_from_crit_except
  	b	.
  
-@@ -660,10 +669,10 @@ kernel_dbg_exc:
+@@ -660,10 +674,10 @@ kernel_dbg_exc:
  			        PROLOG_ADDITION_NONE)
  	EXCEPTION_COMMON(0x310, PACA_EXGEN, INTS_KEEP)
  	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -732,7 +708,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* Embedded Hypervisor priviledged  */
  	START_EXCEPTION(ehpriv);
-@@ -671,10 +680,10 @@ kernel_dbg_exc:
+@@ -671,10 +685,10 @@ kernel_dbg_exc:
  			        PROLOG_ADDITION_NONE)
  	EXCEPTION_COMMON(0x320, PACA_EXGEN, INTS_KEEP)
  	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -746,7 +722,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /* LRAT Error interrupt */
  	START_EXCEPTION(lrat_error);
-@@ -773,16 +782,16 @@ storage_fault_common:
+@@ -773,16 +787,16 @@ storage_fault_common:
  	mr	r5,r15
  	ld	r14,PACA_EXGEN+EX_R14(r13)
  	ld	r15,PACA_EXGEN+EX_R15(r13)
@@ -768,7 +744,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /*
   * Alignment exception doesn't fit entirely in the 0x100 bytes so it
-@@ -794,10 +803,10 @@ alignment_more:
+@@ -794,10 +808,10 @@ alignment_more:
  	addi	r3,r1,STACK_FRAME_OVERHEAD
  	ld	r14,PACA_EXGEN+EX_R14(r13)
  	ld	r15,PACA_EXGEN+EX_R15(r13)
@@ -782,7 +758,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  /*
   * We branch here from entry_64.S for the last stage of the exception
-@@ -931,7 +940,7 @@ bad_stack_book3e:
+@@ -931,7 +945,7 @@ bad_stack_book3e:
  	std	r12,0(r11)
  	ld	r2,PACATOC(r13)
  1:	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -791,7 +767,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  	b	1b
  
  /*
-@@ -1286,13 +1295,13 @@ _GLOBAL(start_initialization_book3e)
+@@ -1286,13 +1300,13 @@ _GLOBAL(start_initialization_book3e)
  	 * and always use AS 0, so we just set it up to match our link
  	 * address and never use 0 based addresses.
  	 */
@@ -808,7 +784,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  	/* Return to common init code */
  	tovirt(r28,r28)
-@@ -1313,7 +1322,7 @@ _GLOBAL(start_initialization_book3e)
+@@ -1313,7 +1327,7 @@ _GLOBAL(start_initialization_book3e)
   */
  _GLOBAL(book3e_secondary_core_init_tlb_set)
  	li	r4,1
@@ -817,7 +793,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  _GLOBAL(book3e_secondary_core_init)
  	mflr	r28
-@@ -1323,18 +1332,18 @@ _GLOBAL(book3e_secondary_core_init)
+@@ -1323,18 +1337,18 @@ _GLOBAL(book3e_secondary_core_init)
  	bne	2f
  
  	/* Setup TLB for this core */
@@ -844,22 +820,23 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/exceptions-64s.S
 +++ linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
-@@ -139,8 +139,12 @@ BEGIN_FTR_SECTION
+@@ -140,12 +140,12 @@ BEGIN_FTR_SECTION
  #endif
  
  	beq	cr1,2f
 -	b	.power7_wakeup_noloss
 -2:	b	.power7_wakeup_tb_loss
 +	b	power7_wakeup_noloss
-+2:	b	power7_wakeup_loss
-+
-+	/* Fast Sleep wakeup on PowerNV */
-+8:	GET_PACA(r13)
-+	b 	power7_wakeup_tb_loss
++2:	b	power7_wakeup_tb_loss
+ 
+ 	/* Fast Sleep wakeup on PowerNV */
+ 8:	GET_PACA(r13)
+-	b 	.power7_wakeup_loss
++	b 	power7_wakeup_loss
+ 
  9:
  END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
- #endif /* CONFIG_PPC_P7_NAP */
-@@ -208,7 +212,7 @@ data_access_slb_pSeries:
+@@ -214,7 +214,7 @@ data_access_slb_pSeries:
  #endif /* __DISABLED__ */
  	mfspr	r12,SPRN_SRR1
  #ifndef CONFIG_RELOCATABLE
@@ -868,7 +845,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  #else
  	/*
  	 * We can't just use a direct branch to slb_miss_realmode
-@@ -240,7 +244,7 @@ instruction_access_slb_pSeries:
+@@ -246,7 +246,7 @@ instruction_access_slb_pSeries:
  #endif /* __DISABLED__ */
  	mfspr	r12,SPRN_SRR1
  #ifndef CONFIG_RELOCATABLE
@@ -877,7 +854,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  #else
  	mfctr	r11
  	ld	r10,PACAKBASE(r13)
-@@ -800,7 +804,7 @@ data_access_slb_relon_pSeries:
+@@ -806,7 +806,7 @@ data_access_slb_relon_pSeries:
  	mfspr	r3,SPRN_DAR
  	mfspr	r12,SPRN_SRR1
  #ifndef CONFIG_RELOCATABLE
@@ -886,7 +863,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  #else
  	/*
  	 * We can't just use a direct branch to slb_miss_realmode
-@@ -825,7 +829,7 @@ instruction_access_slb_relon_pSeries:
+@@ -831,7 +831,7 @@ instruction_access_slb_relon_pSeries:
  	mfspr	r3,SPRN_SRR0		/* SRR0 is faulting address */
  	mfspr	r12,SPRN_SRR1
  #ifndef CONFIG_RELOCATABLE
@@ -895,7 +872,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  #else
  	mfctr	r11
  	ld	r10,PACAKBASE(r13)
-@@ -937,7 +941,7 @@ system_call_entry:
+@@ -943,7 +943,7 @@ system_call_entry:
  	b	system_call_common
  
  ppc64_runlatch_on_trampoline:
@@ -904,7 +881,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  /*
   * Here we have detected that the kernel stack pointer is bad.
-@@ -996,7 +1000,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
+@@ -1002,7 +1002,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_CFAR)
  	std	r12,RESULT(r1)
  	std	r11,STACK_FRAME_OVERHEAD-16(r1)
  1:	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -913,7 +890,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	b	1b
  
  /*
-@@ -1017,7 +1021,7 @@ data_access_common:
+@@ -1023,7 +1023,7 @@ data_access_common:
  	ld	r3,PACA_EXGEN+EX_DAR(r13)
  	lwz	r4,PACA_EXGEN+EX_DSISR(r13)
  	li	r5,0x300
@@ -922,7 +899,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	.align  7
  	.globl  h_data_storage_common
-@@ -1027,11 +1031,11 @@ h_data_storage_common:
+@@ -1033,11 +1033,11 @@ h_data_storage_common:
  	mfspr   r10,SPRN_HDSISR
  	stw     r10,PACA_EXGEN+EX_DSISR(r13)
  	EXCEPTION_PROLOG_COMMON(0xe00, PACA_EXGEN)
@@ -937,7 +914,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	.align	7
  	.globl instruction_access_common
-@@ -1042,7 +1046,7 @@ instruction_access_common:
+@@ -1048,7 +1048,7 @@ instruction_access_common:
  	ld	r3,_NIP(r1)
  	andis.	r4,r12,0x5820
  	li	r5,0x400
@@ -946,7 +923,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	STD_EXCEPTION_COMMON(0xe20, h_instr_storage, .unknown_exception)
  
-@@ -1059,7 +1063,7 @@ slb_miss_user_common:
+@@ -1065,7 +1065,7 @@ slb_miss_user_common:
  	stw	r9,PACA_EXGEN+EX_CCR(r13)
  	std	r10,PACA_EXGEN+EX_LR(r13)
  	std	r11,PACA_EXGEN+EX_SRR0(r13)
@@ -955,7 +932,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	ld	r10,PACA_EXGEN+EX_LR(r13)
  	ld	r3,PACA_EXGEN+EX_R3(r13)
-@@ -1102,9 +1106,9 @@ slb_miss_fault:
+@@ -1108,9 +1108,9 @@ slb_miss_fault:
  unrecov_user_slb:
  	EXCEPTION_PROLOG_COMMON(0x4200, PACA_EXGEN)
  	DISABLE_INTS
@@ -967,7 +944,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	b	1b
  
  #endif /* __DISABLED__ */
-@@ -1129,10 +1133,10 @@ machine_check_common:
+@@ -1135,10 +1135,10 @@ machine_check_common:
  	lwz	r4,PACA_EXGEN+EX_DSISR(r13)
  	std	r3,_DAR(r1)
  	std	r4,_DSISR(r1)
@@ -981,7 +958,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	.align	7
  	.globl alignment_common
-@@ -1146,31 +1150,31 @@ alignment_common:
+@@ -1152,31 +1152,31 @@ alignment_common:
  	lwz	r4,PACA_EXGEN+EX_DSISR(r13)
  	std	r3,_DAR(r1)
  	std	r4,_DSISR(r1)
@@ -1021,7 +998,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	BUG_OPCODE
  1:
  #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
-@@ -1182,15 +1186,15 @@ BEGIN_FTR_SECTION
+@@ -1188,15 +1188,15 @@ BEGIN_FTR_SECTION
  	bne-	2f
  END_FTR_SECTION_IFSET(CPU_FTR_TM)
  #endif
@@ -1041,7 +1018,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  #endif
  	.align	7
  	.globl altivec_unavailable_common
-@@ -1208,24 +1212,24 @@ BEGIN_FTR_SECTION
+@@ -1214,24 +1214,24 @@ BEGIN_FTR_SECTION
  	bne-	2f
    END_FTR_SECTION_NESTED(CPU_FTR_TM, CPU_FTR_TM, 69)
  #endif
@@ -1073,7 +1050,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	.align	7
  	.globl vsx_unavailable_common
-@@ -1243,23 +1247,23 @@ BEGIN_FTR_SECTION
+@@ -1249,23 +1249,23 @@ BEGIN_FTR_SECTION
  	bne-	2f
    END_FTR_SECTION_NESTED(CPU_FTR_TM, CPU_FTR_TM, 69)
  #endif
@@ -1104,7 +1081,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	STD_EXCEPTION_COMMON(0xf60, facility_unavailable, .facility_unavailable_exception)
  	STD_EXCEPTION_COMMON(0xf80, hv_facility_unavailable, .facility_unavailable_exception)
-@@ -1357,9 +1361,9 @@ _GLOBAL(opal_mc_secondary_handler)
+@@ -1363,9 +1363,9 @@ _GLOBAL(opal_mc_secondary_handler)
  machine_check_handle_early:
  	std	r0,GPR0(r1)	/* Save r0 */
  	EXCEPTION_PROLOG_COMMON_3(0x200)
@@ -1116,7 +1093,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	ld	r12,_MSR(r1)
  #ifdef	CONFIG_PPC_P7_NAP
  	/*
-@@ -1379,11 +1383,11 @@ machine_check_handle_early:
+@@ -1385,11 +1385,11 @@ machine_check_handle_early:
  	/* Supervisor state loss */
  	li	r0,1
  	stb	r0,PACA_NAPSTATELOST(r13)
@@ -1130,7 +1107,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  4:
  #endif
  	/*
-@@ -1415,7 +1419,7 @@ machine_check_handle_early:
+@@ -1421,7 +1421,7 @@ machine_check_handle_early:
  	andi.	r11,r12,MSR_RI
  	bne	2f
  1:	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -1139,7 +1116,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	b	1b
  2:
  	/*
-@@ -1423,7 +1427,7 @@ machine_check_handle_early:
+@@ -1429,7 +1429,7 @@ machine_check_handle_early:
  	 * Queue up the MCE event so that we can log it later, while
  	 * returning from kernel or opal call.
  	 */
@@ -1148,7 +1125,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	MACHINE_CHECK_HANDLER_WINDUP
  	rfid
  9:
-@@ -1448,7 +1452,7 @@ slb_miss_realmode:
+@@ -1454,7 +1454,7 @@ slb_miss_realmode:
  	stw	r9,PACA_EXSLB+EX_CCR(r13)	/* save CR in exc. frame */
  	std	r10,PACA_EXSLB+EX_LR(r13)	/* save LR */
  
@@ -1157,7 +1134,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  	/* All done -- return from exception. */
  
-@@ -1488,9 +1492,9 @@ slb_miss_realmode:
+@@ -1494,9 +1494,9 @@ slb_miss_realmode:
  unrecov_slb:
  	EXCEPTION_PROLOG_COMMON(0x4100, PACA_EXSLB)
  	DISABLE_INTS
@@ -1169,7 +1146,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	b	1b
  
  
-@@ -1544,7 +1548,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_SLB)
+@@ -1550,7 +1550,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_SLB)
  	 *
  	 * at return r3 = 0 for success, 1 for page fault, negative for error
  	 */
@@ -1178,7 +1155,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	cmpdi	r3,0			/* see if hash_page succeeded */
  
  	/* Success */
-@@ -1558,35 +1562,35 @@ handle_page_fault:
+@@ -1564,35 +1564,35 @@ handle_page_fault:
  11:	ld	r4,_DAR(r1)
  	ld	r5,_DSISR(r1)
  	addi	r3,r1,STACK_FRAME_OVERHEAD
@@ -1224,7 +1201,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  
  /*
   * We come here as a result of a DSI at a point where we don't want
-@@ -1595,16 +1599,16 @@ handle_dabr_fault:
+@@ -1601,16 +1601,16 @@ handle_dabr_fault:
   * were soft-disabled.  We want to invoke the exception handler for
   * the access, or panic if there isn't a handler.
   */
@@ -1530,7 +1507,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_power7.S
 +++ linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
-@@ -48,7 +48,7 @@ _GLOBAL(power7_nap)
+@@ -58,7 +58,7 @@ _GLOBAL(power7_powersave_common)
  	/* Make sure FPU, VSX etc... are flushed as we may lose
  	 * state when going to nap mode
  	 */
@@ -1539,7 +1516,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  #endif /* CONFIG_SMP */
  
  	/* Hard disable interrupts */
-@@ -143,7 +143,7 @@ _GLOBAL(power7_wakeup_loss)
+@@ -168,7 +168,7 @@ _GLOBAL(power7_wakeup_loss)
  _GLOBAL(power7_wakeup_noloss)
  	lbz	r0,PACA_NAPSTATELOST(r13)
  	cmpwi	r0,0
