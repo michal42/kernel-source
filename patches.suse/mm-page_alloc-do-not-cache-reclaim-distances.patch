@@ -1,0 +1,81 @@
+From e46a1fbfbeb94503d993aed2b70bcf75f9a90a93 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 4 Jun 2014 16:07:15 -0700
+Subject: [PATCH] mm: page_alloc: do not cache reclaim distances
+
+References: VM Functionality
+Patch-mainline: v3.16
+Git-commit: 5f7a75acdb24c7b9c436b3a0a66eec12e101d19c
+
+pgdat->reclaim_nodes tracks if a remote node is allowed to be reclaimed
+by zone_reclaim due to its distance.  As it is expected that
+zone_reclaim_mode will be rarely enabled it is unreasonable for all
+machines to take a penalty.  Fortunately, the zone_reclaim_mode() path
+is already slow and it is the path that takes the hit.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Acked-by: Johannes Weiner <hannes@cmpxchg.org>
+Reviewed-by: Zhang Yanfei <zhangyanfei@cn.fujitsu.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Reviewed-by: Christoph Lameter <cl@linux.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ include/linux/mmzone.h |  1 -
+ mm/page_alloc.c        | 17 ++---------------
+ 2 files changed, 2 insertions(+), 16 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 8b16fb9..1d7d2c9 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -787,7 +787,6 @@ typedef struct pglist_data {
+ 	unsigned long node_spanned_pages; /* total size of physical page
+ 					     range, including holes */
+ 	int node_id;
+-	nodemask_t reclaim_nodes;	/* Nodes allowed to reclaim from */
+ 	wait_queue_head_t kswapd_wait;
+ 	wait_queue_head_t pfmemalloc_wait;
+ 	struct task_struct *kswapd;	/* Protected by lock_memory_hotplug() */
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 4997611..109e87c 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1856,16 +1856,8 @@ static bool zone_local(struct zone *local_zone, struct zone *zone)
+ 
+ static bool zone_allows_reclaim(struct zone *local_zone, struct zone *zone)
+ {
+-	return node_isset(local_zone->node, zone->zone_pgdat->reclaim_nodes);
+-}
+-
+-static void __paginginit init_zone_allows_reclaim(int nid)
+-{
+-	int i;
+-
+-	for_each_node_state(i, N_MEMORY)
+-		if (node_distance(nid, i) <= RECLAIM_DISTANCE)
+-			node_set(i, NODE_DATA(nid)->reclaim_nodes);
++	return node_distance(zone_to_nid(local_zone), zone_to_nid(zone)) <
++				RECLAIM_DISTANCE;
+ }
+ 
+ #else	/* CONFIG_NUMA */
+@@ -1899,9 +1891,6 @@ static bool zone_allows_reclaim(struct zone *local_zone, struct zone *zone)
+ 	return true;
+ }
+ 
+-static inline void init_zone_allows_reclaim(int nid)
+-{
+-}
+ #endif	/* CONFIG_NUMA */
+ 
+ /*
+@@ -4985,8 +4974,6 @@ void __paginginit free_area_init_node(int nid, unsigned long *zones_size,
+ 
+ 	pgdat->node_id = nid;
+ 	pgdat->node_start_pfn = node_start_pfn;
+-	if (node_state(nid, N_MEMORY))
+-		init_zone_allows_reclaim(nid);
+ #ifdef CONFIG_HAVE_MEMBLOCK_NODE_MAP
+ 	get_pfn_range_for_nid(nid, &start_pfn, &end_pfn);
+ #endif

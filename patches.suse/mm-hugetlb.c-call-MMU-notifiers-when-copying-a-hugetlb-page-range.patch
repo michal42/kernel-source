@@ -1,0 +1,79 @@
+From 51a6552bdc399b1a04238b3d457a7c7d1f057710 Mon Sep 17 00:00:00 2001
+From: Andreas Sandberg <andreas@sandberg.pp.se>
+Date: Tue, 21 Jan 2014 15:49:09 -0800
+Subject: [PATCH] mm/hugetlb.c: call MMU notifiers when copying a hugetlb page
+ range
+
+References: VM Functionality
+Patch-mainline: v3.14
+Git-commit: e8569dd299dbc7bac878325c0bdc7aa449eae479
+
+When copy_hugetlb_page_range() is called to copy a range of hugetlb
+mappings, the secondary MMUs are not notified if there is a protection
+downgrade, which breaks COW semantics in KVM.
+
+This patch adds the necessary MMU notifier calls.
+
+Signed-off-by: Andreas Sandberg <andreas@sandberg.pp.se>
+Acked-by: Steve Capper <steve.capper@linaro.org>
+Acked-by: Marc Zyngier <marc.zyngier@arm.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Andrea Arcangeli <aarcange@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/hugetlb.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index e2e7fdb..3476cf0 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -2384,17 +2384,27 @@ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+ 	int cow;
+ 	struct hstate *h = hstate_vma(vma);
+ 	unsigned long sz = huge_page_size(h);
++	unsigned long mmun_start;	/* For mmu_notifiers */
++	unsigned long mmun_end;		/* For mmu_notifiers */
++	int ret = 0;
+ 
+ 	cow = (vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE;
+ 
++	mmun_start = vma->vm_start;
++	mmun_end = vma->vm_end;
++	if (cow)
++		mmu_notifier_invalidate_range_start(src, mmun_start, mmun_end);
++
+ 	for (addr = vma->vm_start; addr < vma->vm_end; addr += sz) {
+ 		spinlock_t *src_ptl, *dst_ptl;
+ 		src_pte = huge_pte_offset(src, addr);
+ 		if (!src_pte)
+ 			continue;
+ 		dst_pte = huge_pte_alloc(dst, addr, sz);
+-		if (!dst_pte)
+-			goto nomem;
++		if (!dst_pte) {
++			ret = -ENOMEM;
++			break;
++		}
+ 
+ 		/* If the pagetables are shared don't copy or take references */
+ 		if (dst_pte == src_pte)
+@@ -2415,10 +2425,11 @@ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+ 		spin_unlock(src_ptl);
+ 		spin_unlock(dst_ptl);
+ 	}
+-	return 0;
+ 
+-nomem:
+-	return -ENOMEM;
++	if (cow)
++		mmu_notifier_invalidate_range_end(src, mmun_start, mmun_end);
++
++	return ret;
+ }
+ 
+ static int is_hugetlb_entry_migration(pte_t pte)

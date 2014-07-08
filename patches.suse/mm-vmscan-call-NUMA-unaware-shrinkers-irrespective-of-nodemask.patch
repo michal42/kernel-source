@@ -1,0 +1,61 @@
+From 777176c31ab231e3d9cea3c12ac02d0df3cb6678 Mon Sep 17 00:00:00 2001
+From: Vladimir Davydov <vdavydov@parallels.com>
+Date: Thu, 23 Jan 2014 15:53:23 -0800
+Subject: [PATCH] mm: vmscan: call NUMA-unaware shrinkers irrespective of
+ nodemask
+
+References: VM Functionality
+Patch-mainline: v3.14
+Git-commit: ec97097bca147d5718a5d2c024d1ec740b10096d
+
+If a shrinker is not NUMA-aware, shrink_slab() should call it exactly
+once with nid=0, but currently it is not true: if node 0 is not set in
+the nodemask or if it is not online, we will not call such shrinkers at
+all.  As a result some slabs will be left untouched under some
+circumstances.  Let us fix it.
+
+Signed-off-by: Vladimir Davydov <vdavydov@parallels.com>
+Reported-by: Dave Chinner <dchinner@redhat.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Michal Hocko <mhocko@suse.cz>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Glauber Costa <glommer@gmail.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/vmscan.c | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index cb52fba..01c82d3 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -372,16 +372,17 @@ unsigned long shrink_slab(struct shrink_control *shrinkctl,
+ 	}
+ 
+ 	list_for_each_entry(shrinker, &shrinker_list, list) {
+-		for_each_node_mask(shrinkctl->nid, shrinkctl->nodes_to_scan) {
+-			if (!node_online(shrinkctl->nid))
+-				continue;
+-
+-			if (!(shrinker->flags & SHRINKER_NUMA_AWARE) &&
+-			    (shrinkctl->nid != 0))
+-				break;
+-
++		if (!(shrinker->flags & SHRINKER_NUMA_AWARE)) {
++			shrinkctl->nid = 0;
+ 			freed += shrink_slab_node(shrinkctl, shrinker,
+-				 nr_pages_scanned, lru_pages);
++					nr_pages_scanned, lru_pages);
++			continue;
++		}
++
++		for_each_node_mask(shrinkctl->nid, shrinkctl->nodes_to_scan) {
++			if (node_online(shrinkctl->nid))
++				freed += shrink_slab_node(shrinkctl, shrinker,
++						nr_pages_scanned, lru_pages);
+ 
+ 		}
+ 	}
