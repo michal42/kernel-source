@@ -3,7 +3,7 @@ Date: Tue, 3 Jun 2014 16:19:24 +0200
 Subject: [PATCH 3/3] ftrace/x86/xen: use kernel identity mapping only when
  really needed
 Patch-mainline: Cleaner solution is needed once the related Xen part gets upstream
-Reference: bnc#873195
+Reference: bnc#873195, bnc#886272
 
 The dynamic ftrace is not correctly initialized when the kernel is being loaded
 using the Xen hypervisor:
@@ -52,14 +52,12 @@ because the Xen code is still not there.
 
 Signed-off-by: Petr Mladek <pmladek@suse.cz>
 ---
- arch/x86/kernel/ftrace.c | 9 ++++++++-
- 1 file changed, 8 insertions(+), 1 deletion(-)
+ arch/x86/kernel/ftrace.c |   12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
 
-diff --git a/arch/x86/kernel/ftrace.c b/arch/x86/kernel/ftrace.c
-index 8f5aca97897d..823f0de4802a 100644
 --- a/arch/x86/kernel/ftrace.c
 +++ b/arch/x86/kernel/ftrace.c
-@@ -85,10 +85,17 @@ static unsigned long text_ip_addr(unsigned long ip)
+@@ -84,12 +84,20 @@ static unsigned long text_ip_addr(unsign
  	 * CONFIG_DEBUG_RODATA. So we use the kernel identity mapping instead
  	 * of the kernel text mapping to modify the kernel text.
  	 *
@@ -73,11 +71,12 @@ index 8f5aca97897d..823f0de4802a 100644
  	 * kernel identity mapping to modify code.
  	 */
 -	if (within(ip, (unsigned long)_text, (unsigned long)_etext))
++#ifdef CONFIG_DEBUG_RODATA
 +	if (kernel_set_to_readonly &&
 +	    within(ip, (unsigned long)_text, (unsigned long)_etext))
  		ip = (unsigned long)__va(__pa_symbol(ip));
- 
+-
++#endif
  	return ip;
--- 
-1.8.4
-
+ }
+ 

@@ -1,0 +1,40 @@
+From ba5e3ed08108cb7a975ab1a793bd9fa8672180db Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Fri, 20 Sep 2013 14:52:41 +1000
+Subject: [PATCH 013/160] KVM: PPC: Book3S HV: Don't crash host on unknown
+ guest interrupt
+Git-commit: f3271d4c9011bf5f36a65b9b5e7caaef4280686d
+Patch-mainline: v3.13-rc1
+References: FATE#317763
+
+If we come out of a guest with an interrupt that we don't know about,
+instead of crashing the host with a BUG(), we now return to userspace
+with the exit reason set to KVM_EXIT_UNKNOWN and the trap vector in
+the hw.hardware_exit_reason field of the kvm_run structure, as is done
+on x86.  Note that run->exit_reason is already set to KVM_EXIT_UNKNOWN
+at the beginning of kvmppc_handle_exit().
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_hv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index ba322bf..a52408d 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -712,8 +712,8 @@ static int kvmppc_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu,
+ 		printk(KERN_EMERG "trap=0x%x | pc=0x%lx | msr=0x%llx\n",
+ 			vcpu->arch.trap, kvmppc_get_pc(vcpu),
+ 			vcpu->arch.shregs.msr);
++		run->hw.hardware_exit_reason = vcpu->arch.trap;
+ 		r = RESUME_HOST;
+-		BUG();
+ 		break;
+ 	}
+ 
+-- 
+1.8.5.2
+

@@ -1,0 +1,57 @@
+From afd891351df7e925bf3ca4fe673f9c6efd13080d Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 24 Apr 2014 13:39:16 +0200
+Subject: [PATCH 108/160] KVM: PPC: PR: Fill pvinfo hcall instructions in big
+ endian
+Git-commit: 2743103f91e20d4c4d4f1a8d00821289c4c6ff62
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+We expose a blob of hypercall instructions to user space that it gives to
+the guest via device tree again. That blob should contain a stream of
+instructions necessary to do a hypercall in big endian, as it just gets
+passed into the guest and old guests use them straight away.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/powerpc.c | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/arch/powerpc/kvm/powerpc.c b/arch/powerpc/kvm/powerpc.c
+index 3cf541a..a9bd0ff 100644
+--- a/arch/powerpc/kvm/powerpc.c
++++ b/arch/powerpc/kvm/powerpc.c
+@@ -1015,10 +1015,10 @@ static int kvm_vm_ioctl_get_pvinfo(struct kvm_ppc_pvinfo *pvinfo)
+ 	u32 inst_nop = 0x60000000;
+ #ifdef CONFIG_KVM_BOOKE_HV
+ 	u32 inst_sc1 = 0x44000022;
+-	pvinfo->hcall[0] = inst_sc1;
+-	pvinfo->hcall[1] = inst_nop;
+-	pvinfo->hcall[2] = inst_nop;
+-	pvinfo->hcall[3] = inst_nop;
++	pvinfo->hcall[0] = cpu_to_be32(inst_sc1);
++	pvinfo->hcall[1] = cpu_to_be32(inst_nop);
++	pvinfo->hcall[2] = cpu_to_be32(inst_nop);
++	pvinfo->hcall[3] = cpu_to_be32(inst_nop);
+ #else
+ 	u32 inst_lis = 0x3c000000;
+ 	u32 inst_ori = 0x60000000;
+@@ -1034,10 +1034,10 @@ static int kvm_vm_ioctl_get_pvinfo(struct kvm_ppc_pvinfo *pvinfo)
+ 	 *    sc
+ 	 *    nop
+ 	 */
+-	pvinfo->hcall[0] = inst_lis | ((KVM_SC_MAGIC_R0 >> 16) & inst_imm_mask);
+-	pvinfo->hcall[1] = inst_ori | (KVM_SC_MAGIC_R0 & inst_imm_mask);
+-	pvinfo->hcall[2] = inst_sc;
+-	pvinfo->hcall[3] = inst_nop;
++	pvinfo->hcall[0] = cpu_to_be32(inst_lis | ((KVM_SC_MAGIC_R0 >> 16) & inst_imm_mask));
++	pvinfo->hcall[1] = cpu_to_be32(inst_ori | (KVM_SC_MAGIC_R0 & inst_imm_mask));
++	pvinfo->hcall[2] = cpu_to_be32(inst_sc);
++	pvinfo->hcall[3] = cpu_to_be32(inst_nop);
+ #endif
+ 
+ 	pvinfo->flags = KVM_PPC_PVINFO_FLAGS_EV_IDLE;
+-- 
+1.8.5.2
+

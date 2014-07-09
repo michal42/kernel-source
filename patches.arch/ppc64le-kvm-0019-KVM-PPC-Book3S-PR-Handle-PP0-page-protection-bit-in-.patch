@@ -1,0 +1,49 @@
+From c7af9fb1dcc83eb69622ea6892619d400e00c2a0 Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Fri, 20 Sep 2013 14:52:46 +1000
+Subject: [PATCH 019/160] KVM: PPC: Book3S PR: Handle PP0 page-protection bit
+ in guest HPTEs
+Git-commit: 03a9c90334d611c3006ac9569579f25f64812bc1
+Patch-mainline: v3.13-rc1
+References: FATE#317763
+
+64-bit POWER processors have a three-bit field for page protection in
+the hashed page table entry (HPTE).  Currently we only interpret the two
+bits that were present in older versions of the architecture.  The only
+defined combination that has the new bit set is 110, meaning read-only
+for supervisor and no access for user mode.
+
+This adds code to kvmppc_mmu_book3s_64_xlate() to interpret the extra
+bit appropriately.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_64_mmu.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/powerpc/kvm/book3s_64_mmu.c b/arch/powerpc/kvm/book3s_64_mmu.c
+index 6c9c848..0a699ef2 100644
+--- a/arch/powerpc/kvm/book3s_64_mmu.c
++++ b/arch/powerpc/kvm/book3s_64_mmu.c
+@@ -297,6 +297,8 @@ do_second:
+ 	v = pteg[i];
+ 	r = pteg[i+1];
+ 	pp = (r & HPTE_R_PP) | key;
++	if (r & HPTE_R_PP0)
++		pp |= 8;
+ 
+ 	gpte->eaddr = eaddr;
+ 	gpte->vpage = kvmppc_mmu_book3s_64_ea_to_vp(vcpu, eaddr, data);
+@@ -318,6 +320,7 @@ do_second:
+ 	case 3:
+ 	case 5:
+ 	case 7:
++	case 10:
+ 		gpte->may_read = true;
+ 		break;
+ 	}
+-- 
+1.8.5.2
+

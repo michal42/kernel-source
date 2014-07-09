@@ -16,17 +16,17 @@ already. No "deferred" patching happens on the module load.
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h          |  6 +++++-
- kernel/kgraft.c                 | 18 ++++++++++++++----
+ kernel/kgraft.c                 | 17 +++++++++++++----
  samples/kgraft/kgraft_patcher.c |  4 ++--
- 3 files changed, 21 insertions(+), 7 deletions(-)
+ 3 files changed, 20 insertions(+), 7 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index 7d42bad55aaa..ebc29882ab80 100644
+index f43e2c178570..6f142642193c 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -46,6 +46,9 @@ struct kgr_patch_fun {
  	const char *name;
- 	const char *new_name;
+ 	void *new_fun;
  
 +	bool abort_if_missing;
 +	bool applied;
@@ -34,28 +34,23 @@ index 7d42bad55aaa..ebc29882ab80 100644
  	unsigned long loc_old;
  	unsigned long loc_new;
  
-@@ -66,7 +69,7 @@ struct kgr_patch {
- 	struct kgr_patch_fun *patches[];
- };
+@@ -69,9 +72,10 @@ struct kgr_patch {
+ #define kgr_for_each_patch(p, pf)	\
+ 	for (pf = p->patches; pf->name; pf++)
  
--#define KGR_PATCHED_FUNCTION(_name, _new_function)				\
-+#define KGR_PATCHED_FUNCTION(_name, _new_function, abort)			\
- 	typeof(_new_function) __used _new_function;				\
- 	static struct ftrace_ops __kgr_patch_ftrace_ops_slow_ ## _name = {	\
- 		.flags = FTRACE_OPS_FL_SAVE_REGS,				\
-@@ -77,6 +80,7 @@ struct kgr_patch {
- 	static struct kgr_patch_fun __kgr_patch_ ## _name = {			\
- 		.name = #_name,							\
- 		.new_name = #_new_function,					\
-+		.abort_if_missing = abort,					\
- 		.ftrace_ops_slow = &__kgr_patch_ftrace_ops_slow_ ## _name,	\
- 		.ftrace_ops_fast = &__kgr_patch_ftrace_ops_fast_ ## _name,	\
- 	};
+-#define KGR_PATCH(_name, _new_function)		{			\
++#define KGR_PATCH(_name, _new_function, abort)	{			\
+ 		.name = #_name,						\
+ 		.new_fun = _new_function,				\
++		.abort_if_missing = abort,				\
+ 	}
+ #define KGR_PATCH_END				{ }
+ 
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 69757d766b40..525dbaa2780b 100644
+index 8be89f1bb547..b053f67e05ae 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -233,11 +233,16 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -238,11 +238,16 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  	/* Choose between slow and fast stub */
  	if (!final) {
  		err = kgr_init_ftrace_ops(patch_fun);
@@ -66,14 +61,14 @@ index 69757d766b40..525dbaa2780b 100644
  			return err;
 +		}
  		pr_debug("kgr: patching %s to slow stub\n", patch_fun->name);
- 		new_ops = patch_fun->ftrace_ops_slow;
+ 		new_ops = &patch_fun->ftrace_ops_slow;
  	} else {
 +		if (!patch_fun->applied)
 +			return 0;
  		pr_debug("kgr: patching %s to fast stub\n", patch_fun->name);
- 		new_ops = patch_fun->ftrace_ops_fast;
+ 		new_ops = &patch_fun->ftrace_ops_fast;
  	}
-@@ -269,7 +274,9 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -274,7 +279,9 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  					patch_fun->name, err);
  			/* don't fail: we are only slower */
  		}
@@ -84,42 +79,35 @@ index 69757d766b40..525dbaa2780b 100644
  	pr_debug("kgr: redirection for %s done\n", patch_fun->name);
  
  	return 0;
-@@ -321,8 +328,11 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -326,8 +333,10 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		 */
  		if (ret < 0) {
  			for (patch_fun--; patch_fun >= patch->patches;
 -					patch_fun--)
--				unregister_ftrace_function((*patch_fun)->ftrace_ops_slow);
+-				unregister_ftrace_function(&patch_fun->ftrace_ops_slow);
 +					patch_fun--) {
-+				if ((*patch_fun)->applied)
-+					unregister_ftrace_function(
-+						(*patch_fun)->ftrace_ops_slow);
++				if (patch_fun->applied)
++					unregister_ftrace_function(&patch_fun->ftrace_ops_slow);
 +			}
  			goto err_unlock;
  		}
  	}
 diff --git a/samples/kgraft/kgraft_patcher.c b/samples/kgraft/kgraft_patcher.c
-index 115c9b365de8..9ef5a3a007f4 100644
+index 5a0ff97ee773..4a7070344f4e 100644
 --- a/samples/kgraft/kgraft_patcher.c
 +++ b/samples/kgraft/kgraft_patcher.c
-@@ -53,7 +53,7 @@ asmlinkage long kgr_new_sys_iopl(unsigned int level)
- 
- 	return 0;
- }
--KGR_PATCHED_FUNCTION(SyS_iopl, kgr_new_sys_iopl);
-+KGR_PATCHED_FUNCTION(SyS_iopl, kgr_new_sys_iopl, true);
- 
- static bool new_capable(int cap)
- {
-@@ -61,7 +61,7 @@ static bool new_capable(int cap)
- 
- 	return ns_capable(&init_user_ns, cap);
- }
--KGR_PATCHED_FUNCTION(capable, new_capable);
-+KGR_PATCHED_FUNCTION(capable, new_capable, true);
- 
- static struct kgr_patch patch = {
+@@ -66,9 +66,9 @@ static struct kgr_patch patch = {
  	.owner = THIS_MODULE,
+ 	.patches = {
+ #if defined(CONFIG_X86)
+-		KGR_PATCH(SyS_iopl, kgr_new_sys_iopl),
++		KGR_PATCH(SyS_iopl, kgr_new_sys_iopl, true),
+ #endif
+-		KGR_PATCH(capable, kgr_new_capable),
++		KGR_PATCH(capable, kgr_new_capable, true),
+ 		KGR_PATCH_END
+ 	}
+ };
 -- 
 2.0.0
 

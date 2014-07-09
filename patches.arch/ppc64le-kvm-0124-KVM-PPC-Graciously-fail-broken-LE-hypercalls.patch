@@ -1,0 +1,54 @@
+From 8c2d394c66a64cde8993cc70d933730bcdb9f61f Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Tue, 13 May 2014 17:05:51 +0200
+Subject: [PATCH 124/160] KVM: PPC: Graciously fail broken LE hypercalls
+Git-commit: 42188365f92c2d6bc89c9441a5e9305c1354e8a6
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+There are LE Linux guests out there that don't handle hypercalls correctly.
+Instead of interpreting the instruction stream from device tree as big endian
+they assume it's a little endian instruction stream and fail.
+
+When we see an illegal instruction from such a byte reversed instruction stream,
+bail out graciously and just declare every hcall as error.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_emulate.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/arch/powerpc/kvm/book3s_emulate.c b/arch/powerpc/kvm/book3s_emulate.c
+index c992447..3f29526 100644
+--- a/arch/powerpc/kvm/book3s_emulate.c
++++ b/arch/powerpc/kvm/book3s_emulate.c
+@@ -94,8 +94,25 @@ int kvmppc_core_emulate_op_pr(struct kvm_run *run, struct kvm_vcpu *vcpu,
+ 	int rs = get_rs(inst);
+ 	int ra = get_ra(inst);
+ 	int rb = get_rb(inst);
++	u32 inst_sc = 0x44000002;
+ 
+ 	switch (get_op(inst)) {
++	case 0:
++		emulated = EMULATE_FAIL;
++		if ((kvmppc_get_msr(vcpu) & MSR_LE) &&
++		    (inst == swab32(inst_sc))) {
++			/*
++			 * This is the byte reversed syscall instruction of our
++			 * hypercall handler. Early versions of LE Linux didn't
++			 * swap the instructions correctly and ended up in
++			 * illegal instructions.
++			 * Just always fail hypercalls on these broken systems.
++			 */
++			kvmppc_set_gpr(vcpu, 3, EV_UNIMPLEMENTED);
++			kvmppc_set_pc(vcpu, kvmppc_get_pc(vcpu) + 4);
++			emulated = EMULATE_DONE;
++		}
++		break;
+ 	case 19:
+ 		switch (get_xop(inst)) {
+ 		case OP_19_XOP_RFID:
+-- 
+1.8.5.2
+

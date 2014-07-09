@@ -1,0 +1,80 @@
+From ee30804d0ec708b771b0d90258de62764cd8ab74 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 24 Apr 2014 12:51:44 +0200
+Subject: [PATCH 102/160] KVM: PPC: Book3S_32: PR: Access HTAB in big endian
+Git-commit: 860540bc50a174c2dff5e11821375475a5da5f4e
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+The HTAB is always big endian. We access the guest's HTAB using
+copy_from/to_user, but don't yet take care of the fact that we might
+be running on an LE host.
+
+Wrap all accesses to the guest HTAB with big endian accessors.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_32_mmu.c | 16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_32_mmu.c b/arch/powerpc/kvm/book3s_32_mmu.c
+index 60fc3f4..0e42b16 100644
+--- a/arch/powerpc/kvm/book3s_32_mmu.c
++++ b/arch/powerpc/kvm/book3s_32_mmu.c
+@@ -208,6 +208,7 @@ static int kvmppc_mmu_book3s_32_xlate_pte(struct kvm_vcpu *vcpu, gva_t eaddr,
+ 	u32 sre;
+ 	hva_t ptegp;
+ 	u32 pteg[16];
++	u32 pte0, pte1;
+ 	u32 ptem = 0;
+ 	int i;
+ 	int found = 0;
+@@ -233,11 +234,13 @@ static int kvmppc_mmu_book3s_32_xlate_pte(struct kvm_vcpu *vcpu, gva_t eaddr,
+ 	}
+ 
+ 	for (i=0; i<16; i+=2) {
+-		if (ptem == pteg[i]) {
++		pte0 = be32_to_cpu(pteg[i]);
++		pte1 = be32_to_cpu(pteg[i + 1]);
++		if (ptem == pte0) {
+ 			u8 pp;
+ 
+-			pte->raddr = (pteg[i+1] & ~(0xFFFULL)) | (eaddr & 0xFFF);
+-			pp = pteg[i+1] & 3;
++			pte->raddr = (pte1 & ~(0xFFFULL)) | (eaddr & 0xFFF);
++			pp = pte1 & 3;
+ 
+ 			if ((sr_kp(sre) &&  (vcpu->arch.shared->msr & MSR_PR)) ||
+ 			    (sr_ks(sre) && !(vcpu->arch.shared->msr & MSR_PR)))
+@@ -260,7 +263,7 @@ static int kvmppc_mmu_book3s_32_xlate_pte(struct kvm_vcpu *vcpu, gva_t eaddr,
+ 			}
+ 
+ 			dprintk_pte("MMU: Found PTE -> %x %x - %x\n",
+-				    pteg[i], pteg[i+1], pp);
++				    pte0, pte1, pp);
+ 			found = 1;
+ 			break;
+ 		}
+@@ -269,7 +272,7 @@ static int kvmppc_mmu_book3s_32_xlate_pte(struct kvm_vcpu *vcpu, gva_t eaddr,
+ 	/* Update PTE C and A bits, so the guest's swapper knows we used the
+ 	   page */
+ 	if (found) {
+-		u32 pte_r = pteg[i+1];
++		u32 pte_r = pte1;
+ 		char __user *addr = (char __user *) (ptegp + (i+1) * sizeof(u32));
+ 
+ 		/*
+@@ -296,7 +299,8 @@ no_page_found:
+ 			    to_book3s(vcpu)->sdr1, ptegp);
+ 		for (i=0; i<16; i+=2) {
+ 			dprintk_pte("   %02d: 0x%x - 0x%x (0x%x)\n",
+-				    i, pteg[i], pteg[i+1], ptem);
++				    i, be32_to_cpu(pteg[i]),
++				    be32_to_cpu(pteg[i+1]), ptem);
+ 		}
+ 	}
+ 
+-- 
+1.8.5.2
+

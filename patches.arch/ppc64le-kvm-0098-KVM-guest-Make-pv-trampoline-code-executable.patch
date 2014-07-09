@@ -1,0 +1,80 @@
+From 9b31c8761a6ba5dc83483444cb122b279f206692 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Tue, 29 Apr 2014 12:17:26 +0200
+Subject: [PATCH 098/160] KVM guest: Make pv trampoline code executable
+Git-commit: b18db0b80867931f4e3a844400a3c22a4fd2ff57
+Patch-mainline: v3.15-rc8
+References: FATE#317763
+
+Our PV guest patching code assembles chunks of instructions on the fly when it
+encounters more complicated instructions to hijack. These instructions need
+to live in a section that we don't mark as non-executable, as otherwise we
+fault when jumping there.
+
+Right now we put it into the .bss section where it automatically gets marked
+as non-executable. Add a check to the NX setting function to ensure that we
+leave these particular pages executable.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+Conflicts: arch/powerpc/include/asm/sections.h
+
+---
+ arch/powerpc/include/asm/sections.h | 11 +++++++++++
+ arch/powerpc/kernel/kvm.c           |  2 +-
+ arch/powerpc/mm/hash_utils_64.c     |  4 ++++
+ 3 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/include/asm/sections.h b/arch/powerpc/include/asm/sections.h
+index d1bb96d..a5e930a 100644
+--- a/arch/powerpc/include/asm/sections.h
++++ b/arch/powerpc/include/asm/sections.h
+@@ -39,6 +39,17 @@ static inline int overlaps_kernel_text(unsigned long start, unsigned long end)
+ 		(unsigned long)_stext < end;
+ }
+ 
++static inline int overlaps_kvm_tmp(unsigned long start, unsigned long end)
++{
++#ifdef CONFIG_KVM_GUEST
++	extern char kvm_tmp[];
++	return start < (unsigned long)kvm_tmp &&
++		(unsigned long)&kvm_tmp[1024 * 1024] < end;
++#else
++	return 0;
++#endif
++}
++
+ #if !defined(_CALL_ELF) || _CALL_ELF != 2
+ #undef dereference_function_descriptor
+ static inline void *dereference_function_descriptor(void *ptr)
+diff --git a/arch/powerpc/kernel/kvm.c b/arch/powerpc/kernel/kvm.c
+index 6a01752..dd8695f 100644
+--- a/arch/powerpc/kernel/kvm.c
++++ b/arch/powerpc/kernel/kvm.c
+@@ -74,7 +74,7 @@
+ #define KVM_INST_MTSRIN		0x7c0001e4
+ 
+ static bool kvm_patching_worked = true;
+-static char kvm_tmp[1024 * 1024];
++char kvm_tmp[1024 * 1024];
+ static int kvm_tmp_index;
+ 
+ static inline void kvm_patch_ins(u32 *inst, u32 new_inst)
+diff --git a/arch/powerpc/mm/hash_utils_64.c b/arch/powerpc/mm/hash_utils_64.c
+index 0085ad0..0a684be 100644
+--- a/arch/powerpc/mm/hash_utils_64.c
++++ b/arch/powerpc/mm/hash_utils_64.c
+@@ -207,6 +207,10 @@ int htab_bolt_mapping(unsigned long vstart, unsigned long vend,
+ 		if (overlaps_kernel_text(vaddr, vaddr + step))
+ 			tprot &= ~HPTE_R_N;
+ 
++		/* Make kvm guest trampolines executable */
++		if (overlaps_kvm_tmp(vaddr, vaddr + step))
++			tprot &= ~HPTE_R_N;
++
+ 		/*
+ 		 * If relocatable, check if it overlaps interrupt vectors that
+ 		 * are copied down to real 0. For relocatable kernel
+-- 
+1.8.5.2
+

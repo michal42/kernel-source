@@ -23,11 +23,11 @@ Cc: Ingo Molnar <mingo@redhat.com>
 Cc: Thomas Gleixner <tglx@linutronix.de>
 ---
  include/linux/kgraft.h |  7 +++++++
- kernel/kgraft.c        | 38 ++++++++++++++++++++++++++++++++++++--
- 2 files changed, 43 insertions(+), 2 deletions(-)
+ kernel/kgraft.c        | 39 +++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 44 insertions(+), 2 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index c08be13d3aff..e95c5a50a6d1 100644
+index 2a9584a44f1e..d9e752815769 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -18,6 +18,7 @@
@@ -54,7 +54,7 @@ index c08be13d3aff..e95c5a50a6d1 100644
 +	struct kgr_patch *patch;
 +
  	const char *name;
- 	const char *new_name;
+ 	void *new_fun;
  
 @@ -52,10 +57,12 @@ struct kgr_patch_fun {
   * struct kgr_patch -- a kGraft patch
@@ -66,11 +66,11 @@ index c08be13d3aff..e95c5a50a6d1 100644
  struct kgr_patch {
  	struct module *owner;
 +	bool __percpu *irq_use_new;
- 	struct kgr_patch_fun *patches[];
+ 	struct kgr_patch_fun patches[];
  };
  
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 617c6eac26fc..5712360168c6 100644
+index b5c1d7cb4a00..9e0c638730bd 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -15,9 +15,11 @@
@@ -99,15 +99,16 @@ index 617c6eac26fc..5712360168c6 100644
  
  	if (go_old) {
  		pr_debug("kgr: slow stub: calling old code at %lx\n",
-@@ -93,6 +100,7 @@ static void kgr_finalize(void)
- 			pr_err("kgr: finalize for %s failed, trying to continue\n",
- 					(*patch_fun)->name);
+@@ -94,6 +101,8 @@ static void kgr_finalize(void)
+ 					patch_fun->name);
  	}
-+	free_percpu(kgr_patch->irq_use_new);
- }
  
- static void kgr_work_fn(struct work_struct *work)
-@@ -164,6 +172,20 @@ static unsigned long kgr_get_fentry_loc(const char *f_name)
++	free_percpu(kgr_patch->irq_use_new);
++
+ 	mutex_lock(&kgr_in_progress_lock);
+ 	kgr_in_progress = false;
+ 	mutex_unlock(&kgr_in_progress_lock);
+@@ -165,6 +174,20 @@ static unsigned long kgr_get_fentry_loc(const char *f_name)
  	return fentry_loc;
  }
  
@@ -127,8 +128,8 @@ index 617c6eac26fc..5712360168c6 100644
 +
  static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
  {
- 	unsigned long fentry_loc;
-@@ -258,7 +280,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+ 	struct ftrace_ops *fops;
+@@ -262,7 +285,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
   * kgr_patch_kernel -- the entry for a kgraft patch
   * @patch: patch to be applied
   *
@@ -137,7 +138,7 @@ index 617c6eac26fc..5712360168c6 100644
   */
  int kgr_patch_kernel(struct kgr_patch *patch)
  {
-@@ -275,6 +297,13 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -279,6 +302,13 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		return -EBUSY;
  	}
  
@@ -151,16 +152,16 @@ index 617c6eac26fc..5712360168c6 100644
  	mutex_lock(&kgr_in_progress_lock);
  	if (kgr_in_progress) {
  		pr_err("kgr: can't patch, another patching not yet finalized\n");
-@@ -283,6 +312,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -287,6 +317,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	}
  
- 	for (patch_fun = patch->patches; *patch_fun; patch_fun++) {
-+		(*patch_fun)->patch = patch;
+ 	kgr_for_each_patch(patch, patch_fun) {
++		patch_fun->patch = patch;
 +
- 		ret = kgr_patch_code(*patch_fun, false);
+ 		ret = kgr_patch_code(patch_fun, false);
  		/*
  		 * In case any of the symbol resolutions in the set
-@@ -300,6 +331,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -304,6 +336,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	kgr_patch = patch;
  	mutex_unlock(&kgr_in_progress_lock);
  
@@ -168,7 +169,7 @@ index 617c6eac26fc..5712360168c6 100644
  	kgr_handle_processes();
  
  	/*
-@@ -310,6 +342,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -314,6 +347,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	return 0;
  err_unlock:
  	mutex_unlock(&kgr_in_progress_lock);

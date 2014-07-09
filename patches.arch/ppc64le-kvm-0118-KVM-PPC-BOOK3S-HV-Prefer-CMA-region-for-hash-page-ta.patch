@@ -1,0 +1,71 @@
+From 1bb3ae39179c942aa8a6d2f06bd0f9c003698c4b Mon Sep 17 00:00:00 2001
+From: "Aneesh Kumar K.V" <aneesh.kumar@linux.vnet.ibm.com>
+Date: Tue, 6 May 2014 21:24:18 +0530
+Subject: [PATCH 118/160] KVM: PPC: BOOK3S: HV: Prefer CMA region for hash page
+ table allocation
+Git-commit: 792fc49787cb7df13f1c38d3e25c863e1c3a6bb2
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+Today when KVM tries to reserve memory for the hash page table it
+allocates from the normal page allocator first. If that fails it
+falls back to CMA's reserved region. One of the side effects of
+this is that we could end up exhausting the page allocator and
+get linux into OOM conditions while we still have plenty of space
+available in CMA.
+
+This patch addresses this issue by first trying hash page table
+allocation from CMA's reserved region before falling back to the normal
+page allocator. So if we run out of memory, we really are out of memory.
+
+Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_64_mmu_hv.c | 23 ++++++-----------------
+ 1 file changed, 6 insertions(+), 17 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_64_mmu_hv.c b/arch/powerpc/kvm/book3s_64_mmu_hv.c
+index fb25ebc..f32896f 100644
+--- a/arch/powerpc/kvm/book3s_64_mmu_hv.c
++++ b/arch/powerpc/kvm/book3s_64_mmu_hv.c
+@@ -52,7 +52,7 @@ static void kvmppc_rmap_reset(struct kvm *kvm);
+ 
+ long kvmppc_alloc_hpt(struct kvm *kvm, u32 *htab_orderp)
+ {
+-	unsigned long hpt;
++	unsigned long hpt = 0;
+ 	struct revmap_entry *rev;
+ 	struct page *page = NULL;
+ 	long order = KVM_DEFAULT_HPT_ORDER;
+@@ -64,22 +64,11 @@ long kvmppc_alloc_hpt(struct kvm *kvm, u32 *htab_orderp)
+ 	}
+ 
+ 	kvm->arch.hpt_cma_alloc = 0;
+-	/*
+-	 * try first to allocate it from the kernel page allocator.
+-	 * We keep the CMA reserved for failed allocation.
+-	 */
+-	hpt = __get_free_pages(GFP_KERNEL | __GFP_ZERO | __GFP_REPEAT |
+-			       __GFP_NOWARN, order - PAGE_SHIFT);
+-
+-	/* Next try to allocate from the preallocated pool */
+-	if (!hpt) {
+-		VM_BUG_ON(order < KVM_CMA_CHUNK_ORDER);
+-		page = kvm_alloc_hpt(1 << (order - PAGE_SHIFT));
+-		if (page) {
+-			hpt = (unsigned long)pfn_to_kaddr(page_to_pfn(page));
+-			kvm->arch.hpt_cma_alloc = 1;
+-		} else
+-			--order;
++	VM_BUG_ON(order < KVM_CMA_CHUNK_ORDER);
++	page = kvm_alloc_hpt(1 << (order - PAGE_SHIFT));
++	if (page) {
++		hpt = (unsigned long)pfn_to_kaddr(page_to_pfn(page));
++		kvm->arch.hpt_cma_alloc = 1;
+ 	}
+ 
+ 	/* Lastly try successively smaller sizes from the page allocator */
+-- 
+1.8.5.2
+
