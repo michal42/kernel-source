@@ -1,0 +1,90 @@
+From: fan.du <fan.du@windriver.com>
+Subject: powerpc: Make irq_stat.timers_irqs counting more specific
+Git-commit: c041cfa2af1ccb8d0346dc576144a1085e9b4d4b
+Patch-mainline: v3.14-rc1
+References: bnc#883741
+
+ powerpc: Make irq_stat.timers_irqs counting more specific
+
+Current irq_stat.timers_irqs counting doesn't discriminate timer event handler
+and other timer interrupt(like arch_irq_work_raise). Sometimes we need to know
+exactly how much interrupts timer event handler fired, so let's be more specific
+on this.
+
+Signed-off-by: Fan Du <fan.du@windriver.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/include/asm/hardirq.h b/arch/powerpc/include/asm/hardirq.h
+index 3bdcfce..418fb65 100644
+--- a/arch/powerpc/include/asm/hardirq.h
++++ b/arch/powerpc/include/asm/hardirq.h
+@@ -6,7 +6,8 @@
+ 
+ typedef struct {
+ 	unsigned int __softirq_pending;
+-	unsigned int timer_irqs;
++	unsigned int timer_irqs_event;
++	unsigned int timer_irqs_others;
+ 	unsigned int pmu_irqs;
+ 	unsigned int mce_exceptions;
+ 	unsigned int spurious_irqs;
+diff --git a/arch/powerpc/kernel/irq.c b/arch/powerpc/kernel/irq.c
+index ba01656..9729b23 100644
+--- a/arch/powerpc/kernel/irq.c
++++ b/arch/powerpc/kernel/irq.c
+@@ -354,8 +354,13 @@ int arch_show_interrupts(struct seq_file *p, int prec)
+ 
+ 	seq_printf(p, "%*s: ", prec, "LOC");
+ 	for_each_online_cpu(j)
+-		seq_printf(p, "%10u ", per_cpu(irq_stat, j).timer_irqs);
+-        seq_printf(p, "  Local timer interrupts\n");
++		seq_printf(p, "%10u ", per_cpu(irq_stat, j).timer_irqs_event);
++        seq_printf(p, "  Local timer interrupts for timer event device\n");
++
++	seq_printf(p, "%*s: ", prec, "LOC");
++	for_each_online_cpu(j)
++		seq_printf(p, "%10u ", per_cpu(irq_stat, j).timer_irqs_others);
++        seq_printf(p, "  Local timer interrupts for others\n");
+ 
+ 	seq_printf(p, "%*s: ", prec, "SPU");
+ 	for_each_online_cpu(j)
+@@ -389,11 +394,12 @@ int arch_show_interrupts(struct seq_file *p, int prec)
+  */
+ u64 arch_irq_stat_cpu(unsigned int cpu)
+ {
+-	u64 sum = per_cpu(irq_stat, cpu).timer_irqs;
++	u64 sum = per_cpu(irq_stat, cpu).timer_irqs_event;
+ 
+ 	sum += per_cpu(irq_stat, cpu).pmu_irqs;
+ 	sum += per_cpu(irq_stat, cpu).mce_exceptions;
+ 	sum += per_cpu(irq_stat, cpu).spurious_irqs;
++	sum += per_cpu(irq_stat, cpu).timer_irqs_others;
+ #ifdef CONFIG_PPC_DOORBELL
+ 	sum += per_cpu(irq_stat, cpu).doorbell_irqs;
+ #endif
+diff --git a/arch/powerpc/kernel/time.c b/arch/powerpc/kernel/time.c
+index b3b1441..afb1b56 100644
+--- a/arch/powerpc/kernel/time.c
++++ b/arch/powerpc/kernel/time.c
+@@ -510,7 +510,6 @@ void timer_interrupt(struct pt_regs * regs)
+ 	 */
+ 	may_hard_irq_enable();
+ 
+-	__get_cpu_var(irq_stat).timer_irqs++;
+ 
+ #if defined(CONFIG_PPC32) && defined(CONFIG_PMAC)
+ 	if (atomic_read(&ppc_n_lost_interrupts) != 0)
+@@ -532,10 +531,12 @@ void timer_interrupt(struct pt_regs * regs)
+ 		*next_tb = ~(u64)0;
+ 		if (evt->event_handler)
+ 			evt->event_handler(evt);
++		__get_cpu_var(irq_stat).timer_irqs_event++;
+ 	} else {
+ 		now = *next_tb - now;
+ 		if (now <= DECREMENTER_MAX)
+ 			set_dec((int)now);
++		__get_cpu_var(irq_stat).timer_irqs_others++;
+ 	}
+ 
+ #ifdef CONFIG_PPC64

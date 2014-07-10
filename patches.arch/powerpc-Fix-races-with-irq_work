@@ -1,0 +1,50 @@
+From: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Subject: powerpc: Fix races with irq_work
+Git-commit: 0215f7d8c53fb192cd4491ede0ece5cca6b5db57
+Patch-mainline: v3.14-rc1
+References: bnc#883741
+
+ powerpc: Fix races with irq_work
+
+If we set irq_work on a processor and immediately afterward, before the
+irq work has a chance to be processed, we change the decrementer value,
+we can seriously delay the handling of that irq_work.
+
+Fix it by checking in a few places for pending irq work, first before
+changing the decrementer in decrementer_set_next_event() and after
+changing it in the same function and in timer_interrupt().
+
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/arch/powerpc/kernel/time.c b/arch/powerpc/kernel/time.c
+index afb1b56..b3dab20 100644
+--- a/arch/powerpc/kernel/time.c
++++ b/arch/powerpc/kernel/time.c
+@@ -536,6 +536,9 @@ void timer_interrupt(struct pt_regs * regs)
+ 		now = *next_tb - now;
+ 		if (now <= DECREMENTER_MAX)
+ 			set_dec((int)now);
++		/* We may have raced with new irq work */
++		if (test_irq_work_pending())
++			set_dec(1);
+ 		__get_cpu_var(irq_stat).timer_irqs_others++;
+ 	}
+ 
+@@ -802,8 +805,16 @@ static void __init clocksource_init(void)
+ static int decrementer_set_next_event(unsigned long evt,
+ 				      struct clock_event_device *dev)
+ {
++	/* Don't adjust the decrementer if some irq work is pending */
++	if (test_irq_work_pending())
++		return 0;
+ 	__get_cpu_var(decrementers_next_tb) = get_tb_or_rtc() + evt;
+ 	set_dec(evt);
++
++	/* We may have raced with new irq work */
++	if (test_irq_work_pending())
++		set_dec(1);
++
+ 	return 0;
+ }
+ 
