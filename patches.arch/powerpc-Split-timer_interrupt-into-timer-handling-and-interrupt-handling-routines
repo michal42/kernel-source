@@ -1,0 +1,62 @@
+From: Preeti U Murthy <preeti@linux.vnet.ibm.com>
+Subject: powerpc: Split timer_interrupt() into timer handling and interrupt handling routines
+Git-commit: 1b7839559b3f1c7a09ff94904788a732063ce2de
+Patch-mainline: v3.15-rc1
+References: bnc#883741,bnc#885934
+
+ powerpc: Split timer_interrupt() into timer handling and interrupt handling routines
+
+Split timer_interrupt(), which is the local timer interrupt handler on ppc
+into routines called during regular interrupt handling and __timer_interrupt(),
+which takes care of running local timers and collecting time related stats.
+
+This will enable callers interested only in running expired local timers to
+directly call into __timer_interupt(). One of the use cases of this is the
+tick broadcast IPI handling in which the sleeping CPUs need to handle the local
+timers that have expired.
+
+Signed-off-by: Preeti U Murthy <preeti@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/arch/powerpc/kernel/time.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/kernel/time.c
++++ linux-3.12-SLE12/arch/powerpc/kernel/time.c
+@@ -479,6 +479,16 @@ void arch_irq_work_raise(void)
+ 
+ #endif /* CONFIG_IRQ_WORK */
+ 
++void __timer_interrupt(void)
++{
++	struct pt_regs *regs = get_irq_regs();
++	u64 *next_tb = &__get_cpu_var(decrementers_next_tb);
++	struct clock_event_device *evt = &__get_cpu_var(decrementers);
++	u64 now;
++
++	__timer_interrupt();
++}
++
+ /*
+  * timer_interrupt - gets called when the decrementer overflows,
+  * with interrupts disabled.
+@@ -487,8 +497,6 @@ void timer_interrupt(struct pt_regs * re
+ {
+ 	struct pt_regs *old_regs;
+ 	u64 *next_tb = &__get_cpu_var(decrementers_next_tb);
+-	struct clock_event_device *evt = &__get_cpu_var(decrementers);
+-	u64 now;
+ 
+ 	/* Ensure a positive value is written to the decrementer, or else
+ 	 * some CPUs will continue to take decrementer exceptions.
+@@ -818,6 +826,10 @@ static void decrementer_set_mode(enum cl
+ /* Interrupt handler for the timer broadcast IPI */
+ void tick_broadcast_ipi_handler(void)
+ {
++	u64 *next_tb = &__get_cpu_var(decrementers_next_tb);
++
++	*next_tb = get_tb_or_rtc();
++	__timer_interrupt();
+ }
+ 
+ static void register_decrementer_clockevent(int cpu)
