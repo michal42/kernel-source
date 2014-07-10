@@ -14,11 +14,11 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  2 files changed, 28 insertions(+), 7 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index 6e9d704dc216..b9d67a42ee7b 100644
+index 42b35383af5c..91d9d5086cd2 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -47,7 +47,13 @@ struct kgr_patch_fun {
- 	const char *new_name;
+ 	void *new_fun;
  
  	bool abort_if_missing;
 -	bool applied;
@@ -33,10 +33,10 @@ index 6e9d704dc216..b9d67a42ee7b 100644
  	unsigned long loc_old;
  	unsigned long loc_new;
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 08957d88fff0..3f7a42fd09ff 100644
+index 4026b5bbfe0b..7fcb6685412f 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -239,21 +239,35 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
+@@ -244,21 +244,35 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
  static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  {
  	struct ftrace_ops *new_ops;
@@ -68,14 +68,14 @@ index 08957d88fff0..3f7a42fd09ff 100644
  			return err;
  		}
  		pr_debug("kgr: patching %s to slow stub\n", patch_fun->name);
- 		new_ops = patch_fun->ftrace_ops_slow;
+ 		new_ops = &patch_fun->ftrace_ops_slow;
  	} else {
 -		if (!patch_fun->applied)
 -			return 0;
  		pr_debug("kgr: patching %s to fast stub\n", patch_fun->name);
- 		new_ops = patch_fun->ftrace_ops_fast;
+ 		new_ops = &patch_fun->ftrace_ops_fast;
  	}
-@@ -285,8 +299,9 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -290,8 +304,9 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  					patch_fun->name, err);
  			/* don't fail: we are only slower */
  		}
@@ -87,15 +87,15 @@ index 08957d88fff0..3f7a42fd09ff 100644
  
  	pr_debug("kgr: redirection for %s done\n", patch_fun->name);
  
-@@ -342,7 +357,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -347,7 +362,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		if (ret < 0) {
  			for (patch_fun--; patch_fun >= patch->patches;
  					patch_fun--) {
--				if ((*patch_fun)->applied)
-+				if ((*patch_fun)->state == KGR_PATCH_SLOW)
- 					unregister_ftrace_function(
- 						(*patch_fun)->ftrace_ops_slow);
+-				if (patch_fun->applied)
++				if (patch_fun->state == KGR_PATCH_SLOW)
+ 					unregister_ftrace_function(&patch_fun->ftrace_ops_slow);
  			}
+ 			goto err_unlock;
 -- 
 2.0.0
 

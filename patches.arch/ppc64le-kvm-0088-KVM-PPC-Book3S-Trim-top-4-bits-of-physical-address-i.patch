@@ -1,0 +1,48 @@
+From 2bf890f852e1c29fc1184e9aa0f26f3901279745 Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Tue, 25 Mar 2014 10:47:04 +1100
+Subject: [PATCH 088/160] KVM: PPC: Book3S: Trim top 4 bits of physical address
+ in RTAS code
+Git-commit: b24f36f33ea088771c2bb7c09e84d0ddea35cf55
+Patch-mainline: v3.15-rc1
+References: FATE#317763
+
+The in-kernel emulation of RTAS functions needs to read the argument
+buffer from guest memory in order to find out what function is being
+requested.  The guest supplies the guest physical address of the buffer,
+and on a real system the code that reads that buffer would run in guest
+real mode.  In guest real mode, the processor ignores the top 4 bits
+of the address specified in load and store instructions.  In order to
+emulate that behaviour correctly, we need to mask off those bits
+before calling kvm_read_guest() or kvm_write_guest().  This adds that
+masking.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Acked-by: Scott Wood <scottwood@freescale.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_rtas.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_rtas.c b/arch/powerpc/kvm/book3s_rtas.c
+index cf95cde..7a05315 100644
+--- a/arch/powerpc/kvm/book3s_rtas.c
++++ b/arch/powerpc/kvm/book3s_rtas.c
+@@ -213,8 +213,11 @@ int kvmppc_rtas_hcall(struct kvm_vcpu *vcpu)
+ 	gpa_t args_phys;
+ 	int rc;
+ 
+-	/* r4 contains the guest physical address of the RTAS args */
+-	args_phys = kvmppc_get_gpr(vcpu, 4);
++	/*
++	 * r4 contains the guest physical address of the RTAS args
++	 * Mask off the top 4 bits since this is a guest real address
++	 */
++	args_phys = kvmppc_get_gpr(vcpu, 4) & KVM_PAM;
+ 
+ 	rc = kvm_read_guest(vcpu->kvm, args_phys, &args, sizeof(args));
+ 	if (rc)
+-- 
+1.8.5.2
+

@@ -4,16 +4,31 @@ Subject: kgr: support revert of patches
 Patch-mainline: submitted for review
 References: fate#313296
 
+Add support to remove a module with patch. This effectively reverts
+the patch and allows the module removal. We do this by adding a
+'revert' file to patch's sysfs directory. A write to that file starts
+the process. After it is finished, the module refcount is lowered and
+the module can be removed.
+
+We do not do this in the module rmmod path for two reasons:
+* exit fucntion of a module cannot fail. This means, kgraft revert
+  could not fail. But bad things happen. Removal of a module, when the
+  revert fails would be disaster. Waiting infinitely in such case is
+  not nice at all.
+* Having processes waiting in the D state on rmmod path for kGraft to
+  finish is not nice for the very same reason, even though it is only
+  tens of seconds.
+
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h          |  5 +++
  kernel/kgraft.c                 | 92 ++++++++++++++++++++++++++++++-----------
- kernel/kgraft_files.c           | 12 ++++++
- samples/kgraft/kgraft_patcher.c |  2 -
- 4 files changed, 84 insertions(+), 27 deletions(-)
+ kernel/kgraft_files.c           | 13 ++++++
+ samples/kgraft/kgraft_patcher.c |  1 -
+ 4 files changed, 85 insertions(+), 26 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index 1c4765e6b622..6e6fe2c25742 100644
+index 4d533b5c68c9..d9747463c733 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -53,6 +53,9 @@ struct kgr_patch_fun {
@@ -26,7 +41,7 @@ index 1c4765e6b622..6e6fe2c25742 100644
  		KGR_PATCH_SKIPPED,
  	} state;
  
-@@ -105,6 +108,8 @@ extern bool kgr_in_progress;
+@@ -96,6 +99,8 @@ extern bool kgr_in_progress;
  
  extern int kgr_patch_kernel(struct kgr_patch *);
  extern void kgr_patch_remove(struct kgr_patch *);
@@ -36,7 +51,7 @@ index 1c4765e6b622..6e6fe2c25742 100644
  extern void kgr_patch_dir_del(struct kgr_patch *patch);
  extern int kgr_add_files(void);
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 9bc4a1d5d835..29941832de2b 100644
+index 4059548a571a..f7791202d67b 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -27,7 +27,8 @@
@@ -52,7 +67,7 @@ index 9bc4a1d5d835..29941832de2b 100644
 @@ -36,6 +37,7 @@ static DEFINE_MUTEX(kgr_in_progress_lock);
  bool kgr_in_progress;
  static bool kgr_initialized;
- static const struct kgr_patch *kgr_patch;
+ static struct kgr_patch *kgr_patch;
 +static bool kgr_revert;
  
  /*
@@ -70,25 +85,26 @@ index 9bc4a1d5d835..29941832de2b 100644
  	if (go_old) {
  		pr_debug("kgr: slow stub: calling old code at %lx\n",
  				p->loc_old);
-@@ -93,13 +101,16 @@ static void kgr_finalize(void)
- 	struct kgr_patch_fun *const *patch_fun;
+@@ -93,7 +101,7 @@ static void kgr_finalize(void)
+ 	struct kgr_patch_fun *patch_fun;
  
- 	for (patch_fun = kgr_patch->patches; *patch_fun; patch_fun++) {
--		int ret = kgr_patch_code(*patch_fun, true);
-+		int ret = kgr_patch_code(*patch_fun, true, kgr_revert);
+ 	kgr_for_each_patch(kgr_patch, patch_fun) {
+-		int ret = kgr_patch_code(patch_fun, true);
++		int ret = kgr_patch_code(patch_fun, true, kgr_revert);
  
  		if (ret < 0)
  			pr_err("kgr: finalize for %s failed, trying to continue\n",
- 					(*patch_fun)->name);
- 	}
+@@ -102,6 +110,9 @@ static void kgr_finalize(void)
+ 
  	free_percpu(kgr_patch->irq_use_new);
-+
+ 
 +	if (kgr_revert)
 +		module_put(kgr_patch->owner);
- }
- 
- static void kgr_work_fn(struct work_struct *work)
-@@ -236,7 +247,8 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
++
+ 	mutex_lock(&kgr_in_progress_lock);
+ 	kgr_in_progress = false;
+ 	mutex_unlock(&kgr_in_progress_lock);
+@@ -241,7 +252,8 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
  	return 0;
  }
  
@@ -98,7 +114,7 @@ index 9bc4a1d5d835..29941832de2b 100644
  {
  	struct ftrace_ops *new_ops = NULL, *unreg_ops = NULL;
  	enum kgr_patch_state next_state;
-@@ -244,7 +256,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -249,7 +261,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  
  	switch (patch_fun->state) {
  	case KGR_PATCH_INIT:
@@ -107,34 +123,34 @@ index 9bc4a1d5d835..29941832de2b 100644
  			return -EINVAL;
  		err = kgr_init_ftrace_ops(patch_fun);
  		if (err) {
-@@ -259,12 +271,25 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
- 		new_ops = patch_fun->ftrace_ops_slow;
+@@ -264,12 +276,25 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+ 		new_ops = &patch_fun->ftrace_ops_slow;
  		break;
  	case KGR_PATCH_SLOW:
 -		if (!final)
 +		if (revert || !final)
  			return -EINVAL;
  		next_state = KGR_PATCH_APPLIED;
- 		new_ops = patch_fun->ftrace_ops_fast;
- 		unreg_ops = patch_fun->ftrace_ops_slow;
+ 		new_ops = &patch_fun->ftrace_ops_fast;
+ 		unreg_ops = &patch_fun->ftrace_ops_slow;
  		break;
 +	case KGR_PATCH_APPLIED:
 +		if (!revert || final)
 +			return -EINVAL;
 +		next_state = KGR_PATCH_REVERT_SLOW;
-+		new_ops = patch_fun->ftrace_ops_slow;
-+		unreg_ops = patch_fun->ftrace_ops_fast;
++		new_ops = &patch_fun->ftrace_ops_slow;
++		unreg_ops = &patch_fun->ftrace_ops_fast;
 +		break;
 +	case KGR_PATCH_REVERT_SLOW:
 +		if (!revert || !final)
 +			return -EINVAL;
 +		next_state = KGR_PATCH_REVERTED;
-+		unreg_ops = patch_fun->ftrace_ops_slow;
++		unreg_ops = &patch_fun->ftrace_ops_slow;
 +		break;
  	case KGR_PATCH_SKIPPED:
  		return 0;
  	default:
-@@ -309,13 +334,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -314,13 +339,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  	return 0;
  }
  
@@ -147,9 +163,9 @@ index 9bc4a1d5d835..29941832de2b 100644
 -int kgr_patch_kernel(struct kgr_patch *patch)
 +int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
  {
- 	struct kgr_patch_fun *const *patch_fun;
+ 	struct kgr_patch_fun *patch_fun;
  	int ret;
-@@ -325,20 +344,12 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -330,20 +349,12 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		return -EINVAL;
  	}
  
@@ -171,16 +187,16 @@ index 9bc4a1d5d835..29941832de2b 100644
  	mutex_lock(&kgr_in_progress_lock);
  	if (kgr_in_progress) {
  		pr_err("kgr: can't patch, another patching not yet finalized\n");
-@@ -351,7 +362,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
- 	for (patch_fun = patch->patches; *patch_fun; patch_fun++) {
- 		(*patch_fun)->patch = patch;
+@@ -356,7 +367,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+ 	kgr_for_each_patch(patch, patch_fun) {
+ 		patch_fun->patch = patch;
  
--		ret = kgr_patch_code(*patch_fun, false);
-+		ret = kgr_patch_code(*patch_fun, false, revert);
+-		ret = kgr_patch_code(patch_fun, false);
++		ret = kgr_patch_code(patch_fun, false, revert);
  		/*
  		 * In case any of the symbol resolutions in the set
  		 * has failed, patch all the previously replaced fentry
-@@ -369,10 +380,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -373,10 +384,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	}
  	kgr_in_progress = true;
  	kgr_patch = patch;
@@ -192,7 +208,7 @@ index 9bc4a1d5d835..29941832de2b 100644
  	kgr_handle_irqs();
  	kgr_handle_processes();
  
-@@ -385,7 +395,39 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -389,7 +399,39 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  err_unlock:
  	mutex_unlock(&kgr_in_progress_lock);
  	free_percpu(patch->irq_use_new);
@@ -234,10 +250,10 @@ index 9bc4a1d5d835..29941832de2b 100644
  
  	return ret;
 diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
-index efd204267a3e..0e2ee94cf9f2 100644
+index c1fb552d680d..e155a9c487e1 100644
 --- a/kernel/kgraft_files.c
 +++ b/kernel/kgraft_files.c
-@@ -58,10 +58,22 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
+@@ -56,10 +56,23 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
  	return size;
  }
  
@@ -245,10 +261,11 @@ index efd204267a3e..0e2ee94cf9f2 100644
 +		struct kobj_attribute *attr, const char *buf, size_t count)
 +{
 +	struct kgr_patch *p = kobj_to_patch(kobj);
++	int ret;
 +
-+	kgr_modify_kernel(p, true);
++	ret = kgr_modify_kernel(p, true);
 +
-+	return count;
++	return ret < 0 ? ret : count;
 +}
 +
  static struct kobj_attribute kgr_attr_state = __ATTR_RO(state);
@@ -261,14 +278,13 @@ index efd204267a3e..0e2ee94cf9f2 100644
  };
  
 diff --git a/samples/kgraft/kgraft_patcher.c b/samples/kgraft/kgraft_patcher.c
-index fc777abe8aeb..0ab29d24049e 100644
+index 1358ac6d1399..29504d52180f 100644
 --- a/samples/kgraft/kgraft_patcher.c
 +++ b/samples/kgraft/kgraft_patcher.c
-@@ -88,8 +88,6 @@ static int __init kgr_patcher_init(void)
+@@ -88,7 +88,6 @@ static int __init kgr_patcher_init(void)
  static void __exit kgr_patcher_cleanup(void)
  {
  	kgr_patch_remove(&patch);
--	/* extra care needs to be taken when freeing ftrace_ops->private */
 -	pr_err("removing now buggy!\n");
  }
  

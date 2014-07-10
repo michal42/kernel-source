@@ -1,0 +1,57 @@
+From f9736695de97b1ff0f98641b0319415620a28944 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 24 Apr 2014 13:52:01 +0200
+Subject: [PATCH 110/160] KVM: PPC: Book3S PR: Do dcbz32 patching with big
+ endian instructions
+Git-commit: cd087eefe637d545345ea5f888d4ea4fe52e312c
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+When the host CPU we're running on doesn't support dcbz32 itself, but the
+guest wants to have dcbz only clear 32 bytes of data, we loop through every
+executable mapped page to search for dcbz instructions and patch them with
+a special privileged instruction that we emulate as dcbz32.
+
+The only guests that want to see dcbz act as 32byte are book3s_32 guests, so
+we don't have to worry about little endian instruction ordering. So let's
+just always search for big endian dcbz instructions, also when we're on a
+little endian host.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_32_mmu.c | 2 +-
+ arch/powerpc/kvm/book3s_pr.c     | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_32_mmu.c b/arch/powerpc/kvm/book3s_32_mmu.c
+index 628d90e..93503bb 100644
+--- a/arch/powerpc/kvm/book3s_32_mmu.c
++++ b/arch/powerpc/kvm/book3s_32_mmu.c
+@@ -131,7 +131,7 @@ static hva_t kvmppc_mmu_book3s_32_get_pteg(struct kvm_vcpu *vcpu,
+ 	pteg = (vcpu_book3s->sdr1 & 0xffff0000) | hash;
+ 
+ 	dprintk("MMU: pc=0x%lx eaddr=0x%lx sdr1=0x%llx pteg=0x%x vsid=0x%x\n",
+-		kvmppc_get_pc(&vcpu_book3s->vcpu), eaddr, vcpu_book3s->sdr1, pteg,
++		kvmppc_get_pc(vcpu), eaddr, vcpu_book3s->sdr1, pteg,
+ 		sr_vsid(sre));
+ 
+ 	r = gfn_to_hva(vcpu->kvm, pteg >> PAGE_SHIFT);
+diff --git a/arch/powerpc/kvm/book3s_pr.c b/arch/powerpc/kvm/book3s_pr.c
+index 88ee502..b06e8e6 100644
+--- a/arch/powerpc/kvm/book3s_pr.c
++++ b/arch/powerpc/kvm/book3s_pr.c
+@@ -428,8 +428,8 @@ static void kvmppc_patch_dcbz(struct kvm_vcpu *vcpu, struct kvmppc_pte *pte)
+ 
+ 	/* patch dcbz into reserved instruction, so we trap */
+ 	for (i=hpage_offset; i < hpage_offset + (HW_PAGE_SIZE / 4); i++)
+-		if ((page[i] & 0xff0007ff) == INS_DCBZ)
+-			page[i] &= 0xfffffff7;
++		if ((be32_to_cpu(page[i]) & 0xff0007ff) == INS_DCBZ)
++			page[i] &= cpu_to_be32(0xfffffff7);
+ 
+ 	kunmap_atomic(page);
+ 	put_page(hpage);
+-- 
+1.8.5.2
+

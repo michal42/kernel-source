@@ -4,16 +4,19 @@ Subject: kgr: add patch information into sysfs
 Patch-mainline: submitted for review
 References: fate#313296
 
+Expose information about patch state machine in sysfs. This will be
+later extended to contain a file for patch revert and possibly more.
+
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h          | 10 ++++++
  kernel/kgraft.c                 | 15 +++++++++
- kernel/kgraft_files.c           | 71 +++++++++++++++++++++++++++++++++++++++++
+ kernel/kgraft_files.c           | 69 +++++++++++++++++++++++++++++++++++++++++
  samples/kgraft/kgraft_patcher.c |  2 ++
- 4 files changed, 98 insertions(+)
+ 4 files changed, 96 insertions(+)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index b9d67a42ee7b..1c4765e6b622 100644
+index 91d9d5086cd2..4d533b5c68c9 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -19,6 +19,7 @@
@@ -41,8 +44,8 @@ index b9d67a42ee7b..1c4765e6b622 100644
 +	const char *name;
  	struct module *owner;
  	bool __percpu *irq_use_new;
- 	struct kgr_patch_fun *patches[];
-@@ -97,6 +104,9 @@ struct kgr_patch {
+ 	struct kgr_patch_fun patches[];
+@@ -88,6 +95,9 @@ struct kgr_patch {
  extern bool kgr_in_progress;
  
  extern int kgr_patch_kernel(struct kgr_patch *);
@@ -53,10 +56,10 @@ index b9d67a42ee7b..1c4765e6b622 100644
  extern void kgr_remove_files(void);
  
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 59aebc015f3a..9bc4a1d5d835 100644
+index 513c449a0399..4059548a571a 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -337,6 +337,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -342,6 +342,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		goto err_module_put;
  	}
  
@@ -65,7 +68,7 @@ index 59aebc015f3a..9bc4a1d5d835 100644
  	mutex_lock(&kgr_in_progress_lock);
  	if (kgr_in_progress) {
  		pr_err("kgr: can't patch, another patching not yet finalized\n");
-@@ -369,6 +371,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -373,6 +375,8 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	kgr_patch = patch;
  	mutex_unlock(&kgr_in_progress_lock);
  
@@ -74,7 +77,7 @@ index 59aebc015f3a..9bc4a1d5d835 100644
  	kgr_handle_irqs();
  	kgr_handle_processes();
  
-@@ -388,6 +392,17 @@ err_module_put:
+@@ -392,6 +396,17 @@ err_module_put:
  }
  EXPORT_SYMBOL_GPL(kgr_patch_kernel);
  
@@ -93,10 +96,10 @@ index 59aebc015f3a..9bc4a1d5d835 100644
  {
  	int ret;
 diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
-index 40c6cb76b386..efd204267a3e 100644
+index 40c6cb76b386..c1fb552d680d 100644
 --- a/kernel/kgraft_files.c
 +++ b/kernel/kgraft_files.c
-@@ -17,10 +17,81 @@
+@@ -17,10 +17,79 @@
  #include <linux/kernel.h>
  #include <linux/kgraft.h>
  #include <linux/kobject.h>
@@ -125,15 +128,13 @@ index 40c6cb76b386..efd204267a3e 100644
 +static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 +		char *buf)
 +{
-+	struct kgr_patch_fun *const *patch_fun;
 +	struct kgr_patch *p = kobj_to_patch(kobj);
++	const struct kgr_patch_fun *pf;
 +	ssize_t size;
 +
 +	size = snprintf(buf, PAGE_SIZE, "%-20s  State  Fatal\n", "Function");
 +
-+	for (patch_fun = p->patches; *patch_fun; patch_fun++) {
-+		const struct kgr_patch_fun *pf = *patch_fun;
-+
++	kgr_for_each_patch(p, pf) {
 +		size += snprintf(buf + size, PAGE_SIZE - size,
 +				"%-20s  %5d  %5d\n",
 +				pf->name, pf->state, pf->abort_if_missing);
@@ -179,25 +180,25 @@ index 40c6cb76b386..efd204267a3e 100644
  		struct kobj_attribute *attr, char *buf)
  {
 diff --git a/samples/kgraft/kgraft_patcher.c b/samples/kgraft/kgraft_patcher.c
-index 26ded6887fce..fc777abe8aeb 100644
+index 4e3806ecdce5..1358ac6d1399 100644
 --- a/samples/kgraft/kgraft_patcher.c
 +++ b/samples/kgraft/kgraft_patcher.c
-@@ -70,6 +70,7 @@ static void new_function(unsigned long data)
- KGR_PATCHED_FUNCTION(unknown_function, new_function, false);
+@@ -68,6 +68,7 @@ static void kgr_new_function(unsigned long data)
+ }
  
  static struct kgr_patch patch = {
 +	.name = "sample_patcher",
  	.owner = THIS_MODULE,
  	.patches = {
- 		KGR_PATCH(SyS_iopl),
+ #if defined(CONFIG_X86)
 @@ -86,6 +87,7 @@ static int __init kgr_patcher_init(void)
  
  static void __exit kgr_patcher_cleanup(void)
  {
 +	kgr_patch_remove(&patch);
- 	/* extra care needs to be taken when freeing ftrace_ops->private */
  	pr_err("removing now buggy!\n");
  }
+ 
 -- 
 2.0.0
 

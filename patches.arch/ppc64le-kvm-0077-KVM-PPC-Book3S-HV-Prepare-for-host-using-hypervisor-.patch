@@ -1,0 +1,72 @@
+From 0804615821a2f391a97d9aa895da1589eaa4bd7b Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Wed, 8 Jan 2014 21:25:28 +1100
+Subject: [PATCH 077/160] KVM: PPC: Book3S HV: Prepare for host using
+ hypervisor doorbells
+Git-commit: 5d00f66b865e3782c5852cdafe1cea11a292a81e
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+POWER8 has support for hypervisor doorbell interrupts.  Though the
+kernel doesn't use them for IPIs on the powernv platform yet, it
+probably will in future, so this makes KVM cope gracefully if a
+hypervisor doorbell interrupt arrives while in a guest.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/include/asm/kvm_asm.h      | 1 +
+ arch/powerpc/kvm/book3s_hv.c            | 1 +
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S | 7 +++++++
+ 3 files changed, 9 insertions(+)
+
+diff --git a/arch/powerpc/include/asm/kvm_asm.h b/arch/powerpc/include/asm/kvm_asm.h
+index fdf0627..2be3304 100644
+--- a/arch/powerpc/include/asm/kvm_asm.h
++++ b/arch/powerpc/include/asm/kvm_asm.h
+@@ -97,6 +97,7 @@
+ #define BOOK3S_INTERRUPT_H_DATA_STORAGE	0xe00
+ #define BOOK3S_INTERRUPT_H_INST_STORAGE	0xe20
+ #define BOOK3S_INTERRUPT_H_EMUL_ASSIST	0xe40
++#define BOOK3S_INTERRUPT_H_DOORBELL	0xe80
+ #define BOOK3S_INTERRUPT_PERFMON	0xf00
+ #define BOOK3S_INTERRUPT_ALTIVEC	0xf20
+ #define BOOK3S_INTERRUPT_VSX		0xf40
+diff --git a/arch/powerpc/kvm/book3s_hv.c b/arch/powerpc/kvm/book3s_hv.c
+index dd8cc6b..f1f3d3a 100644
+--- a/arch/powerpc/kvm/book3s_hv.c
++++ b/arch/powerpc/kvm/book3s_hv.c
+@@ -655,6 +655,7 @@ static int kvmppc_handle_exit_hv(struct kvm_run *run, struct kvm_vcpu *vcpu,
+ 		r = RESUME_GUEST;
+ 		break;
+ 	case BOOK3S_INTERRUPT_EXTERNAL:
++	case BOOK3S_INTERRUPT_H_DOORBELL:
+ 		vcpu->stat.ext_intr_exits++;
+ 		r = RESUME_GUEST;
+ 		break;
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index 7c71471..6d94438 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -2001,10 +2001,17 @@ ALT_FTR_SECTION_END_IFSET(CPU_FTR_ARCH_207S)
+ BEGIN_FTR_SECTION
+ 	cmpwi	r6, 5			/* privileged doorbell? */
+ 	beq	0f
++	cmpwi	r6, 3			/* hypervisor doorbell? */
++	beq	3f
+ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+ 	li	r3, 1			/* anything else, return 1 */
+ 0:	blr
+ 
++	/* hypervisor doorbell */
++3:	li	r12, BOOK3S_INTERRUPT_H_DOORBELL
++	li	r3, 1
++	blr
++
+ /*
+  * Determine what sort of external interrupt is pending (if any).
+  * Returns:
+-- 
+1.8.5.2
+

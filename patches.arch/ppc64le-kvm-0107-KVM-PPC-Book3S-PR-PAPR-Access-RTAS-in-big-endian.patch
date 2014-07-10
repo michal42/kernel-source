@@ -1,0 +1,78 @@
+From 47b84d21227132a669e7f8c16ef5e5be232d7d2e Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 24 Apr 2014 13:10:33 +0200
+Subject: [PATCH 107/160] KVM: PPC: Book3S PR: PAPR: Access RTAS in big endian
+Git-commit: b59d9d26becb8b32596f2eed6ce5a81d61f4f513
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+When the guest does an RTAS hypercall it keeps all RTAS variables inside a
+big endian data structure.
+
+To make sure we don't have to bother about endianness inside the actual RTAS
+handlers, let's just convert the whole structure to host endian before we
+call our RTAS handlers and back to big endian when we return to the guest.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_rtas.c | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/arch/powerpc/kvm/book3s_rtas.c b/arch/powerpc/kvm/book3s_rtas.c
+index 7a05315..edb14ba 100644
+--- a/arch/powerpc/kvm/book3s_rtas.c
++++ b/arch/powerpc/kvm/book3s_rtas.c
+@@ -205,6 +205,32 @@ int kvm_vm_ioctl_rtas_define_token(struct kvm *kvm, void __user *argp)
+ 	return rc;
+ }
+ 
++static void kvmppc_rtas_swap_endian_in(struct rtas_args *args)
++{
++#ifdef __LITTLE_ENDIAN__
++	int i;
++
++	args->token = be32_to_cpu(args->token);
++	args->nargs = be32_to_cpu(args->nargs);
++	args->nret = be32_to_cpu(args->nret);
++	for (i = 0; i < args->nargs; i++)
++		args->args[i] = be32_to_cpu(args->args[i]);
++#endif
++}
++
++static void kvmppc_rtas_swap_endian_out(struct rtas_args *args)
++{
++#ifdef __LITTLE_ENDIAN__
++	int i;
++
++	for (i = 0; i < args->nret; i++)
++		args->args[i] = cpu_to_be32(args->args[i]);
++	args->token = cpu_to_be32(args->token);
++	args->nargs = cpu_to_be32(args->nargs);
++	args->nret = cpu_to_be32(args->nret);
++#endif
++}
++
+ int kvmppc_rtas_hcall(struct kvm_vcpu *vcpu)
+ {
+ 	struct rtas_token_definition *d;
+@@ -223,6 +249,8 @@ int kvmppc_rtas_hcall(struct kvm_vcpu *vcpu)
+ 	if (rc)
+ 		goto fail;
+ 
++	kvmppc_rtas_swap_endian_in(&args);
++
+ 	/*
+ 	 * args->rets is a pointer into args->args. Now that we've
+ 	 * copied args we need to fix it up to point into our copy,
+@@ -247,6 +275,7 @@ int kvmppc_rtas_hcall(struct kvm_vcpu *vcpu)
+ 
+ 	if (rc == 0) {
+ 		args.rets = orig_rets;
++		kvmppc_rtas_swap_endian_out(&args);
+ 		rc = kvm_write_guest(vcpu->kvm, args_phys, &args, sizeof(args));
+ 		if (rc)
+ 			goto fail;
+-- 
+1.8.5.2
+

@@ -1,10 +1,10 @@
 From: Mark Fasheh <mfasheh@suse.de>
-Date:   Wed Jun 4 15:47:31 2014 -0700
+Date: Wed, 4 Jun 2014 15:47:31 -0700
 Subject: [PATCH] btrfs: qgroup: account shared subtrees during snapshot delete
 References: bnc#865621, bnc#884001
 Patch-mainline: pending, submitted
 
-During it's tree walk, btrfs_drop_snapshot() will skip any shared
+During its tree walk, btrfs_drop_snapshot() will skip any shared
 subtrees it encounters. This is incorrect when we have qgroups
 turned on as those subtrees need to have their contents
 accounted. In particular, the case we're concerned with is when
@@ -24,12 +24,18 @@ exclusive counts.
 
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 Reviewed-by: Josef Bacik <jbacik@fb.com>
+---
+ fs/btrfs/extent-tree.c       | 261 +++++++++++++++++++++++++++++++++++++++++++
+ fs/btrfs/qgroup.c            | 165 +++++++++++++++++++++++++++
+ fs/btrfs/qgroup.h            |   1 +
+ include/trace/events/btrfs.h |   3 +-
+ 4 files changed, 429 insertions(+), 1 deletion(-)
 
-Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/fs/btrfs/extent-tree.c
-+++ linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
-@@ -7222,6 +7222,229 @@ reada:
+diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
+index 46f39bf..3f43e9a 100644
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -7324,6 +7324,220 @@ reada:
  	wc->reada_slot = slot;
  }
  
@@ -143,7 +149,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
 +				  u64 root_gen,
 +				  int root_level)
 +{
-+	int ret;
++	int ret = 0;
 +	int level;
 +	struct extent_buffer *eb = root_eb;
 +	struct btrfs_path *path = NULL;
@@ -162,9 +168,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
 +
 +	if (root_level == 0) {
 +		ret = account_leaf_items(trans, root, root_eb);
-+		if (ret)
-+			goto out;
-+		goto out_done;
++		goto out;
 +	}
 +
 +	path = btrfs_alloc_path();
@@ -242,14 +246,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
 +		level--;
 +	}
 +
-+out_done:
-+	ret = btrfs_qgroup_record_ref(trans, root->fs_info,
-+				      root->objectid, root_eb->start,
-+				      btrfs_level_size(root, root_level),
-+				      BTRFS_QGROUP_OPER_SUB_SUBTREE, 0);
-+	if (ret)
-+		goto out;
-+
++	ret = 0;
 +out:
 +	btrfs_free_path(path);
 +
@@ -259,10 +256,27 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
  /*
   * helper to process tree block while walking down the tree.
   *
-@@ -7370,6 +7593,15 @@ static noinline int do_walk_down(struct
+@@ -7427,6 +7641,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
+ 	int level = wc->level;
+ 	int reada = 0;
+ 	int ret = 0;
++	bool need_account = false;
+ 
+ 	generation = btrfs_node_ptr_generation(path->nodes[level],
+ 					       path->slots[level]);
+@@ -7472,6 +7687,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
  
  	if (wc->stage == DROP_REFERENCE) {
  		if (wc->refs[level - 1] > 1) {
++			need_account = true;
+ 			if (level == 1 &&
+ 			    (wc->flags[0] & BTRFS_BLOCK_FLAG_FULL_BACKREF))
+ 				goto skip;
+@@ -7535,6 +7751,16 @@ skip:
+ 			parent = 0;
+ 		}
+ 
++		if (need_account) {
 +			ret = account_shared_subtree(trans, root, next,
 +						     generation, level - 1);
 +			if (ret) {
@@ -271,11 +285,34 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
 +					"is out of sync, rescan required.\n",
 +					root->fs_info->sb->s_id, ret);
 +			}
++		}
+ 		ret = btrfs_free_extent(trans, root, bytenr, blocksize, parent,
+ 				root->root_key.objectid, level - 1, 0, 0);
+ 		BUG_ON(ret); /* -ENOMEM */
+@@ -7621,6 +7847,13 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
+ 				ret = btrfs_dec_ref(trans, root, eb, 0,
+ 						    wc->for_reloc);
+ 			BUG_ON(ret); /* -ENOMEM */
++			ret = account_leaf_items(trans, root, eb);
++			if (ret) {
++				printk_ratelimited(KERN_ERR "BTRFS: %s Error "
++					"%d accounting leaf items. Quota "
++					"is out of sync, rescan required.\n",
++					root->fs_info->sb->s_id, ret);
++			}
+ 		}
+ 		/* make block locked assertion in clean_tree_block happy */
+ 		if (!path->locks[level] &&
+@@ -7746,6 +7979,8 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
+ 	int level;
+ 	bool root_dropped = false;
+ 
++	btrfs_debug(root->fs_info, "Drop subvolume %llu", root->objectid);
 +
- 			if (level == 1 &&
- 			    (wc->flags[0] & BTRFS_BLOCK_FLAG_FULL_BACKREF))
- 				goto skip;
-@@ -7769,6 +8001,24 @@ int btrfs_drop_snapshot(struct btrfs_roo
+ 	path = btrfs_alloc_path();
+ 	if (!path) {
+ 		err = -ENOMEM;
+@@ -7871,6 +8106,24 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
  				goto out_end_trans;
  			}
  
@@ -300,7 +337,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
  			btrfs_end_transaction_throttle(trans, tree_root);
  			if (!for_reloc && btrfs_need_cleaner_sleep(root)) {
  				pr_debug("BTRFS: drop snapshot early exit\n");
-@@ -7822,6 +8072,14 @@ int btrfs_drop_snapshot(struct btrfs_roo
+@@ -7924,6 +8177,14 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
  	}
  	root_dropped = true;
  out_end_trans:
@@ -315,33 +352,30 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/extent-tree.c
  	btrfs_end_transaction_throttle(trans, tree_root);
  out_free:
  	kfree(wc);
-Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/fs/btrfs/qgroup.c
-+++ linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
-@@ -1202,7 +1202,7 @@ out:
+diff --git a/fs/btrfs/qgroup.c b/fs/btrfs/qgroup.c
+index a9f0f05..9b0cb93 100644
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
+@@ -1201,6 +1201,50 @@ out:
+ 	mutex_unlock(&fs_info->qgroup_ioctl_lock);
  	return ret;
  }
- static int comp_oper(struct btrfs_qgroup_operation *oper1,
--		     struct btrfs_qgroup_operation *oper2)
-+		     struct btrfs_qgroup_operation *oper2, int for_insert)
- {
- 	if (oper1->bytenr < oper2->bytenr)
- 		return -1;
-@@ -1216,10 +1216,37 @@ static int comp_oper(struct btrfs_qgroup
- 		return -1;
- 	if (oper1->ref_root > oper2->ref_root)
- 		return 1;
--	if (oper1->type < oper2->type)
--		return -1;
--	if (oper1->type > oper2->type)
--		return 1;
-+	if (for_insert) {
-+		if (oper1->type < oper2->type)
-+			return -1;
-+		if (oper1->type > oper2->type)
-+			return 1;
-+	}
++
++static int comp_oper_exist(struct btrfs_qgroup_operation *oper1,
++			   struct btrfs_qgroup_operation *oper2)
++{
++	/*
++	 * Ignore seq and type here, we're looking for any operation
++	 * at all related to this extent on that root.
++	 */
++	if (oper1->bytenr < oper2->bytenr)
++		return -1;
++	if (oper1->bytenr > oper2->bytenr)
++		return 1;
++	if (oper1->ref_root < oper2->ref_root)
++		return -1;
++	if (oper1->ref_root > oper2->ref_root)
++		return 1;
 +	return 0;
 +}
 +
@@ -356,7 +390,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
 +	n = fs_info->qgroup_op_tree.rb_node;
 +	while (n) {
 +		cur = rb_entry(n, struct btrfs_qgroup_operation, n);
-+		cmp = comp_oper(cur, oper, 0);
++		cmp = comp_oper_exist(cur, oper);
 +		if (cmp < 0) {
 +			n = n->rb_right;
 +		} else if (cmp) {
@@ -367,19 +401,13 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
 +		}
 +	}
 +	spin_unlock(&fs_info->qgroup_op_lock);
- 	return 0;
- }
- 
-@@ -1236,7 +1263,7 @@ static int insert_qgroup_oper(struct btr
- 	while (*p) {
- 		parent = *p;
- 		cur = rb_entry(parent, struct btrfs_qgroup_operation, n);
--		cmp = comp_oper(cur, oper);
-+		cmp = comp_oper(cur, oper, 1);
- 		if (cmp < 0) {
- 			p = &(*p)->rb_right;
- 		} else if (cmp) {
-@@ -1290,7 +1317,21 @@ int btrfs_qgroup_record_ref(struct btrfs
++	return 0;
++}
++
+ static int comp_oper(struct btrfs_qgroup_operation *oper1,
+ 		     struct btrfs_qgroup_operation *oper2)
+ {
+@@ -1290,7 +1334,25 @@ int btrfs_qgroup_record_ref(struct btrfs_trans_handle *trans,
  	oper->seq = atomic_inc_return(&fs_info->qgroup_op_seq);
  	INIT_LIST_HEAD(&oper->elem.list);
  	oper->elem.seq = 0;
@@ -391,6 +419,10 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
 +		 * If any operation for this bytenr/ref_root combo
 +		 * exists, then we know it's not exclusively owned and
 +		 * shouldn't be queued up.
++		 *
++		 * This also catches the case where we have a cloned
++		 * extent that gets queued up multiple times during
++		 * drop snapshot.
 +		 */
 +		if (qgroup_oper_exists(fs_info, oper)) {
 +			kfree(oper);
@@ -401,7 +433,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
  	ret = insert_qgroup_oper(fs_info, oper);
  	if (ret) {
  		/* Shouldn't happen so have an assert for developers */
-@@ -1883,6 +1924,106 @@ out:
+@@ -1883,6 +1945,106 @@ out:
  }
  
  /*
@@ -508,7 +540,7 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
   * btrfs_qgroup_account_ref is called for every ref that is added to or deleted
   * from the fs. First, all roots referencing the extent are searched, and
   * then the space is accounted accordingly to the different roots. The
-@@ -1921,6 +2062,9 @@ static int btrfs_qgroup_account(struct b
+@@ -1921,6 +2083,9 @@ static int btrfs_qgroup_account(struct btrfs_trans_handle *trans,
  	case BTRFS_QGROUP_OPER_SUB_SHARED:
  		ret = qgroup_shared_accounting(trans, fs_info, oper);
  		break;
@@ -518,10 +550,10 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.c
  	default:
  		ASSERT(0);
  	}
-Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.h
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/fs/btrfs/qgroup.h
-+++ linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.h
+diff --git a/fs/btrfs/qgroup.h b/fs/btrfs/qgroup.h
+index 5952ff1..18cc68c 100644
+--- a/fs/btrfs/qgroup.h
++++ b/fs/btrfs/qgroup.h
 @@ -44,6 +44,7 @@ enum btrfs_qgroup_operation_type {
  	BTRFS_QGROUP_OPER_ADD_SHARED,
  	BTRFS_QGROUP_OPER_SUB_EXCL,
@@ -530,11 +562,11 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/fs/btrfs/qgroup.h
  };
  
  struct btrfs_qgroup_operation {
-Index: linux-3.12-btrfs-qgroup-fixes-refresh2/include/trace/events/btrfs.h
-===================================================================
---- linux-3.12-btrfs-qgroup-fixes-refresh2.orig/include/trace/events/btrfs.h
-+++ linux-3.12-btrfs-qgroup-fixes-refresh2/include/trace/events/btrfs.h
-@@ -987,7 +987,8 @@ TRACE_EVENT(free_extent_state,
+diff --git a/include/trace/events/btrfs.h b/include/trace/events/btrfs.h
+index b8774b3..96daac6 100644
+--- a/include/trace/events/btrfs.h
++++ b/include/trace/events/btrfs.h
+@@ -1125,7 +1125,8 @@ DEFINE_EVENT(btrfs__workqueue_done, btrfs_workqueue_destroy,
  		{ BTRFS_QGROUP_OPER_ADD_EXCL, 	"OPER_ADD_EXCL" },	\
  		{ BTRFS_QGROUP_OPER_ADD_SHARED, "OPER_ADD_SHARED" },	\
  		{ BTRFS_QGROUP_OPER_SUB_EXCL, 	"OPER_SUB_EXCL" },	\
@@ -544,3 +576,6 @@ Index: linux-3.12-btrfs-qgroup-fixes-refresh2/include/trace/events/btrfs.h
  
  DECLARE_EVENT_CLASS(btrfs_qgroup_oper,
  
+-- 
+1.8.4.5
+

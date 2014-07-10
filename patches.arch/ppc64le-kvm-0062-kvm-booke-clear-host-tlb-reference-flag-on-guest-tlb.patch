@@ -1,0 +1,75 @@
+From dadcb35c43231f44eaf507904b3f43aaca9287a1 Mon Sep 17 00:00:00 2001
+From: Bharat Bhushan <r65777@freescale.com>
+Date: Fri, 15 Nov 2013 11:01:13 +0530
+Subject: [PATCH 062/160] kvm: booke: clear host tlb reference flag on guest
+ tlb invalidation
+Git-commit: 30a91fe24b7a6475d22d22fb0f772318ed435a1d
+Patch-mainline: v3.14-rc3
+References: FATE#317763
+
+On booke, "struct tlbe_ref" contains host tlb mapping information
+(pfn: for guest-pfn to pfn, flags: attribute associated with this mapping)
+for a guest tlb entry. So when a guest creates a TLB entry then
+"struct tlbe_ref" is set to point to valid "pfn" and set attributes in
+"flags" field of the above said structure. When a guest TLB entry is
+invalidated then flags field of corresponding "struct tlbe_ref" is
+updated to point that this is no more valid, also we selectively clear
+some other attribute bits, example: if E500_TLB_BITMAP was set then we clear
+E500_TLB_BITMAP, if E500_TLB_TLB0 is set then we clear this.
+
+Ideally we should clear complete "flags" as this entry is invalid and does not
+have anything to re-used. The other part of the problem is that when we use
+the same entry again then also we do not clear (started doing or-ing etc).
+
+So far it was working because the selectively clearing mentioned above
+actually clears "flags" what was set during TLB mapping. But the problem
+starts coming when we add more attributes to this then we need to selectively
+clear them and which is not needed.
+
+Signed-off-by: Bharat Bhushan <bharat.bhushan@freescale.com>
+Reviewed-by: Scott Wood <scottwood@freescale.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/e500_mmu_host.c | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/arch/powerpc/kvm/e500_mmu_host.c b/arch/powerpc/kvm/e500_mmu_host.c
+index 354c379..35faf09 100644
+--- a/arch/powerpc/kvm/e500_mmu_host.c
++++ b/arch/powerpc/kvm/e500_mmu_host.c
+@@ -231,15 +231,15 @@ void inval_gtlbe_on_host(struct kvmppc_vcpu_e500 *vcpu_e500, int tlbsel,
+ 		ref->flags &= ~(E500_TLB_TLB0 | E500_TLB_VALID);
+ 	}
+ 
+-	/* Already invalidated in between */
+-	if (!(ref->flags & E500_TLB_VALID))
+-		return;
+-
+-	/* Guest tlbe is backed by at most one host tlbe per shadow pid. */
+-	kvmppc_e500_tlbil_one(vcpu_e500, gtlbe);
++	/*
++	 * If TLB entry is still valid then it's a TLB0 entry, and thus
++	 * backed by at most one host tlbe per shadow pid
++	 */
++	if (ref->flags & E500_TLB_VALID)
++		kvmppc_e500_tlbil_one(vcpu_e500, gtlbe);
+ 
+ 	/* Mark the TLB as not backed by the host anymore */
+-	ref->flags &= ~E500_TLB_VALID;
++	ref->flags = 0;
+ }
+ 
+ static inline int tlbe_is_writable(struct kvm_book3e_206_tlb_entry *tlbe)
+@@ -252,7 +252,7 @@ static inline void kvmppc_e500_ref_setup(struct tlbe_ref *ref,
+ 					 pfn_t pfn)
+ {
+ 	ref->pfn = pfn;
+-	ref->flags |= E500_TLB_VALID;
++	ref->flags = E500_TLB_VALID;
+ 
+ 	if (tlbe_is_writable(gtlbe))
+ 		kvm_set_pfn_dirty(pfn);
+-- 
+1.8.5.2
+

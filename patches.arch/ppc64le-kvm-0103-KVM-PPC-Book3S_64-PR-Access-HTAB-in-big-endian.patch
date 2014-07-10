@@ -1,0 +1,56 @@
+From 57b18eaf34b5924a6c12aa39f0eafbff57646480 Mon Sep 17 00:00:00 2001
+From: Alexander Graf <agraf@suse.de>
+Date: Thu, 24 Apr 2014 12:54:54 +0200
+Subject: [PATCH 103/160] KVM: PPC: Book3S_64 PR: Access HTAB in big endian
+Git-commit: 4e509af9f83debe296661d2e09a8a214850efe3c
+Patch-mainline: v3.16-rc1
+References: FATE#317763
+
+The HTAB is always big endian. We access the guest's HTAB using
+copy_from/to_user, but don't yet take care of the fact that we might
+be running on an LE host.
+
+Wrap all accesses to the guest HTAB with big endian accessors.
+
+Signed-off-by: Alexander Graf <agraf@suse.de>
+
+---
+ arch/powerpc/kvm/book3s_64_mmu.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_64_mmu.c b/arch/powerpc/kvm/book3s_64_mmu.c
+index 171e5ca..b93c245 100644
+--- a/arch/powerpc/kvm/book3s_64_mmu.c
++++ b/arch/powerpc/kvm/book3s_64_mmu.c
+@@ -275,12 +275,15 @@ do_second:
+ 		key = 4;
+ 
+ 	for (i=0; i<16; i+=2) {
++		u64 pte0 = be64_to_cpu(pteg[i]);
++		u64 pte1 = be64_to_cpu(pteg[i + 1]);
++
+ 		/* Check all relevant fields of 1st dword */
+-		if ((pteg[i] & v_mask) == v_val) {
++		if ((pte0 & v_mask) == v_val) {
+ 			/* If large page bit is set, check pgsize encoding */
+ 			if (slbe->large &&
+ 			    (vcpu->arch.hflags & BOOK3S_HFLAG_MULTI_PGSIZE)) {
+-				pgsize = decode_pagesize(slbe, pteg[i+1]);
++				pgsize = decode_pagesize(slbe, pte1);
+ 				if (pgsize < 0)
+ 					continue;
+ 			}
+@@ -297,8 +300,8 @@ do_second:
+ 		goto do_second;
+ 	}
+ 
+-	v = pteg[i];
+-	r = pteg[i+1];
++	v = be64_to_cpu(pteg[i]);
++	r = be64_to_cpu(pteg[i+1]);
+ 	pp = (r & HPTE_R_PP) | key;
+ 	if (r & HPTE_R_PP0)
+ 		pp |= 8;
+-- 
+1.8.5.2
+

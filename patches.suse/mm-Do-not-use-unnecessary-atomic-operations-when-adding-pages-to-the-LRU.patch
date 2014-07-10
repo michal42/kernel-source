@@ -1,34 +1,50 @@
-From cdec6f594fb5d3c49d2a794824a1741978551828 Mon Sep 17 00:00:00 2001
+From a85a99e34793972cf7b63f17daa97dc5bdfc897d Mon Sep 17 00:00:00 2001
 From: Mel Gorman <mgorman@suse.de>
-Date: Thu, 3 Apr 2014 16:29:33 +0100
-Subject: [PATCH] mm: Do not use unnecessary atomic operations when adding
+Date: Wed, 4 Jun 2014 16:10:28 -0700
+Subject: [PATCH] mm: do not use unnecessary atomic operations when adding
  pages to the LRU
 
 References: VM/FS Performance
 Patch-mainline: v3.16
 Git-commit: 6fb81a17d21f2a138b8f424af4cf379f2b694060
 
-When adding pages to the LRU we clear the active bit unconditionally. As the
-page could be reachable from other paths we cannot use unlocked operations
-without risk of corruption such as a parallel mark_page_accessed. This
-patch test if is necessary to clear the atomic flag before using an atomic
-operation. In the unlikely even this races with mark_page_accesssed the
-consequences are simply that the page may be promoted to the active list
-that might have been left on the inactive list before the patch. This is
-a marginal consequence.
+When adding pages to the LRU we clear the active bit unconditionally.
+As the page could be reachable from other paths we cannot use unlocked
+operations without risk of corruption such as a parallel
+mark_page_accessed.  This patch tests if is necessary to clear the
+active flag before using an atomic operation.  This potentially opens a
+tiny race when PageActive is checked as mark_page_accessed could be
+called after PageActive was checked.  The race already exists but this
+patch changes it slightly.  The consequence is that that the page may be
+promoted to the active list that might have been left on the inactive
+list before the patch.  It's too tiny a race and too marginal a
+consequence to always use atomic operations for.
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
+Acked-by: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Vlastimil Babka <vbabka@suse.cz>
+Cc: Jan Kara <jack@suse.cz>
+Cc: Michal Hocko <mhocko@suse.cz>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Dave Hansen <dave.hansen@intel.com>
+Cc: Theodore Ts'o <tytso@mit.edu>
+Cc: "Paul E. McKenney" <paulmck@linux.vnet.ibm.com>
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 ---
- include/linux/swap.h | 6 ++++--
+ mm/swap.c | 6 ++++--
  1 file changed, 4 insertions(+), 2 deletions(-)
 
-diff --git a/include/linux/swap.h b/include/linux/swap.h
-index d30dad4..ab5881f 100644
---- a/include/linux/swap.h
-+++ b/include/linux/swap.h
-@@ -293,13 +293,15 @@ extern void add_page_to_unevictable_list(struct page *page);
+diff --git a/mm/swap.c b/mm/swap.c
+index 18229c7..74456e0 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -613,13 +613,15 @@ static void __lru_cache_add(struct page *page)
   */
- static inline void lru_cache_add_anon(struct page *page)
+ void lru_cache_add_anon(struct page *page)
  {
 -	ClearPageActive(page);
 +	if (PageActive(page))
@@ -36,11 +52,11 @@ index d30dad4..ab5881f 100644
  	__lru_cache_add(page);
  }
  
- static inline void lru_cache_add_file(struct page *page)
+ void lru_cache_add_file(struct page *page)
  {
 -	ClearPageActive(page);
 +	if (PageActive(page))
 +		ClearPageActive(page);
  	__lru_cache_add(page);
  }
- 
+ EXPORT_SYMBOL(lru_cache_add_file);

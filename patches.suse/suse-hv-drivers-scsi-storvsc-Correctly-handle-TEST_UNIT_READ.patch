@@ -1,0 +1,37 @@
+From: "K. Y. Srinivasan" <kys@microsoft.com>
+Date: Wed, 9 Jul 2014 23:33:52 -0700
+Patch-mainline: submitted
+Subject: drivers: scsi: storvsc: Correctly handle TEST_UNIT_READY failure
+References: bnc#879255
+
+On some Windows hosts on FC SANs, TEST_UNIT_READY can return SRB_STATUS_ERROR.
+Correctly handle this.
+
+In this version of the patch I have addressed comments from
+Christoph Hellwig <hch@infradead.org>
+
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Cc: <stable@vger.kernel.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/scsi/storvsc_drv.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
+index 4f2d212..bb49109 100644
+--- a/drivers/scsi/storvsc_drv.c
++++ b/drivers/scsi/storvsc_drv.c
+@@ -1020,6 +1020,13 @@ static void storvsc_handle_error(struct vmscsi_request *vm_srb,
+ 		case ATA_12:
+ 			set_host_byte(scmnd, DID_PASSTHROUGH);
+ 			break;
++		/*
++		 * On Some Windows hosts TEST_UNIT_READY command can return
++		 * SRB_STATUS_ERROR, let the upper level code deal with it
++		 * based on the sense information.
++		 */
++		case TEST_UNIT_READY:
++			break;
+ 		default:
+ 			set_host_byte(scmnd, DID_TARGET_FAILURE);
+ 		}

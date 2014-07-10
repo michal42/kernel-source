@@ -2,7 +2,7 @@ From: Vaidyanathan Srinivasan <svaidy@linux.vnet.ibm.com>
 Subject: powerpc/powernv: Add context management for Fast Sleep
 Git-commit: aca79d2b6ec2c0b955b22abb71c6dab90fa1d4d5
 Patch-mainline: v3.15-rc1
-References: bnc#878240
+References: bnc#878240,bnc#885934
 
 Before adding Fast-Sleep into the cpuidle framework, some low level
 support needs to be added to enable it. This includes saving and
@@ -15,6 +15,18 @@ Signed-off-by: Preeti U. Murthy <preeti@linux.vnet.ibm.com>
 Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
+Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/include/asm/processor.h
++++ linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
+@@ -440,6 +440,7 @@ enum idle_boot_override {IDLE_NO_OVERRID
+ 
+ extern int powersave_nap;	/* set if nap mode can be used in idle loop */
+ extern void power7_nap(void);
++extern void power7_sleep(void);
+ extern void flush_instruction_cache(void);
+ extern void hard_reset_now(void);
+ extern void poweroff_now(void);
 Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/exceptions-64s.S
@@ -32,6 +44,18 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	GET_PACA(r13)
  
  #ifdef CONFIG_KVM_BOOK3S_64_HV
+@@ -141,6 +142,11 @@ BEGIN_FTR_SECTION
+ 	beq	cr1,2f
+ 	b	.power7_wakeup_noloss
+ 2:	b	.power7_wakeup_tb_loss
++
++	/* Fast Sleep wakeup on PowerNV */
++8:	GET_PACA(r13)
++	b 	.power7_wakeup_loss
++
+ 9:
+ END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
+ #endif /* CONFIG_PPC_P7_NAP */
 Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
 ===================================================================
 --- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_power7.S

@@ -1,0 +1,52 @@
+From e36aaea28972c57a32a3ba5365e61633739719b9 Mon Sep 17 00:00:00 2001
+From: Emil Medve <Emilian.Medve@Freescale.com>
+Date: Mon, 6 Jan 2014 02:58:40 -0600
+Subject: [PATCH] kbuild: Fix silent builds with make-4
+Git-commit: e36aaea28972c57a32a3ba5365e61633739719b9
+Patch-mainline: v3.14-rc1
+
+make-4 changed the way/order it presents the command line options
+into MAKEFLAGS
+
+In make-3.8x, '-s' would always be first into a group of options
+with the '-'/hyphen removed
+
+$ make -p -s 2>/dev/null | grep ^MAKEFLAGS
+MAKEFLAGS = sp
+
+In make-4, '-s' seems to always be last into a group of options
+with the '-'/hyphen removed
+
+$ make -s -p 2>/dev/null | grep ^MAKEFLAGS
+MAKEFLAGS = ps
+
+Signed-off-by: Emil Medve <Emilian.Medve@Freescale.com>
+Signed-off-by: Michal Marek <mmarek@suse.cz>
+
+---
+ Makefile | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index c0c2d58..685f1bd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -311,9 +311,15 @@ endif
+ # If the user is running make -s (silent mode), suppress echoing of
+ # commands
+ 
++ifneq ($(filter 4.%,$(MAKE_VERSION)),)	# make-4
++ifneq ($(filter %s ,$(firstword x$(MAKEFLAGS))),)
++  quiet=silent_
++endif
++else					# make-3.8x
+ ifneq ($(filter s% -s%,$(MAKEFLAGS)),)
+   quiet=silent_
+ endif
++endif
+ 
+ export quiet Q KBUILD_VERBOSE
+ 
+-- 
+1.8.4.5
+
