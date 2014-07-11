@@ -13,14 +13,14 @@ new_ops will not be set on the last phase.
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- kernel/kgraft.c | 48 ++++++++++++++++++++++++------------------------
- 1 file changed, 24 insertions(+), 24 deletions(-)
+ kernel/kgraft.c | 37 ++++++++++++++++++-------------------
+ 1 file changed, 18 insertions(+), 19 deletions(-)
 
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index eb3f6b65bf3b..513c449a0399 100644
+index 2fc0d63ccdd8..0b4a58ed3743 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -243,12 +243,14 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
+@@ -273,12 +273,14 @@ static int kgr_ftrace_disable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
  
  static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  {
@@ -36,7 +36,7 @@ index eb3f6b65bf3b..513c449a0399 100644
  		err = kgr_init_ftrace_ops(patch_fun);
  		if (err) {
  			if (err == -ENOENT && !patch_fun->abort_if_missing) {
-@@ -259,9 +261,14 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -289,9 +291,14 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  		}
  
  		next_state = KGR_PATCH_SLOW;
@@ -51,7 +51,7 @@ index eb3f6b65bf3b..513c449a0399 100644
  		break;
  	case KGR_PATCH_SKIPPED:
  		return 0;
-@@ -269,28 +276,21 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -299,21 +306,14 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  		return -EINVAL;
  	}
  
@@ -65,45 +65,33 @@ index eb3f6b65bf3b..513c449a0399 100644
 -	}
 -
 -	/* Flip the switch */
--	err = ftrace_set_filter_ip(new_ops, patch_fun->loc_old, 0, 0);
+-	err = kgr_ftrace_enable(patch_fun, new_ops);
 -	if (err) {
--		pr_err("kgr: setting filter for %lx (%s) failed\n",
+-		pr_err("kgr: cannot enable ftrace function for %lx (%s)\n",
 -				patch_fun->loc_old, patch_fun->name);
 -		return err;
--	}
 +	if (new_ops) {
 +		/* Flip the switch */
-+		err = ftrace_set_filter_ip(new_ops, patch_fun->loc_old, 0, 0);
++		err = kgr_ftrace_enable(patch_fun, new_ops);
 +		if (err) {
-+			pr_err("kgr: setting filter for %lx (%s) failed\n",
-+					patch_fun->loc_old, patch_fun->name);
-+			return err;
-+		}
- 
--	err = register_ftrace_function(new_ops);
--	if (err) {
--		pr_err("kgr: registering ftrace function for %lx (%s) failed\n",
--				patch_fun->loc_old, patch_fun->name);
--		return err;
-+		err = register_ftrace_function(new_ops);
-+		if (err) {
-+			pr_err("kgr: registering ftrace function for %lx (%s) failed\n",
++			pr_err("kgr: cannot enable ftrace function for %lx (%s)\n",
 +					patch_fun->loc_old, patch_fun->name);
 +			return err;
 +		}
  	}
  
  	/*
-@@ -298,8 +298,8 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -321,9 +321,8 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  	 * the last one always "wins", as it'll be dragged earlier from the
  	 * ftrace hashtable
  	 */
 -	if (final) {
--		err = unregister_ftrace_function(&patch_fun->ftrace_ops_slow);
+-		err = kgr_ftrace_disable(patch_fun,
+-				&patch_fun->ftrace_ops_slow);
 +	if (unreg_ops) {
-+		err = unregister_ftrace_function(unreg_ops);
++		err = kgr_ftrace_disable(patch_fun, unreg_ops);
  		if (err) {
- 			pr_warning("kgr: unregistering ftrace function for %s failed with %d\n",
+ 			pr_warning("kgr: disabling ftrace function for %s failed with %d\n",
  					patch_fun->name, err);
 -- 
 2.0.0

@@ -55,6 +55,8 @@ js: massive cleanup and documentation
 js: handle patch module refcount internally
 js: remove the need of attribute used
 js: make all the structs self-contained
+js: add some comments
+js: remove filter properly
 
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
@@ -68,11 +70,11 @@ Cc: Andi Kleen <andi@firstfloor.org>
  arch/x86/include/asm/thread_info.h |    1 
  arch/x86/kernel/asm-offsets.c      |    1 
  arch/x86/kernel/entry_64.S         |    3 
- include/linux/kgraft.h             |   86 +++++++++
+ include/linux/kgraft.h             |   87 ++++++++
  kernel/Kconfig.kgraft              |    7 
  kernel/Makefile                    |    1 
- kernel/kgraft.c                    |  336 +++++++++++++++++++++++++++++++++++++
- 9 files changed, 464 insertions(+)
+ kernel/kgraft.c                    |  361 +++++++++++++++++++++++++++++++++++++
+ 9 files changed, 490 insertions(+)
  create mode 100644 arch/x86/include/asm/kgraft.h
  create mode 100644 include/linux/kgraft.h
  create mode 100644 kernel/Kconfig.kgraft
@@ -174,7 +176,7 @@ Cc: Andi Kleen <andi@firstfloor.org>
  	jnz   int_careful
 --- /dev/null
 +++ b/include/linux/kgraft.h
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,87 @@
 +/*
 + * kGraft Online Kernel Patching
 + *
@@ -232,6 +234,7 @@ Cc: Andi Kleen <andi@firstfloor.org>
 + * @patches: array of @kgr_patch_fun structures
 + */
 +struct kgr_patch {
++	/* a patch shall set these */
 +	struct module *owner;
 +	struct kgr_patch_fun patches[];
 +};
@@ -283,7 +286,7 @@ Cc: Andi Kleen <andi@firstfloor.org>
  obj-$(CONFIG_PROFILING) += profile.o
 --- /dev/null
 +++ b/kernel/kgraft.c
-@@ -0,0 +1,336 @@
+@@ -0,0 +1,361 @@
 +/*
 + * kGraft Online Kernel Patching
 + *
@@ -488,6 +491,36 @@ Cc: Andi Kleen <andi@firstfloor.org>
 +	return 0;
 +}
 +
++static int kgr_ftrace_enable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
++{
++	int ret;
++
++	ret = ftrace_set_filter_ip(fops, pf->loc_old, 0, 0);
++	if (ret)
++		return ret;
++
++	ret = register_ftrace_function(fops);
++	if (ret)
++		ftrace_set_filter_ip(fops, pf->loc_old, 1, 0);
++
++	return ret;
++}
++
++static int kgr_ftrace_disable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
++{
++	int ret;
++
++	ret = unregister_ftrace_function(fops);
++	if (ret)
++		return ret;
++
++	ret = ftrace_set_filter_ip(fops, pf->loc_old, 1, 0);
++	if (ret)
++		register_ftrace_function(fops);
++
++	return ret;
++}
++
 +static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
 +{
 +	struct ftrace_ops *new_ops;
@@ -506,16 +539,9 @@ Cc: Andi Kleen <andi@firstfloor.org>
 +	}
 +
 +	/* Flip the switch */
-+	err = ftrace_set_filter_ip(new_ops, patch_fun->loc_old, 0, 0);
++	err = kgr_ftrace_enable(patch_fun, new_ops);
 +	if (err) {
-+		pr_err("kgr: setting filter for %lx (%s) failed\n",
-+				patch_fun->loc_old, patch_fun->name);
-+		return err;
-+	}
-+
-+	err = register_ftrace_function(new_ops);
-+	if (err) {
-+		pr_err("kgr: registering ftrace function for %lx (%s) failed\n",
++		pr_err("kgr: cannot enable ftrace function for %lx (%s)\n",
 +				patch_fun->loc_old, patch_fun->name);
 +		return err;
 +	}
@@ -526,9 +552,10 @@ Cc: Andi Kleen <andi@firstfloor.org>
 +	 * ftrace hashtable
 +	 */
 +	if (final) {
-+		err = unregister_ftrace_function(&patch_fun->ftrace_ops_slow);
++		err = kgr_ftrace_disable(patch_fun,
++				&patch_fun->ftrace_ops_slow);
 +		if (err) {
-+			pr_warning("kgr: unregistering ftrace function for %s failed with %d\n",
++			pr_warning("kgr: disabling ftrace function for %s failed with %d\n",
 +					patch_fun->name, err);
 +			/* don't fail: we are only slower */
 +		}
@@ -577,7 +604,8 @@ Cc: Andi Kleen <andi@firstfloor.org>
 +		if (ret < 0) {
 +			for (patch_fun--; patch_fun >= patch->patches;
 +					patch_fun--)
-+				unregister_ftrace_function(&patch_fun->ftrace_ops_slow);
++				kgr_ftrace_disable(patch_fun,
++						&patch_fun->ftrace_ops_slow);
 +			goto err_unlock;
 +		}
 +	}

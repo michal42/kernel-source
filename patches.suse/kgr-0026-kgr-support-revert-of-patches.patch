@@ -22,13 +22,13 @@ We do not do this in the module rmmod path for two reasons:
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h          |  5 +++
- kernel/kgraft.c                 | 92 ++++++++++++++++++++++++++++++-----------
+ kernel/kgraft.c                 | 89 +++++++++++++++++++++++++++++------------
  kernel/kgraft_files.c           | 13 ++++++
  samples/kgraft/kgraft_patcher.c |  1 -
- 4 files changed, 85 insertions(+), 26 deletions(-)
+ 4 files changed, 82 insertions(+), 26 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index 4d533b5c68c9..d9747463c733 100644
+index 2cee7322a427..e40d9e462b1d 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -53,6 +53,9 @@ struct kgr_patch_fun {
@@ -41,7 +41,7 @@ index 4d533b5c68c9..d9747463c733 100644
  		KGR_PATCH_SKIPPED,
  	} state;
  
-@@ -96,6 +99,8 @@ extern bool kgr_in_progress;
+@@ -99,6 +102,8 @@ extern bool kgr_in_progress;
  
  extern int kgr_patch_kernel(struct kgr_patch *);
  extern void kgr_patch_remove(struct kgr_patch *);
@@ -51,7 +51,7 @@ index 4d533b5c68c9..d9747463c733 100644
  extern void kgr_patch_dir_del(struct kgr_patch *patch);
  extern int kgr_add_files(void);
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 4059548a571a..f7791202d67b 100644
+index 81dbfa432841..75beac8d2c7f 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -27,7 +27,8 @@
@@ -72,20 +72,17 @@ index 4059548a571a..f7791202d67b 100644
  
  /*
   * The stub needs to modify the RIP value stored in struct pt_regs
-@@ -61,6 +63,12 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+@@ -61,6 +63,9 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
  	else
  		go_old = kgr_task_in_progress(current);
  
-+	WARN(p->state != KGR_PATCH_SLOW && p->state != KGR_PATCH_REVERT_SLOW,
-+			"state is %d", p->state);
-+
 +	if (p->state == KGR_PATCH_REVERT_SLOW)
 +		go_old = !go_old;
 +
  	if (go_old) {
  		pr_debug("kgr: slow stub: calling old code at %lx\n",
  				p->loc_old);
-@@ -93,7 +101,7 @@ static void kgr_finalize(void)
+@@ -93,7 +98,7 @@ static void kgr_finalize(void)
  	struct kgr_patch_fun *patch_fun;
  
  	kgr_for_each_patch(kgr_patch, patch_fun) {
@@ -94,7 +91,7 @@ index 4059548a571a..f7791202d67b 100644
  
  		if (ret < 0)
  			pr_err("kgr: finalize for %s failed, trying to continue\n",
-@@ -102,6 +110,9 @@ static void kgr_finalize(void)
+@@ -102,6 +107,9 @@ static void kgr_finalize(void)
  
  	free_percpu(kgr_patch->irq_use_new);
  
@@ -104,8 +101,8 @@ index 4059548a571a..f7791202d67b 100644
  	mutex_lock(&kgr_in_progress_lock);
  	kgr_in_progress = false;
  	mutex_unlock(&kgr_in_progress_lock);
-@@ -241,7 +252,8 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
- 	return 0;
+@@ -271,7 +279,8 @@ static int kgr_ftrace_disable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
+ 	return ret;
  }
  
 -static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
@@ -114,7 +111,7 @@ index 4059548a571a..f7791202d67b 100644
  {
  	struct ftrace_ops *new_ops = NULL, *unreg_ops = NULL;
  	enum kgr_patch_state next_state;
-@@ -249,7 +261,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -279,7 +288,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  
  	switch (patch_fun->state) {
  	case KGR_PATCH_INIT:
@@ -123,7 +120,7 @@ index 4059548a571a..f7791202d67b 100644
  			return -EINVAL;
  		err = kgr_init_ftrace_ops(patch_fun);
  		if (err) {
-@@ -264,12 +276,25 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -294,12 +303,25 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  		new_ops = &patch_fun->ftrace_ops_slow;
  		break;
  	case KGR_PATCH_SLOW:
@@ -150,7 +147,7 @@ index 4059548a571a..f7791202d67b 100644
  	case KGR_PATCH_SKIPPED:
  		return 0;
  	default:
-@@ -314,13 +339,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
+@@ -337,13 +359,7 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)
  	return 0;
  }
  
@@ -165,7 +162,7 @@ index 4059548a571a..f7791202d67b 100644
  {
  	struct kgr_patch_fun *patch_fun;
  	int ret;
-@@ -330,20 +349,12 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -353,20 +369,12 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		return -EINVAL;
  	}
  
@@ -187,7 +184,7 @@ index 4059548a571a..f7791202d67b 100644
  	mutex_lock(&kgr_in_progress_lock);
  	if (kgr_in_progress) {
  		pr_err("kgr: can't patch, another patching not yet finalized\n");
-@@ -356,7 +367,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -379,7 +387,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	kgr_for_each_patch(patch, patch_fun) {
  		patch_fun->patch = patch;
  
@@ -196,7 +193,7 @@ index 4059548a571a..f7791202d67b 100644
  		/*
  		 * In case any of the symbol resolutions in the set
  		 * has failed, patch all the previously replaced fentry
-@@ -373,10 +384,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -396,10 +404,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	}
  	kgr_in_progress = true;
  	kgr_patch = patch;
@@ -208,7 +205,7 @@ index 4059548a571a..f7791202d67b 100644
  	kgr_handle_irqs();
  	kgr_handle_processes();
  
-@@ -389,7 +399,39 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -412,7 +419,39 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  err_unlock:
  	mutex_unlock(&kgr_in_progress_lock);
  	free_percpu(patch->irq_use_new);
@@ -250,7 +247,7 @@ index 4059548a571a..f7791202d67b 100644
  
  	return ret;
 diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
-index c1fb552d680d..e155a9c487e1 100644
+index 8685c33ee7c0..0cc1ec600d0d 100644
 --- a/kernel/kgraft_files.c
 +++ b/kernel/kgraft_files.c
 @@ -56,10 +56,23 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
