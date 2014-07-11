@@ -1,0 +1,40 @@
+From: Stephan Mueller <smueller@chronox.de>
+Subject: crypto: drbg - simplify ordering of linked list in drbg_ctr_df
+Git-commit: c0eedf803467620fd3bdafccdd761990f6bd42e1
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git.kernel.org/cgit/linux/kernel/git/herbert/cryptodev-2.6.git
+References: bnc#856310
+
+ crypto: drbg - simplify ordering of linked list in drbg_ctr_df
+
+As reported by a static code analyzer, the code for the ordering of
+the linked list can be simplified.
+
+Reported-by: kbuild test robot <fengguang.wu@intel.com>
+Signed-off-by: Stephan Mueller <smueller@chronox.de>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/crypto/drbg.c b/crypto/drbg.c
+index faaa2ce..99fa8f8 100644
+--- a/crypto/drbg.c
++++ b/crypto/drbg.c
+@@ -516,13 +516,13 @@ static int drbg_ctr_df(struct drbg_state *drbg,
+ 	S2.next = addtl;
+ 
+ 	/*
+-	 * splice in addtl between S2 and S4 -- we place S4 at the end of the
+-	 * input data chain
++	 * Splice in addtl between S2 and S4 -- we place S4 at the end
++	 * of the input data chain. As this code is only triggered when
++	 * addtl is not NULL, no NULL checks are necessary.
+ 	 */
+ 	tempstr = addtl;
+-	for (; NULL != tempstr; tempstr = tempstr->next)
+-		if (NULL == tempstr->next)
+-			break;
++	while (tempstr->next)
++		tempstr = tempstr->next;
+ 	tempstr->next = &S4;
+ 
+ 	/* 10.4.2 step 9 */
