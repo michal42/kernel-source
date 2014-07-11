@@ -1,0 +1,50 @@
+From: Michael Ellerman <mpe@ellerman.id.au>
+Date: Tue, 17 Jun 2014 16:15:32 +1000
+Subject: [PATCH] powerpc: Add ppc_global_function_entry()
+Patch-mainline: v3.16-rc3
+Git-commit: d997c00c5a9b61474f7ff5f27ed64173bb007987
+References: bnc#878240
+
+Acked-by: Petr Mladek <pmladek@suse.cz>
+
+ABIv2 has the concept of a global and local entry point to a function.
+In most cases we are interested in the local entry point, and so that is
+what ppc_function_entry() returns.
+
+However we have a case in the ftrace code where we want the global entry
+point, and there may be other places we need it too. Rather than special
+casing each, add an accessor.
+
+For ABIv1 and 32-bit there is only a single entry point, so we return
+that. That means it's safe for the caller to use this without also
+checking the ABI version.
+
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+---
+ arch/powerpc/include/asm/code-patching.h | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/powerpc/include/asm/code-patching.h b/arch/powerpc/include/asm/code-patching.h
+index 37991e154ef8..840a5509b3f1 100644
+--- a/arch/powerpc/include/asm/code-patching.h
++++ b/arch/powerpc/include/asm/code-patching.h
+@@ -88,4 +88,15 @@ static inline unsigned long ppc_function_entry(void *func)
+ #endif
+ }
+ 
++static inline unsigned long ppc_global_function_entry(void *func)
++{
++#if defined(CONFIG_PPC64) && defined(_CALL_ELF) && _CALL_ELF == 2
++	/* PPC64 ABIv2 the global entry point is at the address */
++	return (unsigned long)func;
++#else
++	/* All other cases there is no change vs ppc_function_entry() */
++	return ppc_function_entry(func);
++#endif
++}
++
+ #endif /* _ASM_POWERPC_CODE_PATCHING_H */
+-- 
+1.8.4
+

@@ -1,0 +1,69 @@
+From: Michael Ellerman <mpe@ellerman.id.au>
+Date: Mon, 23 Jun 2014 13:23:31 +1000
+Subject: [PATCH] powerpc/kprobes: Fix jprobes on ABI v2 (LE)
+Patch-mainline: v3.16-rc3
+Git-commit: 2f0143c91d30823f6f6e7d94d7fa818f7ab18a18
+References: bnc#878240
+
+Acked-by: Petr Mladek <pmladek@suse.cz>
+
+In commit 721aeaa9 "Build little endian ppc64 kernel with ABIv2", we
+missed some updates required in the kprobes code to make jprobes work
+when the kernel is built with ABI v2.
+
+Firstly update arch_deref_entry_point() to do the right thing. Now that
+we have added ppc_global_function_entry() we can just always use that, it
+will do the right thing for 32 & 64 bit and ABI v1 & v2.
+
+Secondly we need to update the code that sets up the register state before
+calling the jprobe handler. On ABI v1 we setup r2 to hold the TOC, on ABI
+v2 we need to populate r12 with the function entry point address.
+
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+---
+ arch/powerpc/kernel/kprobes.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/kernel/kprobes.c b/arch/powerpc/kernel/kprobes.c
+index 90fab64d911d..2f72af82513c 100644
+--- a/arch/powerpc/kernel/kprobes.c
++++ b/arch/powerpc/kernel/kprobes.c
+@@ -32,6 +32,7 @@
+ #include <linux/module.h>
+ #include <linux/kdebug.h>
+ #include <linux/slab.h>
++#include <asm/code-patching.h>
+ #include <asm/cacheflush.h>
+ #include <asm/sstep.h>
+ #include <asm/uaccess.h>
+@@ -491,12 +492,10 @@ int __kprobes kprobe_exceptions_notify(struct notifier_block *self,
+ 	return ret;
+ }
+ 
+-#ifdef CONFIG_PPC64
+ unsigned long arch_deref_entry_point(void *entry)
+ {
+-	return ((func_descr_t *)entry)->entry;
++	return ppc_global_function_entry(entry);
+ }
+-#endif
+ 
+ int __kprobes setjmp_pre_handler(struct kprobe *p, struct pt_regs *regs)
+ {
+@@ -508,8 +507,12 @@ int __kprobes setjmp_pre_handler(struct kprobe *p, struct pt_regs *regs)
+ 	/* setup return addr to the jprobe handler routine */
+ 	regs->nip = arch_deref_entry_point(jp->entry);
+ #ifdef CONFIG_PPC64
++#if defined(_CALL_ELF) && _CALL_ELF == 2
++	regs->gpr[12] = (unsigned long)jp->entry;
++#else
+ 	regs->gpr[2] = (unsigned long)(((func_descr_t *)jp->entry)->toc);
+ #endif
++#endif
+ 
+ 	return 1;
+ }
+-- 
+1.8.4
+

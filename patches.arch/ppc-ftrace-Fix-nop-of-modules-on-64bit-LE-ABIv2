@@ -1,0 +1,57 @@
+From: Michael Ellerman <mpe@ellerman.id.au>
+Date: Tue, 17 Jun 2014 16:15:35 +1000
+Subject: [PATCH] powerpc/ftrace: Fix nop of modules on 64bit LE (ABIv2)
+Patch-mainline: v3.16-rc3
+Git-commit: d84e0d69c26b4d739214974d6ad6baf23f510580
+References: bnc#878240
+
+Acked-by: Petr Mladek <pmladek@suse.cz>
+
+There is a bug in the handling of the function entry when we are nopping
+out a branch from a module in ftrace.
+
+We compare the result of module_trampoline_target() with the value of
+ppc_function_entry(), and expect them to be true. But they never will
+be.
+
+module_trampoline_target() will always return the global entry point of
+the function, whereas ppc_function_entry() will always return the local.
+
+Fix it by using the newly added ppc_global_function_entry().
+
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+---
+ arch/powerpc/kernel/ftrace.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/kernel/ftrace.c b/arch/powerpc/kernel/ftrace.c
+index 8fc0c1742498..96efc664b49d 100644
+--- a/arch/powerpc/kernel/ftrace.c
++++ b/arch/powerpc/kernel/ftrace.c
+@@ -105,7 +105,7 @@ __ftrace_make_nop(struct module *mod,
+ 		  struct dyn_ftrace *rec, unsigned long addr)
+ {
+ 	unsigned int op;
+-	unsigned long ptr;
++	unsigned long entry, ptr;
+ 	unsigned long ip = rec->ip;
+ 	void *tramp;
+ 
+@@ -136,10 +136,11 @@ __ftrace_make_nop(struct module *mod,
+ 
+ 	pr_devel("trampoline target %lx", ptr);
+ 
++	entry = ppc_global_function_entry((void *)addr);
+ 	/* This should match what was called */
+-	if (ptr != ppc_function_entry((void *)addr)) {
++	if (ptr != entry) {
+ 		printk(KERN_ERR "addr %lx does not match expected %lx\n",
+-			ptr, ppc_function_entry((void *)addr));
++			ptr, entry);
+ 		return -EINVAL;
+ 	}
+ 
+-- 
+1.8.4
+

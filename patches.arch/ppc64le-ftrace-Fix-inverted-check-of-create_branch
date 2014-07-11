@@ -1,0 +1,50 @@
+From: Michael Ellerman <mpe@ellerman.id.au>
+Date: Tue, 17 Jun 2014 16:15:34 +1000
+Subject: [PATCH] powerpc/ftrace: Fix inverted check of create_branch()
+Patch-mainline: v3.16-rc3
+Git-commit: b7b348c682fac04cade7b860c49d4a17f158dad4
+References: bnc#863764 fate#315275, LTC#103998
+
+Fixes regression caused by
+patches.arch/ppc64le-ELFv2-0046-ftrace-Fix-ABIv2-issues-with-__ftrace_make_call
+
+Acked-by: Petr Mladek <pmladek@suse.cz>
+
+Upstream-Description:
+
+In commit 24a1bdc35, "Fix ABIv2 issues with __ftrace_make_call", Anton
+changed the logic that creates and patches the branch, and added a
+thinko in the check of create_branch(). create_branch() returns the
+instruction that was generated, so if we get zero then it succeeded.
+
+The result is we can't ftrace modules:
+
+  Branch out of range
+  WARNING: at ../kernel/trace/ftrace.c:1638
+  ftrace failed to modify [<d000000004ba001c>] fuse_req_init_context+0x1c/0x90 [fuse]
+
+We should probably fix patch_instruction() to do that check and make the
+API saner, but that's a separate patch. For now just invert the test.
+
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+---
+ arch/powerpc/kernel/ftrace.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/kernel/ftrace.c b/arch/powerpc/kernel/ftrace.c
+index f5d1a3420192..8fc0c1742498 100644
+--- a/arch/powerpc/kernel/ftrace.c
++++ b/arch/powerpc/kernel/ftrace.c
+@@ -320,7 +320,7 @@ __ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
+ 	}
+ 
+ 	/* Ensure branch is within 24 bits */
+-	if (create_branch(ip, rec->arch.mod->arch.tramp, BRANCH_SET_LINK)) {
++	if (!create_branch(ip, rec->arch.mod->arch.tramp, BRANCH_SET_LINK)) {
+ 		printk(KERN_ERR "Branch out of range");
+ 		return -EINVAL;
+ 	}
+-- 
+1.8.4
+
