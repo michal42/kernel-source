@@ -1,0 +1,61 @@
+From 932e5d9ea1e6b08710255e17b8280c33c89dc845 Mon Sep 17 00:00:00 2001
+From: Alan Stern <stern@rowland.harvard.edu>
+Date: Mon, 30 Jun 2014 11:04:21 -0400
+Subject: [PATCH] usb-storage/SCSI: Add broken_fua blacklist flag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Git-Commit: b14bf2d0c0358140041d1c1805a674376964d0e0
+Patch-Mainline: v3.16-rc4
+References: bnc#886885
+
+Some buggy JMicron USB-ATA bridges don't know how to translate the FUA
+bit in READs or WRITEs.  This patch adds an entry in unusual_devs.h
+and a blacklist flag to tell the sd driver not to use FUA.
+
+SCSI part.
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+Reported-by: Michael Büsch <m@bues.ch>
+Tested-by: Michael Büsch <m@bues.ch>
+Acked-by: James Bottomley <James.Bottomley@HansenPartnership.com>
+CC: Matthew Dharm <mdharm-usb@one-eyed-alien.net>
+CC: <stable@vger.kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/scsi/sd.c          | 5 ++++-
+ include/scsi/scsi_device.h | 1 +
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index 46c215e..92dbb6f 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -2451,7 +2451,10 @@ sd_read_cache_type(struct scsi_disk *sdkp, unsigned char *buffer)
+ 		}
+ 
+ 		sdkp->DPOFUA = (data.device_specific & 0x10) != 0;
+-		if (sdkp->DPOFUA && !sdkp->device->use_10_for_rw) {
++		if (sdp->broken_fua) {
++			sd_printk(KERN_NOTICE, sdkp, "Disabling FUA\n");
++			sdkp->DPOFUA = 0;
++		} else if (sdkp->DPOFUA && !sdkp->device->use_10_for_rw) {
+ 			sd_printk(KERN_NOTICE, sdkp,
+ 				  "Uses READ/WRITE(6), disabling FUA\n");
+ 			sdkp->DPOFUA = 0;
+diff --git a/include/scsi/scsi_device.h b/include/scsi/scsi_device.h
+index 42d2c53..2b38f23 100644
+--- a/include/scsi/scsi_device.h
++++ b/include/scsi/scsi_device.h
+@@ -174,6 +174,7 @@ struct scsi_device {
+ 	unsigned is_visible:1;	/* is the device visible in sysfs */
+ 	unsigned wce_default_on:1;	/* Cache is ON by default */
+ 	unsigned no_dif:1;	/* T10 PI (DIF) should be disabled */
++	unsigned broken_fua:1;		/* Don't set FUA bit */
+ 
+ 	atomic_t disk_events_disable_depth; /* disable depth for disk events */
+ 
+-- 
+1.8.4.5
+
