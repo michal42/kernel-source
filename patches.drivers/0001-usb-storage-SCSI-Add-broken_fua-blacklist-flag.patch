@@ -1,0 +1,80 @@
+From 9553713ecca0b4c19566503c88460c67baab564d Mon Sep 17 00:00:00 2001
+From: Alan Stern <stern@rowland.harvard.edu>
+Date: Mon, 30 Jun 2014 11:04:21 -0400
+Subject: [PATCH] usb-storage/SCSI: Add broken_fua blacklist flag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+References: bnc#886885
+Patch-Mainline: v3.16-rc4
+Git-Commit: b14bf2d0c0358140041d1c1805a674376964d0e0
+
+Some buggy JMicron USB-ATA bridges don't know how to translate the FUA
+bit in READs or WRITEs.  This patch adds an entry in unusual_devs.h
+and a blacklist flag to tell the sd driver not to use FUA.
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+Reported-by: Michael Büsch <m@bues.ch>
+Tested-by: Michael Büsch <m@bues.ch>
+Acked-by: James Bottomley <James.Bottomley@HansenPartnership.com>
+CC: Matthew Dharm <mdharm-usb@one-eyed-alien.net>
+CC: <stable@vger.kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/storage/scsiglue.c     | 4 ++++
+ drivers/usb/storage/unusual_devs.h | 7 +++++++
+ include/linux/usb_usual.h          | 4 +++-
+ 3 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/storage/scsiglue.c b/drivers/usb/storage/scsiglue.c
+index 9d38ddc..866b5df 100644
+--- a/drivers/usb/storage/scsiglue.c
++++ b/drivers/usb/storage/scsiglue.c
+@@ -256,6 +256,10 @@ static int slave_configure(struct scsi_device *sdev)
+ 		if (us->fflags & US_FL_WRITE_CACHE)
+ 			sdev->wce_default_on = 1;
+ 
++		/* A few buggy USB-ATA bridges don't understand FUA */
++		if (us->fflags & US_FL_BROKEN_FUA)
++			sdev->broken_fua = 1;
++
+ 	} else {
+ 
+ 		/* Non-disk-type devices don't need to blacklist any pages
+diff --git a/drivers/usb/storage/unusual_devs.h b/drivers/usb/storage/unusual_devs.h
+index 174a447..80a5b36 100644
+--- a/drivers/usb/storage/unusual_devs.h
++++ b/drivers/usb/storage/unusual_devs.h
+@@ -1936,6 +1936,13 @@ UNUSUAL_DEV(  0x14cd, 0x6600, 0x0201, 0x0201,
+ 		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
+ 		US_FL_IGNORE_RESIDUE ),
+ 
++/* Reported by Michael Büsch <m@bues.ch> */
++UNUSUAL_DEV(  0x152d, 0x0567, 0x0114, 0x0114,
++		"JMicron",
++		"USB to ATA/ATAPI Bridge",
++		USB_SC_DEVICE, USB_PR_DEVICE, NULL,
++		US_FL_BROKEN_FUA ),
++
+ /* Reported by Alexandre Oliva <oliva@lsd.ic.unicamp.br>
+  * JMicron responds to USN and several other SCSI ioctls with a
+  * residue that causes subsequent I/O requests to fail.  */
+diff --git a/include/linux/usb_usual.h b/include/linux/usb_usual.h
+index 1a64b26..9b7de1b 100644
+--- a/include/linux/usb_usual.h
++++ b/include/linux/usb_usual.h
+@@ -70,7 +70,9 @@
+ 	US_FLAG(NEEDS_CAP16,	0x00400000)			\
+ 		/* cannot handle READ_CAPACITY_10 */		\
+ 	US_FLAG(IGNORE_UAS,	0x00800000)			\
+-		/* Device advertises UAS but it is broken */
++		/* Device advertises UAS but it is broken */	\
++	US_FLAG(BROKEN_FUA,	0x01000000)			\
++		/* Cannot handle FUA in WRITE or READ CDBs */	\
+ 
+ #define US_FLAG(name, value)	US_FL_##name = value ,
+ enum { US_DO_ALL_FLAGS };
+-- 
+1.8.4.5
+
