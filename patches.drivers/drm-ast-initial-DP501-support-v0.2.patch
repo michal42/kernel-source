@@ -21,18 +21,16 @@ backup firmware properly.
 
 Signed-off-by: Dave Airlie <airlied@redhat.com>
 ---
- drivers/gpu/drm/ast/Makefile    |   4 +-
- drivers/gpu/drm/ast/ast_dp501.c | 411 ++++++++++++++++++++++++++++++++++++++++
- drivers/gpu/drm/ast/ast_drv.h   |  22 +++
- drivers/gpu/drm/ast/ast_main.c  |  58 +++++-
- drivers/gpu/drm/ast/ast_mode.c  |  22 ++-
- drivers/gpu/drm/ast/ast_post.c  |   6 +-
- 6 files changed, 509 insertions(+), 14 deletions(-)
+ drivers/gpu/drm/ast/Makefile    |    4 
+ drivers/gpu/drm/ast/ast_dp501.c |  411 ++++++++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/ast/ast_drv.h   |   22 ++
+ drivers/gpu/drm/ast/ast_main.c  |   56 ++++-
+ drivers/gpu/drm/ast/ast_mode.c  |   22 +-
+ drivers/gpu/drm/ast/ast_post.c  |    6 
+ 6 files changed, 508 insertions(+), 13 deletions(-)
 
-diff --git a/drivers/gpu/drm/ast/Makefile b/drivers/gpu/drm/ast/Makefile
-index 8df4f28..171aa06 100644
---- a/drivers/gpu/drm/ast/Makefile
-+++ b/drivers/gpu/drm/ast/Makefile
+--- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/Makefile
++++ linux-3.12-SLE12/drivers/gpu/drm/ast/Makefile
 @@ -4,6 +4,6 @@
  
  ccflags-y := -Iinclude/drm
@@ -43,11 +41,8 @@ index 8df4f28..171aa06 100644
 -obj-$(CONFIG_DRM_AST) := ast.o
 \ No newline at end of file
 +obj-$(CONFIG_DRM_AST) := ast.o
-diff --git a/drivers/gpu/drm/ast/ast_dp501.c b/drivers/gpu/drm/ast/ast_dp501.c
-new file mode 100644
-index 0000000..f5fa764
 --- /dev/null
-+++ b/drivers/gpu/drm/ast/ast_dp501.c
++++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_dp501.c
 @@ -0,0 +1,411 @@
 +
 +#include <linux/firmware.h>
@@ -227,7 +222,7 @@ index 0000000..f5fa764
 +	struct ast_private *ast = dev->dev_private;
 +	u32 i, data;
 +	u32 boot_address;
-+	
++
 +	data = ast_mindwm(ast, 0x1e6e2100) & 0x01;
 +	if (data) {
 +		boot_address = get_fw_base(ast);
@@ -367,7 +362,7 @@ index 0000000..f5fa764
 +	ast_write32(ast, 0xf004, 0x1e6e0000);
 +	ast_write32(ast, 0xf000, 0x1);
 +	ast_write32(ast, 0x12000, 0x1688a8a8);
-+	
++
 +	jreg = ast_get_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xd0, 0xff);
 +	if (!(jreg & 0x80)) {
 +		/* Init SCU DVO Settings */
@@ -460,10 +455,8 @@ index 0000000..f5fa764
 +		}
 +	}
 +}
-diff --git a/drivers/gpu/drm/ast/ast_drv.h b/drivers/gpu/drm/ast/ast_drv.h
-index 5617427..5d6a875 100644
---- a/drivers/gpu/drm/ast/ast_drv.h
-+++ b/drivers/gpu/drm/ast/ast_drv.h
+--- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_drv.h
++++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_drv.h
 @@ -65,6 +65,13 @@ enum ast_chip {
  	AST1180,
  };
@@ -490,7 +483,7 @@ index 5617427..5d6a875 100644
  };
  
  int ast_driver_load(struct drm_device *dev, unsigned long flags);
-@@ -370,4 +382,14 @@ int ast_mmap(struct file *filp, struct vm_area_struct *vma);
+@@ -372,4 +384,14 @@ int ast_mmap(struct file *filp, struct v
  
  /* ast post */
  void ast_post_gpu(struct drm_device *dev);
@@ -505,11 +498,9 @@ index 5617427..5d6a875 100644
 +u8 ast_get_dp501_max_clk(struct drm_device *dev);
 +void ast_init_3rdtx(struct drm_device *dev);
  #endif
-diff --git a/drivers/gpu/drm/ast/ast_main.c b/drivers/gpu/drm/ast/ast_main.c
-index 81dc68f..68a2177 100644
---- a/drivers/gpu/drm/ast/ast_main.c
-+++ b/drivers/gpu/drm/ast/ast_main.c
-@@ -66,6 +66,7 @@ uint8_t ast_get_index_reg_mask(struct ast_private *ast,
+--- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_main.c
++++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_main.c
+@@ -66,6 +66,7 @@ uint8_t ast_get_index_reg_mask(struct as
  static int ast_detect_chip(struct drm_device *dev)
  {
  	struct ast_private *ast = dev->dev_private;
@@ -517,7 +508,7 @@ index 81dc68f..68a2177 100644
  
  	if (dev->pdev->device == PCI_CHIP_AST1180) {
  		ast->chip = AST1100;
-@@ -117,7 +118,7 @@ static int ast_detect_chip(struct drm_device *dev)
+@@ -117,7 +118,7 @@ static int ast_detect_chip(struct drm_de
  		break;
  	default:
  	{
@@ -526,12 +517,10 @@ index 81dc68f..68a2177 100644
  		jreg = ast_get_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xd0, 0xff);
  		if (!(jreg & 0x80))
  			ast->support_wide_screen = true;
-@@ -137,7 +138,32 @@ static int ast_detect_chip(struct drm_device *dev)
- 	}
+@@ -138,6 +139,31 @@ static int ast_detect_chip(struct drm_de
  	break;
  	}
--			       
-+
+ 
 +	ast->tx_chip_type = AST_TX_NONE;
 +	jreg = ast_get_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xa3, 0xff);
 +	if (jreg & 0x80)
@@ -560,7 +549,7 @@ index 81dc68f..68a2177 100644
  	return 0;
  }
  
-@@ -291,17 +317,32 @@ static u32 ast_get_vram_info(struct drm_device *dev)
+@@ -338,17 +364,32 @@ static u32 ast_get_vram_info(struct drm_
  {
  	struct ast_private *ast = dev->dev_private;
  	u8 jreg;
@@ -579,7 +568,8 @@ index 81dc68f..68a2177 100644
 +	case 1: vram_size = AST_VIDMEM_SIZE_16M; break;
 +	case 2: vram_size = AST_VIDMEM_SIZE_32M; break;
 +	case 3: vram_size = AST_VIDMEM_SIZE_64M; break;
-+	}
+ 	}
+-	return AST_VIDMEM_DEFAULT_SIZE;
 +
 +	jreg = ast_get_index_reg_mask(ast, AST_IO_CRTC_PORT, 0x99, 0xff);
 +	switch (jreg & 0x03) {
@@ -592,14 +582,13 @@ index 81dc68f..68a2177 100644
 +	case 3:
 +		vram_size -= 0x400000;
 +		break;
- 	}
--	return AST_VIDMEM_DEFAULT_SIZE;
++	}
 +
 +	return vram_size;
  }
  
  int ast_driver_load(struct drm_device *dev, unsigned long flags)
-@@ -378,6 +419,7 @@ int ast_driver_unload(struct drm_device *dev)
+@@ -426,6 +467,7 @@ int ast_driver_unload(struct drm_device
  {
  	struct ast_private *ast = dev->dev_private;
  
@@ -607,11 +596,9 @@ index 81dc68f..68a2177 100644
  	ast_mode_fini(dev);
  	ast_fbdev_fini(dev);
  	drm_mode_config_cleanup(dev);
-diff --git a/drivers/gpu/drm/ast/ast_mode.c b/drivers/gpu/drm/ast/ast_mode.c
-index efe8acc..4f45aa4 100644
---- a/drivers/gpu/drm/ast/ast_mode.c
-+++ b/drivers/gpu/drm/ast/ast_mode.c
-@@ -460,9 +460,13 @@ static void ast_crtc_dpms(struct drm_crtc *crtc, int mode)
+--- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_mode.c
++++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_mode.c
+@@ -460,9 +460,13 @@ static void ast_crtc_dpms(struct drm_crt
  	case DRM_MODE_DPMS_STANDBY:
  	case DRM_MODE_DPMS_SUSPEND:
  		ast_set_index_reg_mask(ast, AST_IO_SEQ_PORT, 0x1, 0xdf, 0);
@@ -625,7 +612,7 @@ index efe8acc..4f45aa4 100644
  		ast_set_index_reg_mask(ast, AST_IO_SEQ_PORT, 0x1, 0xdf, 0x20);
  		break;
  	}
-@@ -738,10 +742,24 @@ static int ast_encoder_init(struct drm_device *dev)
+@@ -755,10 +759,24 @@ int ast_encoder_init(struct drm_device *
  static int ast_get_modes(struct drm_connector *connector)
  {
  	struct ast_connector *ast_connector = to_ast_connector(connector);
@@ -652,11 +639,9 @@ index efe8acc..4f45aa4 100644
  	if (edid) {
  		drm_mode_connector_update_edid_property(&ast_connector->base, edid);
  		ret = drm_add_edid_modes(connector, edid);
-diff --git a/drivers/gpu/drm/ast/ast_post.c b/drivers/gpu/drm/ast/ast_post.c
-index 85fda8f..34d99b3 100644
---- a/drivers/gpu/drm/ast/ast_post.c
-+++ b/drivers/gpu/drm/ast/ast_post.c
-@@ -107,7 +107,7 @@ ast_set_def_ext_reg(struct drm_device *dev)
+--- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_post.c
++++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_post.c
+@@ -107,7 +107,7 @@ ast_set_def_ext_reg(struct drm_device *d
  	ast_set_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xb6, 0xff, reg);
  }
  
@@ -665,7 +650,7 @@ index 85fda8f..34d99b3 100644
  {
  	uint32_t data;
  
-@@ -120,7 +120,7 @@ static u32 ast_mindwm(struct ast_private *ast, u32 r)
+@@ -120,7 +120,7 @@ static u32 ast_mindwm(struct ast_private
  	return ast_read32(ast, 0x10000 + (r & 0x0000ffff));
  }
  
@@ -674,7 +659,7 @@ index 85fda8f..34d99b3 100644
  {
  	uint32_t data;
  	ast_write32(ast, 0xf004, r & 0xffff0000);
-@@ -378,6 +378,8 @@ void ast_post_gpu(struct drm_device *dev)
+@@ -378,6 +378,8 @@ void ast_post_gpu(struct drm_device *dev
  		ast_init_dram_2300(dev);
  	else
  		ast_init_dram_reg(dev);
