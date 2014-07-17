@@ -20,46 +20,58 @@ each other on separate cores. On a single core machine these would all be
 processed on one core resulting in higher utilization of the one core.
 
 ---
- drivers/cpufreq/cpufreq_ondemand.c |   24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
+ drivers/cpufreq/cpufreq_ondemand.c |   36 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
 
 --- a/drivers/cpufreq/cpufreq_ondemand.c
 +++ b/drivers/cpufreq/cpufreq_ondemand.c
-@@ -35,6 +35,7 @@
+@@ -26,6 +26,7 @@
  #define MICRO_FREQUENCY_MIN_SAMPLE_RATE		(10000)
  #define MIN_FREQUENCY_UP_THRESHOLD		(11)
  #define MAX_FREQUENCY_UP_THRESHOLD		(100)
 +#define MAX_DEFAULT_SAMPLING_RATE		(300 * 1000U)
  
- /*
-  * The polling frequency of this governor depends on the capability of
-@@ -736,6 +737,29 @@ static int cpufreq_governor_dbs(struct c
- 			dbs_tuners_ins.sampling_rate =
- 				max(min_sampling_rate,
- 				    latency * LATENCY_MULTIPLIER);
-+			/*
-+			 * Cut def_sampling rate to 300ms if it was above,
-+			 * still consider to not set it above latency
-+			 * transition * 100
-+			 */
-+			if (dbs_tuners_ins.sampling_rate > MAX_DEFAULT_SAMPLING_RATE) {
-+				dbs_tuners_ins.sampling_rate =
-+					max(min_sampling_rate, MAX_DEFAULT_SAMPLING_RATE);
-+				printk(KERN_INFO "CPUFREQ: ondemand sampling "
-+				       "rate set to %d ms\n",
-+				       dbs_tuners_ins.sampling_rate / 1000);
-+			}
-+			/*
-+			 * Be conservative in respect to performance.
-+			 * If an application calculates using two threads
-+			 * depending on each other, they will be run on several
-+			 * CPU cores resulting on 50% load on both.
-+			 * SLED might still want to prefer 80% up_threshold
-+			 * by default, but we cannot differ that here.
-+			 */
-+			if (num_online_cpus() > 1)
-+				dbs_tuners_ins.up_threshold =
-+					DEF_FREQUENCY_UP_THRESHOLD / 2;
- 			dbs_tuners_ins.io_is_busy = should_io_be_busy();
- 		}
- 		mutex_unlock(&dbs_mutex);
+ static DEFINE_PER_CPU(struct od_cpu_dbs_info_s, od_cpu_dbs_info);
+ 
+@@ -592,7 +593,40 @@ EXPORT_SYMBOL_GPL(od_unregister_powersav
+ static int od_cpufreq_governor_dbs(struct cpufreq_policy *policy,
+ 		unsigned int event)
+ {
+-	return cpufreq_governor_dbs(policy, &od_dbs_cdata, event);
++	struct dbs_data *dbs_data;
++	struct od_dbs_tuners *od_tuners;
++	int ret;
++
++	ret = cpufreq_governor_dbs(policy, &od_dbs_cdata, event);
++
++	if (ret || event != CPUFREQ_GOV_START)
++		return ret;
++
++	dbs_data = policy->governor_data;
++	mutex_lock(&dbs_data->mutex);
++	od_tuners = dbs_data->tuners;
++
++	/*
++	 * Set default sampling rate to 300ms if it was above.
++	 */
++	if (od_tuners->sampling_rate > MAX_DEFAULT_SAMPLING_RATE) {
++		unsigned int rate = dbs_data->min_sampling_rate;
++
++		rate = max(rate, MAX_DEFAULT_SAMPLING_RATE);
++		od_tuners->sampling_rate = rate;
++		printk(KERN_INFO "CPUFREQ: ondemand sampling "
++		       "rate set to %d ms\n", rate / 1000);
++	}
++	/*
++	 * Be conservative regarding performance.
++	 * Threaded applications will run on multiple cores,
++	 * resulting in as little as 50% load per core.
++	 */
++	if (num_online_cpus() > 1)
++		od_tuners->up_threshold = DEF_FREQUENCY_UP_THRESHOLD / 2;
++	mutex_unlock(&dbs_data->mutex);
++
++	return ret;
+ }
+ 
+ #ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
