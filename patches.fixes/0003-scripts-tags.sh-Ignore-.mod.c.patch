@@ -1,0 +1,82 @@
+From ae63b2d7bdd9bd66b88843be0daf8e37d8f0b574 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 6 Feb 2014 07:51:42 -0500
+Subject: [PATCH 3/7] scripts/tags.sh: Ignore *.mod.c
+Git-commit: ae63b2d7bdd9bd66b88843be0daf8e37d8f0b574
+Patch-mainline: v3.15-rc1
+
+CONFIG_MODVERSIONS=y results in a .mod.c for every compiled file in the
+kernel. Issuing a 'make cscope' on a compiled kernel tree results in
+the cscope files containing *.mod.c files.
+
+[prarit@prarit linux]# make cscope
+[prarit@prarit linux]# cat cscope.files | grep mod.c | wc -l
+4807
+
+These files are not useful for cscope and should be ignored. For example,
+
+   #   line  filename / context / line
+   1    105  arch/x86/kvm/kvm-intel.mod.c <<GLOBAL>>
+             { 0x618911fc, __VMLINUX_SYMBOL_STR(numa_node) },
+   2    508  drivers/block/mtip32xx/mtip32xx.h <<GLOBAL>>
+             int numa_node;
+   3     55  drivers/block/mtip32xx/mtip32xx.mod.c <<GLOBAL>>
+             { 0x618911fc, __VMLINUX_SYMBOL_STR(numa_node) },
+   4     37  drivers/cpufreq/acpi-cpufreq.mod.c <<GLOBAL>>
+             { 0x618911fc, __VMLINUX_SYMBOL_STR(numa_node) },
+   <snip>
+
+Add an export to RCS_FIND_IGNORE so it can be used in scripts/tags.sh
+and add explicitly ignore *.mod.c files.
+
+Signed-off-by: Prarit Bhargava <prarit@redhat.com>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Kirill Tkhai <tkhai@yandex.ru>
+Cc: Michael Opdenacker <michael.opdenacker@free-electrons.com>
+Cc: Rusty Russell <rusty@rustcorp.com.au>
+Signed-off-by: Michal Marek <mmarek@suse.cz>
+
+---
+ Makefile        | 5 +++--
+ scripts/tags.sh | 9 ++++-----
+ 2 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 606ef7c..2acd9dd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -414,8 +414,9 @@ export MODVERDIR := $(if $(KBUILD_EXTMOD),$(firstword $(KBUILD_EXTMOD))/).tmp_ve
+ 
+ # Files to ignore in find ... statements
+ 
+-RCS_FIND_IGNORE := \( -name SCCS -o -name BitKeeper -o -name .svn -o -name CVS \
+-		   -o -name .pc -o -name .hg -o -name .git \) -prune -o
++export RCS_FIND_IGNORE := \( -name SCCS -o -name BitKeeper -o -name .svn -o    \
++			  -name CVS -o -name .pc -o -name .hg -o -name .git \) \
++			  -prune -o
+ export RCS_TAR_IGNORE := --exclude SCCS --exclude BitKeeper --exclude .svn \
+ 			 --exclude CVS --exclude .pc --exclude .hg --exclude .git
+ 
+diff --git a/scripts/tags.sh b/scripts/tags.sh
+index 58c4559..f2c5b00 100755
+--- a/scripts/tags.sh
++++ b/scripts/tags.sh
+@@ -11,11 +11,10 @@ if [ "$KBUILD_VERBOSE" = "1" ]; then
+ 	set -x
+ fi
+ 
+-# This is a duplicate of RCS_FIND_IGNORE without escaped '()'
+-ignore="( -name SCCS -o -name BitKeeper -o -name .svn -o \
+-          -name CVS  -o -name .pc       -o -name .hg  -o \
+-          -name .git )                                   \
+-          -prune -o"
++# RCS_FIND_IGNORE has escaped ()s -- remove them.
++ignore="$(echo "$RCS_FIND_IGNORE" | sed 's|\\||g' )"
++# tags and cscope files should also ignore MODVERSION *.mod.c files
++ignore="$ignore ( -name *.mod.c ) -prune -o"
+ 
+ # Do not use full path if we do not use O=.. builds
+ # Use make O=. {tags|cscope}
+-- 
+1.8.4.5
+
