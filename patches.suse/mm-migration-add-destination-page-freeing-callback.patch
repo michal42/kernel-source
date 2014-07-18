@@ -84,7 +84,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  				MR_COMPACTION);
 --- a/mm/memory-failure.c
 +++ b/mm/memory-failure.c
-@@ -1518,7 +1518,7 @@ static int soft_offline_huge_page(struct
+@@ -1554,7 +1554,7 @@ static int soft_offline_huge_page(struct
  
  	/* Keep page count to indicate a given hugepage is isolated. */
  	list_move(&hpage->lru, &pagelist);
@@ -93,7 +93,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  				MIGRATE_SYNC, MR_MEMORY_FAILURE);
  	if (ret) {
  		pr_info("soft offline: %#lx: migration failed %d, type %lx\n",
-@@ -1599,7 +1599,7 @@ static int __soft_offline_page(struct pa
+@@ -1635,7 +1635,7 @@ static int __soft_offline_page(struct pa
  		inc_zone_page_state(page, NR_ISOLATED_ANON +
  					page_is_file_cache(page));
  		list_add(&page->lru, &pagelist);
@@ -115,7 +115,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  			putback_movable_pages(&source);
 --- a/mm/mempolicy.c
 +++ b/mm/mempolicy.c
-@@ -1059,7 +1059,7 @@ static int migrate_to_node(struct mm_str
+@@ -1060,7 +1060,7 @@ static int migrate_to_node(struct mm_str
  			flags | MPOL_MF_DISCONTIG_OK, &pagelist);
  
  	if (!list_empty(&pagelist)) {
@@ -124,18 +124,18 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  					MIGRATE_SYNC, MR_SYSCALL);
  		if (err)
  			putback_movable_pages(&pagelist);
-@@ -1308,7 +1308,7 @@ static long do_mbind(unsigned long start
+@@ -1306,7 +1306,7 @@ static long do_mbind(unsigned long start
+ 
  		if (!list_empty(&pagelist)) {
  			WARN_ON_ONCE(flags & MPOL_MF_LAZY);
- 			nr_failed = migrate_pages(&pagelist, new_vma_page,
--					(unsigned long)vma,
-+					NULL, (unsigned long)vma,
- 					MIGRATE_SYNC, MR_MEMPOLICY_MBIND);
+-			nr_failed = migrate_pages(&pagelist, new_page,
++			nr_failed = migrate_pages(&pagelist, new_page, NULL,
+ 				start, MIGRATE_SYNC, MR_MEMPOLICY_MBIND);
  			if (nr_failed)
  				putback_movable_pages(&pagelist);
 --- a/mm/migrate.c
 +++ b/mm/migrate.c
-@@ -925,8 +925,9 @@ out:
+@@ -923,8 +923,9 @@ out:
   * Obtain the lock on page, remove all ptes and migrate the page
   * to the newly allocated page in newpage.
   */
@@ -147,7 +147,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  {
  	int rc = 0;
  	int *result = NULL;
-@@ -970,11 +971,17 @@ out:
+@@ -968,11 +969,17 @@ out:
  				page_is_file_cache(page));
  		putback_lru_page(page);
  	}
@@ -168,7 +168,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	if (result) {
  		if (rc)
  			*result = rc;
-@@ -1003,8 +1010,9 @@ out:
+@@ -1001,8 +1008,9 @@ out:
   * will wait in the page fault for migration to complete.
   */
  static int unmap_and_move_huge_page(new_page_t get_new_page,
@@ -180,7 +180,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  {
  	int rc = 0;
  	int *result = NULL;
-@@ -1040,20 +1048,30 @@ static int unmap_and_move_huge_page(new_
+@@ -1038,20 +1046,30 @@ static int unmap_and_move_huge_page(new_
  	if (!page_mapped(hpage))
  		rc = move_to_new_page(new_hpage, hpage, 1, mode);
  
@@ -214,7 +214,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	if (result) {
  		if (rc)
  			*result = rc;
-@@ -1070,6 +1088,8 @@ out:
+@@ -1068,6 +1086,8 @@ out:
   * @from:		The list of pages to be migrated.
   * @get_new_page:	The function used to allocate free pages to be used
   *			as the target of the page migration.
@@ -223,7 +223,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
   * @private:		Private data to be passed on to get_new_page()
   * @mode:		The migration mode that specifies the constraints for
   *			page migration, if any.
-@@ -1083,7 +1103,8 @@ out:
+@@ -1081,7 +1101,8 @@ out:
   * Returns the number of pages that were not migrated, or an error code.
   */
  int migrate_pages(struct list_head *from, new_page_t get_new_page,
@@ -233,7 +233,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  {
  	int retry = 1;
  	int nr_failed = 0;
-@@ -1105,10 +1126,11 @@ int migrate_pages(struct list_head *from
+@@ -1103,10 +1124,11 @@ int migrate_pages(struct list_head *from
  
  			if (PageHuge(page))
  				rc = unmap_and_move_huge_page(get_new_page,
@@ -248,7 +248,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  			switch(rc) {
  			case -ENOMEM:
-@@ -1252,7 +1274,7 @@ set_status:
+@@ -1250,7 +1272,7 @@ set_status:
  
  	err = 0;
  	if (!list_empty(&pagelist)) {
@@ -257,7 +257,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  				(unsigned long)pm, MIGRATE_SYNC, MR_SYSCALL);
  		if (err)
  			putback_movable_pages(&pagelist);
-@@ -1708,7 +1730,8 @@ int migrate_misplaced_page(struct page *
+@@ -1706,7 +1728,8 @@ int migrate_misplaced_page(struct page *
  
  	list_add(&page->lru, &migratepages);
  	nr_remaining = migrate_pages(&migratepages, alloc_misplaced_dst_page,
@@ -269,7 +269,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		isolated = 0;
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -6196,7 +6196,7 @@ static int __alloc_contig_migrate_range(
+@@ -6228,7 +6228,7 @@ static int __alloc_contig_migrate_range(
  		cc->nr_migratepages -= nr_reclaimed;
  
  		ret = migrate_pages(&cc->migratepages, alloc_migrate_target,

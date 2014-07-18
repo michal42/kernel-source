@@ -14,26 +14,24 @@ Link: http://lkml.kernel.org/n/tip-p9ijt8div0hwldexwfm4nlhj@git.kernel.org
 Signed-off-by: Ingo Molnar <mingo@kernel.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- kernel/Makefile                 |    3 -
- kernel/futex.c                  |    2 +-
- kernel/locking/Makefile         |    3 +
- kernel/locking/rtmutex-debug.c  |  187 +++++++
- kernel/locking/rtmutex-debug.h  |   33 ++
- kernel/locking/rtmutex-tester.c |  420 ++++++++++++++++
- kernel/locking/rtmutex.c        | 1060 +++++++++++++++++++++++++++++++++++++++
- kernel/locking/rtmutex.h        |   26 +
- kernel/locking/rtmutex_common.h |  126 +++++
- kernel/rcutree_plugin.h         |    2 +-
- kernel/rtmutex-debug.c          |  187 -------
- kernel/rtmutex-debug.h          |   33 --
- kernel/rtmutex-tester.c         |  420 ----------------
- kernel/rtmutex.c                | 1060 ---------------------------------------
- kernel/rtmutex.h                |   26 -
- kernel/rtmutex_common.h         |  126 -----
- 16 files changed, 1857 insertions(+), 1857 deletions(-)
+ kernel/Makefile                 |    3 
+ kernel/futex.c                  |    2 
+ kernel/locking/Makefile         |    3 
+ kernel/locking/rtmutex-debug.c  |  187 +++++
+ kernel/locking/rtmutex-debug.h  |   38 +
+ kernel/locking/rtmutex-tester.c |  420 +++++++++++++
+ kernel/locking/rtmutex.c        | 1257 ++++++++++++++++++++++++++++++++++++++++
+ kernel/locking/rtmutex.h        |   31 
+ kernel/locking/rtmutex_common.h |  126 ++++
+ kernel/rcutree_plugin.h         |    2 
+ kernel/rtmutex-debug.c          |  187 -----
+ kernel/rtmutex-debug.h          |   38 -
+ kernel/rtmutex-tester.c         |  420 -------------
+ kernel/rtmutex.c                | 1257 ----------------------------------------
+ kernel/rtmutex.h                |   31 
+ kernel/rtmutex_common.h         |  126 ----
+ 16 files changed, 2064 insertions(+), 2064 deletions(-)
 
-diff --git a/kernel/Makefile b/kernel/Makefile
-index 5700ada..6de4179b 100644
 --- a/kernel/Makefile
 +++ b/kernel/Makefile
 @@ -34,9 +34,6 @@ obj-$(CONFIG_FUTEX) += futex.o
@@ -46,8 +44,6 @@ index 5700ada..6de4179b 100644
  obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
  obj-$(CONFIG_SMP) += smp.o
  ifneq ($(CONFIG_SMP),y)
-diff --git a/kernel/futex.c b/kernel/futex.c
-index 4feeda7..95fa7f1 100644
 --- a/kernel/futex.c
 +++ b/kernel/futex.c
 @@ -67,7 +67,7 @@
@@ -59,8 +55,6 @@ index 4feeda7..95fa7f1 100644
  
  /*
   * Basic futex operation and ordering guarantees:
-diff --git a/kernel/locking/Makefile b/kernel/locking/Makefile
-index 5978fdd..59f66de 100644
 --- a/kernel/locking/Makefile
 +++ b/kernel/locking/Makefile
 @@ -15,5 +15,8 @@ obj-$(CONFIG_LOCKDEP) += lockdep_proc.o
@@ -72,9 +66,6 @@ index 5978fdd..59f66de 100644
 +obj-$(CONFIG_RT_MUTEX_TESTER) += rtmutex-tester.o
  obj-$(CONFIG_DEBUG_SPINLOCK) += spinlock.o
  obj-$(CONFIG_DEBUG_SPINLOCK) += spinlock_debug.o
-diff --git a/kernel/locking/rtmutex-debug.c b/kernel/locking/rtmutex-debug.c
-new file mode 100644
-index 0000000..13b243a
 --- /dev/null
 +++ b/kernel/locking/rtmutex-debug.c
 @@ -0,0 +1,187 @@
@@ -265,12 +256,9 @@ index 0000000..13b243a
 +{
 +}
 +
-diff --git a/kernel/locking/rtmutex-debug.h b/kernel/locking/rtmutex-debug.h
-new file mode 100644
-index 0000000..14193d5
 --- /dev/null
 +++ b/kernel/locking/rtmutex-debug.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,38 @@
 +/*
 + * RT-Mutexes: blocking mutual exclusion locks with PI support
 + *
@@ -304,9 +292,11 @@ index 0000000..14193d5
 +{
 +	return (waiter != NULL);
 +}
-diff --git a/kernel/locking/rtmutex-tester.c b/kernel/locking/rtmutex-tester.c
-new file mode 100644
-index 0000000..1d96dd0
++
++static inline void rt_mutex_print_deadlock(struct rt_mutex_waiter *w)
++{
++	debug_rt_mutex_print_deadlock(w);
++}
 --- /dev/null
 +++ b/kernel/locking/rtmutex-tester.c
 @@ -0,0 +1,420 @@
@@ -730,12 +720,9 @@ index 0000000..1d96dd0
 +}
 +
 +device_initcall(init_rttest);
-diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
-new file mode 100644
-index 0000000..0dd6aec
 --- /dev/null
 +++ b/kernel/locking/rtmutex.c
-@@ -0,0 +1,1060 @@
+@@ -0,0 +1,1257 @@
 +/*
 + * RT-Mutexes: simple blocking mutual exclusion locks with PI support
 + *
@@ -820,12 +807,64 @@ index 0000000..0dd6aec
 +		owner = *p;
 +	} while (cmpxchg(p, owner, owner | RT_MUTEX_HAS_WAITERS) != owner);
 +}
++
++/*
++ * Safe fastpath aware unlock:
++ * 1) Clear the waiters bit
++ * 2) Drop lock->wait_lock
++ * 3) Try to unlock the lock with cmpxchg
++ */
++static inline bool unlock_rt_mutex_safe(struct rt_mutex *lock)
++	__releases(lock->wait_lock)
++{
++	struct task_struct *owner = rt_mutex_owner(lock);
++
++	clear_rt_mutex_waiters(lock);
++	raw_spin_unlock(&lock->wait_lock);
++	/*
++	 * If a new waiter comes in between the unlock and the cmpxchg
++	 * we have two situations:
++	 *
++	 * unlock(wait_lock);
++	 *					lock(wait_lock);
++	 * cmpxchg(p, owner, 0) == owner
++	 *					mark_rt_mutex_waiters(lock);
++	 *					acquire(lock);
++	 * or:
++	 *
++	 * unlock(wait_lock);
++	 *					lock(wait_lock);
++	 *					mark_rt_mutex_waiters(lock);
++	 *
++	 * cmpxchg(p, owner, 0) != owner
++	 *					enqueue_waiter();
++	 *					unlock(wait_lock);
++	 * lock(wait_lock);
++	 * wake waiter();
++	 * unlock(wait_lock);
++	 *					lock(wait_lock);
++	 *					acquire(lock);
++	 */
++	return rt_mutex_cmpxchg(lock, owner, NULL);
++}
++
 +#else
 +# define rt_mutex_cmpxchg(l,c,n)	(0)
 +static inline void mark_rt_mutex_waiters(struct rt_mutex *lock)
 +{
 +	lock->owner = (struct task_struct *)
 +			((unsigned long)lock->owner | RT_MUTEX_HAS_WAITERS);
++}
++
++/*
++ * Simple slow path only version: lock->owner is protected by lock->wait_lock.
++ */
++static inline bool unlock_rt_mutex_safe(struct rt_mutex *lock)
++	__releases(lock->wait_lock)
++{
++	lock->owner = NULL;
++	raw_spin_unlock(&lock->wait_lock);
++	return true;
 +}
 +#endif
 +
@@ -880,27 +919,36 @@ index 0000000..0dd6aec
 + */
 +int max_lock_depth = 1024;
 +
++static inline struct rt_mutex *task_blocked_on_lock(struct task_struct *p)
++{
++	return p->pi_blocked_on ? p->pi_blocked_on->lock : NULL;
++}
++
 +/*
 + * Adjust the priority chain. Also used for deadlock detection.
 + * Decreases task's usage by one - may thus free the task.
 + *
-+ * @task: the task owning the mutex (owner) for which a chain walk is probably
-+ *	  needed
++ * @task:	the task owning the mutex (owner) for which a chain walk is
++ *		probably needed
 + * @deadlock_detect: do we have to carry out deadlock detection?
-+ * @orig_lock: the mutex (can be NULL if we are walking the chain to recheck
-+ * 	       things for a task that has just got its priority adjusted, and
-+ *	       is waiting on a mutex)
++ * @orig_lock:	the mutex (can be NULL if we are walking the chain to recheck
++ *		things for a task that has just got its priority adjusted, and
++ *		is waiting on a mutex)
++ * @next_lock:	the mutex on which the owner of @orig_lock was blocked before
++ *		we dropped its pi_lock. Is never dereferenced, only used for
++ *		comparison to detect lock chain changes.
 + * @orig_waiter: rt_mutex_waiter struct for the task that has just donated
-+ *		 its priority to the mutex owner (can be NULL in the case
-+ *		 depicted above or if the top waiter is gone away and we are
-+ *		 actually deboosting the owner)
-+ * @top_task: the current top waiter
++ *		its priority to the mutex owner (can be NULL in the case
++ *		depicted above or if the top waiter is gone away and we are
++ *		actually deboosting the owner)
++ * @top_task:	the current top waiter
 + *
 + * Returns 0 or -EDEADLK.
 + */
 +static int rt_mutex_adjust_prio_chain(struct task_struct *task,
 +				      int deadlock_detect,
 +				      struct rt_mutex *orig_lock,
++				      struct rt_mutex *next_lock,
 +				      struct rt_mutex_waiter *orig_waiter,
 +				      struct task_struct *top_task)
 +{
@@ -934,7 +982,7 @@ index 0000000..0dd6aec
 +		}
 +		put_task_struct(task);
 +
-+		return deadlock_detect ? -EDEADLK : 0;
++		return -EDEADLK;
 +	}
 + retry:
 +	/*
@@ -959,13 +1007,32 @@ index 0000000..0dd6aec
 +		goto out_unlock_pi;
 +
 +	/*
++	 * We dropped all locks after taking a refcount on @task, so
++	 * the task might have moved on in the lock chain or even left
++	 * the chain completely and blocks now on an unrelated lock or
++	 * on @orig_lock.
++	 *
++	 * We stored the lock on which @task was blocked in @next_lock,
++	 * so we can detect the chain change.
++	 */
++	if (next_lock != waiter->lock)
++		goto out_unlock_pi;
++
++	/*
 +	 * Drop out, when the task has no waiters. Note,
 +	 * top_waiter can be NULL, when we are in the deboosting
 +	 * mode!
 +	 */
-+	if (top_waiter && (!task_has_pi_waiters(task) ||
-+			   top_waiter != task_top_pi_waiter(task)))
-+		goto out_unlock_pi;
++	if (top_waiter) {
++		if (!task_has_pi_waiters(task))
++			goto out_unlock_pi;
++		/*
++		 * If deadlock detection is off, we stop here if we
++		 * are not the top pi waiter of the task.
++		 */
++		if (!detect_deadlock && top_waiter != task_top_pi_waiter(task))
++			goto out_unlock_pi;
++	}
 +
 +	/*
 +	 * When deadlock detection is off then we check, if further
@@ -981,11 +1048,16 @@ index 0000000..0dd6aec
 +		goto retry;
 +	}
 +
-+	/* Deadlock detection */
++	/*
++	 * Deadlock detection. If the lock is the same as the original
++	 * lock which caused us to walk the lock chain or if the
++	 * current lock is owned by the task which initiated the chain
++	 * walk, we detected a deadlock.
++	 */
 +	if (lock == orig_lock || rt_mutex_owner(lock) == top_task) {
 +		debug_rt_mutex_deadlock(deadlock_detect, orig_waiter, lock);
 +		raw_spin_unlock(&lock->wait_lock);
-+		ret = deadlock_detect ? -EDEADLK : 0;
++		ret = -EDEADLK;
 +		goto out_unlock_pi;
 +	}
 +
@@ -1032,10 +1104,25 @@ index 0000000..0dd6aec
 +		__rt_mutex_adjust_prio(task);
 +	}
 +
++	/*
++	 * Check whether the task which owns the current lock is pi
++	 * blocked itself. If yes we store a pointer to the lock for
++	 * the lock chain change detection above. After we dropped
++	 * task->pi_lock next_lock cannot be dereferenced anymore.
++	 */
++	next_lock = task_blocked_on_lock(task);
++
 +	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 +
 +	top_waiter = rt_mutex_top_waiter(lock);
 +	raw_spin_unlock(&lock->wait_lock);
++
++	/*
++	 * We reached the end of the lock chain. Stop right here. No
++	 * point to go back just to figure that out.
++	 */
++	if (!next_lock)
++		goto out_put_task;
 +
 +	if (!detect_deadlock && waiter != top_waiter)
 +		goto out_put_task;
@@ -1147,8 +1234,21 @@ index 0000000..0dd6aec
 +{
 +	struct task_struct *owner = rt_mutex_owner(lock);
 +	struct rt_mutex_waiter *top_waiter = waiter;
-+	unsigned long flags;
++	struct rt_mutex *next_lock;
 +	int chain_walk = 0, res;
++	unsigned long flags;
++
++	/*
++	 * Early deadlock detection. We really don't want the task to
++	 * enqueue on itself just to untangle the mess later. It's not
++	 * only an optimization. We drop the locks, so another waiter
++	 * can come in before the chain walk detects the deadlock. So
++	 * the other will detect the deadlock and return -EDEADLOCK,
++	 * which is wrong, as the other waiter is not in a deadlock
++	 * situation.
++	 */
++	if (owner == task)
++		return -EDEADLK;
 +
 +	raw_spin_lock_irqsave(&task->pi_lock, flags);
 +	__rt_mutex_adjust_prio(task);
@@ -1169,20 +1269,28 @@ index 0000000..0dd6aec
 +	if (!owner)
 +		return 0;
 +
++	raw_spin_lock_irqsave(&owner->pi_lock, flags);
 +	if (waiter == rt_mutex_top_waiter(lock)) {
-+		raw_spin_lock_irqsave(&owner->pi_lock, flags);
 +		plist_del(&top_waiter->pi_list_entry, &owner->pi_waiters);
 +		plist_add(&waiter->pi_list_entry, &owner->pi_waiters);
 +
 +		__rt_mutex_adjust_prio(owner);
 +		if (owner->pi_blocked_on)
 +			chain_walk = 1;
-+		raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
-+	}
-+	else if (debug_rt_mutex_detect_deadlock(waiter, detect_deadlock))
++	} else if (debug_rt_mutex_detect_deadlock(waiter, detect_deadlock)) {
 +		chain_walk = 1;
++	}
 +
-+	if (!chain_walk)
++	/* Store the lock on which owner is blocked or NULL */
++	next_lock = task_blocked_on_lock(owner);
++
++	raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
++	/*
++	 * Even if full deadlock detection is on, if the owner is not
++	 * blocked itself, we can avoid finding this out in the chain
++	 * walk.
++	 */
++	if (!chain_walk || !next_lock)
 +		return 0;
 +
 +	/*
@@ -1194,8 +1302,8 @@ index 0000000..0dd6aec
 +
 +	raw_spin_unlock(&lock->wait_lock);
 +
-+	res = rt_mutex_adjust_prio_chain(owner, detect_deadlock, lock, waiter,
-+					 task);
++	res = rt_mutex_adjust_prio_chain(owner, detect_deadlock, lock,
++					 next_lock, waiter, task);
 +
 +	raw_spin_lock(&lock->wait_lock);
 +
@@ -1205,7 +1313,8 @@ index 0000000..0dd6aec
 +/*
 + * Wake up the next waiter on the lock.
 + *
-+ * Remove the top waiter from the current tasks waiter list and wake it up.
++ * Remove the top waiter from the current tasks pi waiter list and
++ * wake it up.
 + *
 + * Called with lock->wait_lock held.
 + */
@@ -1226,10 +1335,23 @@ index 0000000..0dd6aec
 +	 */
 +	plist_del(&waiter->pi_list_entry, &current->pi_waiters);
 +
-+	rt_mutex_set_owner(lock, NULL);
++	/*
++	 * As we are waking up the top waiter, and the waiter stays
++	 * queued on the lock until it gets the lock, this lock
++	 * obviously has waiters. Just set the bit here and this has
++	 * the added benefit of forcing all new tasks into the
++	 * slow path making sure no task of lower priority than
++	 * the top waiter can steal this lock.
++	 */
++	lock->owner = (void *) RT_MUTEX_HAS_WAITERS;
 +
 +	raw_spin_unlock_irqrestore(&current->pi_lock, flags);
 +
++	/*
++	 * It's safe to dereference waiter as it cannot go away as
++	 * long as we hold lock->wait_lock. The waiter task needs to
++	 * acquire it in order to dequeue the waiter.
++	 */
 +	wake_up_process(waiter->task);
 +}
 +
@@ -1244,8 +1366,8 @@ index 0000000..0dd6aec
 +{
 +	int first = (waiter == rt_mutex_top_waiter(lock));
 +	struct task_struct *owner = rt_mutex_owner(lock);
++	struct rt_mutex *next_lock = NULL;
 +	unsigned long flags;
-+	int chain_walk = 0;
 +
 +	raw_spin_lock_irqsave(&current->pi_lock, flags);
 +	plist_del(&waiter->list_entry, &lock->wait_list);
@@ -1269,15 +1391,15 @@ index 0000000..0dd6aec
 +		}
 +		__rt_mutex_adjust_prio(owner);
 +
-+		if (owner->pi_blocked_on)
-+			chain_walk = 1;
++		/* Store the lock on which owner is blocked or NULL */
++		next_lock = task_blocked_on_lock(owner);
 +
 +		raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
 +	}
 +
 +	WARN_ON(!plist_node_empty(&waiter->pi_list_entry));
 +
-+	if (!chain_walk)
++	if (!next_lock)
 +		return;
 +
 +	/* gets dropped in rt_mutex_adjust_prio_chain()! */
@@ -1285,7 +1407,7 @@ index 0000000..0dd6aec
 +
 +	raw_spin_unlock(&lock->wait_lock);
 +
-+	rt_mutex_adjust_prio_chain(owner, 0, lock, NULL, current);
++	rt_mutex_adjust_prio_chain(owner, 0, lock, next_lock, NULL, current);
 +
 +	raw_spin_lock(&lock->wait_lock);
 +}
@@ -1298,6 +1420,7 @@ index 0000000..0dd6aec
 +void rt_mutex_adjust_pi(struct task_struct *task)
 +{
 +	struct rt_mutex_waiter *waiter;
++	struct rt_mutex *next_lock;
 +	unsigned long flags;
 +
 +	raw_spin_lock_irqsave(&task->pi_lock, flags);
@@ -1307,12 +1430,13 @@ index 0000000..0dd6aec
 +		raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 +		return;
 +	}
-+
++	next_lock = waiter->lock;
 +	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 +
 +	/* gets dropped in rt_mutex_adjust_prio_chain()! */
 +	get_task_struct(task);
-+	rt_mutex_adjust_prio_chain(task, 0, NULL, NULL, task);
++
++	rt_mutex_adjust_prio_chain(task, 0, NULL, next_lock, NULL, task);
 +}
 +
 +/**
@@ -1364,6 +1488,26 @@ index 0000000..0dd6aec
 +	return ret;
 +}
 +
++static void rt_mutex_handle_deadlock(int res, int detect_deadlock,
++				     struct rt_mutex_waiter *w)
++{
++	/*
++	 * If the result is not -EDEADLOCK or the caller requested
++	 * deadlock detection, nothing to do here.
++	 */
++	if (res != -EDEADLOCK || detect_deadlock)
++		return;
++
++	/*
++	 * Yell lowdly and stop the task right here.
++	 */
++	rt_mutex_print_deadlock(w);
++	while (1) {
++		set_current_state(TASK_INTERRUPTIBLE);
++		schedule();
++	}
++}
++
 +/*
 + * Slow path lock function:
 + */
@@ -1401,8 +1545,10 @@ index 0000000..0dd6aec
 +
 +	set_current_state(TASK_RUNNING);
 +
-+	if (unlikely(ret))
++	if (unlikely(ret)) {
 +		remove_waiter(lock, &waiter);
++		rt_mutex_handle_deadlock(ret, detect_deadlock, &waiter);
++	}
 +
 +	/*
 +	 * try_to_take_rt_mutex() sets the waiter bit
@@ -1458,12 +1604,49 @@ index 0000000..0dd6aec
 +
 +	rt_mutex_deadlock_account_unlock(current);
 +
-+	if (!rt_mutex_has_waiters(lock)) {
-+		lock->owner = NULL;
-+		raw_spin_unlock(&lock->wait_lock);
-+		return;
++	/*
++	 * We must be careful here if the fast path is enabled. If we
++	 * have no waiters queued we cannot set owner to NULL here
++	 * because of:
++	 *
++	 * foo->lock->owner = NULL;
++	 *			rtmutex_lock(foo->lock);   <- fast path
++	 *			free = atomic_dec_and_test(foo->refcnt);
++	 *			rtmutex_unlock(foo->lock); <- fast path
++	 *			if (free)
++	 *				kfree(foo);
++	 * raw_spin_unlock(foo->lock->wait_lock);
++	 *
++	 * So for the fastpath enabled kernel:
++	 *
++	 * Nothing can set the waiters bit as long as we hold
++	 * lock->wait_lock. So we do the following sequence:
++	 *
++	 *	owner = rt_mutex_owner(lock);
++	 *	clear_rt_mutex_waiters(lock);
++	 *	raw_spin_unlock(&lock->wait_lock);
++	 *	if (cmpxchg(&lock->owner, owner, 0) == owner)
++	 *		return;
++	 *	goto retry;
++	 *
++	 * The fastpath disabled variant is simple as all access to
++	 * lock->owner is serialized by lock->wait_lock:
++	 *
++	 *	lock->owner = NULL;
++	 *	raw_spin_unlock(&lock->wait_lock);
++	 */
++	while (!rt_mutex_has_waiters(lock)) {
++		/* Drops lock->wait_lock ! */
++		if (unlock_rt_mutex_safe(lock) == true)
++			return;
++		/* Relock the rtmutex and try again */
++		raw_spin_lock(&lock->wait_lock);
 +	}
 +
++	/*
++	 * The wakeup next waiter path does not suffer from the above
++	 * race. See the comments there.
++	 */
 +	wakeup_next_waiter(lock);
 +
 +	raw_spin_unlock(&lock->wait_lock);
@@ -1710,7 +1893,8 @@ index 0000000..0dd6aec
 +		return 1;
 +	}
 +
-+	ret = task_blocks_on_rt_mutex(lock, waiter, task, detect_deadlock);
++	/* We enforce deadlock detection for futexes */
++	ret = task_blocks_on_rt_mutex(lock, waiter, task, 1);
 +
 +	if (ret && !rt_mutex_owner(lock)) {
 +		/*
@@ -1796,12 +1980,9 @@ index 0000000..0dd6aec
 +
 +	return ret;
 +}
-diff --git a/kernel/locking/rtmutex.h b/kernel/locking/rtmutex.h
-new file mode 100644
-index 0000000..a1a1dd0
 --- /dev/null
 +++ b/kernel/locking/rtmutex.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,31 @@
 +/*
 + * RT-Mutexes: blocking mutual exclusion locks with PI support
 + *
@@ -1828,9 +2009,11 @@ index 0000000..a1a1dd0
 +#define debug_rt_mutex_print_deadlock(w)		do { } while (0)
 +#define debug_rt_mutex_detect_deadlock(w,d)		(d)
 +#define debug_rt_mutex_reset_waiter(w)			do { } while (0)
-diff --git a/kernel/locking/rtmutex_common.h b/kernel/locking/rtmutex_common.h
-new file mode 100644
-index 0000000..53a66c8
++
++static inline void rt_mutex_print_deadlock(struct rt_mutex_waiter *w)
++{
++	WARN(1, "rtmutex deadlock detected\n");
++}
 --- /dev/null
 +++ b/kernel/locking/rtmutex_common.h
 @@ -0,0 +1,126 @@
@@ -1960,8 +2143,6 @@ index 0000000..53a66c8
 +#endif
 +
 +#endif
-diff --git a/kernel/rcutree_plugin.h b/kernel/rcutree_plugin.h
-index 511e6b4..848da80 100644
 --- a/kernel/rcutree_plugin.h
 +++ b/kernel/rcutree_plugin.h
 @@ -1128,7 +1128,7 @@ void exit_rcu(void)
@@ -1973,9 +2154,6 @@ index 511e6b4..848da80 100644
  
  #ifdef CONFIG_RCU_TRACE
  
-diff --git a/kernel/rtmutex-debug.c b/kernel/rtmutex-debug.c
-deleted file mode 100644
-index 13b243a..0000000
 --- a/kernel/rtmutex-debug.c
 +++ /dev/null
 @@ -1,187 +0,0 @@
@@ -2166,12 +2344,9 @@ index 13b243a..0000000
 -{
 -}
 -
-diff --git a/kernel/rtmutex-debug.h b/kernel/rtmutex-debug.h
-deleted file mode 100644
-index 14193d5..0000000
 --- a/kernel/rtmutex-debug.h
 +++ /dev/null
-@@ -1,33 +0,0 @@
+@@ -1,38 +0,0 @@
 -/*
 - * RT-Mutexes: blocking mutual exclusion locks with PI support
 - *
@@ -2205,9 +2380,11 @@ index 14193d5..0000000
 -{
 -	return (waiter != NULL);
 -}
-diff --git a/kernel/rtmutex-tester.c b/kernel/rtmutex-tester.c
-deleted file mode 100644
-index 1d96dd0..0000000
+-
+-static inline void rt_mutex_print_deadlock(struct rt_mutex_waiter *w)
+-{
+-	debug_rt_mutex_print_deadlock(w);
+-}
 --- a/kernel/rtmutex-tester.c
 +++ /dev/null
 @@ -1,420 +0,0 @@
@@ -2631,12 +2808,9 @@ index 1d96dd0..0000000
 -}
 -
 -device_initcall(init_rttest);
-diff --git a/kernel/rtmutex.c b/kernel/rtmutex.c
-deleted file mode 100644
-index 0dd6aec..0000000
 --- a/kernel/rtmutex.c
 +++ /dev/null
-@@ -1,1060 +0,0 @@
+@@ -1,1257 +0,0 @@
 -/*
 - * RT-Mutexes: simple blocking mutual exclusion locks with PI support
 - *
@@ -2721,12 +2895,64 @@ index 0dd6aec..0000000
 -		owner = *p;
 -	} while (cmpxchg(p, owner, owner | RT_MUTEX_HAS_WAITERS) != owner);
 -}
+-
+-/*
+- * Safe fastpath aware unlock:
+- * 1) Clear the waiters bit
+- * 2) Drop lock->wait_lock
+- * 3) Try to unlock the lock with cmpxchg
+- */
+-static inline bool unlock_rt_mutex_safe(struct rt_mutex *lock)
+-	__releases(lock->wait_lock)
+-{
+-	struct task_struct *owner = rt_mutex_owner(lock);
+-
+-	clear_rt_mutex_waiters(lock);
+-	raw_spin_unlock(&lock->wait_lock);
+-	/*
+-	 * If a new waiter comes in between the unlock and the cmpxchg
+-	 * we have two situations:
+-	 *
+-	 * unlock(wait_lock);
+-	 *					lock(wait_lock);
+-	 * cmpxchg(p, owner, 0) == owner
+-	 *					mark_rt_mutex_waiters(lock);
+-	 *					acquire(lock);
+-	 * or:
+-	 *
+-	 * unlock(wait_lock);
+-	 *					lock(wait_lock);
+-	 *					mark_rt_mutex_waiters(lock);
+-	 *
+-	 * cmpxchg(p, owner, 0) != owner
+-	 *					enqueue_waiter();
+-	 *					unlock(wait_lock);
+-	 * lock(wait_lock);
+-	 * wake waiter();
+-	 * unlock(wait_lock);
+-	 *					lock(wait_lock);
+-	 *					acquire(lock);
+-	 */
+-	return rt_mutex_cmpxchg(lock, owner, NULL);
+-}
+-
 -#else
 -# define rt_mutex_cmpxchg(l,c,n)	(0)
 -static inline void mark_rt_mutex_waiters(struct rt_mutex *lock)
 -{
 -	lock->owner = (struct task_struct *)
 -			((unsigned long)lock->owner | RT_MUTEX_HAS_WAITERS);
+-}
+-
+-/*
+- * Simple slow path only version: lock->owner is protected by lock->wait_lock.
+- */
+-static inline bool unlock_rt_mutex_safe(struct rt_mutex *lock)
+-	__releases(lock->wait_lock)
+-{
+-	lock->owner = NULL;
+-	raw_spin_unlock(&lock->wait_lock);
+-	return true;
 -}
 -#endif
 -
@@ -2781,27 +3007,36 @@ index 0dd6aec..0000000
 - */
 -int max_lock_depth = 1024;
 -
+-static inline struct rt_mutex *task_blocked_on_lock(struct task_struct *p)
+-{
+-	return p->pi_blocked_on ? p->pi_blocked_on->lock : NULL;
+-}
+-
 -/*
 - * Adjust the priority chain. Also used for deadlock detection.
 - * Decreases task's usage by one - may thus free the task.
 - *
-- * @task: the task owning the mutex (owner) for which a chain walk is probably
-- *	  needed
+- * @task:	the task owning the mutex (owner) for which a chain walk is
+- *		probably needed
 - * @deadlock_detect: do we have to carry out deadlock detection?
-- * @orig_lock: the mutex (can be NULL if we are walking the chain to recheck
-- * 	       things for a task that has just got its priority adjusted, and
-- *	       is waiting on a mutex)
+- * @orig_lock:	the mutex (can be NULL if we are walking the chain to recheck
+- *		things for a task that has just got its priority adjusted, and
+- *		is waiting on a mutex)
+- * @next_lock:	the mutex on which the owner of @orig_lock was blocked before
+- *		we dropped its pi_lock. Is never dereferenced, only used for
+- *		comparison to detect lock chain changes.
 - * @orig_waiter: rt_mutex_waiter struct for the task that has just donated
-- *		 its priority to the mutex owner (can be NULL in the case
-- *		 depicted above or if the top waiter is gone away and we are
-- *		 actually deboosting the owner)
-- * @top_task: the current top waiter
+- *		its priority to the mutex owner (can be NULL in the case
+- *		depicted above or if the top waiter is gone away and we are
+- *		actually deboosting the owner)
+- * @top_task:	the current top waiter
 - *
 - * Returns 0 or -EDEADLK.
 - */
 -static int rt_mutex_adjust_prio_chain(struct task_struct *task,
 -				      int deadlock_detect,
 -				      struct rt_mutex *orig_lock,
+-				      struct rt_mutex *next_lock,
 -				      struct rt_mutex_waiter *orig_waiter,
 -				      struct task_struct *top_task)
 -{
@@ -2835,7 +3070,7 @@ index 0dd6aec..0000000
 -		}
 -		put_task_struct(task);
 -
--		return deadlock_detect ? -EDEADLK : 0;
+-		return -EDEADLK;
 -	}
 - retry:
 -	/*
@@ -2860,13 +3095,32 @@ index 0dd6aec..0000000
 -		goto out_unlock_pi;
 -
 -	/*
+-	 * We dropped all locks after taking a refcount on @task, so
+-	 * the task might have moved on in the lock chain or even left
+-	 * the chain completely and blocks now on an unrelated lock or
+-	 * on @orig_lock.
+-	 *
+-	 * We stored the lock on which @task was blocked in @next_lock,
+-	 * so we can detect the chain change.
+-	 */
+-	if (next_lock != waiter->lock)
+-		goto out_unlock_pi;
+-
+-	/*
 -	 * Drop out, when the task has no waiters. Note,
 -	 * top_waiter can be NULL, when we are in the deboosting
 -	 * mode!
 -	 */
--	if (top_waiter && (!task_has_pi_waiters(task) ||
--			   top_waiter != task_top_pi_waiter(task)))
--		goto out_unlock_pi;
+-	if (top_waiter) {
+-		if (!task_has_pi_waiters(task))
+-			goto out_unlock_pi;
+-		/*
+-		 * If deadlock detection is off, we stop here if we
+-		 * are not the top pi waiter of the task.
+-		 */
+-		if (!detect_deadlock && top_waiter != task_top_pi_waiter(task))
+-			goto out_unlock_pi;
+-	}
 -
 -	/*
 -	 * When deadlock detection is off then we check, if further
@@ -2882,11 +3136,16 @@ index 0dd6aec..0000000
 -		goto retry;
 -	}
 -
--	/* Deadlock detection */
+-	/*
+-	 * Deadlock detection. If the lock is the same as the original
+-	 * lock which caused us to walk the lock chain or if the
+-	 * current lock is owned by the task which initiated the chain
+-	 * walk, we detected a deadlock.
+-	 */
 -	if (lock == orig_lock || rt_mutex_owner(lock) == top_task) {
 -		debug_rt_mutex_deadlock(deadlock_detect, orig_waiter, lock);
 -		raw_spin_unlock(&lock->wait_lock);
--		ret = deadlock_detect ? -EDEADLK : 0;
+-		ret = -EDEADLK;
 -		goto out_unlock_pi;
 -	}
 -
@@ -2933,10 +3192,25 @@ index 0dd6aec..0000000
 -		__rt_mutex_adjust_prio(task);
 -	}
 -
+-	/*
+-	 * Check whether the task which owns the current lock is pi
+-	 * blocked itself. If yes we store a pointer to the lock for
+-	 * the lock chain change detection above. After we dropped
+-	 * task->pi_lock next_lock cannot be dereferenced anymore.
+-	 */
+-	next_lock = task_blocked_on_lock(task);
+-
 -	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 -
 -	top_waiter = rt_mutex_top_waiter(lock);
 -	raw_spin_unlock(&lock->wait_lock);
+-
+-	/*
+-	 * We reached the end of the lock chain. Stop right here. No
+-	 * point to go back just to figure that out.
+-	 */
+-	if (!next_lock)
+-		goto out_put_task;
 -
 -	if (!detect_deadlock && waiter != top_waiter)
 -		goto out_put_task;
@@ -3048,8 +3322,21 @@ index 0dd6aec..0000000
 -{
 -	struct task_struct *owner = rt_mutex_owner(lock);
 -	struct rt_mutex_waiter *top_waiter = waiter;
--	unsigned long flags;
+-	struct rt_mutex *next_lock;
 -	int chain_walk = 0, res;
+-	unsigned long flags;
+-
+-	/*
+-	 * Early deadlock detection. We really don't want the task to
+-	 * enqueue on itself just to untangle the mess later. It's not
+-	 * only an optimization. We drop the locks, so another waiter
+-	 * can come in before the chain walk detects the deadlock. So
+-	 * the other will detect the deadlock and return -EDEADLOCK,
+-	 * which is wrong, as the other waiter is not in a deadlock
+-	 * situation.
+-	 */
+-	if (owner == task)
+-		return -EDEADLK;
 -
 -	raw_spin_lock_irqsave(&task->pi_lock, flags);
 -	__rt_mutex_adjust_prio(task);
@@ -3070,20 +3357,28 @@ index 0dd6aec..0000000
 -	if (!owner)
 -		return 0;
 -
+-	raw_spin_lock_irqsave(&owner->pi_lock, flags);
 -	if (waiter == rt_mutex_top_waiter(lock)) {
--		raw_spin_lock_irqsave(&owner->pi_lock, flags);
 -		plist_del(&top_waiter->pi_list_entry, &owner->pi_waiters);
 -		plist_add(&waiter->pi_list_entry, &owner->pi_waiters);
 -
 -		__rt_mutex_adjust_prio(owner);
 -		if (owner->pi_blocked_on)
 -			chain_walk = 1;
--		raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
--	}
--	else if (debug_rt_mutex_detect_deadlock(waiter, detect_deadlock))
+-	} else if (debug_rt_mutex_detect_deadlock(waiter, detect_deadlock)) {
 -		chain_walk = 1;
+-	}
 -
--	if (!chain_walk)
+-	/* Store the lock on which owner is blocked or NULL */
+-	next_lock = task_blocked_on_lock(owner);
+-
+-	raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
+-	/*
+-	 * Even if full deadlock detection is on, if the owner is not
+-	 * blocked itself, we can avoid finding this out in the chain
+-	 * walk.
+-	 */
+-	if (!chain_walk || !next_lock)
 -		return 0;
 -
 -	/*
@@ -3095,8 +3390,8 @@ index 0dd6aec..0000000
 -
 -	raw_spin_unlock(&lock->wait_lock);
 -
--	res = rt_mutex_adjust_prio_chain(owner, detect_deadlock, lock, waiter,
--					 task);
+-	res = rt_mutex_adjust_prio_chain(owner, detect_deadlock, lock,
+-					 next_lock, waiter, task);
 -
 -	raw_spin_lock(&lock->wait_lock);
 -
@@ -3106,7 +3401,8 @@ index 0dd6aec..0000000
 -/*
 - * Wake up the next waiter on the lock.
 - *
-- * Remove the top waiter from the current tasks waiter list and wake it up.
+- * Remove the top waiter from the current tasks pi waiter list and
+- * wake it up.
 - *
 - * Called with lock->wait_lock held.
 - */
@@ -3127,10 +3423,23 @@ index 0dd6aec..0000000
 -	 */
 -	plist_del(&waiter->pi_list_entry, &current->pi_waiters);
 -
--	rt_mutex_set_owner(lock, NULL);
+-	/*
+-	 * As we are waking up the top waiter, and the waiter stays
+-	 * queued on the lock until it gets the lock, this lock
+-	 * obviously has waiters. Just set the bit here and this has
+-	 * the added benefit of forcing all new tasks into the
+-	 * slow path making sure no task of lower priority than
+-	 * the top waiter can steal this lock.
+-	 */
+-	lock->owner = (void *) RT_MUTEX_HAS_WAITERS;
 -
 -	raw_spin_unlock_irqrestore(&current->pi_lock, flags);
 -
+-	/*
+-	 * It's safe to dereference waiter as it cannot go away as
+-	 * long as we hold lock->wait_lock. The waiter task needs to
+-	 * acquire it in order to dequeue the waiter.
+-	 */
 -	wake_up_process(waiter->task);
 -}
 -
@@ -3145,8 +3454,8 @@ index 0dd6aec..0000000
 -{
 -	int first = (waiter == rt_mutex_top_waiter(lock));
 -	struct task_struct *owner = rt_mutex_owner(lock);
+-	struct rt_mutex *next_lock = NULL;
 -	unsigned long flags;
--	int chain_walk = 0;
 -
 -	raw_spin_lock_irqsave(&current->pi_lock, flags);
 -	plist_del(&waiter->list_entry, &lock->wait_list);
@@ -3170,15 +3479,15 @@ index 0dd6aec..0000000
 -		}
 -		__rt_mutex_adjust_prio(owner);
 -
--		if (owner->pi_blocked_on)
--			chain_walk = 1;
+-		/* Store the lock on which owner is blocked or NULL */
+-		next_lock = task_blocked_on_lock(owner);
 -
 -		raw_spin_unlock_irqrestore(&owner->pi_lock, flags);
 -	}
 -
 -	WARN_ON(!plist_node_empty(&waiter->pi_list_entry));
 -
--	if (!chain_walk)
+-	if (!next_lock)
 -		return;
 -
 -	/* gets dropped in rt_mutex_adjust_prio_chain()! */
@@ -3186,7 +3495,7 @@ index 0dd6aec..0000000
 -
 -	raw_spin_unlock(&lock->wait_lock);
 -
--	rt_mutex_adjust_prio_chain(owner, 0, lock, NULL, current);
+-	rt_mutex_adjust_prio_chain(owner, 0, lock, next_lock, NULL, current);
 -
 -	raw_spin_lock(&lock->wait_lock);
 -}
@@ -3199,6 +3508,7 @@ index 0dd6aec..0000000
 -void rt_mutex_adjust_pi(struct task_struct *task)
 -{
 -	struct rt_mutex_waiter *waiter;
+-	struct rt_mutex *next_lock;
 -	unsigned long flags;
 -
 -	raw_spin_lock_irqsave(&task->pi_lock, flags);
@@ -3208,12 +3518,13 @@ index 0dd6aec..0000000
 -		raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 -		return;
 -	}
--
+-	next_lock = waiter->lock;
 -	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 -
 -	/* gets dropped in rt_mutex_adjust_prio_chain()! */
 -	get_task_struct(task);
--	rt_mutex_adjust_prio_chain(task, 0, NULL, NULL, task);
+-
+-	rt_mutex_adjust_prio_chain(task, 0, NULL, next_lock, NULL, task);
 -}
 -
 -/**
@@ -3265,6 +3576,26 @@ index 0dd6aec..0000000
 -	return ret;
 -}
 -
+-static void rt_mutex_handle_deadlock(int res, int detect_deadlock,
+-				     struct rt_mutex_waiter *w)
+-{
+-	/*
+-	 * If the result is not -EDEADLOCK or the caller requested
+-	 * deadlock detection, nothing to do here.
+-	 */
+-	if (res != -EDEADLOCK || detect_deadlock)
+-		return;
+-
+-	/*
+-	 * Yell lowdly and stop the task right here.
+-	 */
+-	rt_mutex_print_deadlock(w);
+-	while (1) {
+-		set_current_state(TASK_INTERRUPTIBLE);
+-		schedule();
+-	}
+-}
+-
 -/*
 - * Slow path lock function:
 - */
@@ -3302,8 +3633,10 @@ index 0dd6aec..0000000
 -
 -	set_current_state(TASK_RUNNING);
 -
--	if (unlikely(ret))
+-	if (unlikely(ret)) {
 -		remove_waiter(lock, &waiter);
+-		rt_mutex_handle_deadlock(ret, detect_deadlock, &waiter);
+-	}
 -
 -	/*
 -	 * try_to_take_rt_mutex() sets the waiter bit
@@ -3359,12 +3692,49 @@ index 0dd6aec..0000000
 -
 -	rt_mutex_deadlock_account_unlock(current);
 -
--	if (!rt_mutex_has_waiters(lock)) {
--		lock->owner = NULL;
--		raw_spin_unlock(&lock->wait_lock);
--		return;
+-	/*
+-	 * We must be careful here if the fast path is enabled. If we
+-	 * have no waiters queued we cannot set owner to NULL here
+-	 * because of:
+-	 *
+-	 * foo->lock->owner = NULL;
+-	 *			rtmutex_lock(foo->lock);   <- fast path
+-	 *			free = atomic_dec_and_test(foo->refcnt);
+-	 *			rtmutex_unlock(foo->lock); <- fast path
+-	 *			if (free)
+-	 *				kfree(foo);
+-	 * raw_spin_unlock(foo->lock->wait_lock);
+-	 *
+-	 * So for the fastpath enabled kernel:
+-	 *
+-	 * Nothing can set the waiters bit as long as we hold
+-	 * lock->wait_lock. So we do the following sequence:
+-	 *
+-	 *	owner = rt_mutex_owner(lock);
+-	 *	clear_rt_mutex_waiters(lock);
+-	 *	raw_spin_unlock(&lock->wait_lock);
+-	 *	if (cmpxchg(&lock->owner, owner, 0) == owner)
+-	 *		return;
+-	 *	goto retry;
+-	 *
+-	 * The fastpath disabled variant is simple as all access to
+-	 * lock->owner is serialized by lock->wait_lock:
+-	 *
+-	 *	lock->owner = NULL;
+-	 *	raw_spin_unlock(&lock->wait_lock);
+-	 */
+-	while (!rt_mutex_has_waiters(lock)) {
+-		/* Drops lock->wait_lock ! */
+-		if (unlock_rt_mutex_safe(lock) == true)
+-			return;
+-		/* Relock the rtmutex and try again */
+-		raw_spin_lock(&lock->wait_lock);
 -	}
 -
+-	/*
+-	 * The wakeup next waiter path does not suffer from the above
+-	 * race. See the comments there.
+-	 */
 -	wakeup_next_waiter(lock);
 -
 -	raw_spin_unlock(&lock->wait_lock);
@@ -3611,7 +3981,8 @@ index 0dd6aec..0000000
 -		return 1;
 -	}
 -
--	ret = task_blocks_on_rt_mutex(lock, waiter, task, detect_deadlock);
+-	/* We enforce deadlock detection for futexes */
+-	ret = task_blocks_on_rt_mutex(lock, waiter, task, 1);
 -
 -	if (ret && !rt_mutex_owner(lock)) {
 -		/*
@@ -3697,12 +4068,9 @@ index 0dd6aec..0000000
 -
 -	return ret;
 -}
-diff --git a/kernel/rtmutex.h b/kernel/rtmutex.h
-deleted file mode 100644
-index a1a1dd0..0000000
 --- a/kernel/rtmutex.h
 +++ /dev/null
-@@ -1,26 +0,0 @@
+@@ -1,31 +0,0 @@
 -/*
 - * RT-Mutexes: blocking mutual exclusion locks with PI support
 - *
@@ -3729,9 +4097,11 @@ index a1a1dd0..0000000
 -#define debug_rt_mutex_print_deadlock(w)		do { } while (0)
 -#define debug_rt_mutex_detect_deadlock(w,d)		(d)
 -#define debug_rt_mutex_reset_waiter(w)			do { } while (0)
-diff --git a/kernel/rtmutex_common.h b/kernel/rtmutex_common.h
-deleted file mode 100644
-index 53a66c8..0000000
+-
+-static inline void rt_mutex_print_deadlock(struct rt_mutex_waiter *w)
+-{
+-	WARN(1, "rtmutex deadlock detected\n");
+-}
 --- a/kernel/rtmutex_common.h
 +++ /dev/null
 @@ -1,126 +0,0 @@
