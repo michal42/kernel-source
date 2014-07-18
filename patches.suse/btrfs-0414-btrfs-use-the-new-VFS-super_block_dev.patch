@@ -1,0 +1,83 @@
+From 97f0320ba8ac9babd1162b76f3a779c6413a0860 Mon Sep 17 00:00:00 2001
+From: "Luis R. Rodriguez" <mcgrof@suse.com>
+Date: Wed, 16 Jul 2014 14:18:06 -0700
+Subject: [PATCH 2/2] btrfs: use the new VFS super_block_dev
+References: bnc#865869
+Patch-mainline: pending, submitted
+
+Use the new VFS layer struct super_block_dev instead of carrying
+the anonymous bdev's on our own. This makes the VFS layer aware of
+all of our anonymous dev's on the super block.
+
+Signed-off-by: Luis R. Rodriguez <mcgrof@suse.com>
+---
+ fs/btrfs/ctree.h   | 7 ++-----
+ fs/btrfs/disk-io.c | 6 ++----
+ fs/btrfs/inode.c   | 2 +-
+ 3 files changed, 5 insertions(+), 10 deletions(-)
+
+diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
+index 5e8817f..db0c7b2 100644
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -1829,11 +1829,8 @@ struct btrfs_root {
+ 	 * protected by inode_lock
+ 	 */
+ 	struct radix_tree_root delayed_nodes_tree;
+-	/*
+-	 * right now this just gets used so that a root has its own devid
+-	 * for stat.  It may be used for more later
+-	 */
+-	dev_t anon_dev;
++
++	struct super_block_dev sbdev;
+ 
+ 	spinlock_t root_item_lock;
+ 	atomic_t refs;
+diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
+index 8b37a15..67c8bad 100644
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -1265,7 +1265,6 @@ static void __setup_root(u32 nodesize, u32 leafsize, u32 sectorsize,
+ 		root->defrag_trans_start = 0;
+ 	init_completion(&root->kobj_unregister);
+ 	root->root_key.objectid = objectid;
+-	root->anon_dev = 0;
+ 
+ 	spin_lock_init(&root->root_item_lock);
+ }
+@@ -1571,7 +1570,7 @@ int btrfs_init_fs_root(struct btrfs_root *root)
+ 	spin_lock_init(&root->cache_lock);
+ 	init_waitqueue_head(&root->cache_wait);
+ 
+-	ret = get_anon_bdev(&root->anon_dev);
++	ret = insert_anon_sbdev(root->fs_info->sb, &root->sbdev);
+ 	if (ret)
+ 		goto free_writers;
+ 	return 0;
+@@ -3574,8 +3573,7 @@ static void free_fs_root(struct btrfs_root *root)
+ 	WARN_ON(!RB_EMPTY_ROOT(&root->inode_tree));
+ 	btrfs_free_block_rsv(root, root->orphan_block_rsv);
+ 	root->orphan_block_rsv = NULL;
+-	if (root->anon_dev)
+-		free_anon_bdev(root->anon_dev);
++	remove_anon_sbdev(&root->sbdev);
+ 	if (root->subv_writers)
+ 		btrfs_free_subvolume_writers(root->subv_writers);
+ 	free_extent_buffer(root->node);
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 8841d8c..cb9a21d 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -8244,7 +8244,7 @@ static int btrfs_getattr(struct vfsmount *mnt,
+ 	u32 blocksize = inode->i_sb->s_blocksize;
+ 
+ 	generic_fillattr(inode, stat);
+-	stat->dev = BTRFS_I(inode)->root->anon_dev;
++	stat->dev = BTRFS_I(inode)->root->sbdev.anon_dev;
+ 	stat->blksize = PAGE_CACHE_SIZE;
+ 
+ 	spin_lock(&BTRFS_I(inode)->lock);
+-- 
+2.0.1
+
