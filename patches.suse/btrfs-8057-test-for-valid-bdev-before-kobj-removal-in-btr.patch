@@ -1,0 +1,42 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 7 Jul 2014 12:34:49 -0500
+Patch-mainline: 3.16
+Git-commit: 0bfaa9c5cb479cebc24979b384374fe47500b4c9
+Subject: [PATCH] btrfs: test for valid bdev before kobj removal in
+ btrfs_rm_device
+
+commit 99994cd btrfs: dev delete should remove sysfs entry
+added a btrfs_kobj_rm_device, which dereferences device->bdev...
+right after we check whether device->bdev might be NULL.
+
+I don't honestly know if it's possible to have a NULL device->bdev
+here, but assuming that it is (given the test), we need to move
+the kobject removal to be under that test.
+
+(Coverity spotted this)
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/volumes.c |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -1679,11 +1679,11 @@ int btrfs_rm_device(struct btrfs_root *r
+ 	if (device->bdev == root->fs_info->fs_devices->latest_bdev)
+ 		root->fs_info->fs_devices->latest_bdev = next_device->bdev;
+ 
+-	if (device->bdev)
++	if (device->bdev) {
+ 		device->fs_devices->open_devices--;
+-
+-	/* remove sysfs entry */
+-	btrfs_kobj_rm_device(root->fs_info, device);
++		/* remove sysfs entry */
++		btrfs_kobj_rm_device(root->fs_info, device);
++	}
+ 
+ 	call_rcu(&device->rcu, free_device);
+ 
