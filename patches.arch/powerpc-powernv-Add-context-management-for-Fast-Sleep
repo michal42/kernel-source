@@ -15,11 +15,11 @@ Signed-off-by: Preeti U. Murthy <preeti@linux.vnet.ibm.com>
 Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/processor.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
-@@ -440,6 +440,7 @@ enum idle_boot_override {IDLE_NO_OVERRID
+diff --git a/arch/powerpc/include/asm/processor.h b/arch/powerpc/include/asm/processor.h
+index b62de43..d660dc3 100644
+--- a/arch/powerpc/include/asm/processor.h
++++ b/arch/powerpc/include/asm/processor.h
+@@ -450,6 +450,7 @@ enum idle_boot_override {IDLE_NO_OVERRIDE = 0, IDLE_POWERSAVE_OFF};
  
  extern int powersave_nap;	/* set if nap mode can be used in idle loop */
  extern void power7_nap(void);
@@ -27,10 +27,10 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/processor.h
  extern void flush_instruction_cache(void);
  extern void hard_reset_now(void);
  extern void poweroff_now(void);
-Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/exceptions-64s.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
+diff --git a/arch/powerpc/kernel/exceptions-64s.S b/arch/powerpc/kernel/exceptions-64s.S
+index 38d5073..b01a9cb 100644
+--- a/arch/powerpc/kernel/exceptions-64s.S
++++ b/arch/powerpc/kernel/exceptions-64s.S
 @@ -121,9 +121,10 @@ BEGIN_FTR_SECTION
  	cmpwi	cr1,r13,2
  	/* Total loss of HV state is fatal, we could try to use the
@@ -47,7 +47,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
 @@ -141,6 +142,11 @@ BEGIN_FTR_SECTION
  	beq	cr1,2f
  	b	.power7_wakeup_noloss
- 2:	b	.power7_wakeup_tb_loss
+ 2:	b	.power7_wakeup_loss
 +
 +	/* Fast Sleep wakeup on PowerNV */
 +8:	GET_PACA(r13)
@@ -56,11 +56,11 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  9:
  END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
  #endif /* CONFIG_PPC_P7_NAP */
-Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_power7.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
-@@ -21,17 +21,27 @@
+diff --git a/arch/powerpc/kernel/idle_power7.S b/arch/powerpc/kernel/idle_power7.S
+index 3fdef0f..14f78be 100644
+--- a/arch/powerpc/kernel/idle_power7.S
++++ b/arch/powerpc/kernel/idle_power7.S
+@@ -20,17 +20,27 @@
  
  #undef DEBUG
  
@@ -97,7 +97,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  	/* NAP is a state loss, we create a regs frame on the
  	 * stack, fill it up with the state we care about and
  	 * stick a pointer to it in PACAR1. We really only
-@@ -80,8 +90,8 @@ _GLOBAL(power7_nap)
+@@ -79,8 +89,8 @@ _GLOBAL(power7_nap)
  	/* Continue saving state */
  	SAVE_GPR(2, r1)
  	SAVE_NVGPRS(r1)
@@ -108,7 +108,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  	std	r9,_MSR(r1)
  	std	r1,PACAR1(r13)
  
-@@ -91,15 +101,30 @@ _GLOBAL(power7_enter_nap_mode)
+@@ -90,15 +100,30 @@ _GLOBAL(power7_enter_nap_mode)
  	li	r4,KVM_HWTHREAD_IN_NAP
  	stb	r4,HSTATE_HWTHREAD_STATE(r13)
  #endif
@@ -145,5 +145,5 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
 +	b	power7_powersave_common
 +	/* No return */
  
- _GLOBAL(power7_wakeup_tb_loss)
- 	ld	r2,PACATOC(r13);
+ _GLOBAL(power7_wakeup_loss)
+ 	ld	r1,PACAR1(r13)

@@ -1,8 +1,10 @@
 From: Vaidyanathan Srinivasan <svaidy@linux.vnet.ibm.com>
-Subject: [PATCH] powerpc/powernv: Add OPAL call to resync timebase on wakeup
+Subject: powerpc/powernv: Add OPAL call to resync timebase on wakeup
 Git-commit: 97eb001f03494758a938300908b88929163650ce
 Patch-mainline: v3.15-rc1
-References: bnc#878240,FATE#315784 
+References: bnc#878240,FATE#315784
+
+ powerpc/powernv: Add OPAL call to resync timebase on wakeup
 
 During "Fast-sleep" and deeper power savings state, decrementer and
 timebase could be stopped making it out of sync with rest
@@ -16,11 +18,11 @@ Signed-off-by: Preeti U. Murthy <preeti@linux.vnet.ibm.com>
 Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/opal.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/opal.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/opal.h
-@@ -154,6 +154,7 @@ extern int opal_enter_rtas(struct rtas_a
+diff --git a/arch/powerpc/include/asm/opal.h b/arch/powerpc/include/asm/opal.h
+index 40157e2..c71c72e 100644
+--- a/arch/powerpc/include/asm/opal.h
++++ b/arch/powerpc/include/asm/opal.h
+@@ -154,6 +154,7 @@ extern int opal_enter_rtas(struct rtas_args *args,
  #define OPAL_FLASH_VALIDATE			76
  #define OPAL_FLASH_MANAGE			77
  #define OPAL_FLASH_UPDATE			78
@@ -36,23 +38,23 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/opal.h
  
  extern void opal_lpc_init(void);
  
-Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/exceptions-64s.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
-@@ -140,7 +140,7 @@ BEGIN_FTR_SECTION
+diff --git a/arch/powerpc/kernel/exceptions-64s.S b/arch/powerpc/kernel/exceptions-64s.S
+index b01a9cb..9533d7a 100644
+--- a/arch/powerpc/kernel/exceptions-64s.S
++++ b/arch/powerpc/kernel/exceptions-64s.S
+@@ -145,7 +145,7 @@ BEGIN_FTR_SECTION
  
- 	beq	cr1,2f
- 	b	.power7_wakeup_noloss
--2:	b	.power7_wakeup_loss
-+2:	b	.power7_wakeup_tb_loss
+ 	/* Fast Sleep wakeup on PowerNV */
+ 8:	GET_PACA(r13)
+-	b 	.power7_wakeup_loss
++	b 	.power7_wakeup_tb_loss
+ 
  9:
  END_FTR_SECTION_IFSET(CPU_FTR_HVMODE | CPU_FTR_ARCH_206)
- #endif /* CONFIG_PPC_P7_NAP */
-Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_power7.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
+diff --git a/arch/powerpc/kernel/idle_power7.S b/arch/powerpc/kernel/idle_power7.S
+index 14f78be..c3ab869 100644
+--- a/arch/powerpc/kernel/idle_power7.S
++++ b/arch/powerpc/kernel/idle_power7.S
 @@ -17,6 +17,7 @@
  #include <asm/ppc-opcode.h>
  #include <asm/hw_irq.h>
@@ -61,9 +63,9 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  
  #undef DEBUG
  
-@@ -100,6 +101,32 @@ _GLOBAL(power7_enter_nap_mode)
- 	PPC_NAP
- 	b	.
+@@ -125,6 +126,32 @@ _GLOBAL(power7_sleep)
+ 	b	power7_powersave_common
+ 	/* No return */
  
 +_GLOBAL(power7_wakeup_tb_loss)
 +	ld	r2,PACATOC(r13);
@@ -94,11 +96,11 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  _GLOBAL(power7_wakeup_loss)
  	ld	r1,PACAR1(r13)
  	REST_NVGPRS(r1)
-Index: linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-wrappers.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/platforms/powernv/opal-wrappers.S
-+++ linux-3.12-SLE12/arch/powerpc/platforms/powernv/opal-wrappers.S
-@@ -126,6 +126,7 @@ OPAL_CALL(opal_return_cpu,			OPAL_RETURN
+diff --git a/arch/powerpc/platforms/powernv/opal-wrappers.S b/arch/powerpc/platforms/powernv/opal-wrappers.S
+index 3e8829c..aab54b6 100644
+--- a/arch/powerpc/platforms/powernv/opal-wrappers.S
++++ b/arch/powerpc/platforms/powernv/opal-wrappers.S
+@@ -126,6 +126,7 @@ OPAL_CALL(opal_return_cpu,			OPAL_RETURN_CPU);
  OPAL_CALL(opal_validate_flash,			OPAL_FLASH_VALIDATE);
  OPAL_CALL(opal_manage_flash,			OPAL_FLASH_MANAGE);
  OPAL_CALL(opal_update_flash,			OPAL_FLASH_UPDATE);
