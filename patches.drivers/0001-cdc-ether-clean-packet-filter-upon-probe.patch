@@ -1,0 +1,47 @@
+From 88a5c193d29cb8d2888591a8b73b5de0bc47609f Mon Sep 17 00:00:00 2001
+From: Oliver Neukum <oneukum@suse.de>
+Date: Tue, 22 Jul 2014 16:46:10 +0200
+Subject: [PATCH] cdc-ether: clean packet filter upon probe
+Git-Commit: 886672736c53c3f6d830887c10f6e8d42a2d01c7
+Patch-Mainline: v3.17 (submitted)
+References: bnc#888926
+
+There are devices that don't do reset all the way. So the packet filter should
+be set to a sane initial value. Failure to do so leads to intermittent failures
+of DHCP on some systems under some conditions.
+
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/net/usb/cdc_ether.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/net/usb/cdc_ether.c b/drivers/net/usb/cdc_ether.c
+index 2023f3e..b54f9bd 100644
+--- a/drivers/net/usb/cdc_ether.c
++++ b/drivers/net/usb/cdc_ether.c
+@@ -343,6 +343,22 @@ next_desc:
+ 		usb_driver_release_interface(driver, info->data);
+ 		return -ENODEV;
+ 	}
++
++	/* Some devices don't initialise properly. In particular
++	 * the packet filter is not reset. There are devices that
++	 * don't do reset all the way. So the packet filter should
++	 * be set to a sane initial value.
++	 */
++	usb_control_msg(dev->udev,
++			usb_sndctrlpipe(dev->udev, 0),
++			USB_CDC_SET_ETHERNET_PACKET_FILTER,
++			USB_TYPE_CLASS | USB_RECIP_INTERFACE,
++			USB_CDC_PACKET_TYPE_ALL_MULTICAST | USB_CDC_PACKET_TYPE_DIRECTED | USB_CDC_PACKET_TYPE_BROADCAST,
++			intf->cur_altsetting->desc.bInterfaceNumber,
++			NULL,
++			0,
++			1000 /* out of thin air */
++		);
+ 	return 0;
+ 
+ bad_desc:
+-- 
+1.8.4.5
+
