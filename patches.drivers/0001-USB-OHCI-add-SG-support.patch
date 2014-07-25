@@ -1,0 +1,166 @@
+From 6f65126c76e38e671c64ec171acff8a99c4de749 Mon Sep 17 00:00:00 2001
+From: Alan Stern <stern@rowland.harvard.edu>
+Date: Thu, 17 Jul 2014 16:30:01 -0400
+Subject: [PATCH] USB: OHCI: add SG support
+References: FATE#315595
+Git-Commit: 6f65126c76e38e671c64ec171acff8a99c4de749
+Patch-Mainline: v3.16
+
+Apparently nobody ever remembered to add Scatter-Gather support to
+ohci-hcd.  This patch adds it.
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/host/ohci-hcd.c | 38 ++++++++++++++++++++++++++-----
+ drivers/usb/host/ohci-q.c   | 54 ++++++++++++++++++++++++++++++++++-----------
+ 2 files changed, 73 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/usb/host/ohci-hcd.c b/drivers/usb/host/ohci-hcd.c
+index 6f8ec52..7f94c58 100644
+--- a/drivers/usb/host/ohci-hcd.c
++++ b/drivers/usb/host/ohci-hcd.c
+@@ -109,6 +109,33 @@ MODULE_PARM_DESC (no_handshake, "true (not default) disables BIOS handshake");
+ 
+ /*-------------------------------------------------------------------------*/
+ 
++static int number_of_tds(struct urb *urb)
++{
++	int			len, i, num, this_sg_len;
++	struct scatterlist	*sg;
++
++	len = urb->transfer_buffer_length;
++	i = urb->num_mapped_sgs;
++
++	if (len > 0 && i > 0) {		/* Scatter-gather transfer */
++		num = 0;
++		sg = urb->sg;
++		for (;;) {
++			this_sg_len = min_t(int, sg_dma_len(sg), len);
++			num += DIV_ROUND_UP(this_sg_len, 4096);
++			len -= this_sg_len;
++			if (--i <= 0 || len <= 0)
++				break;
++			sg = sg_next(sg);
++		}
++
++	} else {			/* Non-SG transfer */
++		/* one TD for every 4096 Bytes (could be up to 8K) */
++		num = DIV_ROUND_UP(len, 4096);
++	}
++	return num;
++}
++
+ /*
+  * queue up an urb for anything except the root hub
+  */
+@@ -142,12 +169,8 @@ static int ohci_urb_enqueue (
+ 		// case PIPE_INTERRUPT:
+ 		// case PIPE_BULK:
+ 		default:
+-			/* one TD for every 4096 Bytes (can be up to 8K) */
+-			size += urb->transfer_buffer_length / 4096;
+-			/* ... and for any remaining bytes ... */
+-			if ((urb->transfer_buffer_length % 4096) != 0)
+-				size++;
+-			/* ... and maybe a zero length packet to wrap it up */
++			size += number_of_tds(urb);
++			/* maybe a zero-length packet to wrap it up */
+ 			if (size == 0)
+ 				size++;
+ 			else if ((urb->transfer_flags & URB_ZERO_PACKET) != 0
+@@ -506,6 +529,9 @@ static int ohci_init (struct ohci_hcd *ohci)
+ 	int ret;
+ 	struct usb_hcd *hcd = ohci_to_hcd(ohci);
+ 
++	/* Accept arbitrarily long scatter-gather lists */
++	hcd->self.sg_tablesize = ~0;
++
+ 	if (distrust_firmware)
+ 		ohci->flags |= OHCI_QUIRK_HUB_POWER;
+ 
+diff --git a/drivers/usb/host/ohci-q.c b/drivers/usb/host/ohci-q.c
+index d4253e3..517d04d 100644
+--- a/drivers/usb/host/ohci-q.c
++++ b/drivers/usb/host/ohci-q.c
+@@ -602,6 +602,8 @@ static void td_submit_urb (
+ 	u32		info = 0;
+ 	int		is_out = usb_pipeout (urb->pipe);
+ 	int		periodic = 0;
++	int		i, this_sg_len, n;
++	struct scatterlist	*sg;
+ 
+ 	/* OHCI handles the bulk/interrupt data toggles itself.  We just
+ 	 * use the device toggle bits for resetting, and rely on the fact
+@@ -615,10 +617,24 @@ static void td_submit_urb (
+ 
+ 	list_add (&urb_priv->pending, &ohci->pending);
+ 
+-	if (data_len)
+-		data = urb->transfer_dma;
+-	else
+-		data = 0;
++	i = urb->num_mapped_sgs;
++	if (data_len > 0 && i > 0) {
++		sg = urb->sg;
++		data = sg_dma_address(sg);
++
++		/*
++		 * urb->transfer_buffer_length may be smaller than the
++		 * size of the scatterlist (or vice versa)
++		 */
++		this_sg_len = min_t(int, sg_dma_len(sg), data_len);
++	} else {
++		sg = NULL;
++		if (data_len)
++			data = urb->transfer_dma;
++		else
++			data = 0;
++		this_sg_len = data_len;
++	}
+ 
+ 	/* NOTE:  TD_CC is set so we can tell which TDs the HC processed by
+ 	 * using TD_CC_GET, as well as by seeing them on the done list.
+@@ -639,17 +655,29 @@ static void td_submit_urb (
+ 			? TD_T_TOGGLE | TD_CC | TD_DP_OUT
+ 			: TD_T_TOGGLE | TD_CC | TD_DP_IN;
+ 		/* TDs _could_ transfer up to 8K each */
+-		while (data_len > 4096) {
+-			td_fill (ohci, info, data, 4096, urb, cnt);
+-			data += 4096;
+-			data_len -= 4096;
++		for (;;) {
++			n = min(this_sg_len, 4096);
++
++			/* maybe avoid ED halt on final TD short read */
++			if (n >= data_len || (i == 1 && n >= this_sg_len)) {
++				if (!(urb->transfer_flags & URB_SHORT_NOT_OK))
++					info |= TD_R;
++			}
++			td_fill(ohci, info, data, n, urb, cnt);
++			this_sg_len -= n;
++			data_len -= n;
++			data += n;
+ 			cnt++;
++
++			if (this_sg_len <= 0) {
++				if (--i <= 0 || data_len <= 0)
++					break;
++				sg = sg_next(sg);
++				data = sg_dma_address(sg);
++				this_sg_len = min_t(int, sg_dma_len(sg),
++						data_len);
++			}
+ 		}
+-		/* maybe avoid ED halt on final TD short read */
+-		if (!(urb->transfer_flags & URB_SHORT_NOT_OK))
+-			info |= TD_R;
+-		td_fill (ohci, info, data, data_len, urb, cnt);
+-		cnt++;
+ 		if ((urb->transfer_flags & URB_ZERO_PACKET)
+ 				&& cnt < urb_priv->length) {
+ 			td_fill (ohci, info, 0, 0, urb, cnt);
+-- 
+1.8.4.5
+
