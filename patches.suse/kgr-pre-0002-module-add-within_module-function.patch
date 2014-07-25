@@ -1,0 +1,73 @@
+From: Petr Mladek <pmladek@suse.cz>
+Date: Tue, 22 Jul 2014 14:28:09 +0200
+Subject: module: add within_module() function
+Patch-mainline: submitted for review
+References: fate#313296
+
+It is just a small optimization that allows to replace few
+occurrences of within_module_init() || within_module_core()
+with a single call.
+
+Signed-off-by: Petr Mladek <pmladek@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/module.h |    5 +++++
+ kernel/module.c        |   12 ++++--------
+ 2 files changed, 9 insertions(+), 8 deletions(-)
+
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -417,6 +417,11 @@ static inline int within_module_init(uns
+ 	       addr < (unsigned long)mod->module_init + mod->init_size;
+ }
+ 
++static inline int within_module(unsigned long addr, const struct module *mod)
++{
++	return within_module_init(addr, mod) || within_module_core(addr, mod);
++}
++
+ /* Search for module by name: must hold module_mutex. */
+ struct module *find_module(const char *name);
+ 
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -3550,8 +3550,7 @@ const char *module_address_lookup(unsign
+ 	list_for_each_entry_rcu(mod, &modules, list) {
+ 		if (mod->state == MODULE_STATE_UNFORMED)
+ 			continue;
+-		if (within_module_init(addr, mod) ||
+-		    within_module_core(addr, mod)) {
++		if (within_module(addr, mod)) {
+ 			if (modname)
+ 				*modname = mod->name;
+ 			ret = get_ksymbol(mod, addr, size, offset);
+@@ -3575,8 +3574,7 @@ int lookup_module_symbol_name(unsigned l
+ 	list_for_each_entry_rcu(mod, &modules, list) {
+ 		if (mod->state == MODULE_STATE_UNFORMED)
+ 			continue;
+-		if (within_module_init(addr, mod) ||
+-		    within_module_core(addr, mod)) {
++		if (within_module(addr, mod)) {
+ 			const char *sym;
+ 
+ 			sym = get_ksymbol(mod, addr, NULL, NULL);
+@@ -3601,8 +3599,7 @@ int lookup_module_symbol_attrs(unsigned
+ 	list_for_each_entry_rcu(mod, &modules, list) {
+ 		if (mod->state == MODULE_STATE_UNFORMED)
+ 			continue;
+-		if (within_module_init(addr, mod) ||
+-		    within_module_core(addr, mod)) {
++		if (within_module(addr, mod)) {
+ 			const char *sym;
+ 
+ 			sym = get_ksymbol(mod, addr, size, offset);
+@@ -3866,8 +3863,7 @@ struct module *__module_address(unsigned
+ 	list_for_each_entry_rcu(mod, &modules, list) {
+ 		if (mod->state == MODULE_STATE_UNFORMED)
+ 			continue;
+-		if (within_module_core(addr, mod)
+-		    || within_module_init(addr, mod))
++		if (within_module(addr, mod))
+ 			return mod;
+ 	}
+ 	return NULL;
