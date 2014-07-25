@@ -1,0 +1,65 @@
+From: Srinivas Pandruvada <srinivas.pandruvada@linux.intel.com>
+Subject: ACPI / scan: ACPI device object sysfs attribute for _STA evaluation
+References: bnc#888934, FATE#316483, FATE#316836, FATE#316481
+Patch-Mainline: v3.14-rc1
+Git-commit: c713cd7f2d799c50a0721bf51d178ea9567215dd
+
+
+Signed-off-by: Thomas Renninger <trenn@suse.de>
+
+This patch adds a "status" attribute for an ACPI device. This status
+attribute shows the value of the _STA object. The _STA object returns
+current status of an ACPI device: enabled, disabled, functioning,
+present.
+
+Signed-off-by: Srinivas Pandruvada <srinivas.pandruvada@linux.intel.com>
+[rjw: Subject and changelog]
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+
+diff --git a/drivers/acpi/scan.c b/drivers/acpi/scan.c
+index 32b3401..c0f57ff 100644
+--- a/drivers/acpi/scan.c
++++ b/drivers/acpi/scan.c
+@@ -602,6 +602,20 @@ acpi_device_sun_show(struct device *dev, struct device_attribute *attr,
+ }
+ static DEVICE_ATTR(sun, 0444, acpi_device_sun_show, NULL);
+ 
++static ssize_t status_show(struct device *dev, struct device_attribute *attr,
++				char *buf) {
++	struct acpi_device *acpi_dev = to_acpi_device(dev);
++	acpi_status status;
++	unsigned long long sta;
++
++	status = acpi_evaluate_integer(acpi_dev->handle, "_STA", NULL, &sta);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	return sprintf(buf, "%llu\n", sta);
++}
++static DEVICE_ATTR_RO(status);
++
+ static int acpi_device_setup_files(struct acpi_device *dev)
+ {
+ 	struct acpi_buffer buffer = {ACPI_ALLOCATE_BUFFER, NULL};
+@@ -657,6 +671,12 @@ static int acpi_device_setup_files(struct acpi_device *dev)
+ 		dev->pnp.sun = (unsigned long)-1;
+ 	}
+ 
++	if (acpi_has_method(dev->handle, "_STA")) {
++		result = device_create_file(&dev->dev, &dev_attr_status);
++		if (result)
++			goto end;
++	}
++
+         /*
+          * If device has _EJ0, 'eject' file is created that is used to trigger
+          * hot-removal function from userland.
+@@ -712,6 +732,8 @@ static void acpi_device_remove_files(struct acpi_device *dev)
+ 		device_remove_file(&dev->dev, &dev_attr_adr);
+ 	device_remove_file(&dev->dev, &dev_attr_modalias);
+ 	device_remove_file(&dev->dev, &dev_attr_hid);
++	if (acpi_has_method(dev->handle, "_STA"))
++		device_remove_file(&dev->dev, &dev_attr_status);
+ 	if (dev->handle)
+ 		device_remove_file(&dev->dev, &dev_attr_path);
+ }
