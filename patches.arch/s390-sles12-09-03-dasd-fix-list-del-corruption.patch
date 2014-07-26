@@ -1,0 +1,38 @@
+From: Stefan Haberland <stefan.haberland@de.ibm.com>
+Subject: dasd: fix list_del corruption during format
+Patch-mainline: not yet
+Git-commit: -
+References: bnc#888623, LTC#113046
+
+Description:  dasd: fix list_del corruption during format
+Symptom:      If I/O errors occur during format a kernel panic
+              with a list_del corruption may occur.
+Problem:      The error recovery procedure for format requests has 
+              an error that leads to duplicated removal of a list
+              entry.
+Solution:     Stop error recovery procedure after an erp action was
+              taken.
+Reproduction: Storage server errors have to appear during format.
+
+Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/block/dasd.c |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -2294,8 +2294,12 @@ retry:
+ 
+ 	rc = 0;
+ 	list_for_each_entry_safe(cqr, n, ccw_queue, blocklist) {
+-		if (__dasd_sleep_on_erp(cqr))
++		if (__dasd_sleep_on_erp(cqr)) {
++			if (!cqr->status == DASD_CQR_TERMINATED &&
++			    !cqr->status == DASD_CQR_NEED_ERP)
++				break;
+ 			rc = 1;
++		}
+ 	}
+ 	if (rc)
+ 		goto retry;
