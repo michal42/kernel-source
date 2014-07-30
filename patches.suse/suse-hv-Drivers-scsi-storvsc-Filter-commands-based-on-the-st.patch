@@ -1,0 +1,48 @@
+From: K. Y. Srinivasan <kys@microsoft.com>
+Date: Wed, 9 Jul 2014 18:31:08 -0700
+Patch-mainline: submitted
+Subject: Drivers: scsi: storvsc: Filter commands based on the storage protocol version
+
+Going forward it is possible that some of the commands that are not currently
+implemented will be implemented on future Windows hosts. Even if they are not
+implemented, we are told the host will corrrectly handle unsupported
+commands (by returning appropriate return code and sense information).
+Make command filtering depend on the host version.
+
+In this version of the patch I have addressed comments from
+Christoph Hellwig <hch@infradead.org>
+
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Cc: <stable@vger.kernel.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/scsi/storvsc_drv.c |   16 +++++++++++++---
+ 1 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
+index cebcef7..8f8847e 100644
+--- a/drivers/scsi/storvsc_drv.c
++++ b/drivers/scsi/storvsc_drv.c
+@@ -1553,9 +1553,19 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
+ 	struct vmscsi_request *vm_srb;
+ 	struct stor_mem_pools *memp = scmnd->device->hostdata;
+ 
+-	if (!storvsc_scsi_cmd_ok(scmnd)) {
+-		scmnd->scsi_done(scmnd);
+-		return 0;
++	if (vmstor_current_major <= VMSTOR_WIN8_MAJOR) {
++		/*
++		 * On legacy hosts filter unimplemented commands.
++		 * Future hosts are expected to correctly handle
++		 * unsupported commands. Furthermore, it is
++		 * possible that some of the currently
++		 * unsupported commands maybe supported in
++		 * future versions of the host.
++		 */
++		if (!storvsc_scsi_cmd_ok(scmnd)) {
++			scmnd->scsi_done(scmnd);
++			return 0;
++		}
+ 	}
+ 
+ 	request_size = sizeof(struct storvsc_cmd_request);

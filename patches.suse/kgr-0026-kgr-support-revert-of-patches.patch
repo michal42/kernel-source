@@ -22,13 +22,13 @@ We do not do this in the module rmmod path for two reasons:
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h          |  5 +++
- kernel/kgraft.c                 | 89 +++++++++++++++++++++++++++++------------
- kernel/kgraft_files.c           | 13 ++++++
+ kernel/kgraft.c                 | 85 ++++++++++++++++++++++++++++++-----------
+ kernel/kgraft_files.c           | 13 +++++++
  samples/kgraft/kgraft_patcher.c |  1 -
- 4 files changed, 82 insertions(+), 26 deletions(-)
+ 4 files changed, 81 insertions(+), 23 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
-index 2cee7322a427..e40d9e462b1d 100644
+index 7c533f570e2f..f7cc1f769e53 100644
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
 @@ -53,6 +53,9 @@ struct kgr_patch_fun {
@@ -51,7 +51,7 @@ index 2cee7322a427..e40d9e462b1d 100644
  extern void kgr_patch_dir_del(struct kgr_patch *patch);
  extern int kgr_add_files(void);
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 81dbfa432841..75beac8d2c7f 100644
+index 3264e2898fbd..af9b5329b803 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -27,7 +27,8 @@
@@ -85,7 +85,7 @@ index 81dbfa432841..75beac8d2c7f 100644
 @@ -93,7 +98,7 @@ static void kgr_finalize(void)
  	struct kgr_patch_fun *patch_fun;
  
- 	kgr_for_each_patch(kgr_patch, patch_fun) {
+ 	kgr_for_each_patch_fun(kgr_patch, patch_fun) {
 -		int ret = kgr_patch_code(patch_fun, true);
 +		int ret = kgr_patch_code(patch_fun, true, kgr_revert);
  
@@ -162,7 +162,7 @@ index 81dbfa432841..75beac8d2c7f 100644
  {
  	struct kgr_patch_fun *patch_fun;
  	int ret;
-@@ -353,20 +369,12 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -353,11 +369,6 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  		return -EINVAL;
  	}
  
@@ -171,21 +171,18 @@ index 81dbfa432841..75beac8d2c7f 100644
 -		return -EBUSY;
 -	}
 -
- 	patch->irq_use_new = alloc_percpu(bool);
- 	if (!patch->irq_use_new) {
- 		pr_err("kgr: can't patch, cannot allocate percpu data\n");
--		ret = -ENOMEM;
--		goto err_module_put;
-+		return -ENOMEM;
+ 	mutex_lock(&kgr_in_progress_lock);
+ 	if (kgr_in_progress) {
+ 		pr_err("kgr: can't patch, another patching not yet finalized\n");
+@@ -372,14 +383,12 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+ 		goto err_unlock;
  	}
  
 -	init_completion(&patch->finish);
 -
- 	mutex_lock(&kgr_in_progress_lock);
- 	if (kgr_in_progress) {
- 		pr_err("kgr: can't patch, another patching not yet finalized\n");
-@@ -379,7 +387,7 @@ int kgr_patch_kernel(struct kgr_patch *patch)
- 	kgr_for_each_patch(patch, patch_fun) {
+ 	kgr_mark_processes();
+ 
+ 	kgr_for_each_patch_fun(patch, patch_fun) {
  		patch_fun->patch = patch;
  
 -		ret = kgr_patch_code(patch_fun, false);
@@ -193,7 +190,7 @@ index 81dbfa432841..75beac8d2c7f 100644
  		/*
  		 * In case any of the symbol resolutions in the set
  		 * has failed, patch all the previously replaced fentry
-@@ -396,10 +404,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -396,10 +405,9 @@ int kgr_patch_kernel(struct kgr_patch *patch)
  	}
  	kgr_in_progress = true;
  	kgr_patch = patch;
@@ -205,11 +202,10 @@ index 81dbfa432841..75beac8d2c7f 100644
  	kgr_handle_irqs();
  	kgr_handle_processes();
  
-@@ -412,7 +419,39 @@ int kgr_patch_kernel(struct kgr_patch *patch)
+@@ -413,6 +421,39 @@ err_free:
+ 	free_percpu(patch->irq_use_new);
  err_unlock:
  	mutex_unlock(&kgr_in_progress_lock);
- 	free_percpu(patch->irq_use_new);
--err_module_put:
 +
 +	return ret;
 +}
@@ -247,7 +243,7 @@ index 81dbfa432841..75beac8d2c7f 100644
  
  	return ret;
 diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
-index 8685c33ee7c0..0cc1ec600d0d 100644
+index 90eb6053b6bd..4adbff8b7d42 100644
 --- a/kernel/kgraft_files.c
 +++ b/kernel/kgraft_files.c
 @@ -56,10 +56,23 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
@@ -287,5 +283,5 @@ index 1358ac6d1399..29504d52180f 100644
  
  module_init(kgr_patcher_init);
 -- 
-2.0.0
+2.0.1
 

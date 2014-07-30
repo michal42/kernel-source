@@ -1,0 +1,117 @@
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 9 Apr 2014 12:25:43 +1000
+Subject: [PATCH 15/17] NFS: allow lockless access to access_cache
+Patch-mainline: submitted 2014-07-24
+References: bnc#866130
+
+The access cache is used during RCU-walk path lookups, so it is best
+to avoid locking if possible as taking a lock kills concurrency.
+
+The rbtree is not rcu-safe and cannot easily be made so.
+Instead we simply check the last (i.e. most recent) entry on the LRU
+list.  If this doesn't match, then we return -ECHILD and retry in
+lock/refcount mode.
+
+This requires freeing the nfs_access_entry struct with rcu, and
+requires using rcu access primatives when adding entries to the lru, and
+when examining the last entry.
+
+Calling put_rpccred before kfree_rcu looks a bit odd, but as
+put_rpccred already provides rcu protection, we know that the cred will
+not actually be freed until the next grace period, so any concurrent
+access will be safe.
+
+This patch provides about 5% performance improvement on a stat-heavy
+synthetic work load with 4 threads on a 2-core CPU.
+
+Signed-off-by: NeilBrown <neilb@suse.de>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ fs/nfs/dir.c           |   43 +++++++++++++++++++++++++++++++++++++++++--
+ include/linux/nfs_fs.h |    1 +
+ 2 files changed, 42 insertions(+), 2 deletions(-)
+
+--- linux-3.12-SLE12.orig/fs/nfs/dir.c
++++ linux-3.12-SLE12/fs/nfs/dir.c
+@@ -2090,7 +2090,7 @@ static atomic_long_t nfs_access_nr_entri
+ static void nfs_access_free_entry(struct nfs_access_entry *entry)
+ {
+ 	put_rpccred(entry->cred);
+-	kfree(entry);
++	kfree_rcu(entry, rcu_head);
+ 	smp_mb__before_atomic_dec();
+ 	atomic_long_dec(&nfs_access_nr_entries);
+ 	smp_mb__after_atomic_dec();
+@@ -2245,6 +2245,38 @@ out_zap:
+ 	return -ENOENT;
+ }
+ 
++static int nfs_access_get_cached_rcu(struct inode *inode, struct rpc_cred *cred, struct nfs_access_entry *res)
++{
++	/* Only check the most recently returned cache entry,
++	 * but do it without locking.
++	 */
++	struct nfs_inode *nfsi = NFS_I(inode);
++	struct nfs_access_entry *cache;
++	int err = -ECHILD;
++	struct list_head *lh;
++
++	rcu_read_lock();
++	if (nfsi->cache_validity & NFS_INO_INVALID_ACCESS)
++		goto out;
++	lh = rcu_dereference(nfsi->access_cache_entry_lru.prev);
++	cache = list_entry(lh, struct nfs_access_entry, lru);
++	if (lh == &nfsi->access_cache_entry_lru ||
++	    cred != cache->cred)
++		cache = NULL;
++	if (cache == NULL)
++		goto out;
++	if (!nfs_have_delegated_attributes(inode) &&
++	    !time_in_range_open(jiffies, cache->jiffies, cache->jiffies + nfsi->attrtimeo))
++		goto out;
++	res->jiffies = cache->jiffies;
++	res->cred = cache->cred;
++	res->mask = cache->mask;
++	err = 0;
++out:
++	rcu_read_unlock();
++	return err;
++}
++
+ static void nfs_access_add_rbtree(struct inode *inode, struct nfs_access_entry *set)
+ {
+ 	struct nfs_inode *nfsi = NFS_I(inode);
+@@ -2288,6 +2320,11 @@ void nfs_access_add_cache(struct inode *
+ 	cache->cred = get_rpccred(set->cred);
+ 	cache->mask = set->mask;
+ 
++	/* The above field assignments must be visible
++	 * before this item appears on the lru.  We cannot easily
++	 * use rcu_assign_pointer, so just force the memory barrier.
++	 */
++	smp_wmb();
+ 	nfs_access_add_rbtree(inode, cache);
+ 
+ 	/* Update accounting */
+@@ -2326,7 +2363,9 @@ static int nfs_do_access(struct inode *i
+ 
+ 	trace_nfs_access_enter(inode);
+ 
+-	status = nfs_access_get_cached(inode, cred, &cache);
++	status = nfs_access_get_cached_rcu(inode, cred, &cache);
++	if (status != 0)
++		status = nfs_access_get_cached(inode, cred, &cache);
+ 	if (status == 0)
+ 		goto out_cached;
+ 
+--- linux-3.12-SLE12.orig/include/linux/nfs_fs.h
++++ linux-3.12-SLE12/include/linux/nfs_fs.h
+@@ -52,6 +52,7 @@ struct nfs_access_entry {
+ 	unsigned long		jiffies;
+ 	struct rpc_cred *	cred;
+ 	int			mask;
++	struct rcu_head		rcu_head;
+ };
+ 
+ struct nfs_lockowner {

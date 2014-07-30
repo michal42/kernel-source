@@ -1,0 +1,82 @@
+From: Stefan Haberland <stefan.haberland@de.ibm.com>
+Subject: dasd: use aliases for formatted devices during format
+Patch-mainline: not yet
+Git-commit: -
+References: bnc#888623, LTC#113043
+
+Description:  dasd: use aliases for formatted devices during format
+Symptom:      Formatting of a previously formatted device is slower
+              than newly format a device when alias devices are
+              available.
+Problem:      For already formatted devices the alias device are
+              not used for formatting.
+Solution:     Fix the alias handling for already formatted devices.
+Reproduction: Format an unformatted device with alias devices 
+              available twice. The second run is slower.
+
+Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/block/dasd.c      |   11 ++++++-----
+ drivers/s390/block/dasd_eckd.c |    4 ++--
+ drivers/s390/block/dasd_int.h  |    2 +-
+ 3 files changed, 9 insertions(+), 8 deletions(-)
+
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -281,6 +281,12 @@ static int dasd_state_basic_to_known(str
+ {
+ 	int rc;
+ 
++	if (device->discipline->basic_to_known) {
++		rc = device->discipline->basic_to_known(device);
++		if (rc)
++			return rc;
++	}
++
+ 	if (device->block) {
+ 		dasd_profile_exit(&device->block->profile);
+ 		if (device->block->debugfs_dentry)
+@@ -374,11 +380,6 @@ static int dasd_state_ready_to_basic(str
+ {
+ 	int rc;
+ 
+-	if (device->discipline->ready_to_basic) {
+-		rc = device->discipline->ready_to_basic(device);
+-		if (rc)
+-			return rc;
+-	}
+ 	device->state = DASD_STATE_BASIC;
+ 	if (device->block) {
+ 		struct dasd_block *block = device->block;
+--- a/drivers/s390/block/dasd_eckd.c
++++ b/drivers/s390/block/dasd_eckd.c
+@@ -2039,7 +2039,7 @@ static int dasd_eckd_online_to_ready(str
+ 	return 0;
+ };
+ 
+-static int dasd_eckd_ready_to_basic(struct dasd_device *device)
++static int dasd_eckd_basic_to_known(struct dasd_device *device)
+ {
+ 	return dasd_alias_remove_device(device);
+ };
+@@ -4509,7 +4509,7 @@ static struct dasd_discipline dasd_eckd_
+ 	.verify_path = dasd_eckd_verify_path,
+ 	.basic_to_ready = dasd_eckd_basic_to_ready,
+ 	.online_to_ready = dasd_eckd_online_to_ready,
+-	.ready_to_basic = dasd_eckd_ready_to_basic,
++	.basic_to_known = dasd_eckd_basic_to_known,
+ 	.fill_geometry = dasd_eckd_fill_geometry,
+ 	.start_IO = dasd_start_IO,
+ 	.term_IO = dasd_term_IO,
+--- a/drivers/s390/block/dasd_int.h
++++ b/drivers/s390/block/dasd_int.h
+@@ -304,7 +304,7 @@ struct dasd_discipline {
+ 	 */
+ 	int (*basic_to_ready) (struct dasd_device *);
+ 	int (*online_to_ready) (struct dasd_device *);
+-	int (*ready_to_basic)  (struct dasd_device *);
++	int (*basic_to_known)(struct dasd_device *);
+ 
+ 	/* (struct dasd_device *);
+ 	 * Device operation functions. build_cp creates a ccw chain for
