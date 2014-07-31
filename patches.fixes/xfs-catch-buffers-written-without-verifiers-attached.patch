@@ -1,0 +1,70 @@
+From: Dave Chinner <david@fromorbit.com>
+Subject: [PATCH 1/4] xfs: catch buffers written without verifiers attached
+Patch-mainline: Not yet, expected 3.17
+
+We recently had a bug where buffers were slipping through log
+recovery without any verifier attached to them. This was resulting
+in on-disk CRC mismatches for valid data. Add some warning code to
+catch this occurrence so that we catch such bugs during development
+rather than not being aware they exist.
+
+Note that we cannot do this verification unconditionally as non-CRC
+filesystems don't always attach verifiers to the buffers being
+written. e.g. during log recovery we cannot identify all the
+different types of buffers correctly on non-CRC filesystems, so we
+can't attach the correct verifiers in all cases and so we don't
+attach any. Hence we don't want on non-CRC filesystems to avoid
+spamming the logs with false indications.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Acked-by: Jan Kara <jack@suse.cz>
+---
+ fs/xfs/xfs_buf.c | 14 ++++++++++++++
+ fs/xfs/xfs_log.c |  8 +++++++-
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+Index: linux-3.12-SLE12/fs/xfs/xfs_buf.c
+===================================================================
+--- linux-3.12-SLE12.orig/fs/xfs/xfs_buf.c
++++ linux-3.12-SLE12/fs/xfs/xfs_buf.c
+@@ -1345,6 +1345,20 @@ _xfs_buf_ioapply(
+ 						   SHUTDOWN_CORRUPT_INCORE);
+ 				return;
+ 			}
++		} else if (bp->b_bn != XFS_BUF_DADDR_NULL) {
++			struct xfs_mount *mp = bp->b_target->bt_mount;
++
++			/*
++			 * non-crc filesystems don't attach verifiers during
++			 * log recovery, so don't warn for such filesystems.
++			 */
++			if (xfs_sb_version_hascrc(&mp->m_sb)) {
++				xfs_warn(mp,
++					"%s: no ops on block 0x%llx/0x%x",
++					__func__, bp->b_bn, bp->b_length);
++				xfs_hex_dump(bp->b_addr, 64);
++				dump_stack();
++			}
+ 		}
+ 	} else if (bp->b_flags & XBF_READ_AHEAD) {
+ 		rw = READA;
+Index: linux-3.12-SLE12/fs/xfs/xfs_log.c
+===================================================================
+--- linux-3.12-SLE12.orig/fs/xfs/xfs_log.c
++++ linux-3.12-SLE12/fs/xfs/xfs_log.c
+@@ -1371,8 +1371,14 @@ xlog_alloc_log(
+ 
+ 	xlog_get_iclog_buffer_size(mp, log);
+ 
++	/*
++	 * Use a NULL block for the extra log buffer used during splits so that
++	 * it will trigger errors if we ever try to do IO on it without first
++	 * having set it up properly.
++	 */
+ 	error = ENOMEM;
+-	bp = xfs_buf_alloc(mp->m_logdev_targp, 0, BTOBB(log->l_iclog_size), 0);
++	bp = xfs_buf_alloc(mp->m_logdev_targp, XFS_BUF_DADDR_NULL,
++			   BTOBB(log->l_iclog_size), 0);
+ 	if (!bp)
+ 		goto out_free_log;
+ 
