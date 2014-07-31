@@ -42,6 +42,7 @@ Cc: Tejun Heo <tj@kernel.org>
  fs/notify/mark.c                |    5 ++++-
  include/linux/freezer.h         |    2 ++
  kernel/hung_task.c              |    5 ++++-
+ kernel/irq/manage.c             |    1 +
  kernel/kthread.c                |    3 +++
  kernel/rcutree.c                |    6 ++++--
  kernel/rcutree_plugin.h         |   10 ++++++++--
@@ -50,7 +51,7 @@ Cc: Tejun Heo <tj@kernel.org>
  mm/huge_memory.c                |    6 ++++--
  mm/ksm.c                        |    5 +++--
  net/bluetooth/rfcomm/core.c     |    2 ++
- 16 files changed, 49 insertions(+), 14 deletions(-)
+ 17 files changed, 50 insertions(+), 14 deletions(-)
 
 --- a/drivers/base/devtmpfs.c
 +++ b/drivers/base/devtmpfs.c
@@ -176,6 +177,16 @@ Cc: Tejun Heo <tj@kernel.org>
  
  		check_hung_uninterruptible_tasks(timeout);
  	}
+--- a/kernel/irq/manage.c
++++ b/kernel/irq/manage.c
+@@ -653,6 +653,7 @@ static int irq_wait_for_interrupt(struct
+ 	set_current_state(TASK_INTERRUPTIBLE);
+ 
+ 	while (!kthread_should_stop()) {
++		kgr_task_safe(current);
+ 
+ 		if (test_and_clear_bit(IRQTF_RUNTHREAD,
+ 				       &action->thread_flags)) {
 --- a/kernel/kthread.c
 +++ b/kernel/kthread.c
 @@ -111,6 +111,8 @@ bool kthread_freezable_should_stop(bool
@@ -248,8 +259,8 @@ Cc: Tejun Heo <tj@kernel.org>
  		if (!rcu_nocb_poll)
 -			wait_event_interruptible(rdp->nocb_wq, rdp->nocb_head);
 +			wait_event_interruptible(rdp->nocb_wq, ({
-+						kgr_task_safe(current);
-+						rdp->nocb_head; }));
++						 kgr_task_safe(current);
++						 rdp->nocb_head; }));
  		list = ACCESS_ONCE(rdp->nocb_head);
  		if (!list) {
  			schedule_timeout_interruptible(1);
@@ -285,7 +296,7 @@ Cc: Tejun Heo <tj@kernel.org>
  	 * shouldn't have any work pending, but @wq->maydays may still have
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -2757,6 +2757,7 @@ static void khugepaged_do_scan(void)
+@@ -2783,6 +2783,7 @@ static void khugepaged_do_scan(void)
  			break;
  
  		cond_resched();
@@ -293,7 +304,7 @@ Cc: Tejun Heo <tj@kernel.org>
  
  		if (unlikely(kthread_should_stop() || freezing(current)))
  			break;
-@@ -2785,8 +2786,9 @@ static void khugepaged_wait_work(void)
+@@ -2811,8 +2812,9 @@ static void khugepaged_wait_work(void)
  		if (!khugepaged_scan_sleep_millisecs)
  			return;
  

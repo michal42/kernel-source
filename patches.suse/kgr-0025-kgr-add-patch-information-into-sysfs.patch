@@ -8,14 +8,15 @@ Expose information about patch state machine in sysfs. This will be
 later extended to contain a file for patch revert and possibly more.
 
 js: add owner link
+js: fix build for !MODULE
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h          | 10 +++++
  kernel/kgraft.c                 | 15 +++++++
- kernel/kgraft_files.c           | 86 +++++++++++++++++++++++++++++++++++++++++
+ kernel/kgraft_files.c           | 92 +++++++++++++++++++++++++++++++++++++++++
  samples/kgraft/kgraft_patcher.c |  2 +
- 4 files changed, 113 insertions(+)
+ 4 files changed, 119 insertions(+)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
 index 386f12d13dff..7c533f570e2f 100644
@@ -102,10 +103,10 @@ index 6e6bb8f38a2f..3264e2898fbd 100644
  {
  	int ret;
 diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
-index 40c6cb76b386..90eb6053b6bd 100644
+index 40c6cb76b386..d9ae43f07f06 100644
 --- a/kernel/kgraft_files.c
 +++ b/kernel/kgraft_files.c
-@@ -17,10 +17,96 @@
+@@ -17,10 +17,102 @@
  #include <linux/kernel.h>
  #include <linux/kgraft.h>
  #include <linux/kobject.h>
@@ -168,12 +169,14 @@ index 40c6cb76b386..90eb6053b6bd 100644
 +	if (ret)
 +		return ret;
 +
++#ifdef CONFIG_MODULES
 +	if (patch->owner) {
 +		ret = sysfs_create_link(&patch->kobj, &patch->owner->mkobj.kobj,
 +				"owner");
 +		if (ret)
 +			goto err_put;
 +	}
++#endif
 +
 +	ret = sysfs_create_group(&patch->kobj, &kgr_patch_sysfs_group);
 +	if (ret)
@@ -181,10 +184,12 @@ index 40c6cb76b386..90eb6053b6bd 100644
 +
 +	return 0;
 +err_del_link:
++#ifdef CONFIG_MODULES
 +	if (patch->owner)
 +		sysfs_delete_link(&patch->kobj, &patch->owner->mkobj.kobj,
 +				"owner");
 +err_put:
++#endif
 +	kobject_put(&patch->kobj);
 +	return ret;
 +}
@@ -192,9 +197,11 @@ index 40c6cb76b386..90eb6053b6bd 100644
 +void kgr_patch_dir_del(struct kgr_patch *patch)
 +{
 +	sysfs_remove_group(&patch->kobj, &kgr_patch_sysfs_group);
++#ifdef CONFIG_MODULES
 +	if (patch->owner)
 +		sysfs_delete_link(&patch->kobj, &patch->owner->mkobj.kobj,
 +				"owner");
++#endif
 +	kobject_put(&patch->kobj);
 +	wait_for_completion(&patch->finish);
 +}
