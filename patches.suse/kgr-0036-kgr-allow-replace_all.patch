@@ -1,0 +1,176 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Wed, 9 Jul 2014 10:12:40 +0200
+Subject: kgr: allow replace_all
+Patch-mainline: submitted for review
+References: fate#313296
+
+We may want load a single patch on the top of others which will
+replace all of them atomically. As a result we have only a single
+patch applied and all previous modules can be unloaded.
+
+TODO: this is not finished yet!
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/kgraft.h          |  2 ++
+ kernel/kgraft.c                 | 54 +++++++++++++++++++++++++++++++++++++++--
+ kernel/kgraft_files.c           | 10 ++++++++
+ samples/kgraft/kgraft_patcher.c |  2 +-
+ 4 files changed, 65 insertions(+), 3 deletions(-)
+
+diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
+index 178928b12108..f1ed2596ebfc 100644
+--- a/include/linux/kgraft.h
++++ b/include/linux/kgraft.h
+@@ -80,6 +80,7 @@ struct kgr_patch_fun {
+  * @refs: how many patches need to be reverted before this one
+  * @name: name of the patch (to appear in sysfs)
+  * @owner: module to refcount on patching
++ * @replace_all: revert everything applied before and apply this one instead
+  * @patches: array of @kgr_patch_fun structures
+  */
+ struct kgr_patch {
+@@ -93,6 +94,7 @@ struct kgr_patch {
+ 	/* a patch shall set these */
+ 	const char *name;
+ 	struct module *owner;
++	bool replace_all;
+ 	struct kgr_patch_fun patches[];
+ };
+ 
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index cf8ce70dae9a..a91fe87a2110 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -36,6 +36,7 @@ static struct workqueue_struct *kgr_wq;
+ static DECLARE_DELAYED_WORK(kgr_work, kgr_work_fn);
+ static DEFINE_MUTEX(kgr_in_progress_lock);
+ static LIST_HEAD(patches);
++static LIST_HEAD(to_revert);
+ bool kgr_in_progress;
+ static bool kgr_initialized;
+ static struct kgr_patch *kgr_patch;
+@@ -111,6 +112,52 @@ static bool kgr_still_patching(void)
+ 	return failed;
+ }
+ 
++static bool kgr_patch_contains(const struct kgr_patch *p, const char *name)
++{
++	const struct kgr_patch_fun *pf;
++
++	kgr_for_each_patch_fun(p, pf)
++		if (!strcmp(pf->name, name))
++			return true;
++
++	return false;
++}
++
++static void kgr_replace_all(void)
++{
++	struct kgr_patch_fun *pf;
++	struct kgr_patch *p;
++	int err;
++
++	list_for_each_entry(p, &patches, list) {
++		bool needs_revert = false;
++
++		kgr_for_each_patch_fun(p, pf) {
++			if (pf->state != KGR_PATCH_APPLIED)
++				continue;
++
++			if (!kgr_patch_contains(kgr_patch, pf->name)) {
++				needs_revert = true;
++				continue;
++			}
++
++			pr_info("UNREG %s -> %s\n", p->name, pf->name);
++			err = unregister_ftrace_function(&pf->ftrace_ops_fast);
++			if (err) {
++				pr_warning("kgr: unregistering ftrace function for %s failed with %d\n",
++						pf->name, err);
++				continue;
++			}
++			pf->state = KGR_PATCH_REVERTED;
++		}
++
++		if (needs_revert)
++			list_move(&p->list, &to_revert);
++		else
++			module_put(p->owner);
++	}
++}
++
+ static void kgr_finalize(void)
+ {
+ 	struct kgr_patch_fun *patch_fun;
+@@ -130,8 +177,11 @@ static void kgr_finalize(void)
+ 	if (kgr_revert) {
+ 		kgr_refs_dec();
+ 		module_put(kgr_patch->owner);
+-	} else
++	} else {
++		if (kgr_patch->replace_all)
++			kgr_replace_all();
+ 		list_add_tail(&kgr_patch->list, &patches);
++	}
+ 
+ 	kgr_patch = NULL;
+ 	kgr_in_progress = false;
+@@ -437,7 +487,7 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
+ 		goto err_unlock;
+ 	}
+ 
+-	if (kgr_in_progress) {
++	if (kgr_in_progress || !list_empty(&to_revert)) {
+ 		pr_err("kgr: can't patch, another patching not yet finalized\n");
+ 		ret = -EAGAIN;
+ 		goto err_unlock;
+diff --git a/kernel/kgraft_files.c b/kernel/kgraft_files.c
+index 5e2da03d3a1f..fd410590abe1 100644
+--- a/kernel/kgraft_files.c
++++ b/kernel/kgraft_files.c
+@@ -65,6 +65,14 @@ static ssize_t refs_show(struct kobject *kobj, struct kobj_attribute *attr,
+ 	return snprintf(buf, PAGE_SIZE, "%d\n", p->refs);
+ }
+ 
++static ssize_t replace_all_show(struct kobject *kobj,
++		struct kobj_attribute *attr, char *buf)
++{
++	struct kgr_patch *p = kobj_to_patch(kobj);
++
++	return snprintf(buf, PAGE_SIZE, "%d\n", p->replace_all);
++}
++
+ static ssize_t revert_store(struct kobject *kobj,
+ 		struct kobj_attribute *attr, const char *buf, size_t count)
+ {
+@@ -78,11 +86,13 @@ static ssize_t revert_store(struct kobject *kobj,
+ 
+ static struct kobj_attribute kgr_attr_state = __ATTR_RO(state);
+ static struct kobj_attribute kgr_attr_refs = __ATTR_RO(refs);
++static struct kobj_attribute kgr_attr_replace_all = __ATTR_RO(replace_all);
+ static struct kobj_attribute kgr_attr_revert = __ATTR_WO(revert);
+ 
+ static struct attribute *kgr_patch_sysfs_entries[] = {
+ 	&kgr_attr_state.attr,
+ 	&kgr_attr_refs.attr,
++	&kgr_attr_replace_all.attr,
+ 	&kgr_attr_revert.attr,
+ 	NULL
+ };
+diff --git a/samples/kgraft/kgraft_patcher.c b/samples/kgraft/kgraft_patcher.c
+index 29504d52180f..841bb279b977 100644
+--- a/samples/kgraft/kgraft_patcher.c
++++ b/samples/kgraft/kgraft_patcher.c
+@@ -72,7 +72,7 @@ static struct kgr_patch patch = {
+ 	.owner = THIS_MODULE,
+ 	.patches = {
+ #if defined(CONFIG_X86)
+-		KGR_PATCH(SyS_iopl, kgr_new_sys_iopl, true),
++//		KGR_PATCH(SyS_iopl, kgr_new_sys_iopl, true),
+ #endif
+ 		KGR_PATCH(capable, kgr_new_capable, true),
+ 		KGR_PATCH(unknown_function, kgr_new_function, false),
+-- 
+2.0.1
+
