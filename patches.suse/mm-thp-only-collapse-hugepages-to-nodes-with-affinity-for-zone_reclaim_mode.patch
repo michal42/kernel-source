@@ -1,0 +1,78 @@
+From 17d4f0ef8bd40fe796a8778c6efb5ca4be65893f Mon Sep 17 00:00:00 2001
+From: David Rientjes <rientjes@google.com>
+Date: Wed, 23 Jul 2014 09:11:44 +1000
+Subject: [PATCH] mm, thp: only collapse hugepages to nodes with affinity for
+ zone_reclaim_mode
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: No, expected 3.17
+
+Commit 9f1b868a13ac ("mm: thp: khugepaged: add policy for finding target
+node") improved the previous khugepaged logic which allocated a
+transparent hugepages from the node of the first page being collapsed.
+
+However, it is still possible to collapse pages to remote memory which may
+suffer from additional access latency.  With the current policy, it is
+possible that 255 pages (with PAGE_SHIFT == 12) will be collapsed remotely
+if the majority are allocated from that node.
+
+When zone_reclaim_mode is enabled, it means the VM should make every
+attempt to allocate locally to prevent NUMA performance degradation.  In
+this case, we do not want to collapse hugepages to remote nodes that would
+suffer from increased access latency.  Thus, when zone_reclaim_mode is
+enabled, only allow collapsing to nodes with RECLAIM_DISTANCE or less.
+
+There is no functional change for systems that disable zone_reclaim_mode.
+
+Signed-off-by: David Rientjes <rientjes@google.com>
+Acked-by: Vlastimil Babka <vbabka@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/huge_memory.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index f5e13ae..62a1a1e 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -2264,6 +2264,30 @@ static void khugepaged_alloc_sleep(void)
+ 
+ static int khugepaged_node_load[MAX_NUMNODES];
+ 
++static bool khugepaged_scan_abort(int nid)
++{
++	int i;
++
++	/*
++	 * If zone_reclaim_mode is disabled, then no extra effort is made to
++	 * allocate memory locally.
++	 */
++	if (!zone_reclaim_mode)
++		return false;
++
++	/* If there is a count for this node already, it must be acceptable */
++	if (khugepaged_node_load[nid])
++		return false;
++
++	for (i = 0; i < MAX_NUMNODES; i++) {
++		if (!khugepaged_node_load[i])
++			continue;
++		if (node_distance(nid, i) > RECLAIM_DISTANCE)
++			return true;
++	}
++	return false;
++}
++
+ #ifdef CONFIG_NUMA
+ static int khugepaged_find_target_node(void)
+ {
+@@ -2576,6 +2600,8 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
+ 		 * hit record.
+ 		 */
+ 		node = page_to_nid(page);
++		if (khugepaged_scan_abort(node))
++			goto out_unmap;
+ 		khugepaged_node_load[node]++;
+ 		VM_BUG_ON(PageCompound(page));
+ 		if (!PageLRU(page) || PageLocked(page) || !PageAnon(page))
