@@ -68,7 +68,7 @@ Index: linux-3.12-SLE12/kernel/printk/printk.c
   */
  static DEFINE_RAW_SPINLOCK(logbuf_lock);
  
-@@ -1478,14 +1483,19 @@ asmlinkage int vprintk_emit(int facility
+@@ -1477,14 +1482,19 @@ asmlinkage int vprintk_emit(int facility
  	static int recursion_bug;
  	static char textbuf[LOG_LINE_MAX];
  	char *text = textbuf;
@@ -89,7 +89,7 @@ Index: linux-3.12-SLE12/kernel/printk/printk.c
  
  	boot_delay_msec(level);
  	printk_delay();
-@@ -1532,7 +1542,12 @@ asmlinkage int vprintk_emit(int facility
+@@ -1531,7 +1541,12 @@ asmlinkage int vprintk_emit(int facility
  	 * The printf needs to come first; we need the syslog
  	 * prefix which might be passed-in as a parameter.
  	 */
@@ -103,18 +103,27 @@ Index: linux-3.12-SLE12/kernel/printk/printk.c
  
  	/* mark and strip a trailing newline */
  	if (text_len && text[text_len-1] == '\n') {
-@@ -1604,6 +1619,10 @@ asmlinkage int vprintk_emit(int facility
+@@ -1602,6 +1617,11 @@ asmlinkage int vprintk_emit(int facility
+ 	raw_spin_unlock(&logbuf_lock);
  	lockdep_on();
  	local_irq_restore(flags);
- 
++
 +	/* If called from the scheduler, we can not call up(). */
 +	if (in_sched)
 +		return printed_len;
 +
+       	lockdep_off();
+       	/*
+       	 * Disable preemption to avoid being preempted while holding
+@@ -1609,7 +1629,6 @@ asmlinkage int vprintk_emit(int facility
+       	 * console
+       	 */
+       	preempt_disable();
+-
  	/*
- 	 * Disable preemption to avoid being preempted while holding
- 	 * console_sem which would prevent anyone from printing to console
-@@ -2426,21 +2445,19 @@ late_initcall(printk_late_init);
+ 	 * Try to acquire and then immediately release the console semaphore.
+ 	 * The release will print out buffers and wake up /dev/kmsg and syslog()
+@@ -2428,21 +2447,19 @@ late_initcall(printk_late_init);
  /*
   * Delayed printk version, for scheduler-internal messages:
   */
@@ -141,7 +150,7 @@ Index: linux-3.12-SLE12/kernel/printk/printk.c
  	}
  
  	if (pending & PRINTK_PENDING_WAKEUP)
-@@ -2464,21 +2481,15 @@ void wake_up_klogd(void)
+@@ -2466,21 +2483,15 @@ void wake_up_klogd(void)
  
  int printk_sched(const char *fmt, ...)
  {

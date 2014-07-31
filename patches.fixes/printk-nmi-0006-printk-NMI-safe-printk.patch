@@ -73,11 +73,11 @@ Signed-off-by: Petr Mladek <pmladek@suse.cz>
  kernel/printk/printk.c | 281 +++++++++++++++++++++++++++++++++++++++++++++----
  1 file changed, 261 insertions(+), 20 deletions(-)
 
-diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
-index 643ca77e5292..e6cc6f3cf5d5 100644
---- a/kernel/printk/printk.c
-+++ b/kernel/printk/printk.c
-@@ -157,6 +157,18 @@ static int console_may_schedule;
+Index: linux-3.12-SLE12/kernel/printk/printk.c
+===================================================================
+--- linux-3.12-SLE12.orig/kernel/printk/printk.c
++++ linux-3.12-SLE12/kernel/printk/printk.c
+@@ -175,6 +175,18 @@ static int console_may_schedule;
   */
  static DEFINE_RAW_SPINLOCK(logbuf_lock);
  
@@ -96,7 +96,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  /*
   * The printk log buffer consists of a chain of concatenated variable
   * length records. Every record starts with a record header, containing
-@@ -347,6 +359,8 @@ static struct printk_cont nmi_cont = {
+@@ -366,6 +378,8 @@ static struct printk_cont nmi_cont = {
  #define seq_from_id(id) (id & NMI_SEQ_MASK)
  #define make_id(idx, seq) (((unsigned long)idx << NMI_SEQ_BYTES) | \
  			   (seq & NMI_SEQ_MASK))
@@ -105,7 +105,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  /*
   * Maximum length of the allocated buffer. It has to be a power of two.
   * It can be limited either by the maximum number of indexes or
-@@ -379,6 +393,13 @@ static u32 get_buf_len(enum printk_log_type log)
+@@ -398,6 +412,13 @@ static u32 get_buf_len(enum printk_log_t
  		return nmi_log_buf_len;
  }
  
@@ -119,7 +119,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  /*
   * Define functions needed to get the position values,
   * for example, first_idx. Possible values are:
-@@ -452,6 +473,12 @@ static char *log_dict(const struct printk_log *msg)
+@@ -471,6 +492,12 @@ static char *log_dict(const struct print
  	return (char *)msg + sizeof(struct printk_log) + msg->text_len;
  }
  
@@ -132,7 +132,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  /* get record by index; idx must point to valid msg */
  static struct printk_log *log_from_idx(enum printk_log_type log, u32 idx)
  {
-@@ -544,18 +571,28 @@ static int logbuf_has_space(enum printk_log_type log, u32 msg_size, bool empty)
+@@ -563,18 +590,28 @@ static int logbuf_has_space(enum printk_
  
  static int log_make_free_space(enum printk_log_type log, u32 msg_size)
  {
@@ -154,18 +154,18 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
 -		return 0;
 +	if (!logbuf_has_space(log, msg_size, true))
 +		ret = -ENOMEM;
- 
--	return -ENOMEM;
++
 +out:
 +	/* propagate the updated values before the freed space is overwritten */
 +	if (unlikely(log == NMI_LOG) && freed)
 +		smp_wmb();
-+
+ 
+-	return -ENOMEM;
 +	return ret;
  }
  
  /* compute the message size including the padding bytes */
-@@ -651,6 +688,10 @@ static int log_store(enum printk_log_type log, int facility, int level,
+@@ -670,6 +707,10 @@ static int log_store(enum printk_log_typ
  	memset(log_dict(msg) + dict_len, 0, pad_len);
  	msg->len = size;
  
@@ -176,7 +176,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  	/* insert message */
  	inc_next_pos(log);
  
-@@ -1093,6 +1134,7 @@ void __init setup_log_buf(int early)
+@@ -1133,6 +1174,7 @@ void __init setup_log_buf(int early)
  	if (!nmi_log_buf) {
  		if (nmi_log_buf_len > NMI_MAX_LEN)
  			nmi_log_buf_len = NMI_MAX_LEN;
@@ -184,7 +184,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  		/* zero length means that the feature is disabled */
  		if (nmi_log_buf_len)
  			nmi_log_buf = alloc_log_buf(early, nmi_log_buf_len);
-@@ -1811,6 +1853,170 @@ static size_t cont_print_text(char *text, size_t size)
+@@ -1854,6 +1896,170 @@ static size_t cont_print_text(char *text
  	return textlen;
  }
  
@@ -355,7 +355,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  asmlinkage int vprintk_emit(int facility, int level,
  			    const char *dict, size_t dictlen,
  			    const char *fmt, va_list args)
-@@ -1818,7 +2024,6 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1861,7 +2067,6 @@ asmlinkage int vprintk_emit(int facility
  	enum printk_log_type log = MAIN_LOG;
  	struct printk_cont *cont = &main_cont;
  	static int recursion_bug;
@@ -363,7 +363,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  	char *text = textbuf;
  	size_t text_len = 0;
  	enum log_flags lflags = 0;
-@@ -1844,7 +2049,7 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1887,7 +2092,7 @@ asmlinkage int vprintk_emit(int facility
  	/*
  	 * Ouch, printk recursed into itself!
  	 */
@@ -372,7 +372,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  		/*
  		 * If a crash is occurring during printk() on this CPU,
  		 * then try to get the crash message out but make sure
-@@ -1861,18 +2066,46 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -1904,18 +2109,46 @@ asmlinkage int vprintk_emit(int facility
  	}
  
  	lockdep_off();
@@ -382,6 +382,12 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
 -	if (recursion_bug) {
 -		static const char recursion_msg[] =
 -			"BUG: recent printk recursion!";
+-
+-		recursion_bug = 0;
+-		text_len = strlen(recursion_msg);
+-		/* emit KERN_CRIT message */
+-		printed_len += log_store(log, 0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
+-					 NULL, 0, recursion_msg, text_len);
 +	/*
 +	 * Get lock for a log buffer. Make sure we are not going to deadlock
 +	 * when we managed to preempt the currently running printk from NMI
@@ -397,12 +403,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
 +				local_irq_restore(flags);
 +				return 0;
 +			}
- 
--		recursion_bug = 0;
--		text_len = strlen(recursion_msg);
--		/* emit KERN_CRIT message */
--		printed_len += log_store(log, 0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
--					 NULL, 0, recursion_msg, text_len);
++
 +			raw_spin_lock(&nmi_logbuf_lock);
 +			log = NMI_LOG;
 +			cont = &nmi_cont;
@@ -429,7 +430,7 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
  	}
  
  	/*
-@@ -1960,13 +2193,21 @@ asmlinkage int vprintk_emit(int facility, int level,
+@@ -2003,13 +2236,21 @@ asmlinkage int vprintk_emit(int facility
  						 text, text_len);
  	}
  
@@ -454,7 +455,4 @@ index 643ca77e5292..e6cc6f3cf5d5 100644
 +	if (in_sched || in_nmi())
  		return printed_len;
  
- 	/*
--- 
-1.8.4
-
+       	lockdep_off();
