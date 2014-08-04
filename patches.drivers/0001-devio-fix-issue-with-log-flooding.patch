@@ -1,0 +1,37 @@
+From e7661ecf1bc7060f0c7ca15aa11fe20e7f1e0d9a Mon Sep 17 00:00:00 2001
+From: Oliver Neukum <oneukum@suse.de>
+Date: Fri, 1 Aug 2014 08:15:54 +0200
+Subject: [PATCH] devio: fix issue with log flooding
+Git-Commit: d310d05f1225d1f6f2bf505255fdf593bfbb3051
+Patch-Mainline: v3.17
+References: bnc#890088
+
+usbfs allows user space to pass down an URB which sets URB_SHORT_NOT_OK
+for output URBs. That causes usbcore to log messages without limit
+for a nonsensical disallowed combination. The fix is to silently drop
+the attribute in usbfs.
+The problem is reported to exist since 3.14
+https://www.virtualbox.org/ticket/13085
+
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+CC: stable@vger.kernel.org
+---
+ drivers/usb/core/devio.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/usb/core/devio.c b/drivers/usb/core/devio.c
+index 3af4b70..ccc63d6 100644
+--- a/drivers/usb/core/devio.c
++++ b/drivers/usb/core/devio.c
+@@ -1511,7 +1511,7 @@ static int proc_do_submiturb(struct usb_dev_state *ps, struct usbdevfs_urb *uurb
+ 	u = (is_in ? URB_DIR_IN : URB_DIR_OUT);
+ 	if (uurb->flags & USBDEVFS_URB_ISO_ASAP)
+ 		u |= URB_ISO_ASAP;
+-	if (uurb->flags & USBDEVFS_URB_SHORT_NOT_OK)
++	if (uurb->flags & USBDEVFS_URB_SHORT_NOT_OK && is_in)
+ 		u |= URB_SHORT_NOT_OK;
+ 	if (uurb->flags & USBDEVFS_URB_NO_FSBR)
+ 		u |= URB_NO_FSBR;
+-- 
+1.8.4.5
+
