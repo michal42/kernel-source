@@ -1,27 +1,25 @@
 From: Martin Schwidefsky <schwidefsky@de.ibm.com>
-Subject: kernel: size detection of 3270 terminals fails
-Patch-mainline: not yet
+Subject: s390/3270: correct size detection with the read-partition command
+Git-commit: 7cbe4afe854a9a352d9562106449bc55d17d5e5b
+Patch-mainline: v3.16-rc7
 References: bnc#881529, LTC#112394
 
-Description:  kernel: size detection of 3270 terminals fails
-Symptom:      The terminal size of 3270 devices attached to a Linux system
-              is incorrect.
-Problem:      The init_data array with the read-partition command is
-              clear by the reset device callback before the command
-              could be started. The command fails and the fallback
-              to the default size 80x24 is used.
-Solution:     Do not clear the init_data array in the reset device callback.
-Reproduction: Attach a 3270 terminal to a Linux system.
+ s390/3270: correct size detection with the read-partition command
+
+The size detection for 3270 terminals with the read-partition command is
+broken. The raw3270_reset_device_cb function clears the init_data array,
+but if raw3270_writesf_readpart has been called the read-partition command
+is queued which needs the init_data array. In this case the size detection
+will fail and the invalid command does funny things to the terminal.
 
 Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
 Acked-by: Torsten Duwe <duwe@suse.de>
----
- drivers/s390/char/raw3270.c |    1 -
- 1 file changed, 1 deletion(-)
 
+diff --git a/drivers/s390/char/raw3270.c b/drivers/s390/char/raw3270.c
+index 15b3459..220acb4 100644
 --- a/drivers/s390/char/raw3270.c
 +++ b/drivers/s390/char/raw3270.c
-@@ -633,7 +633,6 @@ raw3270_reset_device_cb(struct raw3270_r
+@@ -633,7 +633,6 @@ raw3270_reset_device_cb(struct raw3270_request *rq, void *data)
  	} else
  		raw3270_writesf_readpart(rp);
  	memset(&rp->init_reset, 0, sizeof(rp->init_reset));

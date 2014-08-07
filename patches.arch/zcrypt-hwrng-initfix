@@ -1,0 +1,32 @@
+From:	Ingo Tuchscherer <ingo.tuchscherer@de.ibm.com>
+Subject: s390/zcrypt: improve device probing for zcrypt adapter cards
+Patch-mainline: Submitted, 2014-07-15 LKML
+    
+Improve device probing process for zcrypt adapters to
+transmit service request during registration process.
+    
+Signed-off-by: Ingo Tuchscherer <ingo.tuchscherer@de.ibm.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+Index: linux-3.12-SLE12/drivers/s390/crypto/ap_bus.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/s390/crypto/ap_bus.c
++++ linux-3.12-SLE12/drivers/s390/crypto/ap_bus.c
+@@ -901,10 +901,15 @@ static int ap_device_probe(struct device
+ 	int rc;
+ 
+ 	ap_dev->drv = ap_drv;
++
++	spin_lock_bh(&ap_device_list_lock);
++	list_add(&ap_dev->list, &ap_device_list);
++	spin_unlock_bh(&ap_device_list_lock);
++
+ 	rc = ap_drv->probe ? ap_drv->probe(ap_dev) : -ENODEV;
+-	if (!rc) {
++	if (rc) {
+ 		spin_lock_bh(&ap_device_list_lock);
+-		list_add(&ap_dev->list, &ap_device_list);
++		list_del_init(&ap_dev->list);
+ 		spin_unlock_bh(&ap_device_list_lock);
+ 	}
+ 	return rc;
