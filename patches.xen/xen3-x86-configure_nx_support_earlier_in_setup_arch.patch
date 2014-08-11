@@ -1,0 +1,56 @@
+Message-ID: <53B4B627.8060903@gmail.com>
+Date:	Wed, 02 Jul 2014 20:47:19 -0500
+From: Stuart Hayes <stuart.w.hayes@gmail.com>
+To: tglx@linutronix.de, mingo@redhat.com, hpa@zytor.com, x86@kernel.org
+CC: linux-kernel@vger.kernel.org
+Subject: [PATCH] x86: Configure NX support earlier in setup_arch
+Patch-mainline: not yet
+References: bnc#884369
+
+
+A page fault can crash the kernel very early if an NX bit is set in a
+page table entry, if the CPU doesn't support NX (or if NX support is
+disabled in the CPU).  Move the call to x86_configure_nx() earlier
+than parse_setup_data(), since that calls early_memremap().
+
+Signed-off-by: Stuart Hayes <stuart.w.hayes@gmail.com>
+Link: http://lkml.kernel.org/r/53B4B627.8060903@gmail.com
+Acked-by: Borislav Petkov <bp@suse.de>
+Automatically created from "patches.fixes/x86-configure_nx_support_earlier_in_setup_arch.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/setup-xen.c	2014-03-19 14:17:06.000000000 +0100
++++ sle12/arch/x86/kernel/setup-xen.c	2014-08-08 12:06:35.000000000 +0200
+@@ -1047,6 +1047,17 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	iomem_resource.end = (1ULL << boot_cpu_data.x86_phys_bits) - 1;
+ 	setup_memory_map();
++
++	/*
++	 * x86_configure_nx() is called before parse_setup_data() to detect
++	 * whether hardware doesn't support NX (so that parse_setup_data()
++	 * can safely call early_memremap() without setting the XD bit in
++	 * the PTE, which can cause an unrecoverable page fault). It may
++	 * then be called again from within noexec_setup() during parsing
++	 * early parameters to honor the respective command line option.
++	 */
++	x86_configure_nx();
++
+ 	parse_setup_data();
+ 
+ 	copy_edd();
+@@ -1083,15 +1094,6 @@ void __init setup_arch(char **cmdline_p)
+ 	strlcpy(command_line, boot_command_line, COMMAND_LINE_SIZE);
+ 	*cmdline_p = command_line;
+ 
+-	/*
+-	 * x86_configure_nx() is called before parse_early_param() to detect
+-	 * whether hardware doesn't support NX (so that the early EHCI debug
+-	 * console setup can safely call set_fixmap()). It may then be called
+-	 * again from within noexec_setup() during parsing early parameters
+-	 * to honor the respective command line option.
+-	 */
+-	x86_configure_nx();
+-
+ 	parse_early_param();
+ 
+ 	x86_report_nx();

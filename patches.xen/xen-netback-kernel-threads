@@ -74,7 +74,7 @@ Acked-by: jbeulich@novell.com
  		struct sk_buff_head queue;
  		struct tasklet_struct tasklet;
 --- sle12.orig/drivers/xen/netback/netback.c	2013-10-29 10:24:03.000000000 +0100
-+++ sle12/drivers/xen/netback/netback.c	2013-12-11 11:19:29.000000000 +0100
++++ sle12/drivers/xen/netback/netback.c	2014-08-08 12:10:13.000000000 +0200
 @@ -36,6 +36,7 @@
  
  #include "common.h"
@@ -204,7 +204,7 @@ Acked-by: jbeulich@novell.com
  }
  
  static void netif_page_release(struct page *page, unsigned int order)
-@@ -1991,6 +2020,50 @@ static struct irqaction netif_be_dbg_act
+@@ -1991,6 +2020,51 @@ static struct irqaction netif_be_dbg_act
  };
  #endif
  
@@ -236,9 +236,10 @@ Acked-by: jbeulich@novell.com
 +
 +	while (!kthread_should_stop()) {
 +		wait_event_interruptible(netbk->action_wq,
-+					 rx_work_todo(netbk) ||
-+					 tx_work_todo(netbk) ||
-+					 kthread_should_stop());
++					 (kgr_task_safe(current),
++					  rx_work_todo(netbk) ||
++					  tx_work_todo(netbk) ||
++					  kthread_should_stop()));
 +		cond_resched();
 +
 +		if (rx_work_todo(netbk))
@@ -255,7 +256,7 @@ Acked-by: jbeulich@novell.com
  static int __init netback_init(void)
  {
  	unsigned int i, group;
-@@ -2028,9 +2101,6 @@ static int __init netback_init(void)
+@@ -2028,9 +2102,6 @@ static int __init netback_init(void)
  	for (group = 0; group < netbk_nr_groups; group++) {
  		struct xen_netbk *netbk = &xen_netbk[group];
  
@@ -265,7 +266,7 @@ Acked-by: jbeulich@novell.com
  		skb_queue_head_init(&netbk->rx.queue);
  		skb_queue_head_init(&netbk->tx.queue);
  
-@@ -2066,6 +2136,26 @@ static int __init netback_init(void)
+@@ -2066,6 +2137,26 @@ static int __init netback_init(void)
  			netbk->tx.pending_ring[i] = i;
  			INIT_LIST_HEAD(&netbk->tx.pending_inuse[i].list);
  		}
@@ -292,7 +293,7 @@ Acked-by: jbeulich@novell.com
  	}
  
  	netbk_copy_skb_mode = NETBK_DONT_COPY_SKB;
-@@ -2092,12 +2182,15 @@ static int __init netback_init(void)
+@@ -2092,12 +2183,15 @@ static int __init netback_init(void)
  	return 0;
  
  failed_init:

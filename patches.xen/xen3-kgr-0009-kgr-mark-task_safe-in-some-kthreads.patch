@@ -1,0 +1,214 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Wed, 29 Jan 2014 18:22:39 +0100
+Subject: kgr: mark task_safe in some kthreads
+Patch-mainline: submitted for review
+References: fate#313296, bnc#890556
+
+Before we enable a kthread support in kGraft, we must make sure all
+kthreads mark themselves as kGraft-safe at some point explicitly.
+
+We do this by injecting kgr_task_safe to the freezer test. There, we
+assume that kthreads are in some predefined state and can expect
+something bad to happen. Hence we switch the kGraft worlds there from
+the old one to the new one. The optimal solution would be to convert
+most of kthreads (that need not be kthreads actually) to workqeues as
+suggested by Tejun. This is an upcoming work that will appear next.
+But until we get there, we use freezer for kGraft that way as is
+presented here.
+
+Note that there are also some kthreads that do not utilize freezer, so
+we use kgr_task_safe in them explicitly. This happens at locations
+that appear to be safe for the kthreads to switch the worlds.
+
+The end result after we migrate kthreads (that need not be kthreads)
+to workqueues is: have only kthreads that contain kgr_task_safe
+explicitly (or using some helper) and nothing else.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Acked-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org> [devtmpfs]
+Acked-by: Paul E. McKenney <paulmck@linux.vnet.ibm.com> [rcu]
+Cc: Steven Rostedt <rostedt@goodmis.org>
+Cc: Frederic Weisbecker <fweisbec@gmail.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: "Theodore Ts'o" <tytso@mit.edu>
+Cc: Dipankar Sarma <dipankar@in.ibm.com>
+Cc: Tejun Heo <tj@kernel.org>
+Automatically created from "patches.suse/kgr-0009-kgr-mark-task_safe-in-some-kthreads.patch´" by xen-port-patches.py
+
+--- sle12.orig/drivers/xen/blkback/blkback.c	2013-04-03 10:59:17.000000000 +0200
++++ sle12/drivers/xen/blkback/blkback.c	2014-08-08 11:55:44.000000000 +0200
+@@ -207,10 +207,12 @@ int blkif_schedule(void *arg)
+ 
+ 		wait_event_interruptible(
+ 			blkif->wq,
+-			blkif->waiting_reqs || kthread_should_stop());
++			(kgr_task_safe(current),
++			 blkif->waiting_reqs || kthread_should_stop()));
+ 		wait_event_interruptible(
+ 			pending_free_wq,
+-			!list_empty(&pending_free) || kthread_should_stop());
++			(kgr_task_safe(current),
++			 !list_empty(&pending_free) || kthread_should_stop()));
+ 
+ 		blkif->waiting_reqs = 0;
+ 		smp_mb(); /* clear flag *before* checking for work */
+@@ -222,7 +224,8 @@ int blkif_schedule(void *arg)
+ 			break;
+ 		case -EACCES:
+ 			wait_event_interruptible(blkif->shutdown_wq,
+-						 kthread_should_stop());
++						 (kgr_task_safe(current),
++						  kthread_should_stop()));
+ 			break;
+ 		default:
+ 			BUG();
+@@ -257,6 +260,7 @@ static void drain_io(blkif_t *blkif)
+ 
+ 		if (!atomic_read(&blkif->drain))
+ 			break;
++		kgr_task_safe(current);
+ 	} while (!kthread_should_stop());
+ 	atomic_set(&blkif->drain, 0);
+ }
+--- sle12.orig/drivers/xen/blktap/blktap.c	2013-05-28 10:33:09.000000000 +0200
++++ sle12/drivers/xen/blktap/blktap.c	2014-08-08 11:58:04.000000000 +0200
+@@ -1169,10 +1169,12 @@ int tap_blkif_schedule(void *arg)
+ 
+ 		wait_event_interruptible(
+ 			blkif->wq,
+-			blkif->waiting_reqs || kthread_should_stop());
++			(kgr_task_safe(current),
++			 blkif->waiting_reqs || kthread_should_stop()));
+ 		wait_event_interruptible(
+ 			pending_free_wq,
+-			!list_empty(&pending_free) || kthread_should_stop());
++			(kgr_task_safe(current),
++			 !list_empty(&pending_free) || kthread_should_stop()));
+ 
+ 		blkif->waiting_reqs = 0;
+ 		smp_mb(); /* clear flag *before* checking for work */
+@@ -1184,7 +1186,8 @@ int tap_blkif_schedule(void *arg)
+ 			break;
+ 		case -EACCES:
+ 			wait_event_interruptible(blkif->shutdown_wq,
+-						 kthread_should_stop());
++						 (kgr_task_safe(current),
++						  kthread_should_stop()));
+ 			break;
+ 		default:
+ 			BUG();
+--- sle12.orig/drivers/xen/fbfront/xenfb.c	2013-01-09 17:00:48.000000000 +0100
++++ sle12/drivers/xen/fbfront/xenfb.c	2014-08-08 11:58:56.000000000 +0200
+@@ -271,7 +271,8 @@ static int xenfb_thread(void *data)
+ 		xenfb_handle_resize_dpy(info);
+ 		xenfb_update_screen(info);
+ 		wait_event_interruptible(info->wq,
+-			kthread_should_stop() || info->dirty);
++			(kgr_task_safe(current),
++			 kthread_should_stop() || info->dirty));
+ 		try_to_freeze();
+ 	}
+ 	return 0;
+--- sle12.orig/drivers/xen/scsiback/scsiback.c	2013-01-25 15:10:30.000000000 +0100
++++ sle12/drivers/xen/scsiback/scsiback.c	2014-08-08 12:00:09.000000000 +0200
+@@ -669,10 +669,12 @@ int scsiback_schedule(void *data)
+ 	while (!kthread_should_stop()) {
+ 		wait_event_interruptible(
+ 			info->wq,
+-			info->waiting_reqs || kthread_should_stop());
++			(kgr_task_safe(current),
++			 info->waiting_reqs || kthread_should_stop()));
+ 		wait_event_interruptible(
+ 			pending_free_wq,
+-			!list_empty(&pending_free) || kthread_should_stop());
++			(kgr_task_safe(current),
++			 !list_empty(&pending_free) || kthread_should_stop()));
+ 
+ 		info->waiting_reqs = 0;
+ 		smp_mb();
+@@ -684,7 +686,8 @@ int scsiback_schedule(void *data)
+ 			break;
+ 		case -EACCES:
+ 			wait_event_interruptible(info->shutdown_wq,
+-						 kthread_should_stop());
++						 (kgr_task_safe(current),
++						  kthread_should_stop()));
+ 			break;
+ 		default:
+ 			BUG();
+--- sle12.orig/drivers/xen/scsifront/scsifront.c	2012-12-06 16:13:46.000000000 +0100
++++ sle12/drivers/xen/scsifront/scsifront.c	2014-08-08 12:00:43.000000000 +0200
+@@ -242,7 +242,8 @@ int scsifront_schedule(void *data)
+ 	while (!kthread_should_stop()) {
+ 		wait_event_interruptible(
+ 			info->wq,
+-			info->waiting_resp || kthread_should_stop());
++			(kgr_task_safe(current),
++			 info->waiting_resp || kthread_should_stop()));
+ 
+ 		info->waiting_resp = 0;
+ 		smp_mb();
+--- sle12.orig/drivers/xen/usbback/usbback.c	2013-06-20 15:27:51.000000000 +0200
++++ sle12/drivers/xen/usbback/usbback.c	2014-08-08 12:01:43.000000000 +0200
+@@ -1087,10 +1087,12 @@ int usbbk_schedule(void *arg)
+ 	while (!kthread_should_stop()) {
+ 		wait_event_interruptible(
+ 			usbif->wq,
+-			usbif->waiting_reqs || kthread_should_stop());
++			(kgr_task_safe(current),
++			 usbif->waiting_reqs || kthread_should_stop()));
+ 		wait_event_interruptible(
+ 			pending_free_wq,
+-			!list_empty(&pending_free) || kthread_should_stop());
++			(kgr_task_safe(current),
++			 !list_empty(&pending_free) || kthread_should_stop()));
+ 		usbif->waiting_reqs = 0;
+ 		smp_mb();
+ 
+@@ -1101,7 +1103,8 @@ int usbbk_schedule(void *arg)
+ 			break;
+ 		case -EACCES:
+ 			wait_event_interruptible(usbif->shutdown_wq,
+-						 kthread_should_stop());
++						 (kgr_task_safe(current),
++						  kthread_should_stop()));
+ 			break;
+ 		default:
+ 			BUG();
+--- sle12.orig/drivers/xen/usbfront/usbfront-q.c	2011-01-31 17:56:27.000000000 +0100
++++ sle12/drivers/xen/usbfront/usbfront-q.c	2014-08-08 12:02:25.000000000 +0200
+@@ -515,7 +515,8 @@ int xenhcd_schedule(void *arg)
+ 	while (!kthread_should_stop()) {
+ 		wait_event_interruptible(
+ 				info->wq,
+-				info->waiting_resp || kthread_should_stop());
++				(kgr_task_safe(current),
++				 info->waiting_resp || kthread_should_stop()));
+ 		info->waiting_resp = 0;
+ 		smp_mb();
+ 
+--- sle12.orig/drivers/xen/xenbus/xenbus_comms.c	2013-08-12 13:51:56.000000000 +0200
++++ sle12/drivers/xen/xenbus/xenbus_comms.c	2014-08-08 11:47:44.000000000 +0200
+@@ -180,7 +180,9 @@ int xb_data_to_read(void)
+ 
+ int xb_wait_for_data_to_read(void)
+ {
+-	return wait_event_interruptible(xb_waitq, xb_data_to_read());
++	return wait_event_interruptible(xb_waitq,
++					(kgr_task_safe(current),
++					 xb_data_to_read()));
+ }
+ 
+ int xb_read(void *data, unsigned len)
+--- sle12.orig/drivers/xen/xenbus/xenbus_xs.c	2013-08-12 13:00:59.000000000 +0200
++++ sle12/drivers/xen/xenbus/xenbus_xs.c	2014-08-08 11:44:57.000000000 +0200
+@@ -822,7 +822,8 @@ static int xenwatch_thread(void *unused)
+ 	current->flags |= PF_NOFREEZE;
+ 	for (;;) {
+ 		wait_event_interruptible(watch_events_waitq,
+-					 !list_empty(&watch_events));
++					 (kgr_task_safe(current),
++					  !list_empty(&watch_events)));
+ 
+ 		if (kthread_should_stop())
+ 			break;
