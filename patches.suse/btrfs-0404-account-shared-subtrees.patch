@@ -31,11 +31,11 @@ Reviewed-by: Josef Bacik <jbacik@fb.com>
  include/trace/events/btrfs.h |   3 +-
  4 files changed, 429 insertions(+), 1 deletion(-)
 
-diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
-index 46f39bf..3f43e9a 100644
---- a/fs/btrfs/extent-tree.c
-+++ b/fs/btrfs/extent-tree.c
-@@ -7324,6 +7324,220 @@ reada:
+Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
+===================================================================
+--- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/extent-tree.c
++++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/extent-tree.c
+@@ -7299,6 +7299,220 @@ reada:
  	wc->reada_slot = slot;
  }
  
@@ -256,7 +256,7 @@ index 46f39bf..3f43e9a 100644
  /*
   * helper to process tree block while walking down the tree.
   *
-@@ -7427,6 +7641,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
+@@ -7402,6 +7616,7 @@ static noinline int do_walk_down(struct
  	int level = wc->level;
  	int reada = 0;
  	int ret = 0;
@@ -264,7 +264,7 @@ index 46f39bf..3f43e9a 100644
  
  	generation = btrfs_node_ptr_generation(path->nodes[level],
  					       path->slots[level]);
-@@ -7472,6 +7687,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
+@@ -7447,6 +7662,7 @@ static noinline int do_walk_down(struct
  
  	if (wc->stage == DROP_REFERENCE) {
  		if (wc->refs[level - 1] > 1) {
@@ -272,7 +272,7 @@ index 46f39bf..3f43e9a 100644
  			if (level == 1 &&
  			    (wc->flags[0] & BTRFS_BLOCK_FLAG_FULL_BACKREF))
  				goto skip;
-@@ -7535,6 +7751,16 @@ skip:
+@@ -7510,6 +7726,16 @@ skip:
  			parent = 0;
  		}
  
@@ -289,7 +289,7 @@ index 46f39bf..3f43e9a 100644
  		ret = btrfs_free_extent(trans, root, bytenr, blocksize, parent,
  				root->root_key.objectid, level - 1, 0, 0);
  		BUG_ON(ret); /* -ENOMEM */
-@@ -7621,6 +7847,13 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
+@@ -7596,6 +7822,13 @@ static noinline int walk_up_proc(struct
  				ret = btrfs_dec_ref(trans, root, eb, 0,
  						    wc->for_reloc);
  			BUG_ON(ret); /* -ENOMEM */
@@ -303,7 +303,7 @@ index 46f39bf..3f43e9a 100644
  		}
  		/* make block locked assertion in clean_tree_block happy */
  		if (!path->locks[level] &&
-@@ -7746,6 +7979,8 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
+@@ -7721,6 +7954,8 @@ int btrfs_drop_snapshot(struct btrfs_roo
  	int level;
  	bool root_dropped = false;
  
@@ -312,7 +312,7 @@ index 46f39bf..3f43e9a 100644
  	path = btrfs_alloc_path();
  	if (!path) {
  		err = -ENOMEM;
-@@ -7871,6 +8106,24 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
+@@ -7846,6 +8081,24 @@ int btrfs_drop_snapshot(struct btrfs_roo
  				goto out_end_trans;
  			}
  
@@ -337,11 +337,11 @@ index 46f39bf..3f43e9a 100644
  			btrfs_end_transaction_throttle(trans, tree_root);
  			if (!for_reloc && btrfs_need_cleaner_sleep(root)) {
  				pr_debug("BTRFS: drop snapshot early exit\n");
-@@ -7924,6 +8177,14 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
+@@ -7899,6 +8152,14 @@ int btrfs_drop_snapshot(struct btrfs_roo
  	}
  	root_dropped = true;
  out_end_trans:
-+	ret = btrfs_delayed_qgroup_accounting(trans, root->fs_info);
++	ret = btrfs_delayed_qgroup_accounting(trans, tree_root->fs_info);
 +	if (ret)
 +		printk_ratelimited(KERN_ERR "BTRFS: Failure %d "
 +				   "running qgroup updates "
@@ -352,10 +352,10 @@ index 46f39bf..3f43e9a 100644
  	btrfs_end_transaction_throttle(trans, tree_root);
  out_free:
  	kfree(wc);
-diff --git a/fs/btrfs/qgroup.c b/fs/btrfs/qgroup.c
-index a9f0f05..9b0cb93 100644
---- a/fs/btrfs/qgroup.c
-+++ b/fs/btrfs/qgroup.c
+Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
+===================================================================
+--- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/qgroup.c
++++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.c
 @@ -1201,6 +1201,50 @@ out:
  	mutex_unlock(&fs_info->qgroup_ioctl_lock);
  	return ret;
@@ -407,7 +407,7 @@ index a9f0f05..9b0cb93 100644
  static int comp_oper(struct btrfs_qgroup_operation *oper1,
  		     struct btrfs_qgroup_operation *oper2)
  {
-@@ -1290,7 +1334,25 @@ int btrfs_qgroup_record_ref(struct btrfs_trans_handle *trans,
+@@ -1290,7 +1334,25 @@ int btrfs_qgroup_record_ref(struct btrfs
  	oper->seq = atomic_inc_return(&fs_info->qgroup_op_seq);
  	INIT_LIST_HEAD(&oper->elem.list);
  	oper->elem.seq = 0;
@@ -540,7 +540,7 @@ index a9f0f05..9b0cb93 100644
   * btrfs_qgroup_account_ref is called for every ref that is added to or deleted
   * from the fs. First, all roots referencing the extent are searched, and
   * then the space is accounted accordingly to the different roots. The
-@@ -1921,6 +2083,9 @@ static int btrfs_qgroup_account(struct btrfs_trans_handle *trans,
+@@ -1921,6 +2083,9 @@ static int btrfs_qgroup_account(struct b
  	case BTRFS_QGROUP_OPER_SUB_SHARED:
  		ret = qgroup_shared_accounting(trans, fs_info, oper);
  		break;
@@ -550,10 +550,10 @@ index a9f0f05..9b0cb93 100644
  	default:
  		ASSERT(0);
  	}
-diff --git a/fs/btrfs/qgroup.h b/fs/btrfs/qgroup.h
-index 5952ff1..18cc68c 100644
---- a/fs/btrfs/qgroup.h
-+++ b/fs/btrfs/qgroup.h
+Index: linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
+===================================================================
+--- linux-3.12-btrfs-qgroup-fixes.orig/fs/btrfs/qgroup.h
++++ linux-3.12-btrfs-qgroup-fixes/fs/btrfs/qgroup.h
 @@ -44,6 +44,7 @@ enum btrfs_qgroup_operation_type {
  	BTRFS_QGROUP_OPER_ADD_SHARED,
  	BTRFS_QGROUP_OPER_SUB_EXCL,
@@ -562,11 +562,11 @@ index 5952ff1..18cc68c 100644
  };
  
  struct btrfs_qgroup_operation {
-diff --git a/include/trace/events/btrfs.h b/include/trace/events/btrfs.h
-index b8774b3..96daac6 100644
---- a/include/trace/events/btrfs.h
-+++ b/include/trace/events/btrfs.h
-@@ -1125,7 +1125,8 @@ DEFINE_EVENT(btrfs__workqueue_done, btrfs_workqueue_destroy,
+Index: linux-3.12-btrfs-qgroup-fixes/include/trace/events/btrfs.h
+===================================================================
+--- linux-3.12-btrfs-qgroup-fixes.orig/include/trace/events/btrfs.h
++++ linux-3.12-btrfs-qgroup-fixes/include/trace/events/btrfs.h
+@@ -987,7 +987,8 @@ TRACE_EVENT(free_extent_state,
  		{ BTRFS_QGROUP_OPER_ADD_EXCL, 	"OPER_ADD_EXCL" },	\
  		{ BTRFS_QGROUP_OPER_ADD_SHARED, "OPER_ADD_SHARED" },	\
  		{ BTRFS_QGROUP_OPER_SUB_EXCL, 	"OPER_SUB_EXCL" },	\
@@ -576,6 +576,3 @@ index b8774b3..96daac6 100644
  
  DECLARE_EVENT_CLASS(btrfs_qgroup_oper,
  
--- 
-1.8.4.5
-
