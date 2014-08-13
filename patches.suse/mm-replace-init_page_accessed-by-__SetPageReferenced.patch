@@ -1,0 +1,104 @@
+From c17dcfff2c13e638ae91b871e0a188d9748b65b6 Mon Sep 17 00:00:00 2001
+From: Hugh Dickins <hughd@google.com>
+Date: Wed, 6 Aug 2014 16:06:43 -0700
+Subject: [PATCH] mm: replace init_page_accessed by __SetPageReferenced
+
+References: VM Performance
+Patch-mainline: undefined
+Git-commit: eb39d618f9e80f81cfc5788cf1b252d141c2f0c3
+
+Do we really need an exported alias for __SetPageReferenced()? Its
+callers better know what they're doing, in which case the page would not
+be already marked referenced.  Kill init_page_accessed(), just
+__SetPageReferenced() inline.
+
+Signed-off-by: Hugh Dickins <hughd@google.com>
+Acked-by: Mel Gorman <mgorman@suse.de>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Vlastimil Babka <vbabka@suse.cz>
+Cc: Michal Hocko <mhocko@suse.cz>
+Cc: Dave Hansen <dave.hansen@intel.com>
+Cc: Prabhakar Lad <prabhakar.csengg@gmail.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/swap.h |  1 -
+ mm/filemap.c         |  4 ++--
+ mm/shmem.c           |  2 +-
+ mm/swap.c            | 14 +++-----------
+ 4 files changed, 6 insertions(+), 15 deletions(-)
+
+diff --git a/include/linux/swap.h b/include/linux/swap.h
+index b431f2f..8d529f0 100644
+--- a/include/linux/swap.h
++++ b/include/linux/swap.h
+@@ -275,7 +275,6 @@ extern void lru_add_page_tail(struct page *page, struct page *page_tail,
+ 			 struct lruvec *lruvec, struct list_head *head);
+ extern void activate_page(struct page *);
+ extern void mark_page_accessed(struct page *);
+-extern void init_page_accessed(struct page *page);
+ extern void lru_add_drain(void);
+ extern void lru_add_drain_cpu(int cpu);
+ extern void lru_add_drain_all(void);
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 03d0519..0c5609f 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -989,9 +989,9 @@ no_page:
+ 		if (WARN_ON_ONCE(!(fgp_flags & FGP_LOCK)))
+ 			fgp_flags |= FGP_LOCK;
+ 
+-		/* Init accessed so avoit atomic mark_page_accessed later */
++		/* Init accessed so avoid atomic mark_page_accessed later */
+ 		if (fgp_flags & FGP_ACCESSED)
+-			init_page_accessed(page);
++			__SetPageReferenced(page);
+ 
+ 		err = add_to_page_cache_lru(page, mapping, offset, radix_gfp_mask);
+ 		if (unlikely(err)) {
+diff --git a/mm/shmem.c b/mm/shmem.c
+index c406c9a..404df46 100644
+--- a/mm/shmem.c
++++ b/mm/shmem.c
+@@ -1166,7 +1166,7 @@ repeat:
+ 		__SetPageSwapBacked(page);
+ 		__set_page_locked(page);
+ 		if (sgp == SGP_WRITE)
+-			init_page_accessed(page);
++			__SetPageReferenced(page);
+ 
+ 		error = mem_cgroup_cache_charge(page, current->mm,
+ 						gfp & GFP_RECLAIM_MASK);
+diff --git a/mm/swap.c b/mm/swap.c
+index 74456e0..30f19d0 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -562,6 +562,9 @@ static void __lru_cache_activate_page(struct page *page)
+  * inactive,unreferenced	->	inactive,referenced
+  * inactive,referenced		->	active,unreferenced
+  * active,unreferenced		->	active,referenced
++ *
++ * When a newly allocated page is not yet visible, so safe for non-atomic ops,
++ * __SetPageReferenced(page) may be substituted for mark_page_accessed(page).
+  */
+ void mark_page_accessed(struct page *page)
+ {
+@@ -585,17 +588,6 @@ void mark_page_accessed(struct page *page)
+ }
+ EXPORT_SYMBOL(mark_page_accessed);
+ 
+-/*
+- * Used to mark_page_accessed(page) that is not visible yet and when it is
+- * still safe to use non-atomic ops
+- */
+-void init_page_accessed(struct page *page)
+-{
+-	if (!PageReferenced(page))
+-		__SetPageReferenced(page);
+-}
+-EXPORT_SYMBOL(init_page_accessed);
+-
+ static void __lru_cache_add(struct page *page)
+ {
+ 	struct pagevec *pvec = &get_cpu_var(lru_add_pvec);
