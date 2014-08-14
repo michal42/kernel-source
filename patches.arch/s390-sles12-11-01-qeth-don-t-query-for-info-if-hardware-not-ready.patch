@@ -1,0 +1,58 @@
+From: Eugene Crosser <Eugene.Crosser@ru.ibm.com>
+Subject: qeth: don't query for info if hardware not ready.
+Patch-mainline: not yet
+Git-commit: -
+References: bnc#892005, LTC#113780
+
+Description:  qeth: don't query for info if hardware not ready.
+Symptom:      Under certain timing when networking is quickly turned
+              off and on, there is this error:
+              qeth.3acf0c: 0.0.e101: The qeth device driver failed to
+                 recover an error on the device
+              and the script gets hang for some time.
+Problem:      When qeth device recovery is triggered while networking
+              setup script is running, `ethtool` kernel interface can
+              be accessed when the card is offline. Executing the
+              hardware operation to read the card status at this moment
+              is not allowed and may cause problems.
+Solution:     Check if the card is online, and if it is not, do not
+              call qeth_query_card_info(), and return -ENODEV (for
+              compatibility with other similar cases).
+Reproduction: The problem can be reproduced (not reliably) on systems
+              that run wickedd for network management, by configuring
+              several qeth interfaces, single CPU, and turning
+              wickedd service off and on repeatedly in a script.
+
+Signed-off-by: Eugene Crosser <Eugene.Crosser@ru.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/net/qeth_core_main.c |   10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+--- a/drivers/s390/net/qeth_core_main.c
++++ b/drivers/s390/net/qeth_core_main.c
+@@ -5702,6 +5702,7 @@ int qeth_core_ethtool_get_settings(struc
+ 	struct qeth_card *card = netdev->ml_priv;
+ 	enum qeth_link_types link_type;
+ 	struct carrier_info carrier_info;
++	int rc;
+ 
+ 	if ((card->info.type == QETH_CARD_TYPE_IQD) || (card->info.guestlan))
+ 		link_type = QETH_LINK_TYPE_10GBIT_ETH;
+@@ -5742,8 +5743,15 @@ int qeth_core_ethtool_get_settings(struc
+ 	/* Check if we can obtain more accurate information.	 */
+ 	/* If QUERY_CARD_INFO command is not supported or fails, */
+ 	/* just return the heuristics that was filled above.	 */
+-	if (qeth_query_card_info(card, &carrier_info) != 0)
++	if ((card->state != CARD_STATE_SOFTSETUP) &&
++	    (card->state != CARD_STATE_UP))
++		return -ENODEV;
++	rc = qeth_query_card_info(card, &carrier_info);
++	if (rc == -EOPNOTSUPP) /* for old hardware, return heuristic */
+ 		return 0;
++	if (rc) /* report error from the hardware operation */
++		return rc;
++	/* on success, fill in the information got from the hardware */
+ 
+ 	netdev_dbg(netdev,
+ 	"card info: card_type=0x%02x, port_mode=0x%04x, port_speed=0x%08x\n",
