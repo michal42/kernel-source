@@ -1,0 +1,31 @@
+From: Stephan Mueller <smueller@chronox.de>
+Subject: crypto: drbg - fix failure of generating multiple of 2**16 bytes
+Git-commit: ce5481d01f67ad304908ec2113515440c0fa86eb
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git.kernel.org/cgit/linux/kernel/git/herbert/cryptodev-2.6.git
+References: bnc#856310
+
+ crypto: drbg - fix failure of generating multiple of 2**16 bytes
+
+The function drbg_generate_long slices the request into 2**16 byte
+or smaller chunks. However, the loop, however invokes the random number
+generation function with zero bytes when the request size is a multiple
+of 2**16 bytes. The fix prevents zero bytes requests.
+
+Signed-off-by: Stephan Mueller <smueller@chronox.de>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/crypto/drbg.c b/crypto/drbg.c
+index ff975d9..7894db9 100644
+--- a/crypto/drbg.c
++++ b/crypto/drbg.c
+@@ -1500,7 +1500,7 @@ static int drbg_generate_long(struct drbg_state *drbg,
+ 		if (0 >= tmplen)
+ 			return tmplen;
+ 		len += tmplen;
+-	} while (slice > 0);
++	} while (slice > 0 && (len < buflen));
+ 	return len;
+ }
+ 
