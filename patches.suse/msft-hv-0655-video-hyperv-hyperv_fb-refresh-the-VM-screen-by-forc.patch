@@ -1,7 +1,8 @@
 From: Dexuan Cui <decui@microsoft.com>
-Date: Tue, 8 Jul 2014 20:04:23 -0700
-Patch-mainline: submitted
+Date: Fri, 1 Aug 2014 04:27:54 -0700
+Patch-mainline: v3.17-rc1
 Subject: video: hyperv: hyperv_fb: refresh the VM screen by force on VM panic
+Git-commit: 3686fe964285a9a0c25265f37ada117d47614f1e
 
 Currently the VSC has no chance to notify the VSP of the dirty rectangle on VM
 panic because the notification work is done in a workqueue, and in panic() the
@@ -17,84 +18,85 @@ the VSC flushes any future framebuffer change to the VSP immediately.
 
 v2: removed the MS-TFS line in the commit message
 v3: remove some 'unlikely' markings
+v4: avoid global variables as Tomi Valkeinen suggested
 
+(adjusted to old file location)
+
+Cc: Haiyang Zhang <haiyangz@microsoft.com>
 Signed-off-by: Dexuan Cui <decui@microsoft.com>
-Reviewed-by: Haiyang Zhang <haiyangz@microsoft.com>
+Signed-off-by: Tomi Valkeinen <tomi.valkeinen@ti.com>
 Acked-by: <ohering@suse.de>
 ---
- drivers/video/hyperv_fb.c | 58 ++++++++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 55 insertions(+), 3 deletions(-)
+ drivers/video/hyperv_fb.c | 62 +++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 59 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/video/hyperv_fb.c b/drivers/video/hyperv_fb.c
-index b64f0f2..0135fc3 100644
+index e23392e..569e756 100644
 --- a/drivers/video/hyperv_fb.c
 +++ b/drivers/video/hyperv_fb.c
-@@ -227,11 +227,16 @@ struct hvfb_par {
+@@ -224,6 +224,11 @@ struct hvfb_par {
+ 	u32 pseudo_palette[16];
+ 	u8 init_buf[MAX_VMBUS_PKT_SIZE];
  	u8 recv_buf[MAX_VMBUS_PKT_SIZE];
++
++	/* If true, the VSC notifies the VSP on every framebuffer change */
++	bool synchronous_fb;
++
++	struct notifier_block hvfb_panic_nb;
  };
  
-+static struct fb_info *hvfb_info;
-+
  static uint screen_width = HVFB_WIDTH;
- static uint screen_height = HVFB_HEIGHT;
- static uint screen_depth;
- static uint screen_fb_size;
- 
-+/* If true, the VSC notifies the VSP on every framebuffer change */
-+static bool synchronous_fb;
-+
- /* Send message to Hyper-V host */
- static inline int synthvid_send(struct hv_device *hdev,
- 				struct synthvid_msg *msg)
-@@ -540,6 +545,20 @@ static void hvfb_update_work(struct work_struct *w)
+@@ -532,6 +537,19 @@ static void hvfb_update_work(struct work_struct *w)
  		schedule_delayed_work(&par->dwork, HVFB_UPDATE_DELAY);
  }
  
 +static int hvfb_on_panic(struct notifier_block *nb,
-+			unsigned long e, void *p)
++			 unsigned long e, void *p)
 +{
-+	if (hvfb_info)
-+		synthvid_update(hvfb_info);
++	struct hvfb_par *par;
++	struct fb_info *info;
 +
-+	synchronous_fb = true;
++	par = container_of(nb, struct hvfb_par, hvfb_panic_nb);
++	par->synchronous_fb = true;
++	info = par->info;
++	synthvid_update(info);
 +
 +	return NOTIFY_DONE;
 +}
-+
-+static struct notifier_block hvfb_panic_nb = {
-+	.notifier_call = hvfb_on_panic,
-+};
  
  /* Framebuffer operation handlers */
  
-@@ -590,14 +609,41 @@ static int hvfb_blank(int blank, struct fb_info *info)
+@@ -582,14 +600,44 @@ static int hvfb_blank(int blank, struct fb_info *info)
  	return 1;	/* get fb_blank to set the colormap to all black */
  }
  
 +static void hvfb_cfb_fillrect(struct fb_info *p,
-+				const struct fb_fillrect *rect)
++			      const struct fb_fillrect *rect)
 +{
-+	cfb_fillrect(p, rect);
++	struct hvfb_par *par = p->par;
 +
-+	if (synchronous_fb)
++	cfb_fillrect(p, rect);
++	if (par->synchronous_fb)
 +		synthvid_update(p);
 +}
 +
 +static void hvfb_cfb_copyarea(struct fb_info *p,
-+				const struct fb_copyarea *area)
++			      const struct fb_copyarea *area)
 +{
-+	cfb_copyarea(p, area);
++	struct hvfb_par *par = p->par;
 +
-+	if (synchronous_fb)
++	cfb_copyarea(p, area);
++	if (par->synchronous_fb)
 +		synthvid_update(p);
 +}
 +
 +static void hvfb_cfb_imageblit(struct fb_info *p,
-+				const struct fb_image *image)
++			       const struct fb_image *image)
 +{
-+	cfb_imageblit(p, image);
++	struct hvfb_par *par = p->par;
 +
-+	if (synchronous_fb)
++	cfb_imageblit(p, image);
++	if (par->synchronous_fb)
 +		synthvid_update(p);
 +}
 +
@@ -112,22 +114,24 @@ index b64f0f2..0135fc3 100644
  	.fb_blank = hvfb_blank,
  };
  
-@@ -809,6 +855,9 @@ static int hvfb_probe(struct hv_device *hdev,
+@@ -801,6 +849,11 @@ static int hvfb_probe(struct hv_device *hdev,
  
  	par->fb_ready = true;
  
-+	hvfb_info = info;
-+	atomic_notifier_chain_register(&panic_notifier_list, &hvfb_panic_nb);
++	par->synchronous_fb = false;
++	par->hvfb_panic_nb.notifier_call = hvfb_on_panic;
++	atomic_notifier_chain_register(&panic_notifier_list,
++				       &par->hvfb_panic_nb);
 +
  	return 0;
  
  error:
-@@ -828,6 +877,9 @@ static int hvfb_remove(struct hv_device *hdev)
+@@ -820,6 +873,9 @@ static int hvfb_remove(struct hv_device *hdev)
  	struct fb_info *info = hv_get_drvdata(hdev);
  	struct hvfb_par *par = info->par;
  
-+	atomic_notifier_chain_unregister(&panic_notifier_list, &hvfb_panic_nb);
-+	hvfb_info = NULL;
++	atomic_notifier_chain_unregister(&panic_notifier_list,
++					 &par->hvfb_panic_nb);
 +
  	par->update = false;
  	par->fb_ready = false;
