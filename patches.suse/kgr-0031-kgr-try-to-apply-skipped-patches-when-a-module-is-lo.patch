@@ -4,27 +4,30 @@ Subject: kgr: try to apply skipped patches when a module is loaded
 Patch-mainline: submitted for review
 References: fate#313296
 
-kGraft patches might modify both core kernel functions and modules. To make
-the life easier, new functions for modules have the "abort_if_missing"
-flag disabled. The result is that such patch could be loaded even before
-the affected module.
+kGraft patches might modify both core kernel functions and modules. To
+make the life easier, new functions for modules have the
+"abort_if_missing" flag disabled. The result is that such patch could
+be loaded even before the affected module.
 
-This commit adds kgr_module_init() function that is called when the module is
-being loaded but before the code is used. It allows to apply the fast path
-from the pending patches.
+This commit adds kgr_module_init() function that is called when the
+module is being loaded but before the code is used. It allows to apply
+the fast path from the pending patches.
 
-The support for handling the patch in progress will be added later. It will
-need more tweaking.
+The support for handling the patch in progress will be added later. It
+will need more tweaking.
 
-Also the support for more patches against the same function will be added later.
+Also the support for more patches against the same function will be
+added later.
+
+js: fix !MODULES configs
 
 Signed-off-by: Petr Mladek <pmladek@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/linux/kgraft.h |    1 
- kernel/kgraft.c        |   62 +++++++++++++++++++++++++++++++++++++++++++++++++
+ kernel/kgraft.c        |   66 +++++++++++++++++++++++++++++++++++++++++++++++++
  kernel/module.c        |   10 +++++++
- 3 files changed, 73 insertions(+)
+ 3 files changed, 77 insertions(+)
 
 --- a/include/linux/kgraft.h
 +++ b/include/linux/kgraft.h
@@ -38,10 +41,12 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  extern int kgr_add_files(void);
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -535,6 +535,68 @@ void kgr_patch_remove(struct kgr_patch *
+@@ -570,6 +570,72 @@ void kgr_patch_remove(struct kgr_patch *
  }
  EXPORT_SYMBOL_GPL(kgr_patch_remove);
  
++#ifdef CONFIG_MODULES
++
 +/*
 + * This function is called when new module is loaded but before it is used.
 + * Therefore it could set the fast path directly.
@@ -103,6 +108,8 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +
 +	mutex_unlock(&kgr_in_progress_lock);
 +}
++
++#endif /* CONFIG_MODULES */
 +
  static int __init kgr_init(void)
  {

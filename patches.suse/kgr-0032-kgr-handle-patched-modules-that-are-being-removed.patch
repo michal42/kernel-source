@@ -23,17 +23,21 @@ need more tweaking.
 Finally, the support for more patches against the same function will be added
 later.
 
+js: make kgr_module_exit_nb static (reported by Fengguang Wu
+    <fengguang.wu@intel.com>)
+js: fix !MODULES builds
+
 Signed-off-by: Petr Mladek <pmladek@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
- kernel/kgraft.c | 116 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 116 insertions(+)
+ kernel/kgraft.c | 124 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 124 insertions(+)
 
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 7faa6dd2276e..1c363a89e6f8 100644
+index 6bbe69523baa..fcc5e3d16663 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
-@@ -597,6 +597,118 @@ void kgr_module_init(const struct module *mod)
+@@ -634,8 +634,128 @@ void kgr_module_init(const struct module *mod)
  	mutex_unlock(&kgr_in_progress_lock);
  }
  
@@ -41,7 +45,7 @@ index 7faa6dd2276e..1c363a89e6f8 100644
 + * Disable the patch immediately. It does not matter in which state it is.
 + *
 + * This function is used when a module is being removed and the code is
-+ * not longer called.
++ * no longer called.
 + */
 +static int kgr_forced_code_patch_removal(struct kgr_patch_fun *patch_fun)
 +{
@@ -144,7 +148,17 @@ index 7faa6dd2276e..1c363a89e6f8 100644
 +	return err;
 +}
 +
-+struct notifier_block kgr_module_exit_nb = {
++#else
++
++static int kgr_module_notify_exit(struct notifier_block *self,
++		unsigned long val, void *data)
++{
++	return 0;
++}
++
+ #endif /* CONFIG_MODULES */
+ 
++static struct notifier_block kgr_module_exit_nb = {
 +	.notifier_call = kgr_module_notify_exit,
 +	.priority = 0,
 +};
@@ -152,7 +166,7 @@ index 7faa6dd2276e..1c363a89e6f8 100644
  static int __init kgr_init(void)
  {
  	int ret;
-@@ -617,6 +729,10 @@ static int __init kgr_init(void)
+@@ -656,6 +776,10 @@ static int __init kgr_init(void)
  		goto err_remove_files;
  	}
  
@@ -164,5 +178,5 @@ index 7faa6dd2276e..1c363a89e6f8 100644
  	pr_info("kgr: successfully initialized\n");
  
 -- 
-2.0.1
+2.0.4
 
