@@ -1,0 +1,48 @@
+From: Mark Fasheh <mfasheh@suse.de>
+Date: Mon Aug 18 13:03:40 PDT 2014
+Subject: [PATCH] btrfs: don't crash on existing qgroup items
+References: bnc#892408
+Patch-mainline: pending, submitted
+
+btrfs_drop_snapshot() leaves subvolume qgroup items on disk after
+completion. This can cause problems with snapshot creation. If a new
+snapshot tries to claim the deleted subvolumes id, btrfs will get -EEXIST
+from add_qgroup_item() and go read-only.
+
+We can fix this by catching -EEXIST in add_qgroup_item() and
+initializing the existing items. We have the problem of orphaned
+relation items being on disk from an old snapshot but that is outside
+the scope of this patch.
+
+Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+
+Index: linux-3.12-btrfs-subvolid-reuse-fix/fs/btrfs/qgroup.c
+===================================================================
+--- linux-3.12-btrfs-subvolid-reuse-fix.orig/fs/btrfs/qgroup.c
++++ linux-3.12-btrfs-subvolid-reuse-fix/fs/btrfs/qgroup.c
+@@ -551,9 +551,15 @@ static int add_qgroup_item(struct btrfs_
+ 	key.type = BTRFS_QGROUP_INFO_KEY;
+ 	key.offset = qgroupid;
+ 
++	/*
++	 * Avoid a transaction abort by catching -EEXIST here. In that
++	 * case, we proceed by re-initializing the existing structure
++	 * on disk.
++	 */
++
+ 	ret = btrfs_insert_empty_item(trans, quota_root, path, &key,
+ 				      sizeof(*qgroup_info));
+-	if (ret)
++	if (ret && ret != -EEXIST)
+ 		goto out;
+ 
+ 	leaf = path->nodes[0];
+@@ -572,7 +578,7 @@ static int add_qgroup_item(struct btrfs_
+ 	key.type = BTRFS_QGROUP_LIMIT_KEY;
+ 	ret = btrfs_insert_empty_item(trans, quota_root, path, &key,
+ 				      sizeof(*qgroup_limit));
+-	if (ret)
++	if (ret && ret != -EEXIST)
+ 		goto out;
+ 
+ 	leaf = path->nodes[0];
