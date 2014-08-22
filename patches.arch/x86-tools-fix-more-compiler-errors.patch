@@ -1,0 +1,50 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: x86, tools: Fix more compiler errors
+Git-commit: c7fb93ec51d462ec3540a729ba446663c26a0505
+Patch-mainline: v3.16-rc6
+
+Upstream commit c7fb93ec51d462ec3540a729ba446663c26a0505 (x86/efi:
+Include a .bss section within the PE/COFF headers) was backported to
+3.12.26 as 9e6e90fce2c4cdd721229855a32e4c266e323ff3. But vanilla 3.12
+does not have 993c30a04e205fb239c0875b25b43ddef0499845 (x86, tools:
+Consolidate #ifdef code), so some pieces were missing in the
+backport.
+
+But since we have the commit, we need also this additional patch to be
+able to build for !EFI_STUB.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/x86/boot/tools/build.c |    7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+--- a/arch/x86/boot/tools/build.c
++++ b/arch/x86/boot/tools/build.c
+@@ -269,6 +269,8 @@ static void efi_stub_entry_update(void)
+ static inline void update_pecoff_setup_and_reloc(unsigned int size) {}
+ static inline void update_pecoff_text(unsigned int text_start,
+ 				      unsigned int file_sz) {}
++static inline void update_pecoff_bss(unsigned int file_sz,
++				     unsigned int init_sz) {}
+ static inline void efi_stub_defaults(void) {}
+ static inline void efi_stub_entry_update(void) {}
+ 
+@@ -319,7 +321,7 @@ static void parse_zoffset(char *fname)
+ 
+ int main(int argc, char ** argv)
+ {
+-	unsigned int i, sz, setup_sectors;
++	unsigned int i, sz, setup_sectors, init_sz;
+ 	int c;
+ 	u32 sys_size;
+ 	struct stat sb;
+@@ -327,9 +329,6 @@ int main(int argc, char ** argv)
+ 	int fd;
+ 	void *kernel;
+ 	u32 crc = 0xffffffffUL;
+-#ifdef CONFIG_EFI_STUB
+-	unsigned int init_sz;
+-#endif
+ 
+ 	efi_stub_defaults();
+ 
