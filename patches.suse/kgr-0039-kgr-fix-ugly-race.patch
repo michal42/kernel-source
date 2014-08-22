@@ -1,0 +1,90 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Thu, 21 Aug 2014 15:03:08 +0200
+Subject: kgr: fix ugly race
+Patch-mainline: submitted for review
+References: fate#313296
+
+The code contains an ugly race. If you are familiar with this notion:
+(kgr_mark_processes . for_each_patch(kgr_patch_code)) || kgr_mark_safe
+
+I.e. informally, when we set the in_progress bit for a process, it can
+immediately clear the flag, but still calls the old function, because
+we have not installed the slow stub via kgr_patch_code yet. When we
+suddenly install it, the process can be in the middle of something
+(and not safe to switch at all).
+
+To fix that, we have to introduce a three-state logic:
+* old-world-immutable
+* old-world
+* new-world
+
+This is accomplished by introducing an atomic bit which we set prior
+marking processes (old-world-immutable state) and clear after
+installing the slow stub (old-world state). The slow stub always
+re-sets the in_progress flag to 1 when in the old-world-immutable
+universe. So only the exit from the syscall allows the switch to the
+new-world.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Cc: Vojtech Pavlik <vojtech@suse.cz>
+Cc: Jiri Kosina <jkosina@suse.cz>
+Cc: Petr Mladek <pmladek@suse.cz>
+---
+ kernel/kgraft.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/kgraft.c b/kernel/kgraft.c
+index 1077311065d8..ab360913eed7 100644
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -14,6 +14,7 @@
+  * any later version.
+  */
+ 
++#include <linux/bitmap.h>
+ #include <linux/ftrace.h>
+ #include <linux/hardirq.h> /* for in_interrupt() */
+ #include <linux/kallsyms.h>
+@@ -37,6 +38,7 @@ static DECLARE_DELAYED_WORK(kgr_work, kgr_work_fn);
+ static DEFINE_MUTEX(kgr_in_progress_lock);
+ static LIST_HEAD(patches);
+ static LIST_HEAD(to_revert);
++static DECLARE_BITMAP(kgr_immutable, 1);
+ bool kgr_in_progress;
+ static bool kgr_initialized;
+ static struct kgr_patch *kgr_patch;
+@@ -63,7 +65,10 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+ 
+ 	if (in_interrupt())
+ 		go_old = !*this_cpu_ptr(p->patch->irq_use_new);
+-	else
++	else if (test_bit(0, kgr_immutable)) {
++		kgr_mark_task_in_progress(current);
++		go_old = true;
++	} else
+ 		go_old = kgr_task_in_progress(current);
+ 
+ 	if (p->state == KGR_PATCH_REVERT_SLOW)
+@@ -540,8 +545,10 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
+ 	 * between universes completely, and just flip the switch as soon
+ 	 * as possible
+ 	 */
+-	if (!patch->immediate)
++	if (!patch->immediate) {
+ 		kgr_mark_processes();
++		set_bit(0, kgr_immutable);
++	}
+ 
+ 	kgr_for_each_patch_fun(patch, patch_fun) {
+ 		patch_fun->patch = patch;
+@@ -570,6 +577,7 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
+ 		kgr_refs_inc();
+ 	mutex_unlock(&kgr_in_progress_lock);
+ 
++	clear_bit(0, kgr_immutable);
+ 	kgr_handle_irqs();
+ 	kgr_handle_processes();
+ 
+-- 
+2.0.4
+
