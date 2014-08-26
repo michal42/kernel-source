@@ -1,0 +1,204 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct inet_peer
+Patch-mainline: never, kabi
+
+In 3.2.27, commit 16cc7c2f0ce25aaa048b626477f594668203c44d (inetpeer:
+get rid of ip_id_count), upstream commit
+73f156a6e8c1074ac6327e0abd1169e95eb66463, removed functions
+__ip_select_ident and ipv6_select_ident.
+
+It also removed ip_id_count from struct inet_peer. It indeed changed
+layout of that structure.
+
+Reintroduce the member back, export ipv6_select_ident again and
+reimplement the old __ip_select_ident. The new one is now
+__ip_select_ident_new and used in inlines. Pre-compiled modules will
+still use __ip_select_ident (hopefully there are none).
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/net/inetpeer.h    |    1 +
+ include/net/ip.h          |    5 +++--
+ include/net/secure_seq.h  |    2 ++
+ net/core/secure_seq.c     |   24 ++++++++++++++++++++++++
+ net/ipv4/inetpeer.c       |    4 ++++
+ net/ipv4/ip_tunnel_core.c |    2 +-
+ net/ipv4/route.c          |   41 +++++++++++++++++++++++++++++++++++++++--
+ net/ipv6/ip6_output.c     |    3 ++-
+ 8 files changed, 76 insertions(+), 6 deletions(-)
+
+--- a/include/net/inetpeer.h
++++ b/include/net/inetpeer.h
+@@ -48,6 +48,7 @@ struct inet_peer {
+ 	union {
+ 		struct {
+ 			atomic_t			rid;		/* Frag reception counter */
++			atomic_t			ip_id_count;    /* kabi */
+ 		};
+ 		struct rcu_head         rcu;
+ 		struct inet_peer	*gc_next;
+--- a/include/net/ip.h
++++ b/include/net/ip.h
+@@ -263,7 +263,8 @@ int ip_dont_fragment(struct sock *sk, st
+ }
+ 
+ u32 ip_idents_reserve(u32 hash, int segs);
+-void __ip_select_ident(struct iphdr *iph, int segs);
++void __ip_select_ident(struct iphdr *iph, struct dst_entry *dst, int more);
++void __ip_select_ident_new(struct iphdr *iph, int segs);
+ 
+ static inline void ip_select_ident_segs(struct sk_buff *skb, struct sock *sk, int segs)
+ {
+@@ -282,7 +283,7 @@ static inline void ip_select_ident_segs(
+ 			iph->id = 0;
+ 		}
+ 	} else {
+-		__ip_select_ident(iph, segs);
++		__ip_select_ident_new(iph, segs);
+ 	}
+ }
+ 
+--- a/include/net/secure_seq.h
++++ b/include/net/secure_seq.h
+@@ -3,6 +3,8 @@
+ 
+ #include <linux/types.h>
+ 
++extern __u32 secure_ip_id(__be32 daddr);
++extern __u32 secure_ipv6_id(const __be32 daddr[4]);
+ extern u32 secure_ipv4_port_ephemeral(__be32 saddr, __be32 daddr, __be16 dport);
+ extern u32 secure_ipv6_port_ephemeral(const __be32 *saddr, const __be32 *daddr,
+ 				      __be16 dport);
+--- a/net/core/secure_seq.c
++++ b/net/core/secure_seq.c
+@@ -95,6 +95,30 @@ EXPORT_SYMBOL(secure_ipv6_port_ephemeral
+ #endif
+ 
+ #ifdef CONFIG_INET
++__u32 secure_ip_id(__be32 daddr)
++{
++	u32 hash[MD5_DIGEST_WORDS];
++
++	net_secret_init();
++	hash[0] = (__force __u32) daddr;
++	hash[1] = net_secret[13];
++	hash[2] = net_secret[14];
++	hash[3] = net_secret[15];
++
++	md5_transform(hash, net_secret);
++	return hash[0];
++}
++
++__u32 secure_ipv6_id(const __be32 daddr[4])
++{
++	__u32 hash[4];
++
++	net_secret_init();
++	memcpy(hash, daddr, 16);
++	md5_transform(hash, net_secret);
++
++	return hash[0];
++}
+ 
+ __u32 secure_tcp_sequence_number(__be32 saddr, __be32 daddr,
+ 				 __be16 sport, __be16 dport)
+--- a/net/ipv4/inetpeer.c
++++ b/net/ipv4/inetpeer.c
+@@ -490,6 +490,10 @@ relookup:
+ 		p->daddr = *daddr;
+ 		atomic_set(&p->refcnt, 1);
+ 		atomic_set(&p->rid, 0);
++		atomic_set(&p->ip_id_count,
++				(daddr->family == AF_INET) ?
++					secure_ip_id(daddr->addr.a4) :
++					secure_ipv6_id(daddr->addr.a6));
+ 		p->metrics[RTAX_LOCK-1] = INETPEER_METRICS_NEW;
+ 		p->rate_tokens = 0;
+ 		/* 60*HZ is arbitrary, but chosen enough high so that the first
+--- a/net/ipv4/ip_tunnel_core.c
++++ b/net/ipv4/ip_tunnel_core.c
+@@ -74,7 +74,7 @@ int iptunnel_xmit(struct rtable *rt, str
+ 	iph->daddr	=	dst;
+ 	iph->saddr	=	src;
+ 	iph->ttl	=	ttl;
+-	__ip_select_ident(iph, skb_shinfo(skb)->gso_segs ?: 1);
++	__ip_select_ident_new(iph, skb_shinfo(skb)->gso_segs ?: 1);
+ 
+ 	err = ip_local_out(skb);
+ 	if (unlikely(net_xmit_eval(err)))
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -496,7 +496,44 @@ u32 ip_idents_reserve(u32 hash, int segs
+ }
+ EXPORT_SYMBOL(ip_idents_reserve);
+ 
+-void __ip_select_ident(struct iphdr *iph, int segs)
++static inline int inet_getid(struct inet_peer *p, int more)
++{
++	more++;
++	inet_peer_refcheck(p);
++	return atomic_add_return(more, &p->ip_id_count) - more;
++}
++
++static void ip_select_fb_ident(struct iphdr *iph)
++{
++	static DEFINE_SPINLOCK(ip_fb_id_lock);
++	static u32 ip_fallback_id;
++	u32 salt;
++
++	spin_lock_bh(&ip_fb_id_lock);
++	salt = secure_ip_id((__force __be32)ip_fallback_id ^ iph->daddr);
++	iph->id = htons(salt & 0xFFFF);
++	ip_fallback_id = salt;
++	spin_unlock_bh(&ip_fb_id_lock);
++
++}
++
++void __ip_select_ident(struct iphdr *iph, struct dst_entry *dst, int more)
++{
++	struct net *net = dev_net(dst->dev);
++	struct inet_peer *peer;
++
++	peer = inet_getpeer_v4(net->ipv4.peers, iph->daddr, 1);
++	if (peer) {
++		iph->id = htons(inet_getid(peer, more));
++		inet_putpeer(peer);
++		return;
++	}
++
++	ip_select_fb_ident(iph);
++}
++EXPORT_SYMBOL(__ip_select_ident);
++
++void __ip_select_ident_new(struct iphdr *iph, int segs)
+ {
+ 	static u32 ip_idents_hashrnd __read_mostly;
+ 	static bool hashrnd_initialized = false;
+@@ -514,7 +551,7 @@ void __ip_select_ident(struct iphdr *iph
+ 	id = ip_idents_reserve(hash, segs);
+ 	iph->id = htons(id);
+ }
+-EXPORT_SYMBOL(__ip_select_ident);
++EXPORT_SYMBOL(__ip_select_ident_new);
+ 
+ static void __build_flow_key(struct flowi4 *fl4, const struct sock *sk,
+ 			     const struct iphdr *iph,
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -516,7 +516,7 @@ static void ip6_copy_metadata(struct sk_
+ 	skb_copy_secmark(to, from);
+ }
+ 
+-static void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
++void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
+ {
+ 	static u32 ip6_idents_hashrnd __read_mostly;
+ 	static bool hashrnd_initialized = false;
+@@ -532,6 +532,7 @@ static void ipv6_select_ident(struct fra
+ 	id = ip_idents_reserve(hash, 1);
+ 	fhdr->identification = htonl(id);
+ }
++EXPORT_SYMBOL(ipv6_select_ident);
+ 
+ int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ {

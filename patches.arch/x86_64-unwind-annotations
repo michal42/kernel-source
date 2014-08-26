@@ -4,13 +4,13 @@ Patch-mainline: tbd
 References: bnc#472783, bnc#588458
 
 ---
- arch/x86/kernel/entry_64.S |   99 +++++++++++++++++++++++----------------------
- arch/x86/kernel/head_64.S  |   20 +++++++++
- 2 files changed, 72 insertions(+), 47 deletions(-)
+ arch/x86/kernel/entry_64.S |   84 +++++++++++++++++++++++----------------------
+ arch/x86/kernel/head_64.S  |   20 ++++++++++
+ 2 files changed, 64 insertions(+), 40 deletions(-)
 
 --- a/arch/x86/kernel/entry_64.S
 +++ b/arch/x86/kernel/entry_64.S
-@@ -382,21 +382,21 @@ ENDPROC(native_usergs_sysret64)
+@@ -383,21 +383,21 @@ ENDPROC(native_usergs_sysret64)
  /*
   * initial frame state for interrupts (and exceptions without error code)
   */
@@ -39,7 +39,7 @@ References: bnc#472783, bnc#588458
  	/*CFI_REL_OFFSET ss, SS+\offset-RIP*/
  	CFI_REL_OFFSET rsp, RSP+\offset-RIP
  	/*CFI_REL_OFFSET rflags, EFLAGS+\offset-RIP*/
-@@ -410,14 +410,15 @@ ENDPROC(native_usergs_sysret64)
+@@ -411,14 +411,15 @@ ENDPROC(native_usergs_sysret64)
   */
  	.macro XCPT_FRAME start=1 offset=0
  	INTR_FRAME \start, RIP+\offset-ORIG_RAX
@@ -56,7 +56,7 @@ References: bnc#472783, bnc#588458
  	CFI_REL_OFFSET rdi, RDI+\offset-ARGOFFSET
  	CFI_REL_OFFSET rsi, RSI+\offset-ARGOFFSET
  	CFI_REL_OFFSET rdx, RDX+\offset-ARGOFFSET
-@@ -433,7 +434,9 @@ ENDPROC(native_usergs_sysret64)
+@@ -434,7 +435,9 @@ ENDPROC(native_usergs_sysret64)
   * frame that enables passing a complete pt_regs to a C function.
   */
  	.macro DEFAULT_FRAME start=1 offset=0
@@ -66,7 +66,7 @@ References: bnc#472783, bnc#588458
  	CFI_REL_OFFSET rbx, RBX+\offset
  	CFI_REL_OFFSET rbp, RBP+\offset
  	CFI_REL_OFFSET r12, R12+\offset
-@@ -505,23 +508,23 @@ END(save_rest)
+@@ -491,23 +494,23 @@ ENDPROC(native_usergs_sysret64)
  /* save complete stack frame */
  	.pushsection .kprobes.text, "ax"
  ENTRY(save_paranoid)
@@ -102,7 +102,7 @@ References: bnc#472783, bnc#588458
  	movl $1,%ebx
  	movl $MSR_GS_BASE,%ecx
  	rdmsr
-@@ -1207,7 +1210,7 @@ ENTRY(\sym)
+@@ -1288,7 +1291,7 @@ ENTRY(\sym)
  	subq $ORIG_RAX-R15, %rsp
  	CFI_ADJUST_CFA_OFFSET ORIG_RAX-R15
  	call error_entry
@@ -111,7 +111,7 @@ References: bnc#472783, bnc#588458
  	movq %rsp,%rdi		/* pt_regs pointer */
  	xorl %esi,%esi		/* no error code */
  	call \do_sym
-@@ -1225,6 +1228,7 @@ ENTRY(\sym)
+@@ -1306,6 +1309,7 @@ ENTRY(\sym)
  	subq $ORIG_RAX-R15, %rsp
  	CFI_ADJUST_CFA_OFFSET ORIG_RAX-R15
  	call save_paranoid
@@ -119,7 +119,7 @@ References: bnc#472783, bnc#588458
  	TRACE_IRQS_OFF
  	movq %rsp,%rdi		/* pt_regs pointer */
  	xorl %esi,%esi		/* no error code */
-@@ -1263,7 +1268,7 @@ ENTRY(\sym)
+@@ -1344,7 +1348,7 @@ ENTRY(\sym)
  	subq $ORIG_RAX-R15, %rsp
  	CFI_ADJUST_CFA_OFFSET ORIG_RAX-R15
  	call error_entry
@@ -128,7 +128,7 @@ References: bnc#472783, bnc#588458
  	movq %rsp,%rdi			/* pt_regs pointer */
  	movq ORIG_RAX(%rsp),%rsi	/* get error code */
  	movq $-1,ORIG_RAX(%rsp)		/* no syscall to restart */
-@@ -1282,7 +1287,7 @@ ENTRY(\sym)
+@@ -1363,7 +1367,7 @@ ENTRY(\sym)
  	subq $ORIG_RAX-R15, %rsp
  	CFI_ADJUST_CFA_OFFSET ORIG_RAX-R15
  	call save_paranoid
@@ -137,7 +137,7 @@ References: bnc#472783, bnc#588458
  	TRACE_IRQS_OFF
  	movq %rsp,%rdi			/* pt_regs pointer */
  	movq ORIG_RAX(%rsp),%rsi	/* get error code */
-@@ -1582,25 +1587,24 @@ END(paranoid_exit)
+@@ -1663,25 +1667,24 @@ END(paranoid_exit)
   * returns in "no swapgs flag" in %ebx.
   */
  ENTRY(error_entry)
@@ -178,15 +178,15 @@ References: bnc#472783, bnc#588458
  	xorl %ebx,%ebx
  	testl $3,CS+8(%rsp)
  	je error_kernelspace
-@@ -1618,6 +1622,7 @@ error_sti:
+@@ -1699,6 +1702,7 @@ error_sti:
   * compat mode. Check for these here too.
   */
  error_kernelspace:
 +	CFI_REL_OFFSET rcx, RCX+8
  	incl %ebx
- 	leaq irq_return(%rip),%rcx
+ 	leaq native_irq_return_iret(%rip),%rcx
  	cmpq %rcx,RIP+8(%rsp)
-@@ -1870,7 +1875,7 @@ end_repeat_nmi:
+@@ -1951,7 +1955,7 @@ end_repeat_nmi:
  	 * exceptions might do.
  	 */
  	call save_paranoid
@@ -197,7 +197,7 @@ References: bnc#472783, bnc#588458
  	 * Save off the CR2 register. If we take a page fault in the NMI then
 --- a/arch/x86/kernel/head_64.S
 +++ b/arch/x86/kernel/head_64.S
-@@ -375,6 +375,25 @@ ENTRY(early_idt_handler)
+@@ -378,6 +378,25 @@ ENTRY(early_idt_handler)
  
  11:
  #ifdef CONFIG_EARLY_PRINTK
@@ -223,7 +223,7 @@ References: bnc#472783, bnc#588458
  	GET_CR2_INTO(%r9)	# can clobber any volatile register if pv
  	movl 80(%rsp),%r8d	# error code
  	movl 72(%rsp),%esi	# vector number
-@@ -391,6 +410,7 @@ ENTRY(early_idt_handler)
+@@ -394,6 +413,7 @@ ENTRY(early_idt_handler)
  	movq 40(%rsp),%rsi	# %rip again
  	call __print_symbol
  #endif
