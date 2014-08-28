@@ -1,0 +1,117 @@
+From 3e358ac2bb5bb9c9f4842145ca0da2384d13fd98 Mon Sep 17 00:00:00 2001
+From: Neil Horman <nhorman@tuxdriver.com>
+Date: Fri, 6 Sep 2013 15:36:08 -0400
+Subject: [PATCH] firmware: Be a bit more verbose about direct firmware loading failure
+Git-commit: 3e358ac2bb5bb9c9f4842145ca0da2384d13fd98
+Patch-mainline: 3.13-rc1
+References: bnc#889297
+
+The direct firmware loading interface is a bit quiet about failures.  Failures
+that occur during loading are masked if firmware exists in multiple locations,
+and may be masked entirely in the event that we fall back to the user mode
+helper code.  It would be nice to see some of the more unexpected errors get
+logged, so in the event that you expect the direct firmware loader to work (like
+if CONFIG_FW_LOADER_USER_HELPER is enabled), and something goes wrong, you can
+figure out what happened.
+
+Signed-off-by: Neil Horman <nhorman@tuxdriver.com>
+Acked-by: Ming Lei <ming.lei@canonical.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/base/firmware_class.c |   38 +++++++++++++++++++++++++-------------
+ 1 file changed, 25 insertions(+), 13 deletions(-)
+
+--- a/drivers/base/firmware_class.c
++++ b/drivers/base/firmware_class.c
+@@ -282,31 +282,35 @@ static noinline_for_stack long fw_file_s
+ 	return st.size;
+ }
+ 
+-static bool fw_read_file_contents(struct file *file, struct firmware_buf *fw_buf)
++static int fw_read_file_contents(struct file *file, struct firmware_buf *fw_buf)
+ {
+ 	long size;
+ 	char *buf;
++	int rc;
+ 
+ 	size = fw_file_size(file);
+ 	if (size <= 0)
+-		return false;
++		return -EINVAL;
+ 	buf = vmalloc(size);
+ 	if (!buf)
+-		return false;
+-	if (kernel_read(file, 0, buf, size) != size) {
++		return -ENOMEM;
++	rc = kernel_read(file, 0, buf, size);
++	if (rc != size) {
++		if (rc > 0)
++			rc = -EIO;
+ 		vfree(buf);
+-		return false;
++		return rc;
+ 	}
+ 	fw_buf->data = buf;
+ 	fw_buf->size = size;
+-	return true;
++	return 0;
+ }
+ 
+-static bool fw_get_filesystem_firmware(struct device *device,
++static int fw_get_filesystem_firmware(struct device *device,
+ 				       struct firmware_buf *buf)
+ {
+ 	int i;
+-	bool success = false;
++	int rc = -ENOENT;
+ 	char *path = __getname();
+ 
+ 	for (i = 0; i < ARRAY_SIZE(fw_path); i++) {
+@@ -321,14 +325,17 @@ static bool fw_get_filesystem_firmware(s
+ 		file = filp_open(path, O_RDONLY, 0);
+ 		if (IS_ERR(file))
+ 			continue;
+-		success = fw_read_file_contents(file, buf);
++		rc = fw_read_file_contents(file, buf);
+ 		fput(file);
+-		if (success)
++		if (rc)
++			dev_warn(device, "firmware, attempted to load %s, but failed with error %d\n",
++				path, rc);
++		else
+ 			break;
+ 	}
+ 	__putname(path);
+ 
+-	if (success) {
++	if (!rc) {
+ 		dev_dbg(device, "firmware: direct-loading firmware %s\n",
+ 			buf->fw_id);
+ 		mutex_lock(&fw_lock);
+@@ -337,7 +344,7 @@ static bool fw_get_filesystem_firmware(s
+ 		mutex_unlock(&fw_lock);
+ 	}
+ 
+-	return success;
++	return rc;
+ }
+ 
+ /* firmware holds the ownership of pages */
+@@ -1086,9 +1093,14 @@ _request_firmware(const struct firmware
+ 		}
+ 	}
+ 
+-	if (!fw_get_filesystem_firmware(device, fw->priv))
++	ret = fw_get_filesystem_firmware(device, fw->priv);
++	if (ret) {
++		dev_warn(device, "Direct firmware load failed with error %d\n",
++			 ret);
++		dev_warn(device, "Falling back to user helper\n");
+ 		ret = fw_load_from_user_helper(fw, name, device,
+ 					       uevent, nowait, timeout);
++	}
+ 
+ 	/* don't cache firmware handled without uevent */
+ 	if (!ret)
