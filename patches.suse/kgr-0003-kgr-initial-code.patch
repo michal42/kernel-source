@@ -58,6 +58,7 @@ js: make all the structs self-contained
 js: add some comments
 js: remove filter properly
 pm: better name for kgr_for_each_patch_fun
+js: move the kgr_ftrace a bit upper
 
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
@@ -152,7 +153,7 @@ Cc: Andi Kleen <andi@firstfloor.org>
  	OFFSET(crypto_tfm_ctx_offset, crypto_tfm, __crt_ctx);
 --- a/arch/x86/kernel/entry_64.S
 +++ b/arch/x86/kernel/entry_64.S
-@@ -615,6 +615,7 @@ GLOBAL(system_call_after_swapgs)
+@@ -616,6 +616,7 @@ GLOBAL(system_call_after_swapgs)
  	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
  	movq  %rcx,RIP-ARGOFFSET(%rsp)
  	CFI_REL_OFFSET rip,RIP-ARGOFFSET
@@ -160,7 +161,7 @@ Cc: Andi Kleen <andi@firstfloor.org>
  	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags+THREAD_INFO(%rsp,RIP-ARGOFFSET)
  	jnz tracesys
  system_call_fastpath:
-@@ -639,6 +640,7 @@ sysret_check:
+@@ -640,6 +641,7 @@ sysret_check:
  	LOCKDEP_SYS_EXIT
  	DISABLE_INTERRUPTS(CLBR_NONE)
  	TRACE_IRQS_OFF
@@ -168,7 +169,7 @@ Cc: Andi Kleen <andi@firstfloor.org>
  	movl TI_flags+THREAD_INFO(%rsp,RIP-ARGOFFSET),%edx
  	andl %edi,%edx
  	jnz  sysret_careful
-@@ -761,6 +763,7 @@ GLOBAL(int_ret_from_sys_call)
+@@ -762,6 +764,7 @@ GLOBAL(int_ret_from_sys_call)
  GLOBAL(int_with_check)
  	LOCKDEP_SYS_EXIT_IRQ
  	GET_THREAD_INFO(%rcx)
@@ -356,6 +357,36 @@ Cc: Andi Kleen <andi@firstfloor.org>
 +	}
 +}
 +
++static int kgr_ftrace_enable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
++{
++	int ret;
++
++	ret = ftrace_set_filter_ip(fops, pf->loc_old, 0, 0);
++	if (ret)
++		return ret;
++
++	ret = register_ftrace_function(fops);
++	if (ret)
++		ftrace_set_filter_ip(fops, pf->loc_old, 1, 0);
++
++	return ret;
++}
++
++static int kgr_ftrace_disable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
++{
++	int ret;
++
++	ret = unregister_ftrace_function(fops);
++	if (ret)
++		return ret;
++
++	ret = ftrace_set_filter_ip(fops, pf->loc_old, 1, 0);
++	if (ret)
++		register_ftrace_function(fops);
++
++	return ret;
++}
++
 +static bool kgr_still_patching(void)
 +{
 +	struct task_struct *p;
@@ -491,36 +522,6 @@ Cc: Andi Kleen <andi@firstfloor.org>
 +	fops->flags = FTRACE_OPS_FL_SAVE_REGS;
 +
 +	return 0;
-+}
-+
-+static int kgr_ftrace_enable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
-+{
-+	int ret;
-+
-+	ret = ftrace_set_filter_ip(fops, pf->loc_old, 0, 0);
-+	if (ret)
-+		return ret;
-+
-+	ret = register_ftrace_function(fops);
-+	if (ret)
-+		ftrace_set_filter_ip(fops, pf->loc_old, 1, 0);
-+
-+	return ret;
-+}
-+
-+static int kgr_ftrace_disable(struct kgr_patch_fun *pf, struct ftrace_ops *fops)
-+{
-+	int ret;
-+
-+	ret = unregister_ftrace_function(fops);
-+	if (ret)
-+		return ret;
-+
-+	ret = ftrace_set_filter_ip(fops, pf->loc_old, 1, 0);
-+	if (ret)
-+		register_ftrace_function(fops);
-+
-+	return ret;
 +}
 +
 +static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final)

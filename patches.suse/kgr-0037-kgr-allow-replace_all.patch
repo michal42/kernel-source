@@ -8,6 +8,12 @@ We may want load a single patch on the top of others which will
 replace all of them atomically. As a result we have only a single
 patch applied and all previous modules can be unloaded.
 
+It works as follows:
+* all patches and its patch_funs are walked
+* if a patch_fun's function is contained in the new patch, it is
+  moved to the new one, using the slow stub
+* if it is not, the patch_fun is reverted
+
 TODO: this is not finished yet!
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
@@ -39,7 +45,7 @@ index 178928b12108..f1ed2596ebfc 100644
  };
  
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 75039b206010..7bd2011f4ec0 100644
+index 140fc96214eb..ff1b99f8052d 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -36,6 +36,7 @@ static struct workqueue_struct *kgr_wq;
@@ -50,7 +56,7 @@ index 75039b206010..7bd2011f4ec0 100644
  bool kgr_in_progress;
  static bool kgr_initialized;
  static struct kgr_patch *kgr_patch;
-@@ -111,6 +112,52 @@ static bool kgr_still_patching(void)
+@@ -141,6 +142,52 @@ static bool kgr_still_patching(void)
  	return failed;
  }
  
@@ -84,7 +90,7 @@ index 75039b206010..7bd2011f4ec0 100644
 +			}
 +
 +			pr_info("UNREG %s -> %s\n", p->name, pf->name);
-+			err = unregister_ftrace_function(&pf->ftrace_ops_fast);
++			err = kgr_ftrace_disable(pf, &pf->ftrace_ops_fast);
 +			if (err) {
 +				pr_warning("kgr: unregistering ftrace function for %s failed with %d\n",
 +						pf->name, err);
@@ -103,7 +109,7 @@ index 75039b206010..7bd2011f4ec0 100644
  static void kgr_finalize(void)
  {
  	struct kgr_patch_fun *patch_fun;
-@@ -130,8 +177,11 @@ static void kgr_finalize(void)
+@@ -160,8 +207,11 @@ static void kgr_finalize(void)
  	if (kgr_revert) {
  		kgr_refs_dec();
  		module_put(kgr_patch->owner);
