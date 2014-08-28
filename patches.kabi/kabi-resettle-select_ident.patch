@@ -19,13 +19,15 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 ---
  include/net/inetpeer.h    |    1 +
  include/net/ip.h          |    5 +++--
+ include/net/ipv6.h        |    2 ++
  include/net/secure_seq.h  |    2 ++
  net/core/secure_seq.c     |   24 ++++++++++++++++++++++++
  net/ipv4/inetpeer.c       |    4 ++++
  net/ipv4/ip_tunnel_core.c |    2 +-
  net/ipv4/route.c          |   41 +++++++++++++++++++++++++++++++++++++++--
- net/ipv6/ip6_output.c     |    3 ++-
- 8 files changed, 76 insertions(+), 6 deletions(-)
+ net/ipv6/ip6_output.c     |   17 -----------------
+ net/ipv6/output_core.c    |   18 ++++++++++++++++++
+ 10 files changed, 94 insertions(+), 22 deletions(-)
 
 --- a/include/net/inetpeer.h
 +++ b/include/net/inetpeer.h
@@ -58,6 +60,17 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	}
  }
  
+--- a/include/net/ipv6.h
++++ b/include/net/ipv6.h
+@@ -661,6 +661,8 @@ static inline int ipv6_addr_diff(const s
+ 	return __ipv6_addr_diff(a1, a2, sizeof(struct in6_addr));
+ }
+ 
++extern void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt);
++
+ extern int ip6_dst_hoplimit(struct dst_entry *dst);
+ 
+ /*
 --- a/include/net/secure_seq.h
 +++ b/include/net/secure_seq.h
 @@ -3,6 +3,8 @@
@@ -185,20 +198,58 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  			     const struct iphdr *iph,
 --- a/net/ipv6/ip6_output.c
 +++ b/net/ipv6/ip6_output.c
-@@ -516,7 +516,7 @@ static void ip6_copy_metadata(struct sk_
+@@ -516,23 +516,6 @@ static void ip6_copy_metadata(struct sk_
  	skb_copy_secmark(to, from);
  }
  
 -static void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
-+void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
+-{
+-	static u32 ip6_idents_hashrnd __read_mostly;
+-	static bool hashrnd_initialized = false;
+-	u32 hash, id;
+-
+-	if (unlikely(!hashrnd_initialized)) {
+-		hashrnd_initialized = true;
+-		get_random_bytes(&ip6_idents_hashrnd, sizeof(ip6_idents_hashrnd));
+-	}
+-	hash = __ipv6_addr_jhash(&rt->rt6i_dst.addr, ip6_idents_hashrnd);
+-	hash = __ipv6_addr_jhash(&rt->rt6i_src.addr, hash);
+-
+-	id = ip_idents_reserve(hash, 1);
+-	fhdr->identification = htonl(id);
+-}
+-
+ int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
  {
- 	static u32 ip6_idents_hashrnd __read_mostly;
- 	static bool hashrnd_initialized = false;
-@@ -532,6 +532,7 @@ static void ipv6_select_ident(struct fra
- 	id = ip_idents_reserve(hash, 1);
- 	fhdr->identification = htonl(id);
- }
+ 	struct sk_buff *frag;
+--- a/net/ipv6/output_core.c
++++ b/net/ipv6/output_core.c
+@@ -3,10 +3,28 @@
+  * not configured or static.  These functions are needed by GSO/GRO implementation.
+  */
+ #include <linux/export.h>
++#include <net/ip.h>
+ #include <net/ipv6.h>
+ #include <net/ip6_fib.h>
+ #include <net/addrconf.h>
+ 
++void ipv6_select_ident(struct frag_hdr *fhdr, struct rt6_info *rt)
++{
++	static u32 ip6_idents_hashrnd __read_mostly;
++	static bool hashrnd_initialized = false;
++	u32 hash, id;
++
++	if (unlikely(!hashrnd_initialized)) {
++		hashrnd_initialized = true;
++		get_random_bytes(&ip6_idents_hashrnd, sizeof(ip6_idents_hashrnd));
++	}
++	hash = __ipv6_addr_jhash(&rt->rt6i_dst.addr, ip6_idents_hashrnd);
++	hash = __ipv6_addr_jhash(&rt->rt6i_src.addr, hash);
++
++	id = ip_idents_reserve(hash, 1);
++	fhdr->identification = htonl(id);
++}
 +EXPORT_SYMBOL(ipv6_select_ident);
  
- int ip6_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+ int ip6_find_1stfragopt(struct sk_buff *skb, u8 **nexthdr)
  {
