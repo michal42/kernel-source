@@ -46,17 +46,15 @@ Signed-off-by: Dan Williams <dan.j.williams@intel.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
- drivers/usb/core/hcd.c  |  2 -
- drivers/usb/core/hub.c  | 97 +++++++++++++++++++++++++++++++++++--------------
- drivers/usb/core/hub.h  |  4 +-
- drivers/usb/core/port.c |  6 +--
+ drivers/usb/core/hcd.c  |    2 
+ drivers/usb/core/hub.c  |   97 ++++++++++++++++++++++++++++++++++--------------
+ drivers/usb/core/hub.h  |    4 -
+ drivers/usb/core/port.c |    6 --
  4 files changed, 72 insertions(+), 37 deletions(-)
 
-diff --git a/drivers/usb/core/hcd.c b/drivers/usb/core/hcd.c
-index 670b575..86d5c7e 100644
 --- a/drivers/usb/core/hcd.c
 +++ b/drivers/usb/core/hcd.c
-@@ -2261,9 +2261,7 @@ static void hcd_resume_work(struct work_struct *work)
+@@ -2261,9 +2261,7 @@ static void hcd_resume_work(struct work_
  	struct usb_hcd *hcd = container_of(work, struct usb_hcd, wakeup_work);
  	struct usb_device *udev = hcd->self.root_hub;
  
@@ -66,11 +64,9 @@ index 670b575..86d5c7e 100644
  }
  
  /**
-diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
-index 8972d10..ffee187 100644
 --- a/drivers/usb/core/hub.c
 +++ b/drivers/usb/core/hub.c
-@@ -2784,6 +2784,20 @@ static int port_is_power_on(struct usb_hub *hub, unsigned portstatus)
+@@ -2803,6 +2803,20 @@ static int port_is_power_on(struct usb_h
  	return ret;
  }
  
@@ -91,7 +87,7 @@ index 8972d10..ffee187 100644
  #ifdef	CONFIG_PM
  
  /* Check if a port is suspended(USB2.0 port) or in U3 state(USB3.0 port) */
-@@ -3006,6 +3020,8 @@ int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
+@@ -3025,6 +3039,8 @@ int usb_port_suspend(struct usb_device *
  	int		status;
  	bool		really_suspend = true;
  
@@ -100,7 +96,7 @@ index 8972d10..ffee187 100644
  	/* enable remote wakeup when appropriate; this lets the device
  	 * wake up the upstream hub (including maybe the root hub).
  	 *
-@@ -3099,6 +3115,8 @@ int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
+@@ -3118,6 +3134,8 @@ int usb_port_suspend(struct usb_device *
  		pm_runtime_put_sync(&port_dev->dev);
  
  	usb_mark_last_busy(hub->hdev);
@@ -109,7 +105,7 @@ index 8972d10..ffee187 100644
  	return status;
  }
  
-@@ -3247,13 +3265,13 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+@@ -3303,13 +3321,13 @@ int usb_port_resume(struct usb_device *u
  		}
  	}
  
@@ -125,16 +121,16 @@ index 8972d10..ffee187 100644
  	/* see 7.1.7.7; affects power usage, but not budgeting */
  	if (hub_is_superspeed(hub->hdev))
  		status = hub_set_port_link_state(hub, port1, USB_SS_PORT_LS_U0);
-@@ -3292,8 +3310,6 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+@@ -3348,8 +3366,6 @@ int usb_port_resume(struct usb_device *u
  		}
  	}
  
 -	clear_bit(port1, hub->busy_bits);
 -
- 	status = check_port_resume_type(udev,
- 			hub, port1, status, portchange, portstatus);
- 	if (status == 0)
-@@ -3311,16 +3327,18 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+ 	if (udev->persist_enabled && hub_is_superspeed(hub->hdev))
+ 		status = wait_for_ss_port_enable(udev, hub, &port1, &portchange,
+ 				&portstatus);
+@@ -3371,16 +3387,18 @@ int usb_port_resume(struct usb_device *u
  		usb_unlocked_enable_lpm(udev);
  	}
  
@@ -154,7 +150,7 @@ index 8972d10..ffee187 100644
  	if (udev->state == USB_STATE_SUSPENDED) {
  		dev_dbg(&udev->dev, "usb %sresume\n", "wakeup-");
  		status = usb_autoresume_device(udev);
-@@ -3329,6 +3347,7 @@ int usb_remote_wakeup(struct usb_device *udev)
+@@ -3389,6 +3407,7 @@ int usb_remote_wakeup(struct usb_device
  			usb_autosuspend_device(udev);
  		}
  	}
@@ -162,7 +158,7 @@ index 8972d10..ffee187 100644
  	return status;
  }
  
-@@ -4033,9 +4052,10 @@ static int hub_enable_device(struct usb_device *udev)
+@@ -4093,9 +4112,10 @@ static int hub_enable_device(struct usb_
   * Returns device in USB_STATE_ADDRESS, except on error.
   *
   * If this is called for an already-existing device (as part of
@@ -176,7 +172,7 @@ index 8972d10..ffee187 100644
   */
  static int
  hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
-@@ -4520,7 +4540,9 @@ static void hub_port_connect(struct usb_hub *hub, int port1, u16 portstatus,
+@@ -4580,7 +4600,9 @@ static void hub_port_connect(struct usb_
  		}
  
  		/* reset (non-USB 3.0 devices) and get descriptor */
@@ -186,7 +182,7 @@ index 8972d10..ffee187 100644
  		if (status < 0)
  			goto loop;
  
-@@ -4642,6 +4664,7 @@ done:
+@@ -4702,6 +4724,7 @@ done:
   */
  static void hub_port_connect_change(struct usb_hub *hub, int port1,
  					u16 portstatus, u16 portchange)
@@ -194,7 +190,7 @@ index 8972d10..ffee187 100644
  {
  	struct usb_port *port_dev = hub->ports[port1 - 1];
  	struct usb_device *udev = port_dev->child;
-@@ -4673,26 +4696,29 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
+@@ -4733,26 +4756,29 @@ static void hub_port_connect_change(stru
  			/* For a suspended device, treat this as a
  			 * remote wakeup event.
  			 */
@@ -227,7 +223,7 @@ index 8972d10..ffee187 100644
  {
  	struct usb_port *port_dev = hub->ports[port - 1];
  	struct usb_device *hdev;
-@@ -4717,9 +4743,9 @@ static int hub_handle_remote_wakeup(struct usb_hub *hub, unsigned int port,
+@@ -4777,9 +4803,9 @@ static int hub_handle_remote_wakeup(stru
  		/* TRSMRCY = 10 msec */
  		msleep(10);
  
@@ -239,7 +235,7 @@ index 8972d10..ffee187 100644
  		if (ret < 0)
  			connect_change = 1;
  	} else {
-@@ -4731,6 +4757,7 @@ static int hub_handle_remote_wakeup(struct usb_hub *hub, unsigned int port,
+@@ -4791,6 +4817,7 @@ static int hub_handle_remote_wakeup(stru
  }
  
  static void port_event(struct usb_hub *hub, int port1)
@@ -247,7 +243,7 @@ index 8972d10..ffee187 100644
  {
  	int connect_change, reset_device = 0;
  	struct usb_port *port_dev = hub->ports[port1 - 1];
-@@ -4838,9 +4865,11 @@ static void port_event(struct usb_hub *hub, int port1)
+@@ -4898,9 +4925,11 @@ static void port_event(struct usb_hub *h
  	if (reset_device || (udev && hub_is_superspeed(hub->hdev)
  				&& (portchange & USB_PORT_STAT_C_LINK_STATE)
  				&& (portstatus & USB_PORT_STAT_CONNECTION))) {
@@ -259,7 +255,7 @@ index 8972d10..ffee187 100644
  		connect_change = 0;
  	}
  
-@@ -4934,10 +4963,9 @@ static void hub_events(void)
+@@ -4994,10 +5023,9 @@ static void hub_events(void)
  		for (i = 1; i <= hdev->maxchild; i++) {
  			struct usb_port *port_dev = hub->ports[i - 1];
  
@@ -273,7 +269,7 @@ index 8972d10..ffee187 100644
  				/*
  				 * The get_noresume and barrier ensure that if
  				 * the port was in the process of resuming, we
-@@ -4949,7 +4977,9 @@ static void hub_events(void)
+@@ -5009,7 +5037,9 @@ static void hub_events(void)
  				 */
  				pm_runtime_get_noresume(&port_dev->dev);
  				pm_runtime_barrier(&port_dev->dev);
@@ -283,7 +279,7 @@ index 8972d10..ffee187 100644
  				pm_runtime_put_sync(&port_dev->dev);
  			}
  		}
-@@ -5187,15 +5217,18 @@ static int descriptors_changed(struct usb_device *udev,
+@@ -5247,15 +5277,18 @@ static int descriptors_changed(struct us
   * if the reset wasn't even attempted.
   *
   * Note:
@@ -307,7 +303,7 @@ index 8972d10..ffee187 100644
   */
  static int usb_reset_and_verify_device(struct usb_device *udev)
  {
-@@ -5214,11 +5247,9 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+@@ -5274,11 +5307,9 @@ static int usb_reset_and_verify_device(s
  		return -EINVAL;
  	}
  
@@ -321,7 +317,7 @@ index 8972d10..ffee187 100644
  	parent_hub = usb_hub_to_struct_hub(parent_hdev);
  
  	/* Disable USB2 hardware LPM.
-@@ -5247,7 +5278,6 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+@@ -5307,7 +5338,6 @@ static int usb_reset_and_verify_device(s
  		goto re_enumerate;
  	}
  
@@ -329,7 +325,7 @@ index 8972d10..ffee187 100644
  	for (i = 0; i < SET_CONFIG_TRIES; ++i) {
  
  		/* ep0 maxpacket size may change; let the HCD know about it.
-@@ -5257,7 +5287,6 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
+@@ -5317,7 +5347,6 @@ static int usb_reset_and_verify_device(s
  		if (ret >= 0 || ret == -ENOTCONN || ret == -ENODEV)
  			break;
  	}
@@ -337,7 +333,7 @@ index 8972d10..ffee187 100644
  
  	if (ret < 0)
  		goto re_enumerate;
-@@ -5378,7 +5407,9 @@ int usb_reset_device(struct usb_device *udev)
+@@ -5438,7 +5467,9 @@ int usb_reset_device(struct usb_device *
  	int ret;
  	int i;
  	unsigned int noio_flag;
@@ -347,7 +343,7 @@ index 8972d10..ffee187 100644
  
  	if (udev->state == USB_STATE_NOTATTACHED ||
  			udev->state == USB_STATE_SUSPENDED) {
-@@ -5387,6 +5418,14 @@ int usb_reset_device(struct usb_device *udev)
+@@ -5447,6 +5478,14 @@ int usb_reset_device(struct usb_device *
  		return -EINVAL;
  	}
  
@@ -362,7 +358,7 @@ index 8972d10..ffee187 100644
  	/*
  	 * Don't allocate memory with GFP_KERNEL in current
  	 * context to avoid possible deadlock if usb mass
-@@ -5420,7 +5459,9 @@ int usb_reset_device(struct usb_device *udev)
+@@ -5480,7 +5519,9 @@ int usb_reset_device(struct usb_device *
  		}
  	}
  
@@ -372,8 +368,6 @@ index 8972d10..ffee187 100644
  
  	if (config) {
  		for (i = config->desc.bNumInterfaces - 1; i >= 0; --i) {
-diff --git a/drivers/usb/core/hub.h b/drivers/usb/core/hub.h
-index 906c355..0a7cdc0 100644
 --- a/drivers/usb/core/hub.h
 +++ b/drivers/usb/core/hub.h
 @@ -45,8 +45,6 @@ struct usb_hub {
@@ -401,11 +395,9 @@ index 906c355..0a7cdc0 100644
  	u8 portnum;
  	unsigned int is_superspeed:1;
  };
-diff --git a/drivers/usb/core/port.c b/drivers/usb/core/port.c
-index fb83c2c..8b16557 100644
 --- a/drivers/usb/core/port.c
 +++ b/drivers/usb/core/port.c
-@@ -95,8 +95,6 @@ static int usb_port_runtime_resume(struct device *dev)
+@@ -95,8 +95,6 @@ static int usb_port_runtime_resume(struc
  		pm_runtime_get_sync(&peer->dev);
  
  	usb_autopm_get_interface(intf);
@@ -414,7 +406,7 @@ index fb83c2c..8b16557 100644
  	retval = usb_hub_set_port_power(hdev, hub, port1, true);
  	msleep(hub_power_on_good_delay(hub));
  	if (port_dev->child && !retval) {
-@@ -113,7 +111,6 @@ static int usb_port_runtime_resume(struct device *dev)
+@@ -113,7 +111,6 @@ static int usb_port_runtime_resume(struc
  		retval = 0;
  	}
  
@@ -422,7 +414,7 @@ index fb83c2c..8b16557 100644
  	usb_autopm_put_interface(intf);
  
  	return retval;
-@@ -139,12 +136,10 @@ static int usb_port_runtime_suspend(struct device *dev)
+@@ -139,12 +136,10 @@ static int usb_port_runtime_suspend(stru
  		return -EAGAIN;
  
  	usb_autopm_get_interface(intf);
@@ -435,7 +427,7 @@ index fb83c2c..8b16557 100644
  	usb_autopm_put_interface(intf);
  
  	/*
-@@ -400,6 +395,7 @@ int usb_hub_create_port_device(struct usb_hub *hub, int port1)
+@@ -400,6 +395,7 @@ int usb_hub_create_port_device(struct us
  		port_dev->is_superspeed = 1;
  	dev_set_name(&port_dev->dev, "%s-port%d", dev_name(&hub->hdev->dev),
  			port1);
@@ -443,6 +435,3 @@ index fb83c2c..8b16557 100644
  	retval = device_register(&port_dev->dev);
  	if (retval)
  		goto error_register;
--- 
-1.8.4.5
-

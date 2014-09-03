@@ -1,0 +1,41 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct bio_integrity_payload
+Patch-mainline: never, kabi
+
+In 3.12.28, commit c27a4fe151abf351665639eef0ee2fef7e6fb4f9
+(bio-integrity: add "bip_max_vcnt" into struct bio_integrity_payload),
+upstream commit cbcd1054a1fd2aa980fc11ff28e436fc4aaa2d54,
+added bip_max_vcnt to struct bio_integrity_payload. It indeed changed
+layout of that structure.
+
+The structure has to be allocated using bio_integrity_alloc, so there
+are no worries it will be short for drivers that were not recompiled.
+But we have to move the member to the end of members which can be
+used from the external modules. Note that there is bip_inline_vecs
+behind this, but this is only an internal member and should not be
+accessed from outside. Conclusively, by this patch we preserve the
+layout and offsets of externally accesible members.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/bio.h |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/include/linux/bio.h
++++ b/include/linux/bio.h
+@@ -187,12 +187,14 @@ struct bio_integrity_payload {
+ 	unsigned short		bip_slab;	/* slab the bip came from */
+ 	unsigned short		bip_vcnt;	/* # of integrity bio_vecs */
+ 	unsigned short		bip_idx;	/* current bip_vec index */
+-	unsigned short		bip_max_vcnt;	/* integrity bio_vec slots */
+ 	unsigned		bip_owns_buf:1;	/* should free bip_buf */
+ 
+ 	struct work_struct	bip_work;	/* I/O completion */
+ 
+ 	struct bio_vec		*bip_vec;
++#ifndef __GENKSYMS__
++	unsigned short		bip_max_vcnt;	/* integrity bio_vec slots */
++#endif
+ 	struct bio_vec		bip_inline_vecs[0];/* embedded bvec array */
+ };
+ #endif /* CONFIG_BLK_DEV_INTEGRITY */
