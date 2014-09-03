@@ -18,7 +18,7 @@ Tested-by: Toshi Kani <toshi.kani@hp.com>
 Signed-off-by: Matt Fleming <matt.fleming@intel.com>
 Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dump-an-arbitrary-pagetable.patch" by xen-port-patches.py
 
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable.h	2014-03-12 11:41:11.000000000 +0100
+--- sle12.orig/arch/x86/include/mach-xen/asm/pgtable.h	2014-04-09 13:20:19.000000000 +0200
 +++ sle12/arch/x86/include/mach-xen/asm/pgtable.h	2014-03-19 14:13:58.000000000 +0100
 @@ -15,9 +15,10 @@
  	 : (prot))
@@ -32,17 +32,17 @@ Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dum
  /*
   * ZERO_PAGE is a global shared page that is always zero: used
   * for zero-mapped memory areas etc..
---- sle12.orig/arch/x86/mm/dump_pagetables-xen.c	2011-02-01 15:04:27.000000000 +0100
-+++ sle12/arch/x86/mm/dump_pagetables-xen.c	2014-03-19 14:13:58.000000000 +0100
-@@ -33,6 +33,7 @@ struct pg_state {
- 	unsigned long start_address;
+--- sle12.orig/arch/x86/mm/dump_pagetables-xen.c	2014-09-01 16:15:44.000000000 +0200
++++ sle12/arch/x86/mm/dump_pagetables-xen.c	2014-09-01 16:31:55.000000000 +0200
+@@ -34,6 +34,7 @@ struct pg_state {
  	unsigned long current_address;
  	const struct addr_marker *marker;
+ 	unsigned long lines;
 +	bool to_dmesg;
  };
  
  struct addr_marker {
-@@ -101,10 +102,28 @@ static inline bool hypervisor_space(unsi
+@@ -105,10 +106,28 @@ static inline bool hypervisor_space(unsi
  #define PUD_LEVEL_MULT (PTRS_PER_PMD * PMD_LEVEL_MULT)
  #define PGD_LEVEL_MULT (PTRS_PER_PUD * PUD_LEVEL_MULT)
  
@@ -72,7 +72,7 @@ Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dum
  {
  	pgprotval_t pr = pgprot_val(prot);
  	static const char * const level_name[] =
-@@ -112,47 +131,47 @@ static void printk_prot(struct seq_file 
+@@ -116,47 +135,47 @@ static void printk_prot(struct seq_file 
  
  	if (!pgprot_val(prot)) {
  		/* Not present */
@@ -138,40 +138,40 @@ Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dum
  }
  
  /*
-@@ -191,7 +210,8 @@ static void note_page(struct seq_file *m
- 		st->current_prot = new_prot;
+@@ -196,7 +215,8 @@ static void note_page(struct seq_file *m
  		st->level = level;
  		st->marker = address_markers;
+ 		st->lines = 0;
 -		seq_printf(m, "---[ %s ]---\n", st->marker->name);
 +		pt_dump_seq_printf(m, st->to_dmesg, "---[ %s ]---\n",
 +				   st->marker->name);
  	} else if (prot != cur || level != st->level ||
  		   st->current_address >= st->marker[1].start_address) {
  		const char *unit = units;
-@@ -201,17 +221,17 @@ static void note_page(struct seq_file *m
- 		/*
- 		 * Now print the actual finished series
+@@ -208,17 +228,17 @@ static void note_page(struct seq_file *m
  		 */
--		seq_printf(m, "0x%0*lx-0x%0*lx   ",
--			   width, st->start_address,
--			   width, st->current_address);
-+		pt_dump_seq_printf(m, st->to_dmesg,  "0x%0*lx-0x%0*lx   ",
-+				   width, st->start_address,
-+				   width, st->current_address);
+ 		if (!st->marker->max_lines ||
+ 		    st->lines < st->marker->max_lines) {
+-			seq_printf(m, "0x%0*lx-0x%0*lx   ",
+-				   width, st->start_address,
+-				   width, st->current_address);
++			pt_dump_seq_printf(m, st->to_dmesg,  "0x%0*lx-0x%0*lx   ",
++					   width, st->start_address,
++					   width, st->current_address);
  
- 		delta = (st->current_address - st->start_address) >> 10;
- 		while (!(delta & 1023) && unit[1]) {
- 			delta >>= 10;
- 			unit++;
+ 			delta = (st->current_address - st->start_address) >> 10;
+ 			while (!(delta & 1023) && unit[1]) {
+ 				delta >>= 10;
+ 				unit++;
+ 			}
+-			seq_printf(m, "%9lu%c ", delta, *unit);
+-			printk_prot(m, st->current_prot, st->level);
++			pt_dump_cont_printf(m, st->to_dmesg, "%9lu%c ", delta, *unit);
++			printk_prot(m, st->current_prot, st->level, st->to_dmesg);
  		}
--		seq_printf(m, "%9lu%c ", delta, *unit);
--		printk_prot(m, st->current_prot, st->level);
-+		pt_dump_cont_printf(m, st->to_dmesg, "%9lu%c ", delta, *unit);
-+		printk_prot(m, st->current_prot, st->level, st->to_dmesg);
+ 		st->lines++;
  
- 		/*
- 		 * We print markers for special areas of address space,
-@@ -220,7 +240,8 @@ static void note_page(struct seq_file *m
+@@ -229,7 +249,8 @@ static void note_page(struct seq_file *m
  		 */
  		if (st->current_address >= st->marker[1].start_address) {
  			st->marker++;
@@ -181,7 +181,7 @@ Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dum
  		}
  
  		st->start_address = st->current_address;
-@@ -312,7 +333,7 @@ static void walk_pud_level(struct seq_fi
+@@ -321,7 +342,7 @@ static void walk_pud_level(struct seq_fi
  #define pgd_none(a)  pud_none(__pud_ma(__pgd_val(a)))
  #endif
  
@@ -190,7 +190,7 @@ Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dum
  {
  #ifdef CONFIG_X86_64
  	pgd_t *start = (pgd_t *) &init_level4_pgt;
-@@ -320,9 +341,12 @@ static void walk_pgd_level(struct seq_fi
+@@ -329,9 +350,12 @@ static void walk_pgd_level(struct seq_fi
  	pgd_t *start = swapper_pg_dir;
  #endif
  	int i;
@@ -205,7 +205,7 @@ Automatically created from "patches.arch/x86-ptdump-add-the-functionality-to-dum
  
  	for (i = 0; i < PTRS_PER_PGD; i++) {
  		st.current_address = normalize_addr(i * PGD_LEVEL_MULT);
-@@ -347,7 +371,7 @@ static void walk_pgd_level(struct seq_fi
+@@ -356,7 +380,7 @@ static void walk_pgd_level(struct seq_fi
  
  static int ptdump_show(struct seq_file *m, void *v)
  {

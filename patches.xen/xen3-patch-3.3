@@ -485,7 +485,7 @@ Acked-by: jbeulich@suse.com
 -	.quad compat_sys_process_vm_readv
 -	.quad compat_sys_process_vm_writev
 -ia32_syscall_end:
---- sle12.orig/arch/x86/include/asm/debugreg.h	2014-05-09 14:09:11.000000000 +0200
+--- sle12.orig/arch/x86/include/asm/debugreg.h	2014-09-01 15:44:03.000000000 +0200
 +++ sle12/arch/x86/include/asm/debugreg.h	2013-01-08 12:02:11.000000000 +0100
 @@ -93,7 +93,7 @@ extern void aout_dump_debugregs(struct u
  
@@ -1277,7 +1277,7 @@ Acked-by: jbeulich@suse.com
  	inc_irq_stat(x86_platform_ipis);
  
  	if (x86_platform_ipi_callback)
---- sle12.orig/arch/x86/kernel/irq_64.c	2014-05-09 14:09:11.000000000 +0200
+--- sle12.orig/arch/x86/kernel/irq_64.c	2014-09-01 15:44:03.000000000 +0200
 +++ sle12/arch/x86/kernel/irq_64.c	2012-05-11 10:57:43.000000000 +0200
 @@ -39,7 +39,9 @@ static inline void stack_overflow_check(
  {
@@ -1538,7 +1538,7 @@ Acked-by: jbeulich@suse.com
  }
  
 --- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 12:35:51.000000000 +0100
-+++ sle12/arch/x86/kernel/setup-xen.c	2014-01-23 12:35:55.000000000 +0100
++++ sle12/arch/x86/kernel/setup-xen.c	2014-08-29 08:40:34.000000000 +0200
 @@ -341,7 +341,8 @@ static void __init cleanup_highmap(void)
  static void __init reserve_brk(void)
  {
@@ -1641,6 +1641,17 @@ Acked-by: jbeulich@suse.com
  		efi_enabled = 1;
  		efi_memblock_x86_reserve_range();
  	}
+@@ -993,8 +987,8 @@ void __init setup_arch(char **cmdline_p)
+ 		max_pfn = e820_end_of_ram_pfn();
+ #else
+ 	if (max_pfn > xen_start_info->nr_pages)
+-		memblock_x86_reserve_range(PFN_PHYS(xen_start_info->nr_pages),
+-					   PFN_PHYS(max_pfn), "BALLOON");
++		memblock_reserve(PFN_PHYS(xen_start_info->nr_pages),
++				 PFN_PHYS(max_pfn - xen_start_info->nr_pages));
+ #endif
+ 
+ #ifdef CONFIG_X86_32
 --- sle12.orig/arch/x86/kernel/smp-xen.c	2011-07-01 15:47:44.000000000 +0200
 +++ sle12/arch/x86/kernel/smp-xen.c	2012-02-16 17:53:11.000000000 +0100
 @@ -28,6 +28,7 @@
@@ -2141,7 +2152,7 @@ Acked-by: jbeulich@suse.com
 +}
 +
 --- sle12.orig/arch/x86/mm/init_64-xen.c	2013-04-05 09:18:42.000000000 +0200
-+++ sle12/arch/x86/mm/init_64-xen.c	2013-04-05 09:21:15.000000000 +0200
++++ sle12/arch/x86/mm/init_64-xen.c	2014-09-01 15:53:17.000000000 +0200
 @@ -457,7 +457,7 @@ static inline int __meminit make_readonl
  	 * No need for writable mapping of kernel image. This also ensures that
  	 * page and descriptor tables embedded inside don't have writable
@@ -2151,16 +2162,11 @@ Acked-by: jbeulich@suse.com
  	 * regions can be allocated from under CONFIG_NO_BOOTMEM and thus must
  	 * be writable.
  	 */
-@@ -863,26 +863,12 @@ kernel_physical_mapping_init(unsigned lo
+@@ -863,21 +863,12 @@ kernel_physical_mapping_init(unsigned lo
  #ifndef CONFIG_NUMA
  void __init initmem_init(void)
  {
 -	memblock_x86_register_active_regions(0, 0, max_pfn);
--#ifdef CONFIG_XEN
--	if (max_pfn > xen_start_info->nr_pages)
--		memblock_x86_reserve_range(xen_start_info->nr_pages << PAGE_SHIFT,
--					   max_pfn << PAGE_SHIFT, "BALLOON");
--#endif
 +	memblock_set_node(0, (phys_addr_t)ULLONG_MAX, 0);
  }
  #endif
@@ -2179,7 +2185,7 @@ Acked-by: jbeulich@suse.com
  	sparse_memory_present_with_active_regions(MAX_NUMNODES);
  	sparse_init();
  
-@@ -894,7 +880,7 @@ void __init paging_init(void)
+@@ -889,7 +880,7 @@ void __init paging_init(void)
  	 */
  	node_clear_state(0, N_NORMAL_MEMORY);
  
@@ -2212,7 +2218,7 @@ Acked-by: jbeulich@suse.com
  	 * The return value is ignored as the calls cannot fail.
  	 * Large pages for identity mappings are not used at boot time
  	 * and hence no memory allocations during large page split.
---- sle12.orig/drivers/acpi/osl.c	2014-05-09 14:09:11.000000000 +0200
+--- sle12.orig/drivers/acpi/osl.c	2014-09-01 15:44:03.000000000 +0200
 +++ sle12/drivers/acpi/osl.c	2014-01-23 11:21:49.000000000 +0100
 @@ -329,8 +329,12 @@ acpi_map_lookup_virt(void __iomem *virt,
  }
@@ -2593,7 +2599,7 @@ Acked-by: jbeulich@suse.com
  	return 0;
  }
  
-@@ -431,7 +590,8 @@ static int msix_capability_init(struct p
+@@ -429,7 +588,8 @@ static int msix_capability_init(struct p
  		}
  		if (mapped)
  			continue;
@@ -2603,7 +2609,7 @@ Acked-by: jbeulich@suse.com
  		if (pirq < 0)
  			break;
  		attach_pirq_entry(pirq, entries[i].entry, msi_dev_entry);
-@@ -441,7 +601,12 @@ static int msix_capability_init(struct p
+@@ -439,7 +599,12 @@ static int msix_capability_init(struct p
  	if (i != nvec) {
  		int avail = i - 1;
  		for (j = --i; j >= 0; j--) {
@@ -2617,7 +2623,7 @@ Acked-by: jbeulich@suse.com
  			detach_pirq_entry(entries[j].entry, msi_dev_entry);
  			entries[j].vector = 0;
  		}
-@@ -456,6 +621,7 @@ static int msix_capability_init(struct p
+@@ -454,6 +619,7 @@ static int msix_capability_init(struct p
  	/* Set MSI-X enabled bits and unmask the function */
  	pci_intx_for_msi(dev, 0);
  	dev->msix_enabled = 1;
@@ -2625,7 +2631,7 @@ Acked-by: jbeulich@suse.com
  
  	control &= ~PCI_MSIX_FLAGS_MASKALL;
  	pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
-@@ -554,7 +720,7 @@ int pci_enable_msi_block(struct pci_dev 
+@@ -552,7 +718,7 @@ int pci_enable_msi_block(struct pci_dev 
  		dev->irq = evtchn_map_pirq(-1, dev->irq);
  		dev->msi_enabled = 1;
  		msi_dev_entry->default_irq = temp;
@@ -2634,7 +2640,7 @@ Acked-by: jbeulich@suse.com
  		return ret;
  #else
  		return -EOPNOTSUPP;
-@@ -599,7 +765,10 @@ void pci_msi_shutdown(struct pci_dev *de
+@@ -597,7 +763,10 @@ void pci_msi_shutdown(struct pci_dev *de
  	pirq = dev->irq;
  	/* Restore dev->irq to its default pin-assertion vector */
  	dev->irq = msi_dev_entry->default_irq;
@@ -2646,7 +2652,7 @@ Acked-by: jbeulich@suse.com
  
  	/* Disable MSI mode */
  	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-@@ -611,6 +780,8 @@ void pci_msi_shutdown(struct pci_dev *de
+@@ -609,6 +778,8 @@ void pci_msi_shutdown(struct pci_dev *de
  void pci_disable_msi(struct pci_dev *dev)
  {
  	pci_msi_shutdown(dev);
@@ -2655,7 +2661,7 @@ Acked-by: jbeulich@suse.com
  }
  EXPORT_SYMBOL(pci_disable_msi);
  
-@@ -688,6 +859,7 @@ int pci_enable_msix(struct pci_dev *dev,
+@@ -686,6 +857,7 @@ int pci_enable_msix(struct pci_dev *dev,
  			attach_pirq_entry(irq, entries[i].entry, msi_dev_entry);
  			entries[i].vector = irq;
  		}
@@ -2663,7 +2669,7 @@ Acked-by: jbeulich@suse.com
  		return 0;
  #else
  		return -EOPNOTSUPP;
-@@ -754,6 +926,8 @@ void pci_msix_shutdown(struct pci_dev *d
+@@ -752,6 +924,8 @@ void pci_msix_shutdown(struct pci_dev *d
  void pci_disable_msix(struct pci_dev *dev)
  {
  	pci_msix_shutdown(dev);
@@ -2672,7 +2678,7 @@ Acked-by: jbeulich@suse.com
  }
  EXPORT_SYMBOL(pci_disable_msix);
  
-@@ -768,25 +942,35 @@ EXPORT_SYMBOL(pci_disable_msix);
+@@ -766,25 +940,35 @@ EXPORT_SYMBOL(pci_disable_msix);
   **/
  void msi_remove_pci_irq_vectors(struct pci_dev *dev)
  {
@@ -2715,7 +2721,7 @@ Acked-by: jbeulich@suse.com
  	dev->irq = msi_dev_entry->default_irq;
  }
  
-@@ -809,5 +993,21 @@ EXPORT_SYMBOL(pci_msi_enabled);
+@@ -807,5 +991,21 @@ EXPORT_SYMBOL(pci_msi_enabled);
  
  void pci_msi_init_pci_dev(struct pci_dev *dev)
  {
@@ -4420,7 +4426,7 @@ Acked-by: jbeulich@suse.com
  /* For xenbus internal use. */
  enum {
  	XENBUS_XSD_UNCOMMITTED = 0,
---- sle12.orig/drivers/xen/xenbus/xenbus_dev_backend.c	2014-05-09 14:09:11.000000000 +0200
+--- sle12.orig/drivers/xen/xenbus/xenbus_dev_backend.c	2014-09-01 15:44:03.000000000 +0200
 +++ sle12/drivers/xen/xenbus/xenbus_dev_backend.c	2013-08-09 15:29:19.000000000 +0200
 @@ -9,7 +9,9 @@
  #include <linux/capability.h>
@@ -4474,7 +4480,7 @@ Acked-by: jbeulich@suse.com
 +void xenbus_ring_ops_init(void);
 +
  #endif
---- sle12.orig/include/linux/pci_ids.h	2014-05-09 14:09:11.000000000 +0200
+--- sle12.orig/include/linux/pci_ids.h	2014-09-01 15:44:03.000000000 +0200
 +++ sle12/include/linux/pci_ids.h	2012-06-21 08:31:17.000000000 +0200
 @@ -75,6 +75,7 @@
  #define PCI_CLASS_SYSTEM_RTC		0x0803

@@ -1,0 +1,229 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: Linux 3.12.27
+Patch-mainline: 3.12.27
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Automatically created from "patches.kernel.org/patch-3.12.26-27" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/Kconfig	2014-01-23 11:23:54.000000000 +0100
++++ sle12/arch/x86/Kconfig	2014-09-01 16:15:44.000000000 +0200
+@@ -1030,11 +1030,11 @@ config X86_16BIT
+ 
+ config X86_ESPFIX32
+ 	def_bool y
+-	depends on X86_16BIT && X86_32
++	depends on X86_16BIT && X86_32 && !XEN
+ 
+ config X86_ESPFIX64
+ 	def_bool y
+-	depends on X86_16BIT && X86_64
++	depends on X86_16BIT && X86_64 && !XEN
+ 
+ config TOSHIBA
+ 	tristate "Toshiba Laptop support"
+--- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64_types.h	2013-03-25 09:13:57.000000000 +0100
++++ sle12/arch/x86/include/mach-xen/asm/pgtable_64_types.h	2014-09-01 16:15:44.000000000 +0200
+@@ -62,6 +62,8 @@ typedef union { pteval_t pte; unsigned i
+ #define MODULES_VADDR    _AC(0xffffffffa0000000, UL)
+ #define MODULES_END      _AC(0xffffffffff000000, UL)
+ #define MODULES_LEN   (MODULES_END - MODULES_VADDR)
++#define ESPFIX_PGD_ENTRY _AC(-2, UL)
++#define ESPFIX_BASE_ADDR (ESPFIX_PGD_ENTRY << PGDIR_SHIFT)
+ 
+ #define EARLY_DYNAMIC_PAGE_TABLES	64
+ 
+--- sle12.orig/arch/x86/kernel/entry_64-xen.S	2014-02-06 14:49:18.000000000 +0100
++++ sle12/arch/x86/kernel/entry_64-xen.S	2014-09-01 16:15:44.000000000 +0200
+@@ -61,6 +61,7 @@
+ #include <asm/asm.h>
+ #include <asm/context_tracking.h>
+ #include <asm/smap.h>
++#include <asm/pgtable_types.h>
+ #include <linux/err.h>
+ #include <xen/interface/xen.h>
+ #include <xen/interface/features.h>
+@@ -1001,10 +1002,40 @@ ENTRY(retint_kernel)
+ 	call preempt_schedule_irq
+ 	jmp retint_kernel       /* check again */
+ #endif
+-
+ 	CFI_ENDPROC
+ END(retint_check)
+ 
++	/*
++	 * If IRET takes a fault on the espfix stack, then we
++	 * end up promoting it to a doublefault.  In that case,
++	 * modify the stack to make it look like we just entered
++	 * the #GP handler from user space, similar to bad_iret.
++	 */
++#ifdef CONFIG_X86_ESPFIX64
++	ALIGN
++__do_double_fault:
++	XCPT_FRAME 1 RDI+8
++	movq RSP(%rdi),%rax		/* Trap on the espfix stack? */
++	sarq $PGDIR_SHIFT,%rax
++	cmpl $ESPFIX_PGD_ENTRY,%eax
++	jne do_double_fault		/* No, just deliver the fault */
++	cmpl $__KERNEL_CS,CS(%rdi)
++	jne do_double_fault
++	movq RIP(%rdi),%rax
++	cmpq $native_irq_return_iret,%rax
++	jne do_double_fault		/* This shouldn't happen... */
++	movq PER_CPU_VAR(kernel_stack),%rax
++	subq $(6*8-KERNEL_STACK_OFFSET),%rax	/* Reset to original stack */
++	movq %rax,RSP(%rdi)
++	movq $0,(%rax)			/* Missing (lost) #GP error code */
++	movq $general_protection,RIP(%rdi)
++	retq
++	CFI_ENDPROC
++END(__do_double_fault)
++#else
++# define __do_double_fault do_double_fault
++#endif
++
+ /*
+  * Exception entry points.
+  */
+@@ -1330,7 +1361,7 @@ error_sti:
+  */
+ error_kernelspace:
+ 	incl %ebx
+-	leaq irq_return(%rip),%rcx
++	leaq native_irq_return_iret(%rip),%rcx
+ 	cmpq %rcx,RIP+8(%rsp)
+ 	je error_swapgs
+ 	movl %ecx,%eax	/* zero extend */
+--- sle12.orig/arch/x86/kernel/ldt-xen.c	2014-06-27 14:24:44.000000000 +0200
++++ sle12/arch/x86/kernel/ldt-xen.c	2014-09-01 16:15:44.000000000 +0200
+@@ -20,8 +20,6 @@
+ #include <asm/mmu_context.h>
+ #include <asm/syscalls.h>
+ 
+-int sysctl_ldt16 = 0;
+-
+ #ifdef CONFIG_SMP
+ static void flush_ldt(void *current_mm)
+ {
+@@ -236,16 +234,10 @@ static int write_ldt(void __user *ptr, u
+ 		}
+ 	}
+ 
+-	/*
+-	 * On x86-64 we do not support 16-bit segments due to
+-	 * IRET leaking the high bits of the kernel stack address.
+-	 */
+-#ifdef CONFIG_X86_64
+-	if (!ldt_info.seg_32bit && !sysctl_ldt16) {
++	if (!IS_ENABLED(CONFIG_X86_16BIT) && !ldt_info.seg_32bit) {
+ 		error = -EINVAL;
+ 		goto out_unlock;
+ 	}
+-#endif
+ 
+ 	fill_ldt(&ldt, &ldt_info);
+ 	if (oldmode)
+--- sle12.orig/arch/x86/mm/dump_pagetables-xen.c	2011-02-01 15:04:27.000000000 +0100
++++ sle12/arch/x86/mm/dump_pagetables-xen.c	2014-09-01 16:15:44.000000000 +0200
+@@ -33,11 +33,13 @@ struct pg_state {
+ 	unsigned long start_address;
+ 	unsigned long current_address;
+ 	const struct addr_marker *marker;
++	unsigned long lines;
+ };
+ 
+ struct addr_marker {
+ 	unsigned long start_address;
+ 	const char *name;
++	unsigned long max_lines;
+ };
+ 
+ /* indices for address_markers; keep sync'd w/ address_markers below */
+@@ -48,6 +50,7 @@ enum address_markers_idx {
+ 	LOW_KERNEL_NR,
+ 	VMALLOC_START_NR,
+ 	VMEMMAP_START_NR,
++	ESPFIX_START_NR,
+ 	HIGH_KERNEL_NR,
+ 	MODULES_VADDR_NR,
+ 	MODULES_END_NR,
+@@ -71,6 +74,7 @@ static struct addr_marker address_marker
+ 	{ PAGE_OFFSET,                "Low Kernel Mapping" },
+ 	{ VMALLOC_START,              "vmalloc() Area" },
+ 	{ VMEMMAP_START,              "Vmemmap" },
++	{ ESPFIX_BASE_ADDR,           "ESPfix Area", 16 },
+ 	{ __START_KERNEL_map,         "High Kernel Mapping" },
+ 	{ MODULES_VADDR,              "Modules" },
+ 	{ MODULES_END,                "End Modules" },
+@@ -176,7 +180,7 @@ static void note_page(struct seq_file *m
+ 		      pgprot_t new_prot, int level)
+ {
+ 	pgprotval_t prot, cur;
+-	static const char units[] = "KMGTPE";
++	static const char units[] = "BKMGTPE";
+ 
+ 	/*
+ 	 * If we have a "break" in the series, we need to flush the state that
+@@ -191,6 +195,7 @@ static void note_page(struct seq_file *m
+ 		st->current_prot = new_prot;
+ 		st->level = level;
+ 		st->marker = address_markers;
++		st->lines = 0;
+ 		seq_printf(m, "---[ %s ]---\n", st->marker->name);
+ 	} else if (prot != cur || level != st->level ||
+ 		   st->current_address >= st->marker[1].start_address) {
+@@ -201,17 +206,21 @@ static void note_page(struct seq_file *m
+ 		/*
+ 		 * Now print the actual finished series
+ 		 */
+-		seq_printf(m, "0x%0*lx-0x%0*lx   ",
+-			   width, st->start_address,
+-			   width, st->current_address);
+-
+-		delta = (st->current_address - st->start_address) >> 10;
+-		while (!(delta & 1023) && unit[1]) {
+-			delta >>= 10;
+-			unit++;
++		if (!st->marker->max_lines ||
++		    st->lines < st->marker->max_lines) {
++			seq_printf(m, "0x%0*lx-0x%0*lx   ",
++				   width, st->start_address,
++				   width, st->current_address);
++
++			delta = (st->current_address - st->start_address) >> 10;
++			while (!(delta & 1023) && unit[1]) {
++				delta >>= 10;
++				unit++;
++			}
++			seq_printf(m, "%9lu%c ", delta, *unit);
++			printk_prot(m, st->current_prot, st->level);
+ 		}
+-		seq_printf(m, "%9lu%c ", delta, *unit);
+-		printk_prot(m, st->current_prot, st->level);
++		st->lines++;
+ 
+ 		/*
+ 		 * We print markers for special areas of address space,
+--- sle12.orig/arch/x86/vdso/vdso32-setup-xen.c	2014-06-27 14:24:44.000000000 +0200
++++ sle12/arch/x86/vdso/vdso32-setup-xen.c	2014-09-01 16:15:44.000000000 +0200
+@@ -43,7 +43,6 @@ enum {
+ #ifdef CONFIG_X86_64
+ #define vdso_enabled			sysctl_vsyscall32
+ #define arch_setup_additional_pages	syscall32_setup_pages
+-extern int sysctl_ldt16;
+ #endif
+ 
+ /*
+@@ -429,13 +428,6 @@ static struct ctl_table abi_table2[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= proc_dointvec
+ 	},
+-	{
+-		.procname	= "ldt16",
+-		.data		= &sysctl_ldt16,
+-		.maxlen		= sizeof(int),
+-		.mode		= 0644,
+-		.proc_handler	= proc_dointvec
+-	},
+ 	{}
+ };
+ 

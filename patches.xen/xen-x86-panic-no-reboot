@@ -1,8 +1,12 @@
-From: jbeulich@novell.com
-Subject: Don't automatically reboot Dom0 on panic (match native)
-Patch-mainline: obsolete
+From: jbeulich@suse.com
+Subject: don't automatically reboot Dom0 on panic (match native)
+Patch-mainline: n/a
 
-$subject says it all.
+But make sure KEXEC_CMD_kexec gets issued instead of the previous
+reporting of SHUTDOWN_crash.
+
+TBD: kexec_should_crash() should probably also be made functional
+     for the CONFIG_XEN && !CONFIG_KEXEC case
 
 --- sle12.orig/arch/x86/kernel/setup-xen.c	2014-02-27 14:20:53.000000000 +0100
 +++ sle12/arch/x86/kernel/setup-xen.c	2014-01-23 14:19:39.000000000 +0100
@@ -30,3 +34,48 @@ $subject says it all.
  
  	set_iopl.iopl = 1;
  	WARN_ON(HYPERVISOR_physdev_op(PHYSDEVOP_set_iopl, &set_iopl));
+--- sle12.orig/include/linux/kexec.h	2012-10-23 14:53:19.000000000 +0200
++++ sle12/include/linux/kexec.h	2014-08-28 14:13:37.000000000 +0200
+@@ -2,6 +2,10 @@
+ #define LINUX_KEXEC_H
+ 
+ #include <uapi/linux/kexec.h>
++#ifdef CONFIG_XEN
++#include <asm/hypervisor.h>
++#include <xen/interface/kexec.h>
++#endif
+ 
+ #ifdef CONFIG_KEXEC
+ #include <linux/list.h>
+@@ -234,7 +238,15 @@ void crash_free_reserved_phys_range(unsi
+ #else /* !CONFIG_KEXEC */
+ struct pt_regs;
+ struct task_struct;
+-static inline void crash_kexec(struct pt_regs *regs) { }
++static inline void crash_kexec(struct pt_regs *regs) {
++#ifdef CONFIG_XEN
++	if (is_initial_xendomain()) {
++		xen_kexec_exec_t xke = { .type = KEXEC_TYPE_CRASH };
++
++		VOID(HYPERVISOR_kexec_op(KEXEC_CMD_kexec, &xke));
++	}
++#endif
++}
+ static inline int kexec_should_crash(struct task_struct *p) { return 0; }
+ #endif /* CONFIG_KEXEC */
+ #endif /* LINUX_KEXEC_H */
+--- sle12.orig/kernel/kexec.c	2014-01-23 11:17:23.000000000 +0100
++++ sle12/kernel/kexec.c	2014-08-28 13:34:39.000000000 +0200
+@@ -1148,6 +1148,12 @@ void crash_kexec(struct pt_regs *regs)
+ 			crash_save_vmcoreinfo();
+ 			machine_crash_shutdown(&fixed_regs);
+ 			machine_kexec(kexec_crash_image);
++#ifdef CONFIG_XEN
++		} else if (is_initial_xendomain()) {
++			xen_kexec_exec_t xke = { .type = KEXEC_TYPE_CRASH };
++
++			VOID(HYPERVISOR_kexec_op(KEXEC_CMD_kexec, &xke));
++#endif
+ 		}
+ 		mutex_unlock(&kexec_mutex);
+ 	}
