@@ -25,14 +25,15 @@ order by incrementing the reference count of previous patches.
 
 js: do not chain ftrace locations, always jump from 'name'
 jk: fix patch stacking
+js: de-duplicate code and extract to kgr_get_last_pf
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
 ---
- include/linux/kgraft.h |   9 ++++-
- kernel/kgraft.c        | 103 +++++++++++++++++++++++++++++++++++++++++++++++--
- kernel/kgraft_files.c  |  10 +++++
- 3 files changed, 118 insertions(+), 4 deletions(-)
+ include/linux/kgraft.h |  9 ++++-
+ kernel/kgraft.c        | 98 ++++++++++++++++++++++++++++++++++++++++++++++++--
+ kernel/kgraft_files.c  | 10 ++++++
+ 3 files changed, 113 insertions(+), 4 deletions(-)
 
 diff --git a/include/linux/kgraft.h b/include/linux/kgraft.h
 index f7cc1f769e53..de21eec63745 100644
@@ -87,7 +88,7 @@ index f7cc1f769e53..de21eec63745 100644
  	/* a patch shall set these */
  	const char *name;
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index cf7f382e54ac..303e602379cf 100644
+index cf7f382e54ac..f4f58b488a80 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -18,6 +18,7 @@
@@ -163,15 +164,15 @@ index cf7f382e54ac..303e602379cf 100644
  	mutex_unlock(&kgr_in_progress_lock);
  }
  
-@@ -236,6 +259,53 @@ static void kgr_handle_irqs(void)
+@@ -236,6 +259,48 @@ static void kgr_handle_irqs(void)
  	schedule_on_each_cpu(kgr_handle_irq_cpu);
  }
  
-+static unsigned long kgr_get_old_fun(const struct kgr_patch_fun *patch_fun)
++static struct kgr_patch_fun *
++kgr_get_last_pf(const struct kgr_patch_fun *patch_fun)
 +{
 +	const char *name = patch_fun->name;
-+	unsigned long last_new_fun = 0;
-+	struct kgr_patch_fun *pf;
++	struct kgr_patch_fun *pf, *last_pf = NULL;
 +	struct kgr_patch *p;
 +
 +	list_for_each_entry(p, &patches, list) {
@@ -180,12 +181,19 @@ index cf7f382e54ac..303e602379cf 100644
 +				continue;
 +
 +			if (!strcmp(pf->name, name))
-+				last_new_fun = (unsigned long)pf->new_fun;
++				last_pf = pf;
 +		}
 +	}
 +
-+	if (last_new_fun)
-+		return ftrace_function_to_fentry(last_new_fun);
++	return last_pf;
++}
++
++static unsigned long kgr_get_old_fun(const struct kgr_patch_fun *patch_fun)
++{
++	struct kgr_patch_fun *pf = kgr_get_last_pf(patch_fun);
++
++	if (pf)
++		return ftrace_function_to_fentry((unsigned long)pf->new_fun);
 +
 +	return patch_fun->loc_name;
 +}
@@ -194,30 +202,18 @@ index cf7f382e54ac..303e602379cf 100644
 + * Obtain the "previous" (in the sense of patch stacking) value of ftrace_ops
 + * so that it can be put back properly in case of reverting the patch
 + */
-+static struct ftrace_ops *kgr_get_old_fops(const struct kgr_patch_fun *patch_fun)
++static struct ftrace_ops *
++kgr_get_old_fops(const struct kgr_patch_fun *patch_fun)
 +{
-+	const char *name = patch_fun->name;
-+	struct ftrace_ops *last_new_fops = NULL;
-+	struct kgr_patch_fun *pf;
-+	struct kgr_patch *p;
++	struct kgr_patch_fun *pf = kgr_get_last_pf(patch_fun);
 +
-+	list_for_each_entry(p, &patches, list) {
-+		kgr_for_each_patch_fun(p, pf) {
-+			if (pf->state != KGR_PATCH_APPLIED)
-+				continue;
-+
-+			if (!strcmp(pf->name, name))
-+				last_new_fops = &pf->ftrace_ops_fast;
-+		}
-+	}
-+
-+	return last_new_fops;
++	return pf ? &pf->ftrace_ops_fast : NULL;
 +}
 +
  static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
  {
  	struct ftrace_ops *fops;
-@@ -262,6 +332,14 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
+@@ -262,6 +327,14 @@ static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
  	if (IS_ERR_VALUE(fentry_loc))
  		return fentry_loc;
  
@@ -232,7 +228,7 @@ index cf7f382e54ac..303e602379cf 100644
  	pr_debug("kgr: storing %lx to loc_old for %s\n",
  			fentry_loc, patch_fun->name);
  	patch_fun->loc_old = fentry_loc;
-@@ -301,6 +379,12 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final,
+@@ -301,6 +374,12 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final,
  
  		next_state = KGR_PATCH_SLOW;
  		new_ops = &patch_fun->ftrace_ops_slow;
@@ -245,7 +241,7 @@ index cf7f382e54ac..303e602379cf 100644
  		break;
  	case KGR_PATCH_SLOW:
  		if (revert || !final)
-@@ -321,6 +405,11 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final,
+@@ -321,6 +400,11 @@ static int kgr_patch_code(struct kgr_patch_fun *patch_fun, bool final,
  			return -EINVAL;
  		next_state = KGR_PATCH_REVERTED;
  		unreg_ops = &patch_fun->ftrace_ops_slow;
@@ -257,7 +253,7 @@ index cf7f382e54ac..303e602379cf 100644
  		break;
  	case KGR_PATCH_SKIPPED:
  		return 0;
-@@ -370,6 +459,12 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
+@@ -370,6 +454,12 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
  	}
  
  	mutex_lock(&kgr_in_progress_lock);
@@ -270,7 +266,7 @@ index cf7f382e54ac..303e602379cf 100644
  	if (kgr_in_progress) {
  		pr_err("kgr: can't patch, another patching not yet finalized\n");
  		ret = -EAGAIN;
-@@ -406,6 +501,8 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
+@@ -406,6 +496,8 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert)
  	kgr_in_progress = true;
  	kgr_patch = patch;
  	kgr_revert = revert;
@@ -312,5 +308,5 @@ index f649ee5645ca..9bcc1b5ae317 100644
  	NULL
  };
 -- 
-2.0.4
+2.1.0
 
