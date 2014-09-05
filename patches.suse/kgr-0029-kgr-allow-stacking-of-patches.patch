@@ -26,6 +26,7 @@ order by incrementing the reference count of previous patches.
 js: do not chain ftrace locations, always jump from 'name'
 jk: fix patch stacking
 js: de-duplicate code and extract to kgr_get_last_pf
+js: prepend kgr_ to the list of patches
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
@@ -88,7 +89,7 @@ index f7cc1f769e53..de21eec63745 100644
  	/* a patch shall set these */
  	const char *name;
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index cf7f382e54ac..f4f58b488a80 100644
+index cf7f382e54ac..fc0f048637a7 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -18,6 +18,7 @@
@@ -103,7 +104,7 @@ index cf7f382e54ac..f4f58b488a80 100644
  static struct workqueue_struct *kgr_wq;
  static DECLARE_DELAYED_WORK(kgr_work, kgr_work_fn);
  static DEFINE_MUTEX(kgr_in_progress_lock);
-+static LIST_HEAD(patches);
++static LIST_HEAD(kgr_patches);
  bool kgr_in_progress;
  static bool kgr_initialized;
  static struct kgr_patch *kgr_patch;
@@ -115,7 +116,7 @@ index cf7f382e54ac..f4f58b488a80 100644
 +{
 +	struct kgr_patch *p;
 +
-+	list_for_each_entry(p, &patches, list)
++	list_for_each_entry(p, &kgr_patches, list)
 +		p->refs++;
 +}
 +
@@ -123,7 +124,7 @@ index cf7f382e54ac..f4f58b488a80 100644
 +{
 +	struct kgr_patch *p;
 +
-+	list_for_each_entry(p, &patches, list)
++	list_for_each_entry(p, &kgr_patches, list)
 +		p->refs--;
 +}
 +
@@ -160,7 +161,7 @@ index cf7f382e54ac..f4f58b488a80 100644
 +		list_del(&kgr_patch->list);
 +		kgr_refs_dec();
 +	} else
-+		list_add_tail(&kgr_patch->list, &patches);
++		list_add_tail(&kgr_patch->list, &kgr_patches);
  	mutex_unlock(&kgr_in_progress_lock);
  }
  
@@ -175,7 +176,7 @@ index cf7f382e54ac..f4f58b488a80 100644
 +	struct kgr_patch_fun *pf, *last_pf = NULL;
 +	struct kgr_patch *p;
 +
-+	list_for_each_entry(p, &patches, list) {
++	list_for_each_entry(p, &kgr_patches, list) {
 +		kgr_for_each_patch_fun(p, pf) {
 +			if (pf->state != KGR_PATCH_APPLIED)
 +				continue;
