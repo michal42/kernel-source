@@ -25,6 +25,8 @@ to workqueues is: have only kthreads that contain kgr_task_safe
 explicitly (or using some helper) and nothing else.
 
 jk: issue kgr_task_safe() for !CONFIG_FREEZER
+jk: call kgr_task_safe only for kthreads in fix try_to_freeze
+js: one line, one command
 
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
@@ -45,7 +47,7 @@ Cc: Tejun Heo <tj@kernel.org>
  fs/jbd2/journal.c                |    2 ++
  fs/notify/mark.c                 |    5 ++++-
  fs/xfs/xfs_trans_ail.c           |    2 ++
- include/linux/freezer.h          |    4 +++-
+ include/linux/freezer.h          |   11 ++++++++++-
  kernel/hung_task.c               |    5 ++++-
  kernel/irq/manage.c              |    1 +
  kernel/kthread.c                 |    3 +++
@@ -56,7 +58,7 @@ Cc: Tejun Heo <tj@kernel.org>
  mm/huge_memory.c                 |    6 ++++--
  mm/ksm.c                         |    5 +++--
  net/bluetooth/rfcomm/core.c      |    2 ++
- 19 files changed, 55 insertions(+), 15 deletions(-)
+ 19 files changed, 62 insertions(+), 15 deletions(-)
 
 --- a/drivers/base/devtmpfs.c
 +++ b/drivers/base/devtmpfs.c
@@ -92,7 +94,7 @@ Cc: Tejun Heo <tj@kernel.org>
  		    shost->host_failed != shost->host_busy) {
 --- a/drivers/usb/core/hub.c
 +++ b/drivers/usb/core/hub.c
-@@ -4916,9 +4916,9 @@ static int hub_thread(void *__unused)
+@@ -4957,9 +4957,9 @@ static int hub_thread(void *__unused)
  
  	do {
  		hub_events();
@@ -173,21 +175,28 @@ Cc: Tejun Heo <tj@kernel.org>
  		else
 --- a/include/linux/freezer.h
 +++ b/include/linux/freezer.h
-@@ -61,6 +61,8 @@ static inline bool try_to_freeze_unsafe(
+@@ -61,6 +61,9 @@ static inline bool try_to_freeze_unsafe(
  
  static inline bool try_to_freeze(void)
  {
-+	kgr_task_safe(current);
++	if (current->flags & PF_KTHREAD)
++		kgr_task_safe(current);
 +
  	if (!(current->flags & PF_NOFREEZE))
  		debug_check_no_locks_held();
  	return try_to_freeze_unsafe();
-@@ -316,7 +318,7 @@ static inline void thaw_processes(void)
+@@ -316,7 +319,13 @@ static inline void thaw_processes(void)
  static inline void thaw_kernel_threads(void) {}
  
  static inline bool try_to_freeze_nowarn(void) { return false; }
 -static inline bool try_to_freeze(void) { return false; }
-+static inline bool try_to_freeze(void) { kgr_task_safe(current); return false; }
++static inline bool try_to_freeze(void)
++{
++	if (current->flags & PF_KTHREAD)
++		kgr_task_safe(current);
++
++	return false;
++}
  
  static inline void freezer_do_not_count(void) {}
  static inline void freezer_count(void) {}
