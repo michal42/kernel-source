@@ -1,0 +1,40 @@
+From: Alan Stern <stern@rowland.harvard.edu>
+Subject: Block: fix unbalanced bypass-disable in blk_register_queue
+References: bnc#880794
+Git-commit: Not available
+Patch-mainline: Submitted on 9 Sep 2014 to linux-kernel@vger.kernel.org
+
+
+When a queue is registered, the block layer turns off the bypass
+setting (because bypass is enabled when the queue is created).  This
+doesn't work well for queues that are unregistered and then registered
+again; we get a WARNING because of the unbalanced calls to
+blk_queue_bypass_end().
+
+This patch fixes the problem by making blk_register_queue() call
+blk_queue_bypass_end() only the first time the queue is registered.
+
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+CC: Tejun Heo <tj@kernel.org>
+CC: James Bottomley <James.Bottomley@HansenPartnership.com>
+CC: Jens Axboe <axboe@kernel.dk>
+Signed-off-by: Shirish Pargaonkar <spargaonkar@suse.com>
+---
+diff --git a/block/blk-sysfs.c b/block/blk-sysfs.c
+index a2692cb..ccba7c9 100644
+--- a/block/blk-sysfs.c
++++ b/block/blk-sysfs.c
+@@ -583,8 +583,10 @@ int blk_register_queue(struct gendisk *disk)
+ 	 * Initialization must be complete by now.  Finish the initial
+ 	 * bypass from queue allocation.
+ 	 */
+-	blk_queue_bypass_end(q);
+-	queue_flag_set_unlocked(QUEUE_FLAG_INIT_DONE, q);
++	if (!blk_queue_init_done(q)) {
++		queue_flag_set_unlocked(QUEUE_FLAG_INIT_DONE, q);
++		blk_queue_bypass_end(q);
++	}
+ 
+ 	ret = blk_trace_init_sysfs(dev);
+ 	if (ret)
