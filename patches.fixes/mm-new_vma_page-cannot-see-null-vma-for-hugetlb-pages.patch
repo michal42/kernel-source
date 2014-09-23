@@ -1,0 +1,47 @@
+From: Michal Hocko <mhocko@suse.cz>
+Date: Thu, 23 Jan 2014 15:53:15 -0800
+Subject: mm: new_vma_page() cannot see NULL vma for hugetlb pages
+Git-commit: cc81717ed3bc6d4f3738d13a1e097437caada0e9
+Patch-mainline: v3.14-rc1
+References: bnc#897912
+
+Commit 11c731e81bb0 ("mm/mempolicy: fix !vma in new_vma_page()") has
+removed BUG_ON(!vma) from new_vma_page which is partially correct
+because page_address_in_vma will return EFAULT for non-linear mappings
+and at least shared shmem might be mapped this way.
+
+The patch also tried to prevent NULL ptr for hugetlb pages which is not
+correct AFAICS because hugetlb pages cannot be mapped as VM_NONLINEAR
+and other conditions in page_address_in_vma seem to be legit and catch
+real bugs.
+
+This patch restores BUG_ON for PageHuge to catch potential issues when
+the to-be-migrated page is not setup properly.
+
+Signed-off-by: Michal Hocko <mhocko@suse.cz>
+Reviewed-by: Bob Liu <bob.liu@oracle.com>
+Cc: Sasha Levin <sasha.levin@oracle.com>
+Cc: Wanpeng Li <liwanp@linux.vnet.ibm.com>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+---
+ mm/mempolicy.c |    6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -1200,10 +1200,8 @@ static struct page *new_page(struct page
+ 	}
+ 
+ 	if (PageHuge(page)) {
+-		if (vma)
+-			return alloc_huge_page_noerr(vma, address, 1);
+-		else
+-			return NULL;
++		BUG_ON(!vma);
++		return alloc_huge_page_noerr(vma, address, 1);
+ 	}
+ 	/*
+ 	 * if !vma, alloc_page_vma() will use task or system default policy
