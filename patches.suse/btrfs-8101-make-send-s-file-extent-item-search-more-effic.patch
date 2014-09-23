@@ -1,0 +1,73 @@
+From: Filipe David Borba Manana <fdmanana@gmail.com>
+Date: Fri, 24 Jan 2014 17:42:09 +0000
+Patch-mainline: 3.14
+Git-commit: 7fdd29d02e0ab595a857fe9c7b71e752ff665372
+References: bnc#897770
+Subject: [PATCH] Btrfs: make send's file extent item search more efficient
+
+Instead of looking for a file extent item, process it, release the path
+and do a btree search for the next file extent item, just process all
+file extent items in a leaf without intermediate btree searches. This way
+we save cpu and we're not blocking other tasks or affecting concurrency on
+the btree, because send's paths use the commit root and skip btree node/leaf
+locking.
+
+Signed-off-by: Filipe David Borba Manana <fdmanana@gmail.com>
+Signed-off-by: Josef Bacik <jbacik@fb.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: Filipe Manana <fdmanana@suse.com>
+---
+ fs/btrfs/send.c | 27 +++++++++++++++++----------
+ 1 file changed, 17 insertions(+), 10 deletions(-)
+
+diff --git a/fs/btrfs/send.c b/fs/btrfs/send.c
+index 3fbcca7..458df91 100644
+--- a/fs/btrfs/send.c
++++ b/fs/btrfs/send.c
+@@ -4623,17 +4623,25 @@ static int process_all_extents(struct send_ctx *sctx)
+ 	key.objectid = sctx->cmp_key->objectid;
+ 	key.type = BTRFS_EXTENT_DATA_KEY;
+ 	key.offset = 0;
+-	while (1) {
+-		ret = btrfs_search_slot_for_read(root, &key, path, 1, 0);
+-		if (ret < 0)
+-			goto out;
+-		if (ret) {
+-			ret = 0;
+-			goto out;
+-		}
++	ret = btrfs_search_slot(NULL, root, &key, path, 0, 0);
++	if (ret < 0)
++		goto out;
+ 
++	while (1) {
+ 		eb = path->nodes[0];
+ 		slot = path->slots[0];
++
++		if (slot >= btrfs_header_nritems(eb)) {
++			ret = btrfs_next_leaf(root, path);
++			if (ret < 0) {
++				goto out;
++			} else if (ret > 0) {
++				ret = 0;
++				break;
++			}
++			continue;
++		}
++
+ 		btrfs_item_key_to_cpu(eb, &found_key, slot);
+ 
+ 		if (found_key.objectid != key.objectid ||
+@@ -4646,8 +4654,7 @@ static int process_all_extents(struct send_ctx *sctx)
+ 		if (ret < 0)
+ 			goto out;
+ 
+-		btrfs_release_path(path);
+-		key.offset = found_key.offset + 1;
++		path->slots[0]++;
+ 	}
+ 
+ out:
+-- 
+1.8.4.5
+
