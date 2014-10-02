@@ -1,0 +1,93 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Thu, 2 Oct 2014 21:14:06 +0200
+Subject: Revert "svcrdma: Select NFSv4.1 backchannel transport based on
+ forward channel"
+Patch-mainline: never, kabi
+
+This reverts commit 849f67c7e1843fbad81a6e0dbbbb1614acbe9c11 from
+3.12.29, upstream commit 3c45ddf823d679a820adddd53b52c6699c9a05ac as
+it breaks kABI and I see no way out :/.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ fs/nfsd/nfs4callback.c                   | 3 +--
+ include/linux/sunrpc/svc_xprt.h          | 1 -
+ net/sunrpc/svcsock.c                     | 2 --
+ net/sunrpc/xprt.c                        | 2 +-
+ net/sunrpc/xprtrdma/svc_rdma_transport.c | 1 -
+ 5 files changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/fs/nfsd/nfs4callback.c b/fs/nfsd/nfs4callback.c
+index cc8c5b32043c..3eaa6e30a2dc 100644
+--- a/fs/nfsd/nfs4callback.c
++++ b/fs/nfsd/nfs4callback.c
+@@ -672,8 +672,7 @@ static int setup_callback_client(struct nfs4_client *clp, struct nfs4_cb_conn *c
+ 		clp->cl_cb_session = ses;
+ 		args.bc_xprt = conn->cb_xprt;
+ 		args.prognumber = clp->cl_cb_session->se_cb_prog;
+-		args.protocol = conn->cb_xprt->xpt_class->xcl_ident |
+-				XPRT_TRANSPORT_BC;
++		args.protocol = XPRT_TRANSPORT_BC_TCP;
+ 		args.authflavor = ses->se_cb_sec.flavor;
+ 	}
+ 	/* Create RPC client */
+diff --git a/include/linux/sunrpc/svc_xprt.h b/include/linux/sunrpc/svc_xprt.h
+index f5bfb1a80abe..b05963f09ebf 100644
+--- a/include/linux/sunrpc/svc_xprt.h
++++ b/include/linux/sunrpc/svc_xprt.h
+@@ -32,7 +32,6 @@ struct svc_xprt_class {
+ 	struct svc_xprt_ops	*xcl_ops;
+ 	struct list_head	xcl_list;
+ 	u32			xcl_max_payload;
+-	int			xcl_ident;
+ };
+ 
+ /*
+diff --git a/net/sunrpc/svcsock.c b/net/sunrpc/svcsock.c
+index 8c6e9c75c525..6ac0f1c3fc28 100644
+--- a/net/sunrpc/svcsock.c
++++ b/net/sunrpc/svcsock.c
+@@ -683,7 +683,6 @@ static struct svc_xprt_class svc_udp_class = {
+ 	.xcl_owner = THIS_MODULE,
+ 	.xcl_ops = &svc_udp_ops,
+ 	.xcl_max_payload = RPCSVC_MAXPAYLOAD_UDP,
+-	.xcl_ident = XPRT_TRANSPORT_UDP,
+ };
+ 
+ static void svc_udp_init(struct svc_sock *svsk, struct svc_serv *serv)
+@@ -1278,7 +1277,6 @@ static struct svc_xprt_class svc_tcp_class = {
+ 	.xcl_owner = THIS_MODULE,
+ 	.xcl_ops = &svc_tcp_ops,
+ 	.xcl_max_payload = RPCSVC_MAXPAYLOAD_TCP,
+-	.xcl_ident = XPRT_TRANSPORT_TCP,
+ };
+ 
+ void svc_init_xprt_sock(void)
+diff --git a/net/sunrpc/xprt.c b/net/sunrpc/xprt.c
+index 42ce6bfc729d..095363eee764 100644
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -1290,7 +1290,7 @@ struct rpc_xprt *xprt_create_transport(struct xprt_create *args)
+ 		}
+ 	}
+ 	spin_unlock(&xprt_list_lock);
+-	dprintk("RPC: transport (%d) not supported\n", args->ident);
++	printk(KERN_ERR "RPC: transport (%d) not supported\n", args->ident);
+ 	return ERR_PTR(-EIO);
+ 
+ found:
+diff --git a/net/sunrpc/xprtrdma/svc_rdma_transport.c b/net/sunrpc/xprtrdma/svc_rdma_transport.c
+index ed36cb52cd86..62e4f9bcc387 100644
+--- a/net/sunrpc/xprtrdma/svc_rdma_transport.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_transport.c
+@@ -89,7 +89,6 @@ struct svc_xprt_class svc_rdma_class = {
+ 	.xcl_owner = THIS_MODULE,
+ 	.xcl_ops = &svc_rdma_ops,
+ 	.xcl_max_payload = RPCSVC_MAXPAYLOAD_TCP,
+-	.xcl_ident = XPRT_TRANSPORT_RDMA,
+ };
+ 
+ struct svc_rdma_op_ctxt *svc_rdma_get_context(struct svcxprt_rdma *xprt)
+-- 
+2.1.1
+
