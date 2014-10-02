@@ -1,0 +1,66 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Mon, 22 Sep 2014 16:30:22 +0200
+Subject: iommu/vt-d: Work around broken RMRR firmware entries
+Git-commit: 80f7b3d1b1f4ec6c80fa3b40c7c9a419e28b0897
+Patch-mainline: v3.18 or v3.17-rc8 (next release)
+References: bnc#892860
+
+The VT-d specification states that an RMRR entry in the DMAR
+table needs to specify the full path to the device. This is
+also how newer Linux kernels implement it.
+
+Unfortunatly older drivers just match for the target device
+and not the full path to the device, so that BIOS vendors
+implement that behavior into their BIOSes to make them work
+with older Linux kernels. But those RMRR entries break on
+newer Linux kernels.
+
+Work around this issue by adding a fall-back into the RMRR
+matching code to match those old RMRR entries too.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/dmar.c | 22 +++++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/iommu/dmar.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/iommu/dmar.c
++++ linux-3.12-SLE12/drivers/iommu/dmar.c
+@@ -177,17 +177,33 @@ static bool dmar_match_pci_path(struct d
+ 	int i;
+ 
+ 	if (info->bus != bus)
+-		return false;
++		goto fallback;
+ 	if (info->level != count)
+-		return false;
++		goto fallback;
+ 
+ 	for (i = 0; i < count; i++) {
+ 		if (path[i].device != info->path[i].device ||
+ 		    path[i].function != info->path[i].function)
+-			return false;
++			goto fallback;
+ 	}
+ 
+ 	return true;
++
++fallback:
++
++	if (count != 1)
++		return false;
++
++	i = info->level - 1;
++	if (bus              == info->path[i].bus &&
++	    path[0].device   == info->path[i].device &&
++	    path[0].function == info->path[i].function) {
++		pr_info(FW_BUG "RMRR entry for device %02x:%02x.%x is broken - applying workaround\n",
++			bus, path[0].device, path[0].function);
++		return true;
++	}
++
++	return false;
+ }
+ 
+ /* Return: > 0 if match found, 0 if no match found, < 0 if error happens */
