@@ -1,0 +1,38 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Tue, 30 Sep 2014 13:02:03 +0200
+Subject: iommu/vt-d: Only remove domain when device is removed
+Git-commit: 1196c2fb0407683c2df92d3d09f9144d42830894
+Patch-mainline: v3.18 or v3.17-rc8 (next release)
+References: bnc#883139
+
+This makes sure any RMRR mappings stay in place when the
+driver is unbound from the device.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+Tested-by: Jerry Hoemann <jerry.hoemann@hp.com>
+---
+ drivers/iommu/intel-iommu.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+Index: linux-3.12-SLE12/drivers/iommu/intel-iommu.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/iommu/intel-iommu.c
++++ linux-3.12-SLE12/drivers/iommu/intel-iommu.c
+@@ -3846,16 +3846,7 @@ static int device_notifier(struct notifi
+ 	if (iommu_dummy(dev))
+ 		return 0;
+ 
+-	if (action != BUS_NOTIFY_UNBOUND_DRIVER &&
+-	    action != BUS_NOTIFY_DEL_DEVICE)
+-		return 0;
+-
+-	/*
+-	 * If the device is still attached to a device driver we can't
+-	 * tear down the domain yet as DMA mappings may still be in use.
+-	 * Wait for the BUS_NOTIFY_UNBOUND_DRIVER event to do that.
+-	 */
+-	if (action == BUS_NOTIFY_DEL_DEVICE && dev->driver != NULL)
++	if (action != BUS_NOTIFY_REMOVED_DEVICE)
+ 		return 0;
+ 
+ 	domain = find_domain(dev);
