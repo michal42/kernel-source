@@ -1,0 +1,52 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Thu, 2 Oct 2014 11:50:25 +0200
+Subject: iommu/vt-d: Store bus information in RMRR PCI device path
+Git-commit: 57384592c43375d2c9a14d82aebbdc95fdda9e9d
+Patch-mainline: v3.18 or v3.17-rc8 (next release)
+References: bnc#892860
+
+This will be used later to match broken RMRR entries.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/dmar.c | 1 +
+ include/linux/dmar.h | 8 +++++++-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+Index: linux-3.12-SLE12/drivers/iommu/dmar.c
+===================================================================
+--- linux-3.12-SLE12.orig/drivers/iommu/dmar.c
++++ linux-3.12-SLE12/drivers/iommu/dmar.c
+@@ -154,6 +154,7 @@ dmar_alloc_pci_notify_info(struct pci_de
+ 	if (event == BUS_NOTIFY_ADD_DEVICE) {
+ 		for (tmp = dev; tmp; tmp = tmp->bus->self) {
+ 			level--;
++			info->path[level].bus = tmp->bus->number;
+ 			info->path[level].device = PCI_SLOT(tmp->devfn);
+ 			info->path[level].function = PCI_FUNC(tmp->devfn);
+ 			if (pci_is_root_bus(tmp->bus))
+Index: linux-3.12-SLE12/include/linux/dmar.h
+===================================================================
+--- linux-3.12-SLE12.orig/include/linux/dmar.h
++++ linux-3.12-SLE12/include/linux/dmar.h
+@@ -56,13 +56,19 @@ struct dmar_drhd_unit {
+ 	struct intel_iommu *iommu;
+ };
+ 
++struct dmar_pci_path {
++	u8 bus;
++	u8 device;
++	u8 function;
++};
++
+ struct dmar_pci_notify_info {
+ 	struct pci_dev			*dev;
+ 	unsigned long			event;
+ 	int				bus;
+ 	u16				seg;
+ 	u16				level;
+-	struct acpi_dmar_pci_path	path[];
++	struct dmar_pci_path		path[];
+ }  __attribute__((packed));
+ 
+ extern struct rw_semaphore dmar_global_lock;
