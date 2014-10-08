@@ -1,0 +1,37 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct machdep_calls
+Patch-mainline: never, kabi
+
+In 3.12.29, commit e828f5bc74b7950667f94cf1af488391ec43018d
+(powerpc/thp: Don't recompute vsid and ssize in loop on invalidate),
+upstream commit fa1f8ae80f8bb996594167ff4750a0b0a5a5bb5d changed
+the prototype of hugepage_invalidate hook in struct machdep_calls. It
+indeed changed the layout of that structure.
+
+However the structure is internal only, so protect the change in the
+member the usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/powerpc/include/asm/machdep.h |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/arch/powerpc/include/asm/machdep.h
++++ b/arch/powerpc/include/asm/machdep.h
+@@ -57,10 +57,16 @@ struct machdep_calls {
+ 	void            (*hpte_removebolted)(unsigned long ea,
+ 					     int psize, int ssize);
+ 	void		(*flush_hash_range)(unsigned long number, int local);
++#ifdef __GENKSYMS__
++	void		(*hugepage_invalidate)(struct mm_struct *mm,
++ 					       unsigned char *hpte_slot_array,
++					       unsigned long addr, int psize);
++#else
+ 	void		(*hugepage_invalidate)(unsigned long vsid,
+ 					       unsigned long addr,
+ 					       unsigned char *hpte_slot_array,
+ 					       int psize, int ssize);
++#endif
+ 	/* special for kexec, to be called in real mode, linear mapping is
+ 	 * destroyed as well */
+ 	void		(*hpte_clear_all)(void);
