@@ -26,17 +26,33 @@ universe. So only the exit from the syscall allows the switch to the
 new-world.
 
 jk: describe kgr_immutable
+js: {
+	Fix the race properly.
+
+	First, set_bit before mark_processes, because this avoid race
+	between them and slow stub.
+
+	Second, merge kgr_mark_processes into kgr_handle_processes.
+	Hence do the stuff after the stub is in place. This avoids
+	another race.
+
+	Finally, add memory barriers to force the consistent state.
+	This is needed because, set_bit et al. are not implicit
+	barriers (on non-x86 HW at least).
+
+	Reported-by: Li Bin <huawei.libin@huawei.com>
+}
 
 Signed-off-by: Jiri Kosina <jkosina@suse.cz>
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Cc: Vojtech Pavlik <vojtech@suse.cz>
 Cc: Petr Mladek <pmladek@suse.cz>
 ---
- kernel/kgraft.c | 21 +++++++++++++++++++--
- 1 file changed, 19 insertions(+), 2 deletions(-)
+ kernel/kgraft.c | 42 ++++++++++++++++++++++++++----------------
+ 1 file changed, 26 insertions(+), 16 deletions(-)
 
 diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index 3b3e3d2937e5..73ec3a88a827 100644
+index c8bf435d3f82..043f22e442b2 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -14,6 +14,7 @@
@@ -64,7 +80,7 @@ index 3b3e3d2937e5..73ec3a88a827 100644
  
  /*
   * The stub needs to modify the RIP value stored in struct pt_regs
-@@ -63,7 +74,10 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+@@ -63,8 +74,13 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
  
  	if (in_interrupt())
  		go_old = !*this_cpu_ptr(p->patch->irq_use_new);
@@ -72,30 +88,71 @@ index 3b3e3d2937e5..73ec3a88a827 100644
 +	else if (test_bit(0, kgr_immutable)) {
 +		kgr_mark_task_in_progress(current);
 +		go_old = true;
-+	} else
++	} else {
++		rmb(); /* test_bit before kgr_mark_task_in_progress */
  		go_old = kgr_task_in_progress(current);
++	}
  
  	if (p->state == KGR_PATCH_REVERT_SLOW)
-@@ -557,8 +571,10 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert, bool force)
+ 		go_old = !go_old;
+@@ -251,22 +267,15 @@ static void kgr_work_fn(struct work_struct *work)
+ 	kgr_finalize();
+ }
+ 
+-static void kgr_mark_processes(void)
+-{
+-	struct task_struct *p;
+-
+-	read_lock(&tasklist_lock);
+-	for_each_process(p)
+-		kgr_mark_task_in_progress(p);
+-	read_unlock(&tasklist_lock);
+-}
+-
+ static void kgr_handle_processes(void)
+ {
+ 	struct task_struct *p;
+ 
+ 	read_lock(&tasklist_lock);
+ 	for_each_process(p) {
++		/* skip tasks wandering in userspace as already migrated */
++		if (kgr_needs_lazy_migration(p))
++			kgr_mark_task_in_progress(p);
+ 		/* wake up kthreads, they will clean the progress flag */
+ 		if (p->flags & PF_KTHREAD) {
+ 			/*
+@@ -275,9 +284,6 @@ static void kgr_handle_processes(void)
+ 			 */
+ 			wake_up_process(p);
+ 		}
+-		/* mark tasks wandering in userspace as already migrated */
+-		if (!kgr_needs_lazy_migration(p))
+-			kgr_task_safe(p);
+ 	}
+ 	read_unlock(&tasklist_lock);
+ }
+@@ -558,8 +564,10 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert, bool force)
  	 * If the patch has immediate flag set, avoid the lazy-switching
  	 * between universes completely.
  	 */
 -	if (!patch->immediate)
+-		kgr_mark_processes();
 +	if (!patch->immediate) {
- 		kgr_mark_processes();
 +		set_bit(0, kgr_immutable);
++		wmb(); /* set_bit before kgr_handle_processes */
 +	}
  
  	kgr_for_each_patch_fun(patch, patch_fun) {
  		patch_fun->patch = patch;
-@@ -587,6 +603,7 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert, bool force)
- 		kgr_refs_inc();
- 	mutex_unlock(&kgr_in_progress_lock);
- 
-+	clear_bit(0, kgr_immutable);
- 	kgr_handle_irqs();
- 	kgr_handle_processes();
- 
+@@ -594,6 +602,8 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert, bool force)
+ 		kgr_finalize();
+ 	} else {
+ 		kgr_handle_processes();
++		wmb(); /* clear_bit after kgr_handle_processes */
++		clear_bit(0, kgr_immutable);
+ 		/*
+ 		 * give everyone time to exit kernel, and check after a while
+ 		 */
 -- 
-2.1.0
+2.1.1
 
