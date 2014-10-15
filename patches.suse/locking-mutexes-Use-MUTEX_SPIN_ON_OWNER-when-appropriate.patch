@@ -1,0 +1,52 @@
+From 7608a43d8f2e02f8b532f8e11481d7ecf8b5d3f9 Mon Sep 17 00:00:00 2001
+From: Davidlohr Bueso <davidlohr@hp.com>
+Date: Wed, 30 Jul 2014 13:41:54 -0700
+Subject: [PATCH] locking/mutexes: Use MUTEX_SPIN_ON_OWNER when appropriate
+Git-commit: 7608a43d8f2e02f8b532f8e11481d7ecf8b5d3f9
+Patch-mainline: 3.18-rc1
+References: Mutex scalability
+
+4badad35 ("locking/mutex: Disable optimistic spinning on some
+architectures") added a ARCH_SUPPORTS_ATOMIC_RMW flag to
+disable the mutex optimistic feature on specific archs.
+
+Because CONFIG_MUTEX_SPIN_ON_OWNER only depended on DEBUG and
+SMP, it was ok to have the ->owner field conditional a bit
+flexible. However by adding a new variable to the matter,
+we can waste space with the unused field, ie: CONFIG_SMP &&
+(!CONFIG_MUTEX_SPIN_ON_OWNER && !CONFIG_DEBUG_MUTEX).
+
+Signed-off-by: Davidlohr Bueso <davidlohr@hp.com>
+Acked-by: Jason Low <jason.low2@hp.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1406752916-3341-5-git-send-email-davidlohr@hp.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Davidlohr Bueso <dbueso@suse.de>
+
+---
+ include/linux/mutex.h  |    2 +-
+ kernel/locking/mutex.h |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+--- a/include/linux/mutex.h
++++ b/include/linux/mutex.h
+@@ -52,7 +52,7 @@ struct mutex {
+ 	atomic_t		count;
+ 	spinlock_t		wait_lock;
+ 	struct list_head	wait_list;
+-#if defined(CONFIG_DEBUG_MUTEXES) || defined(CONFIG_SMP)
++#if defined(CONFIG_DEBUG_MUTEXES) || defined(CONFIG_MUTEX_SPIN_ON_OWNER)
+ 	struct task_struct	*owner;
+ #endif
+ #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
+--- a/kernel/locking/mutex.h
++++ b/kernel/locking/mutex.h
+@@ -16,7 +16,7 @@
+ #define mutex_remove_waiter(lock, waiter, ti) \
+ 		__list_del((waiter)->list.prev, (waiter)->list.next)
+ 
+-#ifdef CONFIG_SMP
++#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
+ static inline void mutex_set_owner(struct mutex *lock)
+ {
+ 	lock->owner = current;
