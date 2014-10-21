@@ -1,0 +1,93 @@
+From 84b0b6babbf4990a5d586d785d1a09640bab37b1 Mon Sep 17 00:00:00 2001
+From: Nadav Amit <namit@cs.technion.ac.il>
+Date: Thu, 18 Sep 2014 22:39:35 +0300
+Subject: KVM: x86: Warn if guest virtual address space is not 48-bits
+Patch-mainline: not yet
+References: CVE-2014-3647 bnc#899192
+
+The KVM emulator code assumes that the guest virtual address space (in 64-bit)
+is 48-bits wide.  Since we are about to add more code that makes the same
+assumption, this patch adds an assertion to make sure guest virtual address
+space is indeed 48-bits wide.
+
+Signed-off-by: Nadav Amit <namit@cs.technion.ac.il>
+Signed-off-by: Bruce Rogers <brogers@suse.com>
+---
+ arch/x86/kvm/cpuid.c | 19 ++++++++++++-------
+ arch/x86/kvm/cpuid.h |  2 +-
+ 2 files changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index e09742b..bb9de4c 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -43,14 +43,14 @@ static u32 xstate_required_size(u64 xstate_bv)
+ 	return ret;
+ }
+ 
+-void kvm_update_cpuid(struct kvm_vcpu *vcpu)
++int kvm_update_cpuid(struct kvm_vcpu *vcpu)
+ {
+ 	struct kvm_cpuid_entry2 *best;
+ 	struct kvm_lapic *apic = vcpu->arch.apic;
+ 
+ 	best = kvm_find_cpuid_entry(vcpu, 1, 0);
+ 	if (!best)
+-		return;
++		return 0;
+ 
+ 	/* Update OSXSAVE bit */
+ 	if (cpu_has_xsave && best->function == 0x1) {
+@@ -78,7 +78,15 @@ void kvm_update_cpuid(struct kvm_vcpu *vcpu)
+ 			xstate_required_size(vcpu->arch.xcr0);
+ 	}
+ 
++	/* The existing code assumes virtual address is 48-bit in the canonical
++	 * address checks; exit if it is ever changed */
++	best = kvm_find_cpuid_entry(vcpu, 0x80000008, 0);
++	if (best && ((best->eax & 0xff00) >> 8) != 48 &&
++		((best->eax & 0xff00) >> 8) != 0)
++		return -EINVAL;
++
+ 	kvm_pmu_cpuid_update(vcpu);
++	return 0;
+ }
+ 
+ static int is_efer_nx(void)
+@@ -141,10 +149,9 @@ int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
+ 	}
+ 	vcpu->arch.cpuid_nent = cpuid->nent;
+ 	cpuid_fix_nx_cap(vcpu);
+-	r = 0;
+ 	kvm_apic_set_version(vcpu);
+ 	kvm_x86_ops->cpuid_update(vcpu);
+-	kvm_update_cpuid(vcpu);
++	r = kvm_update_cpuid(vcpu);
+ 
+ out_free:
+ 	vfree(cpuid_entries);
+@@ -168,9 +175,7 @@ int kvm_vcpu_ioctl_set_cpuid2(struct kvm_vcpu *vcpu,
+ 	vcpu->arch.cpuid_nent = cpuid->nent;
+ 	kvm_apic_set_version(vcpu);
+ 	kvm_x86_ops->cpuid_update(vcpu);
+-	kvm_update_cpuid(vcpu);
+-	return 0;
+-
++	r = kvm_update_cpuid(vcpu);
+ out:
+ 	return r;
+ }
+diff --git a/arch/x86/kvm/cpuid.h b/arch/x86/kvm/cpuid.h
+index b7fd079..6c458e3 100644
+--- a/arch/x86/kvm/cpuid.h
++++ b/arch/x86/kvm/cpuid.h
+@@ -3,7 +3,7 @@
+ 
+ #include "x86.h"
+ 
+-void kvm_update_cpuid(struct kvm_vcpu *vcpu);
++int kvm_update_cpuid(struct kvm_vcpu *vcpu);
+ struct kvm_cpuid_entry2 *kvm_find_cpuid_entry(struct kvm_vcpu *vcpu,
+ 					      u32 function, u32 index);
+ int kvm_dev_ioctl_get_supported_cpuid(struct kvm_cpuid2 *cpuid,
+
