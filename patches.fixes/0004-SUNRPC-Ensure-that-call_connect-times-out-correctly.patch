@@ -1,0 +1,43 @@
+From: Trond Myklebust <trond.myklebust@primarydata.com>
+Date: Mon, 17 Mar 2014 12:51:44 -0400
+Subject: [PATCH] SUNRPC: Ensure that call_connect times out correctly
+Git-commit: 485f2251782f7c44299c491d4676a8a01428d191
+Patch-mainline: v3.15
+References: bnc#901090
+
+When the server is unavailable due to a networking error, etc, we want
+the RPC client to respect the timeout delays when attempting to reconnect.
+
+Reported-by: Neil Brown <neilb@suse.de>
+Fixes: 561ec1603171 (SUNRPC: call_connect_status should recheck bind..)
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/clnt.c |    8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/clnt.c
++++ linux-3.12-SLE12/net/sunrpc/clnt.c
+@@ -1729,10 +1729,6 @@ call_connect_status(struct rpc_task *tas
+ 	trace_rpc_connect_status(task, status);
+ 	task->tk_status = 0;
+ 	switch (status) {
+-		/* if soft mounted, test if we've timed out */
+-	case -ETIMEDOUT:
+-		task->tk_action = call_timeout;
+-		return;
+ 	case -ECONNREFUSED:
+ 	case -ECONNRESET:
+ 	case -ECONNABORTED:
+@@ -1743,7 +1739,9 @@ call_connect_status(struct rpc_task *tas
+ 		if (RPC_IS_SOFTCONN(task))
+ 			break;
+ 	case -EAGAIN:
+-		task->tk_action = call_bind;
++		/* Check for timeouts before looping back to call_bind */
++	case -ETIMEDOUT:
++		task->tk_action = call_timeout;
+ 		return;
+ 	case 0:
+ 		clnt->cl_stats->netreconn++;
