@@ -1,0 +1,41 @@
+From: Trond Myklebust <trond.myklebust@primarydata.com>
+Date: Thu, 3 Jul 2014 00:02:57 -0400
+Subject: [PATCH] SUNRPC: Handle EPIPE in xprt_connect_status
+Git-commit: 2fc193cf924ea6eb74f6a0cf73b94b2e62938ae5
+Patch-mainline: v3.17
+References: bnc#901090
+
+The callback handler xs_error_report() can end up propagating an EPIPE
+error by means of the call to xprt_wake_pending_tasks(). Ensure that
+xprt_connect_status() does not automatically convert this into an
+EIO error.
+
+Reported-by: Weston Andros Adamson <dros@primarydata.com>
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/clnt.c |    1 +
+ net/sunrpc/xprt.c |    1 +
+ 2 files changed, 2 insertions(+)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/clnt.c
++++ linux-3.12-SLE12/net/sunrpc/clnt.c
+@@ -1736,6 +1736,7 @@ call_connect_status(struct rpc_task *tas
+ 	case -ENETUNREACH:
+ 	case -EHOSTUNREACH:
+ 	case -ENOBUFS:
++	case -EPIPE:
+ 		if (RPC_IS_SOFTCONN(task))
+ 			break;
+ 		/* retry with existing socket, after a delay */
+--- linux-3.12-SLE12.orig/net/sunrpc/xprt.c
++++ linux-3.12-SLE12/net/sunrpc/xprt.c
+@@ -760,6 +760,7 @@ static void xprt_connect_status(struct r
+ 	case -ECONNABORTED:
+ 	case -ENETUNREACH:
+ 	case -EHOSTUNREACH:
++	case -EPIPE:
+ 	case -EAGAIN:
+ 		dprintk("RPC: %5u xprt_connect_status: retrying\n", task->tk_pid);
+ 		break;
