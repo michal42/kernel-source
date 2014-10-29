@@ -1,0 +1,94 @@
+From: Trond Myklebust <trond.myklebust@primarydata.com>
+Date: Mon, 30 Jun 2014 13:42:19 -0400
+Subject: [PATCH] SUNRPC: Ensure that we handle ENOBUFS errors correctly.
+Git-commit: 3601c4a91ebbbf1cf69f66a2abeffc6c64a4fe64
+Patch-mainline: v3.17
+References: bnc#901090
+
+Currently, an ENOBUFS error will result in a fatal error for the RPC
+call. Normally, we will just want to wait and then retry.
+
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/clnt.c     |    4 ++++
+ net/sunrpc/xprtsock.c |    5 +++++
+ 2 files changed, 9 insertions(+)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/clnt.c
++++ linux-3.12-SLE12/net/sunrpc/clnt.c
+@@ -1669,6 +1669,7 @@ call_bind_status(struct rpc_task *task)
+ 	case -EHOSTDOWN:
+ 	case -EHOSTUNREACH:
+ 	case -ENETUNREACH:
++	case -ENOBUFS:
+ 	case -EPIPE:
+ 		dprintk("RPC: %5u remote rpcbind unreachable: %d\n",
+ 				task->tk_pid, task->tk_status);
+@@ -1734,6 +1735,7 @@ call_connect_status(struct rpc_task *tas
+ 	case -ECONNABORTED:
+ 	case -ENETUNREACH:
+ 	case -EHOSTUNREACH:
++	case -ENOBUFS:
+ 		if (RPC_IS_SOFTCONN(task))
+ 			break;
+ 		/* retry with existing socket, after a delay */
+@@ -1840,6 +1842,7 @@ call_transmit_status(struct rpc_task *ta
+ 	case -ECONNRESET:
+ 	case -ECONNABORTED:
+ 	case -ENOTCONN:
++	case -ENOBUFS:
+ 	case -EPIPE:
+ 		rpc_task_force_reencode(task);
+ 	}
+@@ -1952,6 +1955,7 @@ call_status(struct rpc_task *task)
+ 	case -ECONNRESET:
+ 	case -ECONNABORTED:
+ 		rpc_force_rebind(clnt);
++	case -ENOBUFS:
+ 		rpc_delay(task, 3*HZ);
+ 	case -EPIPE:
+ 	case -ENOTCONN:
+--- linux-3.12-SLE12.orig/net/sunrpc/xprtsock.c
++++ linux-3.12-SLE12/net/sunrpc/xprtsock.c
+@@ -588,6 +588,7 @@ static int xs_local_send_request(struct
+ 	}
+ 
+ 	switch (status) {
++	case -ENOBUFS:
+ 	case -EAGAIN:
+ 		status = xs_nospace(task);
+ 		break;
+@@ -664,6 +665,7 @@ static int xs_udp_send_request(struct rp
+ 		dprintk("RPC:       sendmsg returned unrecognized error %d\n",
+ 			-status);
+ 	case -ENETUNREACH:
++	case -ENOBUFS:
+ 	case -EPIPE:
+ 	case -ECONNREFUSED:
+ 		/* When the server has died, an ICMP port unreachable message
+@@ -761,6 +763,7 @@ static int xs_tcp_send_request(struct rp
+ 		status = -ENOTCONN;
+ 		/* Should we call xs_close() here? */
+ 		break;
++	case -ENOBUFS:
+ 	case -EAGAIN:
+ 		status = xs_nospace(task);
+ 		break;
+@@ -1946,6 +1949,7 @@ static int xs_local_setup_socket(struct
+ 		dprintk("RPC:       xprt %p connected to %s\n",
+ 				xprt, xprt->address_strings[RPC_DISPLAY_ADDR]);
+ 		xprt_set_connected(xprt);
++	case -ENOBUFS:
+ 		break;
+ 	case -ENOENT:
+ 		dprintk("RPC:       xprt %p: socket %s does not exist\n",
+@@ -2281,6 +2285,7 @@ static void xs_tcp_setup_socket(struct w
+ 	case -ECONNREFUSED:
+ 	case -ECONNRESET:
+ 	case -ENETUNREACH:
++	case -ENOBUFS:
+ 		/* retry with existing socket, after a delay */
+ 		goto out;
+ 	}
