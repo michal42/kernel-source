@@ -1,0 +1,49 @@
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date: Thu, 26 Sep 2013 15:22:45 -0400
+Subject: [PATCH] SUNRPC: call_connect_status should recheck bind and connect
+ status on error
+Git-commit: 561ec1603171cd9b38dcf6cac53e8710f437a48d
+Patch-mainline: v3.13
+References: bnc#901090
+
+Currently, we go directly to call_transmit which sends us to call_status
+on error. If we know that the connect attempt failed, we should rather
+just jump straight back to call_bind and call_connect.
+
+Ditto for EAGAIN, except do not delay.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ net/sunrpc/clnt.c |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+--- linux-3.12-SLE12.orig/net/sunrpc/clnt.c
++++ linux-3.12-SLE12/net/sunrpc/clnt.c
+@@ -1726,6 +1726,7 @@ call_connect_status(struct rpc_task *tas
+ 	dprint_status(task);
+ 
+ 	trace_rpc_connect_status(task, status);
++	task->tk_status = 0;
+ 	switch (status) {
+ 		/* if soft mounted, test if we've timed out */
+ 	case -ETIMEDOUT:
+@@ -1734,12 +1735,14 @@ call_connect_status(struct rpc_task *tas
+ 	case -ECONNREFUSED:
+ 	case -ECONNRESET:
+ 	case -ENETUNREACH:
++		/* retry with existing socket, after a delay */
++		rpc_delay(task, 3*HZ);
+ 		if (RPC_IS_SOFTCONN(task))
+ 			break;
+-		/* retry with existing socket, after a delay */
+-	case 0:
+ 	case -EAGAIN:
+-		task->tk_status = 0;
++		task->tk_action = call_bind;
++		return;
++	case 0:
+ 		clnt->cl_stats->netreconn++;
+ 		task->tk_action = call_transmit;
+ 		return;
