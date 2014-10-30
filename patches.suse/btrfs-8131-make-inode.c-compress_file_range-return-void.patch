@@ -1,0 +1,53 @@
+From: Filipe Manana <fdmanana@suse.com>
+Date: Thu, 9 Oct 2014 21:15:44 +0100
+Patch-mainline: submitted upstream
+References: bnc#902010
+Subject: [PATCH 08/10] Btrfs: make inode.c:compress_file_range() return void
+
+Its return value is useless, its single caller ignores it and can't do
+anything with it anyway, since it's a workqueue task and not the task
+calling filemap_fdatawrite_range (writepages) nor filemap_fdatawait_range().
+Failure is communicated to such functions via start and end of writeback
+with the respective pages tagged with an error and AS_EIO flag set in the
+inode's imapping.
+
+Signed-off-by: Filipe Manana <fdmanana@suse.com>
+---
+ fs/btrfs/inode.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 6458ada1..605552b 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -365,7 +365,7 @@ static noinline int add_async_extent(struct async_cow *cow,
+  * are written in the same order that the flusher thread sent them
+  * down.
+  */
+-static noinline int compress_file_range(struct inode *inode,
++static noinline void compress_file_range(struct inode *inode,
+ 					struct page *locked_page,
+ 					u64 start, u64 end,
+ 					struct async_cow *async_cow,
+@@ -602,8 +602,7 @@ cleanup_and_bail_uncompressed:
+ 		*num_added += 1;
+ 	}
+ 
+-out:
+-	return ret;
++	return;
+ 
+ free_pages_out:
+ 	for (i = 0; i < nr_pages_ret; i++) {
+@@ -611,8 +610,6 @@ free_pages_out:
+ 		page_cache_release(pages[i]);
+ 	}
+ 	kfree(pages);
+-
+-	goto out;
+ }
+ 
+ static void free_async_extent_pages(struct async_extent *async_extent)
+-- 
+1.8.4.5
+
