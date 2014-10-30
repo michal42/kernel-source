@@ -1,0 +1,55 @@
+From: Filipe Manana <fdmanana@suse.com>
+Date: Mon, 6 Oct 2014 22:14:26 +0100
+Patch-mainline: submitted upstream
+References: bnc#902010
+Subject: [PATCH 05/10] Btrfs: make inode.c:submit_compressed_extents() return
+ void
+
+Its return value is completely ignored by its single caller and it's
+useless anyway, since errors are indicated through SetPageError and
+the bit AS_EIO set in the flags of the inode's mapping. The caller
+can't do anything with the value, as it's invoked from a workqueue
+task and not by the task calling filemap_fdatawrite_range (which calls
+the writepages address space callback, which in turn calls the inode's
+fill_delalloc callback).
+
+Signed-off-by: Filipe Manana <fdmanana@suse.com>
+---
+ fs/btrfs/inode.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 6657ea6..53bbc21 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -633,7 +633,7 @@ static void free_async_extent_pages(struct async_extent *async_extent)
+  * queued.  We walk all the async extents created by compress_file_range
+  * and send them down to the disk.
+  */
+-static noinline int submit_compressed_extents(struct inode *inode,
++static noinline void submit_compressed_extents(struct inode *inode,
+ 					      struct async_cow *async_cow)
+ {
+ 	struct async_extent *async_extent;
+@@ -645,9 +645,6 @@ static noinline int submit_compressed_extents(struct inode *inode,
+ 	struct extent_io_tree *io_tree;
+ 	int ret = 0;
+ 
+-	if (list_empty(&async_cow->extents))
+-		return 0;
+-
+ again:
+ 	while (!list_empty(&async_cow->extents)) {
+ 		async_extent = list_entry(async_cow->extents.next,
+@@ -819,7 +816,7 @@ retry:
+ 		kfree(async_extent);
+ 		cond_resched();
+ 	}
+-	return 0;
++	return;
+ out_free_reserve:
+ 	btrfs_free_reserved_extent(root, ins.objectid, ins.offset, 1);
+ out_free:
+-- 
+1.8.4.5
+
