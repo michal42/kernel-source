@@ -1,0 +1,91 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: kprobes: introduce weak arch_check_ftrace_location() helper function
+Patch-mainline: not yet
+Git-commit: -
+References: bnc#903279, LTC#118177
+
+Description:  kernel: reduce function tracer overhead
+Symptom:      The kernel uses more cpu cycles for each function being
+              executed.
+Problem:      The kGraft feature requires to instrument the kernel. In
+              order to do that the kernel gets compiled with the function
+              tracer enabled which causes the compiler to emit code that
+              adds an "mcount" call to the prologue of each function.
+              This code will be modified by the kernel for function tracing.
+              However the implementation was not optimal, since even if
+              disabled each function stored a value on the stack and
+              afterwards contained an unconditional branch which skipped
+              the rest of the mcount prologue code.
+              So more instructions than necessary will be executed which
+              results in a reduced performance.
+Solution:     Patch the mcount prologue code so that only a single
+              instruction of the mcount code will be executed. It's either
+              a branch that skips the rest of the mcount prologue code or
+              a branch to the function tracer.
+Reproduction: Compile the kernel with and without function tracer enabled
+              and compare cpu time spent in the kernel for identical
+              workloads.
+
+Upstream-Description:
+
+              kprobes: introduce weak arch_check_ftrace_location() helper function
+
+              Introduce weak arch_check_ftrace_location() helper function which
+              architectures can override in order to implement handling of kprobes
+              on function tracer call sites on their own, without depending on
+              common code or implementing the KPROBES_ON_FTRACE feature.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Acked-by: Masami Hiramatsu <masami.hiramatsu.pt@hitachi.com>
+              Acked-by: Steven Rostedt <rostedt@goodmis.org>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ include/linux/kprobes.h |    1 +
+ kernel/kprobes.c        |   14 +++++++++++---
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+--- a/include/linux/kprobes.h
++++ b/include/linux/kprobes.h
+@@ -334,6 +334,7 @@ extern void kprobe_ftrace_handler(unsign
+ extern int arch_prepare_kprobe_ftrace(struct kprobe *p);
+ #endif
+ 
++int arch_check_ftrace_location(struct kprobe *p);
+ 
+ /* Get the kprobe at this addr (if any) - called with preemption disabled */
+ struct kprobe *get_kprobe(void *addr);
+--- a/kernel/kprobes.c
++++ b/kernel/kprobes.c
+@@ -1406,10 +1406,8 @@ static inline int check_kprobe_rereg(str
+ 	return ret;
+ }
+ 
+-static __kprobes int check_kprobe_address_safe(struct kprobe *p,
+-					       struct module **probed_mod)
++int __weak arch_check_ftrace_location(struct kprobe *p)
+ {
+-	int ret = 0;
+ 	unsigned long ftrace_addr;
+ 
+ 	/*
+@@ -1427,7 +1425,17 @@ static __kprobes int check_kprobe_addres
+ 		return -EINVAL;
+ #endif
+ 	}
++	return 0;
++}
++
++static __kprobes int check_kprobe_address_safe(struct kprobe *p,
++					       struct module **probed_mod)
++{
++	int ret;
+ 
++	ret = arch_check_ftrace_location(p);
++	if (ret)
++		return ret;
+ 	jump_label_lock();
+ 	preempt_disable();
+ 
