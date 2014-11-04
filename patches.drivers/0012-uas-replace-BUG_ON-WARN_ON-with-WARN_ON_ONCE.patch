@@ -11,14 +11,12 @@ Signed-off-by: Hans de Goede <hdegoede@redhat.com>
 Signed-off-by: Sarah Sharp <sarah.a.sharp@linux.intel.com>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
- drivers/usb/storage/uas.c | 19 ++++++++++---------
- 1 file changed, 10 insertions(+), 9 deletions(-)
+ drivers/usb/storage/uas.c |   15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
 
-diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
-index f049038..046eedf 100644
 --- a/drivers/usb/storage/uas.c
 +++ b/drivers/usb/storage/uas.c
-@@ -154,7 +154,7 @@ static void uas_abort_work(struct uas_dev_info *devinfo)
+@@ -154,7 +154,7 @@ static void uas_abort_work(struct uas_de
  		struct scsi_cmnd *cmnd = container_of(scp, struct scsi_cmnd,
  						      SCp);
  		uas_log_cmd_state(cmnd, __func__);
@@ -27,7 +25,7 @@ index f049038..046eedf 100644
  		cmdinfo->state |= COMMAND_ABORTED;
  		cmdinfo->state &= ~IS_IN_WORK_LIST;
  		list_del(&cmdinfo->work);
-@@ -169,7 +169,7 @@ static void uas_add_work(struct uas_cmd_info *cmdinfo)
+@@ -169,7 +169,7 @@ static void uas_add_work(struct uas_cmd_
  	struct scsi_cmnd *cmnd = container_of(scp, struct scsi_cmnd, SCp);
  	struct uas_dev_info *devinfo = cmnd->device->hostdata;
  
@@ -36,7 +34,7 @@ index f049038..046eedf 100644
  	list_add_tail(&cmdinfo->work, &devinfo->work_list);
  	cmdinfo->state |= IS_IN_WORK_LIST;
  	schedule_work(&devinfo->work);
-@@ -187,7 +187,7 @@ static void uas_zap_dead(struct uas_dev_info *devinfo)
+@@ -187,7 +187,7 @@ static void uas_zap_dead(struct uas_dev_
  		struct scsi_cmnd *cmnd = container_of(scp, struct scsi_cmnd,
  						      SCp);
  		uas_log_cmd_state(cmnd, __func__);
@@ -45,14 +43,7 @@ index f049038..046eedf 100644
  		/* all urbs are killed, clear inflight bits */
  		cmdinfo->state &= ~(COMMAND_INFLIGHT |
  				    DATA_IN_URB_INFLIGHT |
-@@ -271,13 +271,13 @@ static int uas_try_complete(struct scsi_cmnd *cmnd, const char *caller)
- 	struct uas_cmd_info *cmdinfo = (void *)&cmnd->SCp;
- 	struct uas_dev_info *devinfo = (void *)cmnd->device->hostdata;
- 
--	WARN_ON(!spin_is_locked(&devinfo->lock));
-+	WARN_ON_ONCE(!spin_is_locked(&devinfo->lock));
- 	if (cmdinfo->state & (COMMAND_INFLIGHT |
- 			      DATA_IN_URB_INFLIGHT |
+@@ -277,7 +277,7 @@ static int uas_try_complete(struct scsi_
  			      DATA_OUT_URB_INFLIGHT |
  			      UNLINK_DATA_URBS))
  		return -EBUSY;
@@ -61,7 +52,7 @@ index f049038..046eedf 100644
  	cmdinfo->state |= COMMAND_COMPLETED;
  	usb_free_urb(cmdinfo->data_in_urb);
  	usb_free_urb(cmdinfo->data_out_urb);
-@@ -398,8 +398,9 @@ static void uas_data_cmplt(struct urb *urb)
+@@ -398,8 +398,9 @@ static void uas_data_cmplt(struct urb *u
  		sdb = scsi_out(cmnd);
  		cmdinfo->state &= ~DATA_OUT_URB_INFLIGHT;
  	}
@@ -73,16 +64,7 @@ index f049038..046eedf 100644
  		/* error: no data transfered */
  		sdb->resid = sdb->length;
  	} else {
-@@ -573,7 +574,7 @@ static int uas_submit_urbs(struct scsi_cmnd *cmnd,
- 	struct uas_cmd_info *cmdinfo = (void *)&cmnd->SCp;
- 	int err;
- 
--	WARN_ON(!spin_is_locked(&devinfo->lock));
-+	WARN_ON_ONCE(!spin_is_locked(&devinfo->lock));
- 	if (cmdinfo->state & SUBMIT_STATUS_URB) {
- 		err = uas_submit_sense_urb(cmnd->device->host, gfp,
- 					   cmdinfo->stream);
-@@ -771,7 +772,7 @@ static int uas_eh_abort_handler(struct scsi_cmnd *cmnd)
+@@ -771,7 +772,7 @@ static int uas_eh_abort_handler(struct s
  
  	uas_log_cmd_state(cmnd, __func__);
  	spin_lock_irqsave(&devinfo->lock, flags);
@@ -91,6 +73,3 @@ index f049038..046eedf 100644
  	cmdinfo->state |= COMMAND_ABORTED;
  	list_add_tail(&cmdinfo->dead, &devinfo->dead_list);
  	if (cmdinfo->state & IS_IN_WORK_LIST) {
--- 
-1.8.4
-

@@ -40,12 +40,12 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 Acked-by: Michal Hocko <mhocko@suse.cz>
 
 ---
- mm/memcontrol.c |  196 ++++++++++++++++++++++++++++++--------------------------
- 1 file changed, 105 insertions(+), 91 deletions(-)
+ mm/memcontrol.c |  216 ++++++++++++++++++++++++++++++--------------------------
+ 1 file changed, 117 insertions(+), 99 deletions(-)
 
 --- a/mm/memcontrol.c
 +++ b/mm/memcontrol.c
-@@ -2936,6 +2936,8 @@ static void __mem_cgroup_commit_charge(s
+@@ -2975,6 +2975,8 @@ static void __mem_cgroup_commit_charge(s
  static DEFINE_MUTEX(set_limit_mutex);
  
  #ifdef CONFIG_MEMCG_KMEM
@@ -54,7 +54,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  static inline bool memcg_can_account_kmem(struct mem_cgroup *memcg)
  {
  	return !mem_cgroup_disabled() && !mem_cgroup_is_root(memcg) &&
-@@ -3066,34 +3068,6 @@ int memcg_cache_id(struct mem_cgroup *me
+@@ -3105,34 +3107,6 @@ int memcg_cache_id(struct mem_cgroup *me
  	return memcg ? memcg->kmemcg_id : -1;
  }
  
@@ -89,7 +89,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  static size_t memcg_caches_array_size(int num_groups)
  {
  	ssize_t size;
-@@ -3430,9 +3404,10 @@ void kmem_cache_destroy_memcg_children(s
+@@ -3469,9 +3443,10 @@ void kmem_cache_destroy_memcg_children(s
  	 *
  	 * Still, we don't want anyone else freeing memcg_caches under our
  	 * noses, which can happen if a new memcg comes to life. As usual,
@@ -102,7 +102,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  	for_each_memcg_cache_index(i) {
  		c = cache_from_memcg_idx(s, i);
  		if (!c)
-@@ -3455,7 +3430,7 @@ void kmem_cache_destroy_memcg_children(s
+@@ -3494,7 +3469,7 @@ void kmem_cache_destroy_memcg_children(s
  		cancel_work_sync(&c->memcg_params->destroy);
  		kmem_cache_destroy(c);
  	}
@@ -111,7 +111,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  }
  
  struct create_work {
-@@ -5127,11 +5102,23 @@ static ssize_t mem_cgroup_read(struct cg
+@@ -5166,11 +5141,23 @@ static ssize_t mem_cgroup_read(struct cg
  	return simple_read_from_buffer(buf, nbytes, ppos, str, len);
  }
  
@@ -139,7 +139,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  	/*
  	 * For simplicity, we won't allow this to be disabled.  It also can't
  	 * be changed if the cgroup has children already, or if tasks had
-@@ -5145,72 +5132,101 @@ static int memcg_update_kmem_limit(struc
+@@ -5184,72 +5171,101 @@ static int memcg_update_kmem_limit(struc
  	 * of course permitted.
  	 */
  	mutex_lock(&memcg_create_mutex);
@@ -292,7 +292,7 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  #endif /* CONFIG_MEMCG_KMEM */
  
  /*
-@@ -5244,7 +5260,7 @@ static int mem_cgroup_write(struct cgrou
+@@ -5283,7 +5299,7 @@ static int mem_cgroup_write(struct cgrou
  		else if (type == _MEMSWAP)
  			ret = mem_cgroup_resize_memsw_limit(memcg, val);
  		else if (type == _KMEM)
@@ -301,24 +301,45 @@ Acked-by: Michal Hocko <mhocko@suse.cz>
  		else
  			return -EINVAL;
  		break;
-@@ -6250,7 +6266,6 @@ mem_cgroup_css_online(struct cgroup_subs
+@@ -6293,7 +6309,7 @@ mem_cgroup_css_online(struct cgroup_subs
  {
  	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
  	struct mem_cgroup *parent = mem_cgroup_from_css(css_parent(css));
 -	int error = 0;
++	int ret;
  
  	if (css->cgroup->id > MEM_CGROUP_ID_MAX)
  		return -ENOSPC;
-@@ -6285,10 +6300,9 @@ mem_cgroup_css_online(struct cgroup_subs
- 		if (parent != root_mem_cgroup)
+@@ -6329,19 +6345,21 @@ mem_cgroup_css_online(struct cgroup_subs
  			mem_cgroup_subsys.broken_hierarchy = true;
  	}
--
+ 
 -	error = memcg_init_kmem(memcg, &mem_cgroup_subsys);
  	mutex_unlock(&memcg_create_mutex);
+ 
+-	if (!error) {
+-		/*
+-		 * Make sure the memcg is initialized: mem_cgroup_iter()
+-		 * orders reading memcg->initialized against its callers
+-		 * reading the memcg members.
+-		 */
+-		smp_wmb();
+-		memcg->initialized = 1;
+-	}
 -	return error;
++	ret = memcg_init_kmem(memcg, &mem_cgroup_subsys);
++	if (ret)
++		return ret;
 +
-+	return memcg_init_kmem(memcg, &mem_cgroup_subsys);
++	/*
++	 * Make sure the memcg is initialized: mem_cgroup_iter()
++	 * orders reading memcg->initialized against its callers
++	 * reading the memcg members.
++	 */
++	smp_wmb();
++	memcg->initialized = 1;
++
++	return ret;
  }
  
  /*
