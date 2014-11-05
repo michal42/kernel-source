@@ -1,0 +1,57 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Wed, 5 Nov 2014 11:24:14 +0100
+Subject: dm: do not call dm_sync_table() when creating new devices
+References: bnc#901809
+Patch-Mainline: submitted to dm-devel
+
+When creating new devices dm_sync_table() calls
+synchronize_rcu_expedited(), causing _all_ pending
+RCU pointers to be flushed. This causes a latency
+overhead especially noticeable when creating lots
+of devices.
+And all of this is pointless as there are no old
+maps to be disconnected, and hence no stale pointers
+which would need to be cleared up.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/md/dm.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 91a2bdf..7653ec9 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -2266,7 +2266,8 @@ static struct dm_table *__bind(struct mapped_device *md, struct dm_table *t,
+ 		set_disk_ro(md->disk, 1);
+ 	else
+ 		set_disk_ro(md->disk, 0);
+-	dm_sync_table(md);
++	if (old_map)
++		dm_sync_table(md);
+ 
+ 	return old_map;
+ }
+@@ -2707,7 +2708,8 @@ int dm_suspend(struct mapped_device *md, unsigned suspend_flags)
+ 	 * flush_workqueue(md->wq).
+ 	 */
+ 	set_bit(DMF_BLOCK_IO_FOR_SUSPEND, &md->flags);
+-	synchronize_srcu(&md->io_barrier);
++	if (map)
++		synchronize_srcu(&md->io_barrier);
+ 
+ 	/*
+ 	 * Stop md->queue before flushing md->wq in case request-based
+@@ -2727,7 +2729,8 @@ int dm_suspend(struct mapped_device *md, unsigned suspend_flags)
+ 
+ 	if (noflush)
+ 		clear_bit(DMF_NOFLUSH_SUSPENDING, &md->flags);
+-	synchronize_srcu(&md->io_barrier);
++	if (map)
++		synchronize_srcu(&md->io_barrier);
+ 
+ 	/* were we interrupted ? */
+ 	if (r < 0) {
+-- 
+1.8.5.2
+
