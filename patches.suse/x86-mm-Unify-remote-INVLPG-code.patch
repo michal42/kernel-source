@@ -1,0 +1,49 @@
+From d08325ab2ca1c080c87e8bb9599f76c006c0bbfb Mon Sep 17 00:00:00 2001
+From: Dave Hansen <dave.hansen@linux.intel.com>
+Date: Thu, 31 Jul 2014 08:40:58 -0700
+Subject: [PATCH] x86/mm: Unify remote INVLPG code
+
+References: TLB Performance
+Patch-mainline: v3.17
+Git-commit: a23421f111bb256cdbf23dcfe15f35567ab88e98
+
+There are currently three paths through the remote flush code:
+
+1. full invalidation
+2. single page invalidation using invlpg
+3. ranged invalidation using invlpg
+
+This takes 2 and 3 and combines them in to a single path by
+making the single-page one just be the start and end be start
+plus a single page.  This makes placement of our tracepoint easier.
+
+Signed-off-by: Dave Hansen <dave.hansen@linux.intel.com>
+Link: http://lkml.kernel.org/r/20140731154058.E0F90408@viggo.jf.intel.com
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/x86/mm/tlb.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index ae584d0..add5a0f 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -102,13 +102,13 @@ static void flush_tlb_func(void *info)
+ 
+ 	if (f->flush_mm != this_cpu_read(cpu_tlbstate.active_mm))
+ 		return;
++	if (!f->flush_end)
++		f->flush_end = f->flush_start + PAGE_SIZE;
+ 
+ 	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH_RECEIVED);
+ 	if (this_cpu_read(cpu_tlbstate.state) == TLBSTATE_OK) {
+ 		if (f->flush_end == TLB_FLUSH_ALL)
+ 			local_flush_tlb();
+-		else if (!f->flush_end)
+-			__flush_tlb_single(f->flush_start);
+ 		else {
+ 			unsigned long addr;
+ 			addr = f->flush_start;
