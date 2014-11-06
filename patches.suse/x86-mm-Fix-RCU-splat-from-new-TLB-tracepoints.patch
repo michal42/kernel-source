@@ -1,0 +1,51 @@
+From 7a1fcf8ffc029dab410c5599d1c127ec2fe04372 Mon Sep 17 00:00:00 2001
+From: Dave Hansen <dave.hansen@linux.intel.com>
+Date: Thu, 7 Aug 2014 10:58:41 -0700
+Subject: [PATCH] x86/mm: Fix RCU splat from new TLB tracepoints
+
+References: TLB Performance
+Patch-mainline: v3.17
+Git-commit: 7c7f1547b627092737493f0781780af85cc9b1a4
+
+Dave Jones reported seeing a bug from one of my TLB tracepoints:
+
+        http://lkml.kernel.org/r/20140806181801.GA4605@redhat.com
+
+According to Paul McKenney, the right way to fix this is adding
+an _rcuidle suffix to the tracepoint.
+
+        http://lkml.kernel.org/r/20140807065055.GA5821@linux.vnet.ibm.com
+
+This patch does just that.
+
+Reported-by: Dave Jones <davej@redhat.com>,
+Signed-off-by: Dave Hansen <dave.hansen@linux.intel.com>
+Reviewed-by: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
+Cc: Dave Hansen <dave@sr71.net>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20140807175841.5C92D878@viggo.jf.intel.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/x86/mm/tlb.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index 1fe3398..98b7976 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -49,7 +49,13 @@ void leave_mm(int cpu)
+ 	if (cpumask_test_cpu(cpu, mm_cpumask(active_mm))) {
+ 		cpumask_clear_cpu(cpu, mm_cpumask(active_mm));
+ 		load_cr3(swapper_pg_dir);
+-		trace_tlb_flush(TLB_FLUSH_ON_TASK_SWITCH, TLB_FLUSH_ALL);
++		/*
++		 * This gets called in the idle path where RCU
++		 * functions differently.  Tracing normally
++		 * uses RCU, so we have to call the tracepoint
++		 * specially here.
++		 */
++		trace_tlb_flush_rcuidle(TLB_FLUSH_ON_TASK_SWITCH, TLB_FLUSH_ALL);
+ 	}
+ }
+ EXPORT_SYMBOL_GPL(leave_mm);
