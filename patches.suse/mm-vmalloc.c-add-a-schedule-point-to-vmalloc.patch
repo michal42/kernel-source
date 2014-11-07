@@ -1,0 +1,39 @@
+From f9469c13b8a87a434a5b74a99bed81dce33c4346 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Wed, 6 Aug 2014 16:06:25 -0700
+Subject: [PATCH] mm/vmalloc.c: add a schedule point to vmalloc()
+
+References: VM/FS Micro-optimisations
+Patch-mainline: v3.17
+Git-commit: 660654f90e7f8f6d8163276d47fc1573a39c7007
+
+It is not uncommon on busy servers to get stuck hundred of ms in
+vmalloc() calls (like file descriptor expansions).
+
+Add a cond_resched() to __vmalloc_area_node() to be gentle to
+other tasks.
+
+[akpm@linux-foundation.org: only do it for __GFP_WAIT, per David]
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Hugh Dickins <hughd@google.com>
+Acked-by: David Rientjes <rientjes@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/vmalloc.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/mm/vmalloc.c b/mm/vmalloc.c
+index ed957fc..09d5223 100644
+--- a/mm/vmalloc.c
++++ b/mm/vmalloc.c
+@@ -1601,6 +1601,8 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
+ 			goto fail;
+ 		}
+ 		area->pages[i] = page;
++		if (gfp_mask & __GFP_WAIT)
++			cond_resched();
+ 	}
+ 
+ 	if (map_vm_area(area, prot, &pages))
