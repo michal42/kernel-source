@@ -1,0 +1,53 @@
+From 0d485c05a0db5f5f418af2baa52447f74e4d7c00 Mon Sep 17 00:00:00 2001
+From: David Rientjes <rientjes@google.com>
+Date: Wed, 6 Aug 2014 16:06:28 -0700
+Subject: [PATCH] mm, vmalloc: constify allocation mask
+
+References: VM/FS Micro-optimisations
+Patch-mainline: v3.17
+Git-commit: 930f036b4ff6501b91e09bba4bf94423203dabd9
+
+tmp_mask in the __vmalloc_area_node() iteration never changes so it can
+be moved into function scope and marked with const.  This causes the
+movl and orl to only be done once per call rather than area->nr_pages
+times.
+
+nested_gfp can also be marked const.
+
+Signed-off-by: David Rientjes <rientjes@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/vmalloc.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/mm/vmalloc.c b/mm/vmalloc.c
+index 09d5223..3e74309 100644
+--- a/mm/vmalloc.c
++++ b/mm/vmalloc.c
+@@ -1557,7 +1557,8 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
+ 	const int order = 0;
+ 	struct page **pages;
+ 	unsigned int nr_pages, array_size, i;
+-	gfp_t nested_gfp = (gfp_mask & GFP_RECLAIM_MASK) | __GFP_ZERO;
++	const gfp_t nested_gfp = (gfp_mask & GFP_RECLAIM_MASK) | __GFP_ZERO;
++	const gfp_t alloc_mask = gfp_mask | __GFP_NOWARN;
+ 
+ 	nr_pages = get_vm_area_size(area) >> PAGE_SHIFT;
+ 	array_size = (nr_pages * sizeof(struct page *));
+@@ -1588,12 +1589,11 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
+ 
+ 	for (i = 0; i < area->nr_pages; i++) {
+ 		struct page *page;
+-		gfp_t tmp_mask = gfp_mask | __GFP_NOWARN;
+ 
+ 		if (node < 0)
+-			page = alloc_page(tmp_mask);
++			page = alloc_page(alloc_mask);
+ 		else
+-			page = alloc_pages_node(node, tmp_mask, order);
++			page = alloc_pages_node(node, alloc_mask, order);
+ 
+ 		if (unlikely(!page)) {
+ 			/* Successfully allocated i pages, free them in __vunmap() */
