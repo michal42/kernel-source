@@ -1,0 +1,42 @@
+From: Hariprasad Shenai <hariprasad@chelsio.com>
+Date: Wed, 7 May 2014 18:01:03 +0530
+Subject: [PATCH 1/4] cxgb4: Check if rx checksum offload is enabled, while
+ reading hardware calculated checksum
+Patch-mainline: v3.16-rc1
+Git-commit: cca2822d37f419280b8cca27a4a6220e47afb77f
+References: bsc#903999
+
+Signed-off-by: Hariprasad Shenai <hariprasad@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/chelsio/cxgb4/sge.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/ethernet/chelsio/cxgb4/sge.c b/drivers/net/ethernet/chelsio/cxgb4/sge.c
+index 0b8ae9e..03230c6 100644
+--- a/drivers/net/ethernet/chelsio/cxgb4/sge.c
++++ b/drivers/net/ethernet/chelsio/cxgb4/sge.c
+@@ -1687,7 +1687,8 @@ int t4_ethrx_handler(struct sge_rspq *q, const __be64 *rsp,
+ 		return handle_trace_pkt(q->adap, si);
+ 
+ 	pkt = (const struct cpl_rx_pkt *)rsp;
+-	csum_ok = pkt->csum_calc && !pkt->err_vec;
++	csum_ok = pkt->csum_calc && !pkt->err_vec &&
++		  (q->netdev->features & NETIF_F_RXCSUM);
+ 	if ((pkt->l2info & htonl(RXF_TCP)) &&
+ 	    (q->netdev->features & NETIF_F_GRO) && csum_ok && !pkt->ip_frag) {
+ 		do_gro(rxq, si, pkt);
+@@ -1710,8 +1711,7 @@ int t4_ethrx_handler(struct sge_rspq *q, const __be64 *rsp,
+ 
+ 	rxq->stats.pkts++;
+ 
+-	if (csum_ok && (q->netdev->features & NETIF_F_RXCSUM) &&
+-	    (pkt->l2info & htonl(RXF_UDP | RXF_TCP))) {
++	if (csum_ok && (pkt->l2info & htonl(RXF_UDP | RXF_TCP))) {
+ 		if (!pkt->ip_frag) {
+ 			skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 			rxq->stats.rx_cso++;
+-- 
+2.1.2
+
