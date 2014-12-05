@@ -1,0 +1,73 @@
+From: Dirk Brandewie <dirk.j.brandewie@intel.com>
+Date: Fri Jun 20 07:27:58 2014 -0700
+Subject: intel_pstate: Fix setting VID
+Patch-mainline: Upstream/v3.16-rc5
+Git-commit: c16ed06024a6e699c332831dd50d8276744e3de8
+
+References: bnc#907973, FATE#316038
+Signed-off-by: Egbert Eich <eich@suse.com>
+
+Commit 21855ff5 (intel_pstate: Set turbo VID for BayTrail) introduced
+setting the turbo VID which is required to prevent a machine check on
+some Baytrail SKUs under heavy graphics based workloads.  The
+docmumentation update that brought the requirement to light also
+changed the bit mask used for enumerating P state and VID values from
+0x7f to 0x3f.
+
+This change returns the mask value to 0x7f.
+
+Tested with the Intel NUC DN2820FYK,
+BIOS version FYBYT10H.86A.0034.2014.0513.1413 with v3.16-rc1 and
+v3.14.8 kernel versions.
+
+Fixes: 21855ff5 (intel_pstate: Set turbo VID for BayTrail)
+Link: https://bugzilla.kernel.org/show_bug.cgi?id=77951
+Reported-and-tested-by: Rune Reterson <rune@megahurts.dk>
+Reported-and-tested-by: Eric Eickmeyer <erich@ericheickmeyer.com>
+Cc: 3.13+ <stable@vger.kernel.org>  # 3.13+
+Signed-off-by: Dirk Brandewie <dirk.j.brandewie@intel.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+---
+ drivers/cpufreq/intel_pstate.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/cpufreq/intel_pstate.c b/drivers/cpufreq/intel_pstate.c
+index 5ff7ece..578b7f6 100644
+--- a/drivers/cpufreq/intel_pstate.c
++++ b/drivers/cpufreq/intel_pstate.c
+@@ -361,21 +361,21 @@ static int byt_get_min_pstate(void)
+ {
+ 	u64 value;
+ 	rdmsrl(BYT_RATIOS, value);
+-	return (value >> 8) & 0x3F;
++	return (value >> 8) & 0x7F;
+ }
+ 
+ static int byt_get_max_pstate(void)
+ {
+ 	u64 value;
+ 	rdmsrl(BYT_RATIOS, value);
+-	return (value >> 16) & 0x3F;
++	return (value >> 16) & 0x7F;
+ }
+ 
+ static int byt_get_turbo_pstate(void)
+ {
+ 	u64 value;
+ 	rdmsrl(BYT_TURBO_RATIOS, value);
+-	return value & 0x3F;
++	return value & 0x7F;
+ }
+ 
+ static void byt_set_pstate(struct cpudata *cpudata, int pstate)
+@@ -409,8 +409,8 @@ static void byt_get_vid(struct cpudata *cpudata)
+ 
+ 
+ 	rdmsrl(BYT_VIDS, value);
+-	cpudata->vid.min = int_tofp((value >> 8) & 0x3f);
+-	cpudata->vid.max = int_tofp((value >> 16) & 0x3f);
++	cpudata->vid.min = int_tofp((value >> 8) & 0x7f);
++	cpudata->vid.max = int_tofp((value >> 16) & 0x7f);
+ 	cpudata->vid.ratio = div_fp(
+ 		cpudata->vid.max - cpudata->vid.min,
+ 		int_tofp(cpudata->pstate.max_pstate -

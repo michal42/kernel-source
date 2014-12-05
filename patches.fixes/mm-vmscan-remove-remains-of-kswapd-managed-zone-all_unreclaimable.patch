@@ -1,0 +1,50 @@
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Wed, 6 Aug 2014 16:06:10 -0700
+Subject: mm: vmscan: remove remains of kswapd-managed zone->all_unreclaimable
+Git-commit: 8d07429319b2836604061f48f7e3dfe78acc060c
+Patch-mainline: v3.17-rc1
+References: VM Cleanup, bnc#904177
+
+shrink_zones() has a special branch to skip the all_unreclaimable()
+check during hibernation, because a frozen kswapd can't mark a zone
+unreclaimable.
+
+But ever since commit 6e543d5780e3 ("mm: vmscan: fix
+do_try_to_free_pages() livelock"), determining a zone to be
+unreclaimable is done by directly looking at its scan history and no
+longer relies on kswapd setting the per-zone flag.
+
+Remove this branch and let shrink_zones() check the reclaimability of
+the target zones regardless of hibernation state.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Acked-by: Mel Gorman <mgorman@suse.de>
+Cc: Rik van Riel <riel@redhat.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Cc: Vlastimil Babka <vbabka@suse.cz>
+Acked-by: Minchan Kim <minchan@kernel.org>
+Cc: KOSAKI Motohiro <Kosaki.motohiro@jp.fujitsu.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Vlastimil Babka <vbabka@suse.cz>
+---
+ mm/vmscan.c |    8 --------
+ 1 file changed, 8 deletions(-)
+
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -2495,14 +2495,6 @@ out:
+ 	if (sc->nr_reclaimed)
+ 		return sc->nr_reclaimed;
+ 
+-	/*
+-	 * As hibernation is going on, kswapd is freezed so that it can't mark
+-	 * the zone into all_unreclaimable. Thus bypassing all_unreclaimable
+-	 * check.
+-	 */
+-	if (oom_killer_disabled)
+-		return 0;
+-
+ 	/* Aborted reclaim to try compaction? don't OOM, then */
+ 	if (aborted_reclaim)
+ 		return 1;
