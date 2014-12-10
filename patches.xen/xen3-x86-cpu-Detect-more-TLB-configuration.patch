@@ -1,0 +1,67 @@
+From af95f6e4a5188b52fc38f0eec5523a08e681fb82 Mon Sep 17 00:00:00 2001
+From: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Date: Mon, 23 Dec 2013 14:16:58 +0200
+Subject: [PATCH] x86, cpu: Detect more TLB configuration
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+References: TLB Performance
+Patch-mainline: v3.14
+
+The Intel Software Developer’s Manual covers few more TLB
+configurations exposed as CPUID 2 descriptors:
+
+61H Instruction TLB: 4 KByte pages, fully associative, 48 entries
+63H Data TLB: 1 GByte pages, 4-way set associative, 4 entries
+76H Instruction TLB: 2M/4M pages, fully associative, 8 entries
+B5H Instruction TLB: 4KByte pages, 8-way set associative, 64 entries
+B6H Instruction TLB: 4KByte pages, 8-way set associative, 128 entries
+C1H Shared 2nd-Level TLB: 4 KByte/2MByte pages, 8-way associative, 1024 entries
+C2H DTLB DTLB: 2 MByte/$MByte pages, 4-way associative, 16 entries
+
+Let's detect them as well.
+
+Signed-off-by: Kirill A. Shutemov <kirill.shutemov@linux.intel.com>
+Link: http://lkml.kernel.org/r/1387801018-14499-1-git-send-email-kirill.shutemov@linux.intel.com
+Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Automatically created from "patches.suse/x86-cpu-Detect-more-TLB-configuration.patch" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/include/mach-xen/asm/processor.h	2013-09-26 15:33:39.000000000 +0200
++++ sle12/arch/x86/include/mach-xen/asm/processor.h	2014-12-08 14:03:21.000000000 +0100
+@@ -74,6 +74,7 @@ extern u16 __read_mostly tlb_lli_4m[NR_I
+ extern u16 __read_mostly tlb_lld_4k[NR_INFO];
+ extern u16 __read_mostly tlb_lld_2m[NR_INFO];
+ extern u16 __read_mostly tlb_lld_4m[NR_INFO];
++extern u16 __read_mostly tlb_lld_1g[NR_INFO];
+ extern s8  __read_mostly tlb_flushall_shift;
+ 
+ /*
+--- sle12.orig/arch/x86/kernel/cpu/common-xen.c	2014-12-08 13:52:30.000000000 +0100
++++ sle12/arch/x86/kernel/cpu/common-xen.c	2014-12-08 14:03:21.000000000 +0100
+@@ -517,6 +517,7 @@ u16 __read_mostly tlb_lli_4m[NR_INFO];
+ u16 __read_mostly tlb_lld_4k[NR_INFO];
+ u16 __read_mostly tlb_lld_2m[NR_INFO];
+ u16 __read_mostly tlb_lld_4m[NR_INFO];
++u16 __read_mostly tlb_lld_1g[NR_INFO];
+ 
+ /*
+  * tlb_flushall_shift shows the balance point in replacing cr3 write
+@@ -531,13 +532,13 @@ void cpu_detect_tlb(struct cpuinfo_x86 *
+ 	if (this_cpu->c_detect_tlb)
+ 		this_cpu->c_detect_tlb(c);
+ 
+-	printk(KERN_INFO "Last level iTLB entries: 4KB %d, 2MB %d, 4MB %d\n" \
+-		"Last level dTLB entries: 4KB %d, 2MB %d, 4MB %d\n"	     \
++	printk(KERN_INFO "Last level iTLB entries: 4KB %d, 2MB %d, 4MB %d\n"
++		"Last level dTLB entries: 4KB %d, 2MB %d, 4MB %d, 1GB %d\n"
+ 		"tlb_flushall_shift: %d\n",
+ 		tlb_lli_4k[ENTRIES], tlb_lli_2m[ENTRIES],
+ 		tlb_lli_4m[ENTRIES], tlb_lld_4k[ENTRIES],
+ 		tlb_lld_2m[ENTRIES], tlb_lld_4m[ENTRIES],
+-		tlb_flushall_shift);
++		tlb_lld_1g[ENTRIES], tlb_flushall_shift);
+ }
+ 
+ void detect_ht(struct cpuinfo_x86 *c)
