@@ -1,0 +1,456 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/ftrace: remove 31 bit ftrace support
+Patch-mainline: v3.18-rc1
+Git-commit: 53255c9a4dade6ff2162121430d13aaadb38a69c
+References: bnc#903279, LTC#118177
+
+Description:  kernel: reduce function tracer overhead
+Symptom:      The kernel uses more cpu cycles for each function being
+              executed.
+Problem:      The kGraft feature requires to instrument the kernel. In
+              order to do that the kernel gets compiled with the function
+              tracer enabled which causes the compiler to emit code that
+              adds an "mcount" call to the prologue of each function.
+              This code will be modified by the kernel for function tracing.
+              However the implementation was not optimal, since even if
+              disabled each function stored a value on the stack and
+              afterwards contained an unconditional branch which skipped
+              the rest of the mcount prologue code.
+              So more instructions than necessary will be executed which
+              results in a reduced performance.
+Solution:     Patch the mcount prologue code so that only a single
+              instruction of the mcount code will be executed. It's either
+              a branch that skips the rest of the mcount prologue code or
+              a branch to the function tracer.
+Reproduction: Compile the kernel with and without function tracer enabled
+              and compare cpu time spent in the kernel for identical
+              workloads.
+
+Upstream-Description:
+
+              s390/ftrace: remove 31 bit ftrace support
+
+              31 bit and 64 bit diverge more and more and it is rather painful
+              to keep both parts running.
+              To make things simpler just remove the 31 bit support which nobody
+              uses anyway.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/Kconfig              |    6 +-
+ arch/s390/include/asm/ftrace.h |    6 --
+ arch/s390/kernel/Makefile      |    3 -
+ arch/s390/kernel/ftrace.c      |   79 -------------------------------------
+ arch/s390/kernel/mcount.S      |   87 +++++++++++++++++++++++------------------
+ arch/s390/kernel/mcount64.S    |   80 -------------------------------------
+ scripts/recordmcount.c         |    4 -
+ scripts/recordmcount.pl        |    7 ---
+ 8 files changed, 56 insertions(+), 216 deletions(-)
+
+--- a/arch/s390/include/asm/ftrace.h
++++ b/arch/s390/include/asm/ftrace.h
+@@ -18,14 +18,8 @@ static inline unsigned long ftrace_call_
+ 
+ #endif /* __ASSEMBLY__ */
+ 
+-#ifdef CONFIG_64BIT
+ #define MCOUNT_INSN_SIZE  18
+-#else
+-#define MCOUNT_INSN_SIZE  22
+-#endif
+ 
+-#ifdef CONFIG_64BIT
+ #define ARCH_SUPPORTS_FTRACE_OPS 1
+-#endif
+ 
+ #endif /* _ASM_S390_FTRACE_H */
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -112,11 +112,11 @@ config S390
+ 	select HAVE_CMPXCHG_LOCAL
+ 	select HAVE_C_RECORDMCOUNT
+ 	select HAVE_DEBUG_KMEMLEAK
+-	select HAVE_DYNAMIC_FTRACE
++	select HAVE_DYNAMIC_FTRACE if 64BIT
+ 	select HAVE_DYNAMIC_FTRACE_WITH_REGS if 64BIT
+ 	select HAVE_FTRACE_MCOUNT_RECORD
+-	select HAVE_FUNCTION_GRAPH_TRACER
+-	select HAVE_FUNCTION_TRACER
++	select HAVE_FUNCTION_GRAPH_TRACER if 64BIT
++	select HAVE_FUNCTION_TRACER if 64BIT
+ 	select HAVE_FUTEX_CMPXCHG if FUTEX
+ 	select HAVE_KERNEL_BZIP2
+ 	select HAVE_KERNEL_GZIP
+--- a/arch/s390/kernel/ftrace.c
++++ b/arch/s390/kernel/ftrace.c
+@@ -21,9 +21,8 @@ void mcount_replace_code(void);
+ void ftrace_disable_code(void);
+ void ftrace_enable_insn(void);
+ 
+-#ifdef CONFIG_64BIT
+ /*
+- * The 64-bit mcount code looks like this:
++ * The mcount code looks like this:
+  *	stg	%r14,8(%r15)		# offset 0
+  *	larl	%r1,<&counter>		# offset 6
+  *	brasl	%r14,_mcount		# offset 12
+@@ -34,7 +33,7 @@ void ftrace_enable_insn(void);
+  * Note: we do not patch the first instruction to an unconditional branch,
+  * since that would break kprobes/jprobes. It is easier to leave the larl
+  * instruction in and only modify the second instruction.
+- * The 64-bit enabled ftrace code block looks like this:
++ * The enabled ftrace code block looks like this:
+  *	larl	%r0,.+24		# offset 0
+  * >	lg	%r1,__LC_FTRACE_FUNC	# offset 6
+  *	br	%r1			# offset 12
+@@ -71,65 +70,15 @@ asm(
+ #define MCOUNT_INSN_OFFSET	6
+ #define FTRACE_INSN_SIZE	6
+ 
+-#else /* CONFIG_64BIT */
+-/*
+- * The 31-bit mcount code looks like this:
+- *	st	%r14,4(%r15)		# offset 0
+- * >	bras	%r1,0f			# offset 4
+- * >	.long	_mcount			# offset 8
+- * >	.long	<&counter>		# offset 12
+- * > 0:	l	%r14,0(%r1)		# offset 16
+- * >	l	%r1,4(%r1)		# offset 20
+- *	basr	%r14,%r14		# offset 24
+- *	l	%r14,4(%r15)		# offset 26
+- * Total length is 30 bytes. The twenty bytes starting from offset 4
+- * to offset 24 get overwritten by ftrace_make_nop / ftrace_make_call.
+- * The 31-bit enabled ftrace code block looks like this:
+- *	st	%r14,4(%r15)		# offset 0
+- * >	l	%r14,__LC_FTRACE_FUNC	# offset 4
+- * >	j	0f			# offset 8
+- * >	.fill	12,1,0x07		# offset 12
+- *   0:	basr	%r14,%r14		# offset 24
+- *	l	%r14,4(%r14)		# offset 26
+- * The return points of the mcount/ftrace function have the same offset 26.
+- * The 31-bit disabled ftrace code block looks like this:
+- *	st	%r14,4(%r15)		# offset 0
+- * >	j	.+26			# offset 4
+- * >	j	0f			# offset 8
+- * >	.fill	12,1,0x07		# offset 12
+- *   0:	basr	%r14,%r14		# offset 24
+- *	l	%r14,4(%r14)		# offset 26
+- * The j instruction branches to offset 30 to skip as many instructions
+- * as possible.
+- */
+-asm(
+-	"	.align	4\n"
+-	"ftrace_disable_code:\n"
+-	"	j	1f\n"
+-	"	j	0f\n"
+-	"	.fill	12,1,0x07\n"
+-	"0:	basr	%r14,%r14\n"
+-	"1:\n"
+-	"	.align	4\n"
+-	"ftrace_enable_insn:\n"
+-	"	l	%r14,"__stringify(__LC_FTRACE_FUNC)"\n");
+-
+-#define FTRACE_INSN_SIZE	4
+-
+-#endif /* CONFIG_64BIT */
+-
+-#ifdef CONFIG_64BIT
+ int ftrace_modify_call(struct dyn_ftrace *rec, unsigned long old_addr,
+ 		       unsigned long addr)
+ {
+ 	return 0;
+ }
+-#endif
+ 
+ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
+ 		    unsigned long addr)
+ {
+-#ifdef CONFIG_64BIT
+ 	/* Initial replacement of the whole mcount block */
+ 	if (addr == MCOUNT_ADDR) {
+ 		if (probe_kernel_write((void *) rec->ip - MCOUNT_INSN_OFFSET,
+@@ -138,7 +87,6 @@ int ftrace_make_nop(struct module *mod,
+ 			return -EPERM;
+ 		return 0;
+ 	}
+-#endif
+ 	if (probe_kernel_write((void *) rec->ip, ftrace_disable_code,
+ 			       MCOUNT_INSN_SIZE))
+ 		return -EPERM;
+@@ -198,8 +146,6 @@ out:
+  * the original offset to prepare_ftrace_return and put it back.
+  */
+ 
+-#ifdef CONFIG_64BIT
+-
+ int ftrace_enable_ftrace_graph_caller(void)
+ {
+ 	static unsigned short offset = 0x0002;
+@@ -218,25 +164,4 @@ int ftrace_disable_ftrace_graph_caller(v
+ 				  &offset, sizeof(offset));
+ }
+ 
+-#else /* CONFIG_64BIT */
+-
+-int ftrace_enable_ftrace_graph_caller(void)
+-{
+-	unsigned short offset;
+-
+-	offset = ((void *) prepare_ftrace_return -
+-		  (void *) ftrace_graph_caller) / 2;
+-	return probe_kernel_write((void *) ftrace_graph_caller + 2,
+-				  &offset, sizeof(offset));
+-}
+-
+-int ftrace_disable_ftrace_graph_caller(void)
+-{
+-	static unsigned short offset = 0x0002;
+-
+-	return probe_kernel_write((void *) ftrace_graph_caller + 2,
+-				  &offset, sizeof(offset));
+-}
+-
+-#endif /* CONFIG_64BIT */
+ #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
+--- a/arch/s390/kernel/Makefile
++++ b/arch/s390/kernel/Makefile
+@@ -53,8 +53,7 @@ obj-$(CONFIG_COMPAT)		+= compat_linux.o
+ 
+ obj-$(CONFIG_STACKTRACE)	+= stacktrace.o
+ obj-$(CONFIG_KPROBES)		+= kprobes.o
+-obj-$(CONFIG_FUNCTION_TRACER)	+= $(if $(CONFIG_64BIT),mcount64.o,mcount.o)
+-obj-$(CONFIG_FUNCTION_TRACER)	+= ftrace.o
++obj-$(CONFIG_FUNCTION_TRACER)	+= mcount.o ftrace.o
+ obj-$(CONFIG_CRASH_DUMP)	+= crash_dump.o
+ 
+ ifdef CONFIG_64BIT
+--- a/arch/s390/kernel/mcount64.S
++++ /dev/null
+@@ -1,80 +0,0 @@
+-/*
+- * Copyright IBM Corp. 2008, 2009
+- *
+- *   Author(s): Heiko Carstens <heiko.carstens@de.ibm.com>,
+- *
+- */
+-
+-#include <linux/linkage.h>
+-#include <asm/asm-offsets.h>
+-#include <asm/ftrace.h>
+-#include <asm/ptrace.h>
+-
+-	.section .kprobes.text, "ax"
+-
+-ENTRY(ftrace_stub)
+-	br	%r14
+-
+-#define STACK_FRAME_SIZE  (STACK_FRAME_OVERHEAD + __PT_SIZE)
+-#define STACK_PTREGS	  (STACK_FRAME_OVERHEAD)
+-#define STACK_PTREGS_GPRS (STACK_PTREGS + __PT_GPRS)
+-#define STACK_PTREGS_PSW  (STACK_PTREGS + __PT_PSW)
+-
+-ENTRY(_mcount)
+-	br	%r14
+-
+-ENTRY(ftrace_caller)
+-	.globl	ftrace_regs_caller
+-	.set	ftrace_regs_caller,ftrace_caller
+-	lgr	%r1,%r15
+-	aghi	%r15,-STACK_FRAME_SIZE
+-	stg	%r1,__SF_BACKCHAIN(%r15)
+-	stg	%r1,(STACK_PTREGS_GPRS+15*8)(%r15)
+-	stg	%r0,(STACK_PTREGS_PSW+8)(%r15)
+-	stmg	%r2,%r14,(STACK_PTREGS_GPRS+2*8)(%r15)
+-#ifdef CONFIG_HAVE_MARCH_Z196_FEATURES
+-	aghik	%r2,%r0,-MCOUNT_INSN_SIZE
+-	lgrl	%r4,function_trace_op
+-	lgrl	%r1,ftrace_trace_function
+-#else
+-	lgr	%r2,%r0
+-	aghi	%r2,-MCOUNT_INSN_SIZE
+-	larl	%r4,function_trace_op
+-	lg	%r4,0(%r4)
+-	larl	%r1,ftrace_trace_function
+-	lg	%r1,0(%r1)
+-#endif
+-	lgr	%r3,%r14
+-	la	%r5,STACK_PTREGS(%r15)
+-	basr	%r14,%r1
+-#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+-# The j instruction gets runtime patched to a nop instruction.
+-# See ftrace_enable_ftrace_graph_caller. The patched instruction is:
+-#	j	.+4
+-ENTRY(ftrace_graph_caller)
+-	j	ftrace_graph_caller_end
+-	lg	%r2,(STACK_PTREGS_GPRS+14*8)(%r15)
+-	lg	%r3,(STACK_PTREGS_PSW+8)(%r15)
+-	brasl	%r14,prepare_ftrace_return
+-	stg	%r2,(STACK_PTREGS_GPRS+14*8)(%r15)
+-ftrace_graph_caller_end:
+-	.globl	ftrace_graph_caller_end
+-#endif
+-	lg	%r1,(STACK_PTREGS_PSW+8)(%r15)
+-	lmg	%r2,%r15,(STACK_PTREGS_GPRS+2*8)(%r15)
+-	br	%r1
+-
+-#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+-
+-ENTRY(return_to_handler)
+-	stmg	%r2,%r5,32(%r15)
+-	lgr	%r1,%r15
+-	aghi	%r15,-STACK_FRAME_OVERHEAD
+-	stg	%r1,__SF_BACKCHAIN(%r15)
+-	brasl	%r14,ftrace_return_to_handler
+-	aghi	%r15,STACK_FRAME_OVERHEAD
+-	lgr	%r14,%r2
+-	lmg	%r2,%r5,32(%r15)
+-	br	%r14
+-
+-#endif
+--- a/arch/s390/kernel/mcount.S
++++ b/arch/s390/kernel/mcount.S
+@@ -8,60 +8,73 @@
+ #include <linux/linkage.h>
+ #include <asm/asm-offsets.h>
+ #include <asm/ftrace.h>
++#include <asm/ptrace.h>
+ 
+ 	.section .kprobes.text, "ax"
+ 
+ ENTRY(ftrace_stub)
+ 	br	%r14
+ 
++#define STACK_FRAME_SIZE  (STACK_FRAME_OVERHEAD + __PT_SIZE)
++#define STACK_PTREGS	  (STACK_FRAME_OVERHEAD)
++#define STACK_PTREGS_GPRS (STACK_PTREGS + __PT_GPRS)
++#define STACK_PTREGS_PSW  (STACK_PTREGS + __PT_PSW)
++
+ ENTRY(_mcount)
+ 	br	%r14
+ 
+ ENTRY(ftrace_caller)
+-	stm	%r2,%r5,16(%r15)
+-	bras	%r1,1f
+-0:	.long	ftrace_trace_function
+-1:	st	%r14,56(%r15)
+-	lr	%r0,%r15
+-	ahi	%r15,-96
+-	l	%r3,100(%r15)
+-	la	%r2,0(%r14)
+-	st	%r0,__SF_BACKCHAIN(%r15)
+-	la	%r3,0(%r3)
+-	ahi	%r2,-MCOUNT_INSN_SIZE
+-	l	%r14,0b-0b(%r1)
+-	l	%r14,0(%r14)
+-	basr	%r14,%r14
++	.globl	ftrace_regs_caller
++	.set	ftrace_regs_caller,ftrace_caller
++	lgr	%r1,%r15
++	aghi	%r15,-STACK_FRAME_SIZE
++	stg	%r1,__SF_BACKCHAIN(%r15)
++	stg	%r1,(STACK_PTREGS_GPRS+15*8)(%r15)
++	stg	%r0,(STACK_PTREGS_PSW+8)(%r15)
++	stmg	%r2,%r14,(STACK_PTREGS_GPRS+2*8)(%r15)
++#ifdef CONFIG_HAVE_MARCH_Z196_FEATURES
++	aghik	%r2,%r0,-MCOUNT_INSN_SIZE
++	lgrl	%r4,function_trace_op
++	lgrl	%r1,ftrace_trace_function
++#else
++	lgr	%r2,%r0
++	aghi	%r2,-MCOUNT_INSN_SIZE
++	larl	%r4,function_trace_op
++	lg	%r4,0(%r4)
++	larl	%r1,ftrace_trace_function
++	lg	%r1,0(%r1)
++#endif
++	lgr	%r3,%r14
++	la	%r5,STACK_PTREGS(%r15)
++	basr	%r14,%r1
+ #ifdef CONFIG_FUNCTION_GRAPH_TRACER
+-	l	%r2,100(%r15)
+-	l	%r3,152(%r15)
+-ENTRY(ftrace_graph_caller)
+-# The bras instruction gets runtime patched to call prepare_ftrace_return.
++# The j instruction gets runtime patched to a nop instruction.
+ # See ftrace_enable_ftrace_graph_caller. The patched instruction is:
+-#	bras	%r14,prepare_ftrace_return
+-	bras	%r14,0f
+-0:	st	%r2,100(%r15)
++#	j	.+4
++ENTRY(ftrace_graph_caller)
++	j	ftrace_graph_caller_end
++	lg	%r2,(STACK_PTREGS_GPRS+14*8)(%r15)
++	lg	%r3,(STACK_PTREGS_PSW+8)(%r15)
++	brasl	%r14,prepare_ftrace_return
++	stg	%r2,(STACK_PTREGS_GPRS+14*8)(%r15)
++ftrace_graph_caller_end:
++	.globl	ftrace_graph_caller_end
+ #endif
+-	ahi	%r15,96
+-	l	%r14,56(%r15)
+-	lm	%r2,%r5,16(%r15)
+-	br	%r14
++	lg	%r1,(STACK_PTREGS_PSW+8)(%r15)
++	lmg	%r2,%r15,(STACK_PTREGS_GPRS+2*8)(%r15)
++	br	%r1
+ 
+ #ifdef CONFIG_FUNCTION_GRAPH_TRACER
+ 
+ ENTRY(return_to_handler)
+-	stm	%r2,%r5,16(%r15)
+-	st	%r14,56(%r15)
+-	lr	%r0,%r15
+-	ahi	%r15,-96
+-	st	%r0,__SF_BACKCHAIN(%r15)
+-	bras	%r1,0f
+-	.long	ftrace_return_to_handler
+-0:	l	%r2,0b-0b(%r1)
+-	basr	%r14,%r2
+-	lr	%r14,%r2
+-	ahi	%r15,96
+-	lm	%r2,%r5,16(%r15)
++	stmg	%r2,%r5,32(%r15)
++	lgr	%r1,%r15
++	aghi	%r15,-STACK_FRAME_OVERHEAD
++	stg	%r1,__SF_BACKCHAIN(%r15)
++	brasl	%r14,ftrace_return_to_handler
++	aghi	%r15,STACK_FRAME_OVERHEAD
++	lgr	%r14,%r2
++	lmg	%r2,%r5,32(%r15)
+ 	br	%r14
+ 
+ #endif
+--- a/scripts/recordmcount.c
++++ b/scripts/recordmcount.c
+@@ -381,10 +381,6 @@ do_file(char const *const fname)
+ 				"unrecognized ET_REL file: %s\n", fname);
+ 			fail_file();
+ 		}
+-		if (w2(ehdr->e_machine) == EM_S390) {
+-			reltype = R_390_32;
+-			mcount_adjust_32 = -4;
+-		}
+ 		if (w2(ehdr->e_machine) == EM_MIPS) {
+ 			reltype = R_MIPS_32;
+ 			is_fake_mcount32 = MIPS32_is_fake_mcount;
+--- a/scripts/recordmcount.pl
++++ b/scripts/recordmcount.pl
+@@ -241,13 +241,6 @@ if ($arch eq "x86_64") {
+     $objcopy .= " -O elf32-i386";
+     $cc .= " -m32";
+ 
+-} elsif ($arch eq "s390" && $bits == 32) {
+-    $mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*R_390_32\\s+_mcount\$";
+-    $mcount_adjust = -4;
+-    $alignment = 4;
+-    $ld .= " -m elf_s390";
+-    $cc .= " -m31";
+-
+ } elsif ($arch eq "s390" && $bits == 64) {
+     $mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*R_390_(PC|PLT)32DBL\\s+_mcount\\+0x2\$";
+     $mcount_adjust = -8;
