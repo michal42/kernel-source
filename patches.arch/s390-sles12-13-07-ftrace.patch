@@ -1,0 +1,238 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/ftrace: optimize mcount code
+Patch-mainline: v3.18-rc1
+Git-commit: 3d1e220d08c6a00ffa83d39030b8162f66665b2b
+References: bnc#903279, LTC#118177
+
+Description:  kernel: reduce function tracer overhead
+Symptom:      The kernel uses more cpu cycles for each function being
+              executed.
+Problem:      The kGraft feature requires to instrument the kernel. In
+              order to do that the kernel gets compiled with the function
+              tracer enabled which causes the compiler to emit code that
+              adds an "mcount" call to the prologue of each function.
+              This code will be modified by the kernel for function tracing.
+              However the implementation was not optimal, since even if
+              disabled each function stored a value on the stack and
+              afterwards contained an unconditional branch which skipped
+              the rest of the mcount prologue code.
+              So more instructions than necessary will be executed which
+              results in a reduced performance.
+Solution:     Patch the mcount prologue code so that only a single
+              instruction of the mcount code will be executed. It's either
+              a branch that skips the rest of the mcount prologue code or
+              a branch to the function tracer.
+Reproduction: Compile the kernel with and without function tracer enabled
+              and compare cpu time spent in the kernel for identical
+              workloads.
+
+Upstream-Description:
+
+              s390/ftrace: optimize mcount code
+
+              Reduce the number of executed instructions within the mcount block if
+              function tracing is enabled. We achieve that by using a non-standard
+              C function call ABI. Since the called function is also written in
+              assembler this is not a problem.
+              This also allows to replace the unconditional store at the beginning
+              of the mcount block with a larl instruction, which doesn't touch
+              memory.
+
+              In theory we could also patch the first instruction of the mcount block
+              to enable and disable function tracing. However this would break kprobes.
+              This could be fixed with implementing the "kprobes_on_ftrace" feature;
+              however keeping the odd jprobes working seems not to be possible without
+              a lot of code churn. Therefore keep the code easy and simply accept one
+              wasted 1-cycle "larl" instruction per function prologue.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/ftrace.h |    2 -
+ arch/s390/kernel/ftrace.c      |   57 ++++++++++++++++++++++++++++-------------
+ arch/s390/kernel/mcount64.S    |   30 ++++++++++-----------
+ 3 files changed, 55 insertions(+), 34 deletions(-)
+
+--- a/arch/s390/include/asm/ftrace.h
++++ b/arch/s390/include/asm/ftrace.h
+@@ -19,7 +19,7 @@ static inline unsigned long ftrace_call_
+ #endif /* __ASSEMBLY__ */
+ 
+ #ifdef CONFIG_64BIT
+-#define MCOUNT_INSN_SIZE  12
++#define MCOUNT_INSN_SIZE  18
+ #else
+ #define MCOUNT_INSN_SIZE  22
+ #endif
+--- a/arch/s390/kernel/ftrace.c
++++ b/arch/s390/kernel/ftrace.c
+@@ -1,7 +1,7 @@
+ /*
+  * Dynamic function tracer architecture backend.
+  *
+- * Copyright IBM Corp. 2009
++ * Copyright IBM Corp. 2009,2014
+  *
+  *   Author(s): Heiko Carstens <heiko.carstens@de.ibm.com>,
+  *		Martin Schwidefsky <schwidefsky@de.ibm.com>
+@@ -17,6 +17,7 @@
+ #include <asm/asm-offsets.h>
+ #include "entry.h"
+ 
++void mcount_replace_code(void);
+ void ftrace_disable_code(void);
+ void ftrace_enable_insn(void);
+ 
+@@ -24,38 +25,50 @@ void ftrace_enable_insn(void);
+ /*
+  * The 64-bit mcount code looks like this:
+  *	stg	%r14,8(%r15)		# offset 0
+- * >	larl	%r1,<&counter>		# offset 6
+- * >	brasl	%r14,_mcount		# offset 12
++ *	larl	%r1,<&counter>		# offset 6
++ *	brasl	%r14,_mcount		# offset 12
+  *	lg	%r14,8(%r15)		# offset 18
+- * Total length is 24 bytes. The middle two instructions of the mcount
+- * block get overwritten by ftrace_make_nop / ftrace_make_call.
++ * Total length is 24 bytes. The complete mcount block initially gets replaced
++ * by ftrace_make_nop. Subsequent calls to ftrace_make_call / ftrace_make_nop
++ * only patch the jg/lg instruction within the block.
++ * Note: we do not patch the first instruction to an unconditional branch,
++ * since that would break kprobes/jprobes. It is easier to leave the larl
++ * instruction in and only modify the second instruction.
+  * The 64-bit enabled ftrace code block looks like this:
+- *	stg	%r14,8(%r15)		# offset 0
++ *	larl	%r0,.+24		# offset 0
+  * >	lg	%r1,__LC_FTRACE_FUNC	# offset 6
+- * >	lgr	%r0,%r0			# offset 12
+- * >	basr	%r14,%r1		# offset 16
+- *	lg	%r14,8(%15)		# offset 18
+- * The return points of the mcount/ftrace function have the same offset 18.
+- * The 64-bit disable ftrace code block looks like this:
+- *	stg	%r14,8(%r15)		# offset 0
++ *	br	%r1			# offset 12
++ *	brcl	0,0			# offset 14
++ *	brc	0,0			# offset 20
++ * The ftrace function gets called with a non-standard C function call ABI
++ * where r0 contains the return address. It is also expected that the called
++ * function only clobbers r0 and r1, but restores r2-r15.
++ * The return point of the ftrace function has offset 24, so execution
++ * continues behind the mcount block.
++ *	larl	%r0,.+24		# offset 0
+  * >	jg	.+18			# offset 6
+- * >	lgr	%r0,%r0			# offset 12
+- * >	basr	%r14,%r1		# offset 16
+- *	lg	%r14,8(%15)		# offset 18
++ *	br	%r1			# offset 12
++ *	brcl	0,0			# offset 14
++ *	brc	0,0			# offset 20
+  * The jg instruction branches to offset 24 to skip as many instructions
+  * as possible.
+  */
+ asm(
+ 	"	.align	4\n"
++	"mcount_replace_code:\n"
++	"	larl	%r0,0f\n"
+ 	"ftrace_disable_code:\n"
+ 	"	jg	0f\n"
+-	"	lgr	%r0,%r0\n"
+-	"	basr	%r14,%r1\n"
++	"	br	%r1\n"
++	"	brcl	0,0\n"
++	"	brc	0,0\n"
+ 	"0:\n"
+ 	"	.align	4\n"
+ 	"ftrace_enable_insn:\n"
+ 	"	lg	%r1,"__stringify(__LC_FTRACE_FUNC)"\n");
+ 
++#define MCOUNT_BLOCK_SIZE	24
++#define MCOUNT_INSN_OFFSET	6
+ #define FTRACE_INSN_SIZE	6
+ 
+ #else /* CONFIG_64BIT */
+@@ -116,6 +129,16 @@ int ftrace_modify_call(struct dyn_ftrace
+ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
+ 		    unsigned long addr)
+ {
++#ifdef CONFIG_64BIT
++	/* Initial replacement of the whole mcount block */
++	if (addr == MCOUNT_ADDR) {
++		if (probe_kernel_write((void *) rec->ip - MCOUNT_INSN_OFFSET,
++				       mcount_replace_code,
++				       MCOUNT_BLOCK_SIZE))
++			return -EPERM;
++		return 0;
++	}
++#endif
+ 	if (probe_kernel_write((void *) rec->ip, ftrace_disable_code,
+ 			       MCOUNT_INSN_SIZE))
+ 		return -EPERM;
+--- a/arch/s390/kernel/mcount64.S
++++ b/arch/s390/kernel/mcount64.S
+@@ -16,7 +16,6 @@ ENTRY(ftrace_stub)
+ 	br	%r14
+ 
+ #define STACK_FRAME_SIZE  (STACK_FRAME_OVERHEAD + __PT_SIZE)
+-#define STACK_PARENT_IP   (STACK_FRAME_SIZE + 8)
+ #define STACK_PTREGS	  (STACK_FRAME_OVERHEAD)
+ #define STACK_PTREGS_GPRS (STACK_PTREGS + __PT_GPRS)
+ #define STACK_PTREGS_PSW  (STACK_PTREGS + __PT_PSW)
+@@ -31,40 +30,39 @@ ENTRY(ftrace_caller)
+ 	aghi	%r15,-STACK_FRAME_SIZE
+ 	stg	%r1,__SF_BACKCHAIN(%r15)
+ 	stg	%r1,(STACK_PTREGS_GPRS+15*8)(%r15)
+-	stmg	%r0,%r13,STACK_PTREGS_GPRS(%r15)
+-	stg	%r14,(STACK_PTREGS_PSW+8)(%r15)
++	stg	%r0,(STACK_PTREGS_PSW+8)(%r15)
++	stmg	%r2,%r14,(STACK_PTREGS_GPRS+2*8)(%r15)
+ #ifdef CONFIG_HAVE_MARCH_Z196_FEATURES
+-	aghik	%r2,%r14,-MCOUNT_INSN_SIZE
++	aghik	%r2,%r0,-MCOUNT_INSN_SIZE
+ 	lgrl	%r4,function_trace_op
+-	lgrl	%r14,ftrace_trace_function
++	lgrl	%r1,ftrace_trace_function
+ #else
+-	lgr	%r2,%r14
++	lgr	%r2,%r0
+ 	aghi	%r2,-MCOUNT_INSN_SIZE
+ 	larl	%r4,function_trace_op
+ 	lg	%r4,0(%r4)
+-	larl	%r14,ftrace_trace_function
+-	lg	%r14,0(%r14)
++	larl	%r1,ftrace_trace_function
++	lg	%r1,0(%r1)
+ #endif
+-	lg	%r3,STACK_PARENT_IP(%r15)
++	lgr	%r3,%r14
+ 	la	%r5,STACK_PTREGS(%r15)
+-	basr	%r14,%r14
++	basr	%r14,%r1
+ #ifdef CONFIG_FUNCTION_GRAPH_TRACER
+ # The j instruction gets runtime patched to a nop instruction.
+ # See ftrace_enable_ftrace_graph_caller. The patched instruction is:
+ #	j	.+4
+ ENTRY(ftrace_graph_caller)
+ 	j	ftrace_graph_caller_end
+-	lg	%r2,STACK_PARENT_IP(%r15)
++	lg	%r2,(STACK_PTREGS_GPRS+14*8)(%r15)
+ 	lg	%r3,(STACK_PTREGS_PSW+8)(%r15)
+ 	brasl	%r14,prepare_ftrace_return
+-	stg	%r2,STACK_PARENT_IP(%r15)
++	stg	%r2,(STACK_PTREGS_GPRS+14*8)(%r15)
+ ftrace_graph_caller_end:
+ 	.globl	ftrace_graph_caller_end
+ #endif
+-	lmg	%r0,%r13,STACK_PTREGS_GPRS(%r15)
+-	lg	%r14,(STACK_PTREGS_PSW+8)(%r15)
+-	aghi	%r15,STACK_FRAME_SIZE
+-	br	%r14
++	lg	%r1,(STACK_PTREGS_PSW+8)(%r15)
++	lmg	%r2,%r15,(STACK_PTREGS_GPRS+2*8)(%r15)
++	br	%r1
+ 
+ #ifdef CONFIG_FUNCTION_GRAPH_TRACER
+ 
