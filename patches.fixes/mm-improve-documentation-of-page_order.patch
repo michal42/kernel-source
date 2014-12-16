@@ -1,0 +1,58 @@
+From: Mel Gorman <mgorman@suse.de>
+Date: Thu, 23 Jan 2014 15:53:38 -0800
+Subject: mm: improve documentation of page_order
+Git-commit: 6c14466cc00ff13121ae782d33d9df0fde20b124
+Patch-mainline: v3.14-rc1
+References: VM Cleanup, bnc#904177
+
+Developers occasionally try and optimise PFN scanners by using
+page_order but miss that in general it requires zone->lock.  This has
+happened twice for compaction.c and rejected both times.  This patch
+clarifies the documentation of page_order and adds a note to
+compaction.c why page_order is not used.
+
+[akpm@linux-foundation.org: tweaks]
+[lauraa@codeaurora.org: Corrected a page_zone(page)->lock reference]
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Acked-by: Rafael Aquini <aquini@redhat.com>
+Acked-by: Minchan Kim <minchan@kernel.org>
+Cc: Laura Abbott <lauraa@codeaurora.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Vlastimil Babka <vbabka@suse.cz>
+---
+ mm/compaction.c |    5 ++++-
+ mm/internal.h   |    8 +++++---
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+--- a/mm/compaction.c
++++ b/mm/compaction.c
+@@ -584,7 +584,10 @@ isolate_migratepages_range(struct zone *
+ 			}
+ 		}
+ 
+-		/* Skip if free */
++		/*
++		 * Skip if free. page_order cannot be used without zone->lock
++		 * as nothing prevents parallel allocations or buddy merging.
++		 */
+ 		if (PageBuddy(page))
+ 			continue;
+ 
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -163,9 +163,11 @@ isolate_migratepages_range(struct zone *
+ #endif
+ 
+ /*
+- * function for dealing with page's order in buddy system.
+- * zone->lock is already acquired when we use these.
+- * So, we don't need atomic page->flags operations here.
++ * This function returns the order of a free page in the buddy system. In
++ * general, page_zone(page)->lock must be held by the caller to prevent the
++ * page from being allocated in parallel and returning garbage as the order.
++ * If a caller does not hold page_zone(page)->lock, it must guarantee that the
++ * page cannot be allocated or merged in parallel.
+  */
+ static inline unsigned long page_order(struct page *page)
+ {

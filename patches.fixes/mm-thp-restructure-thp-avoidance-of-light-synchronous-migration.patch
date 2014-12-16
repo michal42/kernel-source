@@ -1,0 +1,65 @@
+From: David Rientjes <rientjes@google.com>
+Date: Wed, 6 Aug 2014 16:07:54 -0700
+Subject: mm, thp: restructure thp avoidance of light synchronous migration
+Git-commit: 8fe780484d2674eec27e12bb29c07d3e98a7ad21
+Patch-mainline: v3.17-rc1
+References: VM Performance, bnc#904177
+
+__GFP_NO_KSWAPD, once the way to determine if an allocation was for thp
+or not, has gained more users.  Their use is not necessarily wrong, they
+are trying to do a memory allocation that can easily fail without
+disturbing kswapd, so the bit has gained additional usecases.
+
+This restructures the check to determine whether MIGRATE_SYNC_LIGHT
+should be used for memory compaction in the page allocator.  Rather than
+testing solely for __GFP_NO_KSWAPD, test for all bits that must be set
+for thp allocations.
+
+This also moves the check to be done only after the page allocator is
+aborted for deferred or contended memory compaction since setting
+migration_mode for this case is pointless.
+
+Signed-off-by: David Rientjes <rientjes@google.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Vlastimil Babka <vbabka@suse.cz>
+---
+ mm/page_alloc.c |   17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -2630,14 +2630,6 @@ rebalance:
+ 		goto got_pg;
+ 
+ 	/*
+-	 * It can become very expensive to allocate transparent hugepages at
+-	 * fault, so use asynchronous memory compaction for THP unless it is
+-	 * khugepaged trying to collapse.
+-	 */
+-	if (!(gfp_mask & __GFP_NO_KSWAPD) || (current->flags & PF_KTHREAD))
+-		migration_mode = MIGRATE_SYNC_LIGHT;
+-
+-	/*
+ 	 * If compaction is deferred for high-order allocations, it is because
+ 	 * sync compaction recently failed. In this is the case and the caller
+ 	 * requested a movable allocation that does not heavily disrupt the
+@@ -2647,6 +2639,15 @@ rebalance:
+ 						(gfp_mask & __GFP_NO_KSWAPD))
+ 		goto nopage;
+ 
++	/*
++	 * It can become very expensive to allocate transparent hugepages at
++	 * fault, so use asynchronous memory compaction for THP unless it is
++	 * khugepaged trying to collapse.
++	 */
++	if ((gfp_mask & GFP_TRANSHUGE) != GFP_TRANSHUGE ||
++						(current->flags & PF_KTHREAD))
++		migration_mode = MIGRATE_SYNC_LIGHT;
++
+ 	/* Try direct reclaim and then allocating */
+ 	page = __alloc_pages_direct_reclaim(gfp_mask, order,
+ 					zonelist, high_zoneidx,
