@@ -21,18 +21,16 @@ Signed-off-by: Andreas Gruenbacher <agruen@suse.de>
  include/linux/module.h              |    3 +
  init/Kconfig                        |   17 +++++++
  kernel/ksysfs.c                     |   27 +++++++++++
- kernel/module.c                     |   82 ++++++++++++++++++++++++++++++++++++
+ kernel/module.c                     |   83 ++++++++++++++++++++++++++++++++++++
  kernel/panic.c                      |    6 ++
  kernel/sysctl.c                     |    9 +++
  scripts/Makefile.modpost            |    6 ++
- scripts/mod/modpost.c               |   79 ++++++++++++++++++++++++++++++++++
- 12 files changed, 264 insertions(+), 2 deletions(-)
+ scripts/mod/modpost.c               |   79 +++++++++++++++++++++++++++++++++-
+ 12 files changed, 265 insertions(+), 2 deletions(-)
 
-Index: linux-3.12-SLE12/Documentation/kernel-parameters.txt
-===================================================================
---- linux-3.12-SLE12.orig/Documentation/kernel-parameters.txt
-+++ linux-3.12-SLE12/Documentation/kernel-parameters.txt
-@@ -3207,6 +3207,14 @@ bytes respectively. Such letter suffixes
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -3210,6 +3210,14 @@ bytes respectively. Such letter suffixes
  	unknown_nmi_panic
  			[X86] Cause panic on unknown NMI.
  
@@ -47,10 +45,8 @@ Index: linux-3.12-SLE12/Documentation/kernel-parameters.txt
  	usbcore.authorized_default=
  			[USB] Default USB device authorization:
  			(default -1 = authorized except for wireless USB,
-Index: linux-3.12-SLE12/Documentation/sysctl/kernel.txt
-===================================================================
---- linux-3.12-SLE12.orig/Documentation/sysctl/kernel.txt
-+++ linux-3.12-SLE12/Documentation/sysctl/kernel.txt
+--- a/Documentation/sysctl/kernel.txt
++++ b/Documentation/sysctl/kernel.txt
 @@ -666,6 +666,18 @@ can be ORed together:
  1024 - A module from drivers/staging was loaded.
  2048 - The system is working around a severe firmware bug.
@@ -70,10 +66,8 @@ Index: linux-3.12-SLE12/Documentation/sysctl/kernel.txt
  
  ==============================================================
  
-Index: linux-3.12-SLE12/Makefile
-===================================================================
---- linux-3.12-SLE12.orig/Makefile
-+++ linux-3.12-SLE12/Makefile
+--- a/Makefile
++++ b/Makefile
 @@ -381,6 +381,11 @@ KBUILD_AFLAGS_MODULE  := -DMODULE
  KBUILD_CFLAGS_MODULE  := -DMODULE
  KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
@@ -86,10 +80,8 @@ Index: linux-3.12-SLE12/Makefile
  # Read KERNELRELEASE from include/config/kernel.release (if it exists)
  KERNELRELEASE = $(shell cat include/config/kernel.release 2> /dev/null)
  KERNELVERSION = $(VERSION)$(if $(PATCHLEVEL),.$(PATCHLEVEL)$(if $(SUBLEVEL),.$(SUBLEVEL)))$(EXTRAVERSION)
-Index: linux-3.12-SLE12/include/linux/kernel.h
-===================================================================
---- linux-3.12-SLE12.orig/include/linux/kernel.h
-+++ linux-3.12-SLE12/include/linux/kernel.h
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
 @@ -392,6 +392,9 @@ extern int panic_timeout;
  extern int panic_on_oops;
  extern int panic_on_unrecovered_nmi;
@@ -116,10 +108,8 @@ Index: linux-3.12-SLE12/include/linux/kernel.h
  extern const char hex_asc[];
  #define hex_asc_lo(x)	hex_asc[((x) & 0x0f)]
  #define hex_asc_hi(x)	hex_asc[((x) & 0xf0) >> 4]
-Index: linux-3.12-SLE12/include/linux/module.h
-===================================================================
---- linux-3.12-SLE12.orig/include/linux/module.h
-+++ linux-3.12-SLE12/include/linux/module.h
+--- a/include/linux/module.h
++++ b/include/linux/module.h
 @@ -401,6 +401,9 @@ struct module *__module_address(unsigned
  bool is_module_address(unsigned long addr);
  bool is_module_percpu_address(unsigned long addr);
@@ -130,10 +120,8 @@ Index: linux-3.12-SLE12/include/linux/module.h
  
  static inline int within_module_core(unsigned long addr, const struct module *mod)
  {
-Index: linux-3.12-SLE12/init/Kconfig
-===================================================================
---- linux-3.12-SLE12.orig/init/Kconfig
-+++ linux-3.12-SLE12/init/Kconfig
+--- a/init/Kconfig
++++ b/init/Kconfig
 @@ -1,6 +1,23 @@
  config SUSE_KERNEL
  	def_bool y
@@ -158,10 +146,8 @@ Index: linux-3.12-SLE12/init/Kconfig
  config SPLIT_PACKAGE
  	bool "Split the kernel package into multiple RPMs"
  	depends on SUSE_KERNEL && MODULES
-Index: linux-3.12-SLE12/kernel/ksysfs.c
-===================================================================
---- linux-3.12-SLE12.orig/kernel/ksysfs.c
-+++ linux-3.12-SLE12/kernel/ksysfs.c
+--- a/kernel/ksysfs.c
++++ b/kernel/ksysfs.c
 @@ -183,6 +183,30 @@ static struct bin_attribute notes_attr =
  struct kobject *kernel_kobj;
  EXPORT_SYMBOL_GPL(kernel_kobj);
@@ -169,14 +155,14 @@ Index: linux-3.12-SLE12/kernel/ksysfs.c
 +#ifdef CONFIG_SUSE_KERNEL_SUPPORTED
 +const char *supported_printable(int taint)
 +{
-+	int mask = TAINT_PROPRIETARY_MODULE|TAINT_NO_SUPPORT;
++	int mask = (1 << TAINT_PROPRIETARY_MODULE) | (1 << TAINT_NO_SUPPORT);
 +	if ((taint & mask) == mask)
 +		return "No, Proprietary and Unsupported modules are loaded";
-+	else if (taint & TAINT_PROPRIETARY_MODULE)
++	else if (taint & (1 << TAINT_PROPRIETARY_MODULE))
 +		return "No, Proprietary modules are loaded";
-+	else if (taint & TAINT_NO_SUPPORT)
++	else if (taint & (1 << TAINT_NO_SUPPORT))
 +		return "No, Unsupported modules are loaded";
-+	else if (taint & TAINT_EXTERNAL_SUPPORT)
++	else if (taint & (1 << TAINT_EXTERNAL_SUPPORT))
 +		return "Yes, External";
 +	else
 +		return "Yes";
@@ -203,10 +189,8 @@ Index: linux-3.12-SLE12/kernel/ksysfs.c
  	NULL
  };
  
-Index: linux-3.12-SLE12/kernel/module.c
-===================================================================
---- linux-3.12-SLE12.orig/kernel/module.c
-+++ linux-3.12-SLE12/kernel/module.c
+--- a/kernel/module.c
++++ b/kernel/module.c
 @@ -94,6 +94,22 @@
  /* If this is set, the section belongs in the init part of the module */
  #define INIT_OFFSET_MASK (1UL << (BITS_PER_LONG-1))
@@ -325,7 +309,7 @@ Index: linux-3.12-SLE12/kernel/module.c
  out_unreg_param:
  	module_param_sysfs_remove(mod);
  out_unreg_holders:
-@@ -3846,6 +3926,9 @@ void print_modules(void)
+@@ -3849,6 +3929,9 @@ void print_modules(void)
  	if (last_unloaded_module[0])
  		printk(" [last unloaded: %s]", last_unloaded_module);
  	printk("\n");
@@ -335,10 +319,8 @@ Index: linux-3.12-SLE12/kernel/module.c
  }
  
  #ifdef CONFIG_MODVERSIONS
-Index: linux-3.12-SLE12/kernel/panic.c
-===================================================================
---- linux-3.12-SLE12.orig/kernel/panic.c
-+++ linux-3.12-SLE12/kernel/panic.c
+--- a/kernel/panic.c
++++ b/kernel/panic.c
 @@ -210,6 +210,10 @@ static const struct tnt tnts[] = {
  	{ TAINT_CRAP,			'C', ' ' },
  	{ TAINT_FIRMWARE_WORKAROUND,	'I', ' ' },
@@ -359,11 +341,9 @@ Index: linux-3.12-SLE12/kernel/panic.c
   *
   *	The string is overwritten by the next call to print_tainted().
   */
-Index: linux-3.12-SLE12/kernel/sysctl.c
-===================================================================
---- linux-3.12-SLE12.orig/kernel/sysctl.c
-+++ linux-3.12-SLE12/kernel/sysctl.c
-@@ -733,6 +733,15 @@ static struct ctl_table kern_table[] = {
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -732,6 +732,15 @@ static struct ctl_table kern_table[] = {
  		.extra1		= &pid_max_min,
  		.extra2		= &pid_max_max,
  	},
@@ -379,10 +359,8 @@ Index: linux-3.12-SLE12/kernel/sysctl.c
  	{
  		.procname	= "panic_on_oops",
  		.data		= &panic_on_oops,
-Index: linux-3.12-SLE12/scripts/Makefile.modpost
-===================================================================
---- linux-3.12-SLE12.orig/scripts/Makefile.modpost
-+++ linux-3.12-SLE12/scripts/Makefile.modpost
+--- a/scripts/Makefile.modpost
++++ b/scripts/Makefile.modpost
 @@ -77,7 +77,11 @@ modpost = scripts/mod/modpost
   $(if $(KBUILD_EXTRA_SYMBOLS), $(patsubst %, -e %,$(KBUILD_EXTRA_SYMBOLS))) \
   $(if $(KBUILD_EXTMOD),-o $(modulesymfile))      \
@@ -396,11 +374,9 @@ Index: linux-3.12-SLE12/scripts/Makefile.modpost
  
  # We can go over command line length here, so be careful.
  quiet_cmd_modpost = MODPOST $(words $(filter-out vmlinux FORCE, $^)) modules
-Index: linux-3.12-SLE12/scripts/mod/modpost.c
-===================================================================
---- linux-3.12-SLE12.orig/scripts/mod/modpost.c
-+++ linux-3.12-SLE12/scripts/mod/modpost.c
-@@ -1666,6 +1666,50 @@ static void check_sec_ref(struct module
+--- a/scripts/mod/modpost.c
++++ b/scripts/mod/modpost.c
+@@ -1670,6 +1670,50 @@ static void check_sec_ref(struct module
  	}
  }
  
@@ -451,7 +427,7 @@ Index: linux-3.12-SLE12/scripts/mod/modpost.c
  static void read_symbols(char *modname)
  {
  	const char *symname;
-@@ -1880,6 +1924,15 @@ static void add_staging_flag(struct buff
+@@ -1884,6 +1928,15 @@ static void add_staging_flag(struct buff
  		buf_printf(b, "\nMODULE_INFO(staging, \"Y\");\n");
  }
  
@@ -467,7 +443,7 @@ Index: linux-3.12-SLE12/scripts/mod/modpost.c
  /**
   * Record CRCs for unresolved symbols
   **/
-@@ -2021,6 +2074,15 @@ static void write_if_changed(struct buff
+@@ -2025,6 +2078,15 @@ static void write_if_changed(struct buff
  	fclose(file);
  }
  
@@ -483,7 +459,7 @@ Index: linux-3.12-SLE12/scripts/mod/modpost.c
  /* parse Module.symvers file. line format:
   * 0x12345678<tab>symbol<tab>module[[<tab>export]<tab>something]
   **/
-@@ -2114,12 +2176,15 @@ int main(int argc, char **argv)
+@@ -2118,12 +2180,15 @@ int main(int argc, char **argv)
  	struct buffer buf = { };
  	char *kernel_read = NULL, *module_read = NULL;
  	char *dump_write = NULL, *files_source = NULL;
@@ -500,7 +476,7 @@ Index: linux-3.12-SLE12/scripts/mod/modpost.c
  		switch (opt) {
  		case 'i':
  			kernel_read = optarg;
-@@ -2157,11 +2222,20 @@ int main(int argc, char **argv)
+@@ -2161,11 +2226,20 @@ int main(int argc, char **argv)
  		case 'w':
  			warn_unresolved = 1;
  			break;
@@ -521,7 +497,7 @@ Index: linux-3.12-SLE12/scripts/mod/modpost.c
  	if (kernel_read)
  		read_dump(kernel_read, 1);
  	if (module_read)
-@@ -2198,6 +2272,9 @@ int main(int argc, char **argv)
+@@ -2202,6 +2276,9 @@ int main(int argc, char **argv)
  		add_header(&buf, mod);
  		add_intree_flag(&buf, !external_module);
  		add_staging_flag(&buf, mod->name);
