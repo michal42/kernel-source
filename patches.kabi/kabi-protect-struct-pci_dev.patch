@@ -1,0 +1,40 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct pci_dev
+Patch-mainline: never, kabi
+
+In 3.12.35, commit 5545f8b0fca9fa9efe65d8084dbb536aebabdb61 (PCI/MSI:
+Add device flag indicating that 64-bit MSIs don't work), upstream
+commit f144d1496b47e7450f41b767d0d91c724c2198bc added an one-bit
+member to struct pci_dev. It indeed changed the layout of that
+structure.
+
+Since it is a single bit and there are other bits declared, let us
+move this new bit at the end of the bitfield and rely on the C specs
+that it has to be joined with the others. Then, protect the member the
+usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/pci.h |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -323,7 +323,6 @@ struct pci_dev {
+ 	unsigned int	is_added:1;
+ 	unsigned int	is_busmaster:1; /* device is busmaster */
+ 	unsigned int	no_msi:1;	/* device may not use msi */
+-	unsigned int	no_64bit_msi:1; /* device may only use 32-bit MSIs */
+ 	unsigned int	block_cfg_access:1;	/* config space access is blocked */
+ 	unsigned int	broken_parity_status:1;	/* Device generates false positive parity */
+ 	unsigned int	irq_reroute_variant:2;	/* device needs IRQ rerouting variant */
+@@ -343,6 +342,9 @@ struct pci_dev {
+ 	unsigned int	__aer_firmware_first:1;
+ 	unsigned int	broken_intx_masking:1;
+ 	unsigned int	io_window_1k:1;	/* Intel P2P bridge 1K I/O windows */
++#ifndef __GENKSYMS__
++	unsigned int	no_64bit_msi:1; /* device may only use 32-bit MSIs */
++#endif
+ 	pci_dev_flags_t dev_flags;
+ 	atomic_t	enable_cnt;	/* pci_enable_device has been called */
+ 

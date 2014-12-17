@@ -1,0 +1,104 @@
+From: =?UTF-8?q?Michal=20Kube=C4=8Dek?= <mkubecek@suse.cz>
+Date: Thu, 13 Nov 2014 07:54:50 +0100
+Subject: net: generic dev_disable_lro() stacked device handling
+Patch-mainline: v3.19-rc1
+Git-commit: fbe168ba91f7c327856f205699404284c2f09e36
+References: bnc#829110 bnc#891277 bnc#904053
+
+Large receive offloading is known to cause problems if received packets
+are passed to other host. Therefore the kernel disables it by calling
+dev_disable_lro() whenever a network device is enslaved in a bridge or
+forwarding is enabled for it (or globally). For virtual devices we need
+to disable LRO on the underlying physical device (which is actually
+receiving the packets).
+
+Current dev_disable_lro() code handles this  propagation for a vlan
+(including 802.1ad nested vlan), macvlan or a vlan on top of a macvlan.
+It doesn't handle other stacked devices and their combinations, in
+particular propagation from a bond to its slaves which often causes
+problems in virtualization setups.
+
+As we now have generic data structures describing the upper-lower device
+relationship, dev_disable_lro() can be generalized to disable LRO also
+for all lower devices (if any) once it is disabled for the device
+itself.
+
+For bonding and teaming devices, it is necessary to disable LRO not only
+on current slaves at the moment when dev_disable_lro() is called but
+also on any slave (port) added later.
+
+v2: use lower device links for all devices (including vlan and macvlan)
+
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+Acked-by: Veaceslav Falico <vfalico@gmail.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+---
+ drivers/net/bonding/bond_main.c |  3 +++
+ drivers/net/team/team.c         |  3 +++
+ net/core/dev.c                  | 15 +++++----------
+ 3 files changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 4e32680..674cd85 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -1530,6 +1530,9 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+ 	}
+ #endif
+ 
++	if (!(bond_dev->features & NETIF_F_LRO))
++		dev_disable_lro(slave_dev);
++
+ 	res = netdev_rx_handler_register(slave_dev, bond_handle_frame,
+ 					 new_slave);
+ 	if (res) {
+diff --git a/drivers/net/team/team.c b/drivers/net/team/team.c
+index 8019d94..4f57c5b 100644
+--- a/drivers/net/team/team.c
++++ b/drivers/net/team/team.c
+@@ -1170,6 +1170,9 @@ static int team_port_add(struct team *team, struct net_device *port_dev)
+ 		goto err_set_upper_link;
+ 	}
+ 
++	if (!(dev->features & NETIF_F_LRO))
++		dev_disable_lro(port_dev);
++
+ 	err = netdev_rx_handler_register(port_dev, team_handle_frame,
+ 					 port);
+ 	if (err) {
+diff --git a/net/core/dev.c b/net/core/dev.c
+index a803a5f..c768cbc 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -1422,22 +1422,17 @@ EXPORT_SYMBOL(dev_close);
+  */
+ void dev_disable_lro(struct net_device *dev)
+ {
+-	/*
+-	 * If we're trying to disable lro on a vlan device
+-	 * use the underlying physical device instead
+-	 */
+-	if (is_vlan_dev(dev))
+-		dev = vlan_dev_real_dev(dev);
+-
+-	/* the same for macvlan devices */
+-	if (netif_is_macvlan(dev))
+-		dev = macvlan_dev_real_dev(dev);
++	struct net_device *lower_dev;
++	struct list_head *iter;
+ 
+ 	dev->wanted_features &= ~NETIF_F_LRO;
+ 	netdev_update_features(dev);
+ 
+ 	if (unlikely(dev->features & NETIF_F_LRO))
+ 		netdev_WARN(dev, "failed to disable LRO!\n");
++
++	netdev_for_each_lower_dev(dev, lower_dev, iter)
++		dev_disable_lro(lower_dev);
+ }
+ EXPORT_SYMBOL(dev_disable_lro);
+ 
+-- 
+1.8.4.5
+

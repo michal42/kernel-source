@@ -1,0 +1,34 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Thu, 4 Dec 2014 17:50:29 +0100
+Subject: [PATCH] nvme: Add missing hunk from backport
+References: bnc#873252
+Patch-Mainline: n/a
+
+The backport was missing a hunk, causing the driver to crash.
+
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/block/nvme-core.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/block/nvme-core.c b/drivers/block/nvme-core.c
+index d7c310c..397f67d 100644
+--- a/drivers/block/nvme-core.c
++++ b/drivers/block/nvme-core.c
+@@ -612,10 +612,11 @@ static int nvme_split_and_submit(struct bio *bio, struct nvme_queue *nvmeq,
+ 	if (!bp)
+ 		return -ENOMEM;
+ 
+-	if (bio_list_empty(&nvmeq->sq_cong))
++	if (!waitqueue_active(&nvmeq->sq_full))
+ 		add_wait_queue(&nvmeq->sq_full, &nvmeq->sq_cong_wait);
+ 	bio_list_add(&nvmeq->sq_cong, &bp->b1);
+ 	bio_list_add(&nvmeq->sq_cong, &bp->b2);
++	wake_up(&nvmeq->sq_full);
+ 
+ 	return 0;
+ }
+-- 
+1.8.4.5
+

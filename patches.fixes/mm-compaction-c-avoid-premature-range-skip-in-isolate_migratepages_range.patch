@@ -1,0 +1,59 @@
+From: Joonsoo Kim <iamjoonsoo.kim@lge.com>
+Date: Wed, 29 Oct 2014 14:50:20 -0700
+Subject: mm/compaction.c: avoid premature range skip in
+ isolate_migratepages_range
+Git-commit: 6ea41c0c0aa37d87ef5dd0d14535d2e1e195cd83
+Patch-mainline: v3.19 or v3.18-rc3 (next release)
+References: VM Functionality, bnc#904177
+
+Commit edc2ca612496 ("mm, compaction: move pageblock checks up from
+isolate_migratepages_range()") commonizes isolate_migratepages variants
+and make them use isolate_migratepages_block().
+
+isolate_migratepages_block() could stop the execution when enough pages
+are isolated, but, there is no code in isolate_migratepages_range() to
+handle this case.  In the result, even if isolate_migratepages_block()
+returns prematurely without checking all pages in the range,
+
+isolate_migratepages_block() is called repeately on the following
+pageblock and some pages in the previous range are skipped to check.
+Then, CMA is failed frequently due to this fact.
+
+To fix this problem, this patch let isolate_migratepages_range() know
+the situation that enough pages are isolated and stop the isolation in
+that case.
+
+Note that isolate_migratepages() has no such problem, because, it always
+stops the isolation after just one call of isolate_migratepages_block().
+
+Signed-off-by: Joonsoo Kim <iamjoonsoo.kim@lge.com>
+Acked-by: Vlastimil Babka <vbabka@suse.cz>
+Cc: David Rientjes <rientjes@google.com>
+Cc: Minchan Kim <minchan@kernel.org>
+Cc: Michal Nazarewicz <mina86@mina86.com>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Cc: Christoph Lameter <cl@linux.com>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Zhang Yanfei <zhangyanfei@cn.fujitsu.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/compaction.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/mm/compaction.c b/mm/compaction.c
+index edba18a..ec74cf0 100644
+--- a/mm/compaction.c
++++ b/mm/compaction.c
+@@ -784,6 +784,9 @@ isolate_migratepages_range(struct compact_control *cc, unsigned long start_pfn,
+ 			cc->nr_migratepages = 0;
+ 			break;
+ 		}
++
++		if (cc->nr_migratepages == COMPACT_CLUSTER_MAX)
++			break;
+ 	}
+ 	acct_isolated(cc->zone, cc);
+ 
+

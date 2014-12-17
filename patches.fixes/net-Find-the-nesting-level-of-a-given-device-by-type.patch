@@ -1,0 +1,129 @@
+From: Vlad Yasevich <vyasevic@redhat.com>
+Date: Fri, 16 May 2014 17:04:53 -0400
+Subject: net: Find the nesting level of a given device by type.
+Patch-mainline: v3.15-rc7
+Git-commit: 4085ebe8c31face855fd01ee40372cb4aab1df3a
+References: bnc#829110 bnc#891277 bnc#904053
+
+Multiple devices in the kernel can be stacked/nested and they
+need to know their nesting level for the purposes of lockdep.
+This patch provides a generic function that determines a nesting
+level of a particular device by its type (ex: vlan, macvlan, etc).
+We only care about nesting of the same type of devices.
+
+For example:
+  eth0 <- vlan0.10 <- macvlan0 <- vlan1.20
+
+The nesting level of vlan1.20 would be 1, since there is another vlan
+in the stack under it.
+
+Signed-off-by: Vlad Yasevich <vyasevic@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+Conflicts:
+	include/linux/netdevice.h
+
+---
+ include/linux/netdevice.h | 10 ++++++++++
+ net/core/dev.c            | 49 +++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 59 insertions(+)
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 53cc14e..806d741 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -2899,6 +2899,14 @@ extern void *netdev_lower_get_next_private_rcu(struct net_device *dev,
+ 	     priv; \
+ 	     priv = netdev_lower_get_next_private_rcu(dev, &(iter)))
+ 
++void *netdev_lower_get_next(struct net_device *dev,
++			    struct list_head **iter);
++#define netdev_for_each_lower_dev(dev, ldev, iter) \
++	for (iter = &(dev)->adj_list.lower, \
++	     ldev = netdev_lower_get_next(dev, &(iter)); \
++	     ldev; \
++	     ldev = netdev_lower_get_next(dev, &(iter)))
++
+ extern void *netdev_adjacent_get_private(struct list_head *adj_list);
+ void *netdev_lower_get_first_private_rcu(struct net_device *dev);
+ extern struct net_device *netdev_master_upper_dev_get(struct net_device *dev);
+@@ -2914,6 +2922,8 @@ extern void netdev_upper_dev_unlink(struct net_device *dev,
+ 				    struct net_device *upper_dev);
+ extern void *netdev_lower_dev_get_private(struct net_device *dev,
+ 					  struct net_device *lower_dev);
++int dev_get_nest_level(struct net_device *dev,
++		       bool (*type_check)(struct net_device *dev));
+ extern int skb_checksum_help(struct sk_buff *skb);
+ extern struct sk_buff *__skb_gso_segment(struct sk_buff *skb,
+ 	netdev_features_t features, bool tx_path);
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 4a3273e..a803a5f 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4576,6 +4576,32 @@ void *netdev_lower_get_next_private_rcu(struct net_device *dev,
+ EXPORT_SYMBOL(netdev_lower_get_next_private_rcu);
+ 
+ /**
++ * netdev_lower_get_next - Get the next device from the lower neighbour
++ *                         list
++ * @dev: device
++ * @iter: list_head ** of the current position
++ *
++ * Gets the next netdev_adjacent from the dev's lower neighbour
++ * list, starting from iter position. The caller must hold RTNL lock or
++ * its own locking that guarantees that the neighbour lower
++ * list will remain unchainged.
++ */
++void *netdev_lower_get_next(struct net_device *dev, struct list_head **iter)
++{
++	struct netdev_adjacent *lower;
++
++	lower = list_entry((*iter)->next, struct netdev_adjacent, list);
++
++	if (&lower->list == &dev->adj_list.lower)
++		return NULL;
++
++	*iter = &lower->list;
++
++	return lower->dev;
++}
++EXPORT_SYMBOL(netdev_lower_get_next);
++
++/**
+  * netdev_lower_get_first_private_rcu - Get the first ->private from the
+  *				       lower neighbour list, RCU
+  *				       variant
+@@ -5002,6 +5028,29 @@ void *netdev_lower_dev_get_private(struct net_device *dev,
+ }
+ EXPORT_SYMBOL(netdev_lower_dev_get_private);
+ 
++int dev_get_nest_level(struct net_device *dev,
++		       bool (*type_check)(struct net_device *dev))
++{
++	struct net_device *lower = NULL;
++	struct list_head *iter;
++	int max_nest = -1;
++	int nest;
++
++	ASSERT_RTNL();
++
++	netdev_for_each_lower_dev(dev, lower, iter) {
++		nest = dev_get_nest_level(lower, type_check);
++		if (max_nest < nest)
++			max_nest = nest;
++	}
++
++	if (type_check(dev))
++		max_nest++;
++
++	return max_nest;
++}
++EXPORT_SYMBOL(dev_get_nest_level);
++
+ static void dev_change_rx_flags(struct net_device *dev, int flags)
+ {
+ 	const struct net_device_ops *ops = dev->netdev_ops;
+-- 
+1.8.4.5
+

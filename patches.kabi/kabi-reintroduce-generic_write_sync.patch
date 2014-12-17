@@ -1,0 +1,110 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: reintroduce generic_write_sync
+Patch-mainline: never, kabi
+
+In 3.12.34, commit 79a423edd0ce526b6a28fd1fed4478d0ecda03e0 (fix
+O_SYNC|O_APPEND syncing the wrong range on write()), upstream commit
+d311d79de305f1ada47cadd672e6ed1b28a949eb made an inline function from
+generic_write_sync. This made the symbol to disappear.
+
+Reintroduce the function, just as a wrapper for a newly introduced
+generic_write_sync_i.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ fs/cifs/file.c     |    2 +-
+ fs/ext4/file.c     |    2 +-
+ fs/ntfs/file.c     |    2 +-
+ fs/sync.c          |   10 ++++++++++
+ fs/xfs/xfs_file.c  |    2 +-
+ include/linux/fs.h |    4 +++-
+ mm/filemap.c       |    2 +-
+ 7 files changed, 18 insertions(+), 6 deletions(-)
+
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -2590,7 +2590,7 @@ cifs_writev(struct kiocb *iocb, const st
+ 	if (rc > 0) {
+ 		ssize_t err;
+ 
+-		err = generic_write_sync(file, iocb->ki_pos - rc, rc);
++		err = generic_write_sync_i(file, iocb->ki_pos - rc, rc);
+ 		if (err < 0)
+ 			rc = err;
+ 	}
+--- a/fs/ext4/file.c
++++ b/fs/ext4/file.c
+@@ -152,7 +152,7 @@ ext4_file_dio_write(struct kiocb *iocb,
+ 	if (ret > 0) {
+ 		ssize_t err;
+ 
+-		err = generic_write_sync(file, iocb->ki_pos - ret, ret);
++		err = generic_write_sync_i(file, iocb->ki_pos - ret, ret);
+ 		if (err < 0 && ret > 0)
+ 			ret = err;
+ 	}
+--- a/fs/ntfs/file.c
++++ b/fs/ntfs/file.c
+@@ -2133,7 +2133,7 @@ static ssize_t ntfs_file_aio_write(struc
+ 	ret = ntfs_file_aio_write_nolock(iocb, iov, nr_segs, &iocb->ki_pos);
+ 	mutex_unlock(&inode->i_mutex);
+ 	if (ret > 0) {
+-		int err = generic_write_sync(file, iocb->ki_pos - ret, ret);
++		int err = generic_write_sync_i(file, iocb->ki_pos - ret, ret);
+ 		if (err < 0)
+ 			ret = err;
+ 	}
+--- a/fs/sync.c
++++ b/fs/sync.c
+@@ -220,6 +220,16 @@ SYSCALL_DEFINE1(fdatasync, unsigned int,
+ }
+ 
+ /*
++ * Nobody should use this, it is only a kABI placeholder,
++ * Use generic_write_sync_i instead
++ */
++int generic_write_sync(struct file *file, loff_t pos, loff_t count)
++{
++	return generic_write_sync_i(file, pos, count);
++}
++EXPORT_SYMBOL(generic_write_sync);
++
++/*
+  * sys_sync_file_range() permits finely controlled syncing over a segment of
+  * a file in the range offset .. (offset+nbytes-1) inclusive.  If nbytes is
+  * zero then sys_sync_file_range() will operate from offset out to EOF.
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -926,7 +926,7 @@ start:
+ 		XFS_STATS_ADD(xs_write_bytes, ret);
+ 
+ 		/* Handle various SYNC-type writes */
+-		err = generic_write_sync(file, iocb->ki_pos - ret, ret);
++		err = generic_write_sync_i(file, iocb->ki_pos - ret, ret);
+ 		if (err < 0)
+ 			ret = err;
+ 	}
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -2288,7 +2288,9 @@ extern int filemap_fdatawrite_range(stru
+ extern int vfs_fsync_range(struct file *file, loff_t start, loff_t end,
+ 			   int datasync);
+ extern int vfs_fsync(struct file *file, int datasync);
+-static inline int generic_write_sync(struct file *file, loff_t pos, loff_t count)
++/* this one is to preserve kabi */
++extern int generic_write_sync(struct file *file, loff_t pos, loff_t count);
++static inline int generic_write_sync_i(struct file *file, loff_t pos, loff_t count)
+ {
+ 	if (!(file->f_flags & O_DSYNC) && !IS_SYNC(file->f_mapping->host))
+ 		return 0;
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -2746,7 +2746,7 @@ ssize_t generic_file_aio_write(struct ki
+ 	if (ret > 0) {
+ 		ssize_t err;
+ 
+-		err = generic_write_sync(file, iocb->ki_pos - ret, ret);
++		err = generic_write_sync_i(file, iocb->ki_pos - ret, ret);
+ 		if (err < 0)
+ 			ret = err;
+ 	}

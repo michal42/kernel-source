@@ -1,0 +1,102 @@
+From df3e9b40ee6ebcd51c91d618b220d9b6ef3ee27d Mon Sep 17 00:00:00 2001
+From: "tuukka.tikkanen@linaro.org" <tuukka.tikkanen@linaro.org>
+Date: Mon, 24 Feb 2014 08:29:34 +0200
+Subject: [PATCH] cpuidle: Do not substract exit latency from assumed sleep
+ length
+
+References: cpuidle performance
+Patch-mainline: v3.15
+Git-commit: 61c66d6efa23759f1061d80ced668977fd28337d
+
+The menu governor statistics update function tries to determine the
+amount of time between entry to low power state and the occurrence
+of the wakeup event. However, the time measured by the framework
+includes exit latency on top of the desired value. This exit latency
+is substracted from the measured value to obtain the desired value.
+
+When measured value is not available, the menu governor assumes
+the wakeup was caused by the timer and the time is equal to remaining
+timer length. No exit latency should be substracted from this value.
+
+This patch prevents the erroneous substraction and clarifies the
+associated comment. It also removes one intermediate variable that
+serves no purpose.
+
+Signed-off-by: Tuukka Tikkanen <tuukka.tikkanen@linaro.org>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ drivers/cpuidle/governors/menu.c | 44 ++++++++++++++++++++++++----------------
+ 1 file changed, 26 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/cpuidle/governors/menu.c b/drivers/cpuidle/governors/menu.c
+index f0995dd..b347c10 100644
+--- a/drivers/cpuidle/governors/menu.c
++++ b/drivers/cpuidle/governors/menu.c
+@@ -387,32 +387,40 @@ static void menu_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
+ {
+ 	struct menu_device *data = &__get_cpu_var(menu_devices);
+ 	int last_idx = data->last_state_idx;
+-	unsigned int last_idle_us = cpuidle_get_last_residency(dev);
+ 	struct cpuidle_state *target = &drv->states[last_idx];
+ 	unsigned int measured_us;
+ 	unsigned int new_factor;
+ 
+ 	/*
+-	 * Ugh, this idle state doesn't support residency measurements, so we
+-	 * are basically lost in the dark.  As a compromise, assume we slept
+-	 * for the whole expected time.
++	 * Try to figure out how much time passed between entry to low
++	 * power state and occurrence of the wakeup event.
++	 *
++	 * If the entered idle state didn't support residency measurements,
++	 * we are basically lost in the dark how much time passed.
++	 * As a compromise, assume we slept for the whole expected time.
++	 *
++	 * Any measured amount of time will include the exit latency.
++	 * Since we are interested in when the wakeup begun, not when it
++	 * was completed, we must substract the exit latency. However, if
++	 * the measured amount of time is less than the exit latency,
++	 * assume the state was never reached and the exit latency is 0.
+ 	 */
+-	if (unlikely(!(target->flags & CPUIDLE_FLAG_TIME_VALID)))
+-		last_idle_us = data->next_timer_us;
+-
++	if (unlikely(!(target->flags & CPUIDLE_FLAG_TIME_VALID))) {
++		/* Use timer value as is */
++		measured_us = data->next_timer_us;
+ 
+-	measured_us = last_idle_us;
++	} else {
++		/* Use measured value */
++		measured_us = cpuidle_get_last_residency(dev);
+ 
+-	/*
+-	 * We correct for the exit latency; we are assuming here that the
+-	 * exit latency happens after the event that we're interested in.
+-	 */
+-	if (measured_us > target->exit_latency)
+-		measured_us -= target->exit_latency;
++		/* Deduct exit latency */
++		if (measured_us > target->exit_latency)
++			measured_us -= target->exit_latency;
+ 
+-	/* Make sure our coefficients do not exceed unity */
+-	if (measured_us > data->next_timer_us)
+-		measured_us = data->next_timer_us;
++		/* Make sure our coefficients do not exceed unity */
++		if (measured_us > data->next_timer_us)
++			measured_us = data->next_timer_us;
++	}
+ 
+ 	/* Update our correction ratio */
+ 	new_factor = data->correction_factor[data->bucket];
+@@ -439,7 +447,7 @@ static void menu_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
+ 	data->correction_factor[data->bucket] = new_factor;
+ 
+ 	/* update the repeating-pattern data */
+-	data->intervals[data->interval_ptr++] = last_idle_us;
++	data->intervals[data->interval_ptr++] = measured_us;
+ 	if (data->interval_ptr >= INTERVALS)
+ 		data->interval_ptr = 0;
+ }

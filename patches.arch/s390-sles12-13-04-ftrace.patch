@@ -1,0 +1,96 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/ftrace: remove check of obsolete variable function_trace_stop
+Patch-mainline: v3.17-rc1
+Git-commit: 2a62a57a0633c7bbc9689d738ec0235e2ec822dc
+References: bnc#903279, LTC#118177
+
+Description:  kernel: reduce function tracer overhead
+Symptom:      The kernel uses more cpu cycles for each function being
+              executed.
+Problem:      The kGraft feature requires to instrument the kernel. In
+              order to do that the kernel gets compiled with the function
+              tracer enabled which causes the compiler to emit code that
+              adds an "mcount" call to the prologue of each function.
+              This code will be modified by the kernel for function tracing.
+              However the implementation was not optimal, since even if
+              disabled each function stored a value on the stack and
+              afterwards contained an unconditional branch which skipped
+              the rest of the mcount prologue code.
+              So more instructions than necessary will be executed which
+              results in a reduced performance.
+Solution:     Patch the mcount prologue code so that only a single
+              instruction of the mcount code will be executed. It's either
+              a branch that skips the rest of the mcount prologue code or
+              a branch to the function tracer.
+Reproduction: Compile the kernel with and without function tracer enabled
+              and compare cpu time spent in the kernel for identical
+              workloads.
+
+Upstream-Description:
+
+              s390/ftrace: remove check of obsolete variable function_trace_stop
+
+              Remove check of obsolete variable function_trace_stop as requested by
+              Steven Rostedt.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Steven Rostedt <rostedt@goodmis.org>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/Kconfig           |    1 -
+ arch/s390/kernel/mcount.S   |   10 +++-------
+ arch/s390/kernel/mcount64.S |    3 ---
+ 3 files changed, 3 insertions(+), 11 deletions(-)
+
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -115,7 +115,6 @@ config S390
+ 	select HAVE_FTRACE_MCOUNT_RECORD
+ 	select HAVE_FUNCTION_GRAPH_TRACER
+ 	select HAVE_FUNCTION_TRACER
+-	select HAVE_FUNCTION_TRACE_MCOUNT_TEST
+ 	select HAVE_FUTEX_CMPXCHG if FUTEX
+ 	select HAVE_KERNEL_BZIP2
+ 	select HAVE_KERNEL_GZIP
+--- a/arch/s390/kernel/mcount64.S
++++ b/arch/s390/kernel/mcount64.S
+@@ -20,9 +20,6 @@ ENTRY(_mcount)
+ 
+ ENTRY(ftrace_caller)
+ #endif
+-	larl	%r1,function_trace_stop
+-	icm	%r1,0xf,0(%r1)
+-	bnzr	%r14
+ 	stmg	%r2,%r5,32(%r15)
+ 	stg	%r14,112(%r15)
+ 	lgr	%r1,%r15
+--- a/arch/s390/kernel/mcount.S
++++ b/arch/s390/kernel/mcount.S
+@@ -21,13 +21,9 @@ ENTRY(_mcount)
+ ENTRY(ftrace_caller)
+ #endif
+ 	stm	%r2,%r5,16(%r15)
+-	bras	%r1,2f
++	bras	%r1,1f
+ 0:	.long	ftrace_trace_function
+-1:	.long	function_trace_stop
+-2:	l	%r2,1b-0b(%r1)
+-	icm	%r2,0xf,0(%r2)
+-	jnz	3f
+-	st	%r14,56(%r15)
++1:	st	%r14,56(%r15)
+ 	lr	%r0,%r15
+ 	ahi	%r15,-96
+ 	l	%r3,100(%r15)
+@@ -50,7 +46,7 @@ ENTRY(ftrace_graph_caller)
+ #endif
+ 	ahi	%r15,96
+ 	l	%r14,56(%r15)
+-3:	lm	%r2,%r5,16(%r15)
++	lm	%r2,%r5,16(%r15)
+ 	br	%r14
+ 
+ #ifdef CONFIG_FUNCTION_GRAPH_TRACER
