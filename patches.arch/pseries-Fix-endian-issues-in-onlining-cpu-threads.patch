@@ -1,0 +1,50 @@
+From: Thomas Falcon <tlfalcon@linux.vnet.ibm.com>
+Subject: pseries: Fix endian issues in onlining cpu threads
+Patch-mainline: v3.18-rc2
+Git-commit: 822e71224e07f07a07c385be869fe416ce436430
+References: bsc#907069
+
+The ibm,ppc-interrupt-server#s property is in big endian format.
+These values need to be converted when used by little endian
+architectures.
+
+Signed-off-by: Thomas Falcon <tlfalcon@linux.vnet.ibm.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ arch/powerpc/platforms/pseries/dlpar.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/arch/powerpc/platforms/pseries/dlpar.c b/arch/powerpc/platforms/pseries/dlpar.c
+index 679df55..430f3a5 100644
+--- a/arch/powerpc/platforms/pseries/dlpar.c
++++ b/arch/powerpc/platforms/pseries/dlpar.c
+@@ -364,7 +364,8 @@ static int dlpar_online_cpu(struct device_node *dn)
+ 	int rc = 0;
+ 	unsigned int cpu;
+ 	int len, nthreads, i;
+-	const u32 *intserv;
++	const __be32 *intserv;
++	u32 thread;
+ 
+ 	intserv = of_get_property(dn, "ibm,ppc-interrupt-server#s", &len);
+ 	if (!intserv)
+@@ -374,8 +375,9 @@ static int dlpar_online_cpu(struct device_node *dn)
+ 
+ 	cpu_maps_update_begin();
+ 	for (i = 0; i < nthreads; i++) {
++		thread = be32_to_cpu(intserv[i]);
+ 		for_each_present_cpu(cpu) {
+-			if (get_hard_smp_processor_id(cpu) != intserv[i])
++			if (get_hard_smp_processor_id(cpu) != thread)
+ 				continue;
+ 			BUG_ON(get_cpu_current_state(cpu)
+ 					!= CPU_STATE_OFFLINE);
+@@ -389,7 +391,7 @@ static int dlpar_online_cpu(struct device_node *dn)
+ 		}
+ 		if (cpu == num_possible_cpus())
+ 			printk(KERN_WARNING "Could not find cpu to online "
+-			       "with physical id 0x%x\n", intserv[i]);
++			       "with physical id 0x%x\n", thread);
+ 	}
+ 	cpu_maps_update_done();

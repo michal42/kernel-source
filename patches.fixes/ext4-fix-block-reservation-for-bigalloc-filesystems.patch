@@ -1,0 +1,200 @@
+From 4f2ce24c3a16d24dd066a50784c4fe2f743eae50 Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Tue, 25 Nov 2014 11:41:49 -0500
+Subject: [PATCH] ext4: fix block reservation for bigalloc filesystems
+Git-commit: cbd7584e6ead1b79fb0b81573f158b57fa1f0b49
+Patch-mainline: Merged into linux-linus
+References: bnc#893428
+
+For bigalloc filesystems we have to check whether newly requested inode
+block isn't already part of a cluster for which we already have delayed
+allocation reservation. This check happens in ext4_ext_map_blocks() and
+that function sets EXT4_MAP_FROM_CLUSTER if that's the case. However if
+ext4_da_map_blocks() finds in extent cache information about the block,
+we don't call into ext4_ext_map_blocks() and thus we always end up
+getting new reservation even if the space for cluster is already
+reserved. This results in overreservation and premature ENOSPC reports.
+
+Fix the problem by checking for existing cluster reservation already in
+ext4_da_map_blocks(). That simplifies the logic and actually allows us
+to get rid of the EXT4_MAP_FROM_CLUSTER flag completely.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+
+---
+ fs/ext4/ext4.h              |   12 +-----------
+ fs/ext4/extents.c           |   12 ++++--------
+ fs/ext4/inode.c             |   29 +++++------------------------
+ include/trace/events/ext4.h |    3 +--
+ 4 files changed, 11 insertions(+), 45 deletions(-)
+
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index 5bc6874..462b5ca 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -157,17 +157,9 @@ struct ext4_allocation_request {
+ #define EXT4_MAP_UNWRITTEN	(1 << BH_Unwritten)
+ #define EXT4_MAP_BOUNDARY	(1 << BH_Boundary)
+ #define EXT4_MAP_UNINIT		(1 << BH_Uninit)
+-/* Sometimes (in the bigalloc case, from ext4_da_get_block_prep) the caller of
+- * ext4_map_blocks wants to know whether or not the underlying cluster has
+- * already been accounted for. EXT4_MAP_FROM_CLUSTER conveys to the caller that
+- * the requested mapping was from previously mapped (or delayed allocated)
+- * cluster. We use BH_AllocFromCluster only for this flag. BH_AllocFromCluster
+- * should never appear on buffer_head's state flags.
+- */
+-#define EXT4_MAP_FROM_CLUSTER	(1 << BH_AllocFromCluster)
+ #define EXT4_MAP_FLAGS		(EXT4_MAP_NEW | EXT4_MAP_MAPPED |\
+ 				 EXT4_MAP_UNWRITTEN | EXT4_MAP_BOUNDARY |\
+-				 EXT4_MAP_UNINIT | EXT4_MAP_FROM_CLUSTER)
++				 EXT4_MAP_UNINIT)
+ 
+ struct ext4_map_blocks {
+ 	ext4_fsblk_t m_pblk;
+@@ -2765,8 +2757,6 @@ extern int ext4_mmp_csum_verify(struct super_block *sb,
+ enum ext4_state_bits {
+ 	BH_Uninit	/* blocks are allocated but uninitialized on disk */
+ 	 = BH_JBDPrivateStart,
+-	BH_AllocFromCluster,	/* allocated blocks were part of already
+-				 * allocated cluster. */
+ };
+ 
+ /*
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index 8dd9659..ab7e665 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -4192,6 +4192,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 	ext4_io_end_t *io = ext4_inode_aio(inode);
+ 	ext4_lblk_t cluster_offset;
+ 	int set_unwritten = 0;
++	bool map_from_cluster = false;
+ 
+ 	ext_debug("blocks %u/%u requested for inode %lu\n",
+ 		  map->m_lblk, map->m_len, inode->i_ino);
+@@ -4257,10 +4258,6 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 		}
+ 	}
+ 
+-	if ((sbi->s_cluster_ratio > 1) &&
+-	    ext4_find_delalloc_cluster(inode, map->m_lblk))
+-		map->m_flags |= EXT4_MAP_FROM_CLUSTER;
+-
+ 	/*
+ 	 * requested block isn't allocated yet;
+ 	 * we couldn't try to create block if create flag is zero
+@@ -4278,7 +4275,6 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 	/*
+ 	 * Okay, we need to do block allocation.
+ 	 */
+-	map->m_flags &= ~EXT4_MAP_FROM_CLUSTER;
+ 	newex.ee_block = cpu_to_le32(map->m_lblk);
+ 	cluster_offset = EXT4_LBLK_COFF(sbi, map->m_lblk);
+ 
+@@ -4290,7 +4286,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 	    get_implied_cluster_alloc(inode->i_sb, map, ex, path)) {
+ 		ar.len = allocated = map->m_len;
+ 		newblock = map->m_pblk;
+-		map->m_flags |= EXT4_MAP_FROM_CLUSTER;
++		map_from_cluster = true;
+ 		goto got_allocated_blocks;
+ 	}
+ 
+@@ -4311,7 +4307,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 	    get_implied_cluster_alloc(inode->i_sb, map, ex2, path)) {
+ 		ar.len = allocated = map->m_len;
+ 		newblock = map->m_pblk;
+-		map->m_flags |= EXT4_MAP_FROM_CLUSTER;
++		map_from_cluster = true;
+ 		goto got_allocated_blocks;
+ 	}
+ 
+@@ -4437,7 +4433,7 @@ got_allocated_blocks:
+ 		 */
+ 		reserved_clusters = get_reserved_cluster_alloc(inode,
+ 						map->m_lblk, allocated);
+-		if (map->m_flags & EXT4_MAP_FROM_CLUSTER) {
++		if (map_from_cluster) {
+ 			if (reserved_clusters) {
+ 				/*
+ 				 * We have clusters reserved for this range.
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index d65a626..cc17922 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -453,11 +453,6 @@ static void ext4_map_blocks_es_recheck(handle_t *handle,
+ 	}
+ 	if (!(flags & EXT4_GET_BLOCKS_NO_LOCK))
+ 		up_read((&EXT4_I(inode)->i_data_sem));
+-	/*
+-	 * Clear EXT4_MAP_FROM_CLUSTER and EXT4_MAP_BOUNDARY flag
+-	 * because it shouldn't be marked in es_map->m_flags.
+-	 */
+-	map->m_flags &= ~(EXT4_MAP_FROM_CLUSTER | EXT4_MAP_BOUNDARY);
+ 
+ 	/*
+ 	 * We don't check m_len because extent will be collpased in status
+@@ -1566,20 +1561,10 @@ static int ext4_da_map_blocks(struct inode *inode, sector_t iblock,
+ 	 * Try to see if we can get the block without requesting a new
+ 	 * file system block.
+ 	 */
+-	down_read((&EXT4_I(inode)->i_data_sem));
+-	if (ext4_has_inline_data(inode)) {
+-		/*
+-		 * We will soon create blocks for this page, and let
+-		 * us pretend as if the blocks aren't allocated yet.
+-		 * In case of clusters, we have to handle the work
+-		 * of mapping from cluster so that the reserved space
+-		 * is calculated properly.
+-		 */
+-		if ((EXT4_SB(inode->i_sb)->s_cluster_ratio > 1) &&
+-		    ext4_find_delalloc_cluster(inode, map->m_lblk))
+-			map->m_flags |= EXT4_MAP_FROM_CLUSTER;
++	down_read(&EXT4_I(inode)->i_data_sem);
++	if (ext4_has_inline_data(inode))
+ 		retval = 0;
+-	} else if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))
++	else if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))
+ 		retval = ext4_ext_map_blocks(NULL, inode, map,
+ 					     EXT4_GET_BLOCKS_NO_PUT_HOLE);
+ 	else
+@@ -1598,7 +1583,8 @@ add_delayed:
+ 		 * then we don't need to reserve it again. However we still need
+ 		 * to reserve metadata for every block we're going to write.
+ 		 */
+-		if (!(map->m_flags & EXT4_MAP_FROM_CLUSTER)) {
++		if (EXT4_SB(inode->i_sb)->s_cluster_ratio <= 1 ||
++		    !ext4_find_delalloc_cluster(inode, map->m_lblk)) {
+ 			ret = ext4_da_reserve_space(inode, iblock);
+ 			if (ret) {
+ 				/* not enough space to reserve */
+@@ -1621,11 +1607,6 @@ add_delayed:
+ 			goto out_unlock;
+ 		}
+ 
+-		/* Clear EXT4_MAP_FROM_CLUSTER flag since its purpose is served
+-		 * and it should not appear on the bh->b_state.
+-		 */
+-		map->m_flags &= ~EXT4_MAP_FROM_CLUSTER;
+-
+ 		map_bh(bh, inode->i_sb, invalid_block);
+ 		set_buffer_new(bh);
+ 		set_buffer_delay(bh);
+diff --git a/include/trace/events/ext4.h b/include/trace/events/ext4.h
+index a05a16d..9140223 100644
+--- a/include/trace/events/ext4.h
++++ b/include/trace/events/ext4.h
+@@ -51,8 +51,7 @@ struct extent_status;
+ 	{ EXT4_MAP_MAPPED,	"M" },			\
+ 	{ EXT4_MAP_UNWRITTEN,	"U" },			\
+ 	{ EXT4_MAP_BOUNDARY,	"B" },			\
+-	{ EXT4_MAP_UNINIT,	"u" },			\
+-	{ EXT4_MAP_FROM_CLUSTER, "C" })
++	{ EXT4_MAP_UNINIT,	"u" })
+ 
+ #define show_free_flags(flags) __print_flags(flags, "|",	\
+ 	{ EXT4_FREE_BLOCKS_METADATA,		"METADATA" },	\
+-- 
+1.6.0.2
+

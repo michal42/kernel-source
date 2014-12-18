@@ -1,0 +1,111 @@
+From: Vlastimil Babka <vbabka@suse.cz>
+Date: Thu, 9 Oct 2014 15:27:18 -0700
+Subject: mm, compaction: skip rechecks when lock was already held
+Git-commit: 69b7189f12e0064237630e8c6bb64cad710bb268
+Patch-mainline: v3.18-rc1
+References: VM Performance, bnc#904177
+
+Compaction scanners try to lock zone locks as late as possible by checking
+many page or pageblock properties opportunistically without lock and
+skipping them if not unsuitable.  For pages that pass the initial checks,
+some properties have to be checked again safely under lock.  However, if
+the lock was already held from a previous iteration in the initial checks,
+the rechecks are unnecessary.
+
+This patch therefore skips the rechecks when the lock was already held.
+This is now possible to do, since we don't (potentially) drop and
+reacquire the lock between the initial checks and the safe rechecks
+anymore.
+
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+Reviewed-by: Zhang Yanfei <zhangyanfei@cn.fujitsu.com>
+Reviewed-by: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Acked-by: Minchan Kim <minchan@kernel.org>
+Acked-by: Mel Gorman <mgorman@suse.de>
+Cc: Michal Nazarewicz <mina86@mina86.com>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Cc: Christoph Lameter <cl@linux.com>
+Cc: Rik van Riel <riel@redhat.com>
+Acked-by: David Rientjes <rientjes@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/compaction.c |   53 +++++++++++++++++++++++++++++++----------------------
+ 1 file changed, 31 insertions(+), 22 deletions(-)
+
+--- a/mm/compaction.c
++++ b/mm/compaction.c
+@@ -357,22 +357,30 @@ static unsigned long isolate_freepages_b
+ 			goto isolate_fail;
+ 
+ 		/*
+-		 * The zone lock must be held to isolate freepages.
+-		 * Unfortunately this is a very coarse lock and can be
+-		 * heavily contended if there are parallel allocations
+-		 * or parallel compactions. For async compaction do not
+-		 * spin on the lock and we acquire the lock as late as
+-		 * possible.
++		 * If we already hold the lock, we can skip some rechecking.
++		 * Note that if we hold the lock now, checked_pageblock was
++		 * already set in some previous iteration (or strict is true),
++		 * so it is correct to skip the suitable migration target
++		 * recheck as well.
+ 		 */
+-		if (!locked)
++		if (!locked) {
++			/*
++			 * The zone lock must be held to isolate freepages.
++			 * Unfortunately this is a very coarse lock and can be
++			 * heavily contended if there are parallel allocations
++			 * or parallel compactions. For async compaction do not
++			 * spin on the lock and we acquire the lock as late as
++			 * possible.
++			 */
+ 			locked = compact_trylock_irqsave(&cc->zone->lock,
+ 								&flags, cc);
+-		if (!locked)
+-			break;
++			if (!locked)
++				break;
+ 
+-		/* Recheck this is a buddy page under lock */
+-		if (!PageBuddy(page))
+-			goto isolate_fail;
++			/* Recheck this is a buddy page under lock */
++			if (!PageBuddy(page))
++				goto isolate_fail;
++		}
+ 
+ 		/* Found a free page, break it into order-0 pages */
+ 		isolated = split_free_page(page);
+@@ -631,19 +639,20 @@ isolate_migratepages_block(struct compac
+ 		    page_count(page) > page_mapcount(page))
+ 			continue;
+ 
+-		/* If the lock is not held, try to take it */
+-		if (!locked)
++		/* If we already hold the lock, we can skip some rechecking */
++		if (!locked) {
+ 			locked = compact_trylock_irqsave(&zone->lru_lock,
+ 								&flags, cc);
+-		if (!locked)
+-			break;
++			if (!locked)
++				break;
+ 
+-		/* Recheck PageLRU and PageTransHuge under lock */
+-		if (!PageLRU(page))
+-			continue;
+-		if (PageTransHuge(page)) {
+-			low_pfn += (1 << compound_order(page)) - 1;
+-			continue;
++			/* Recheck PageLRU and PageTransHuge under lock */
++			if (!PageLRU(page))
++				continue;
++			if (PageTransHuge(page)) {
++				low_pfn += (1 << compound_order(page)) - 1;
++				continue;
++			}
+ 		}
+ 
+ 		lruvec = mem_cgroup_page_lruvec(page, zone);

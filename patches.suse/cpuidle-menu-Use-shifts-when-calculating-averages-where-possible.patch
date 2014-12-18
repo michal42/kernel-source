@@ -1,0 +1,58 @@
+From 9b9166c4e97a5ea82c71f36695dc0c3a6fa578d5 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 6 Aug 2014 14:19:18 +0100
+Subject: [PATCH] cpuidle: menu: Use shifts when calculating averages where
+ possible
+
+References: cpuidle performance
+Patch-mainline: v3.17
+Git-commit: ae77930060338226a4377d3b93580c43b5ec82ae
+
+We use do_div even though the divisor will usually be a power-of-two
+unless there are unusual outliers. Use shifts where possible
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+---
+ drivers/cpuidle/governors/menu.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/cpuidle/governors/menu.c b/drivers/cpuidle/governors/menu.c
+index c3732fa..c36e1ea 100644
+--- a/drivers/cpuidle/governors/menu.c
++++ b/drivers/cpuidle/governors/menu.c
+@@ -31,7 +31,8 @@
+  * The default values do not overflow.
+  */
+ #define BUCKETS 12
+-#define INTERVALS 8
++#define INTERVAL_SHIFT 3
++#define INTERVALS (1UL << INTERVAL_SHIFT)
+ #define RESOLUTION 1024
+ #define DECAY 8
+ #define MAX_INTERESTING 50000
+@@ -227,7 +228,10 @@ again:
+ 				max = value;
+ 		}
+ 	}
+-	do_div(avg, divisor);
++	if (divisor == INTERVALS)
++		avg >>= INTERVAL_SHIFT;
++	else
++		do_div(avg, divisor);
+ 
+ 	/* Then try to determine standard deviation */
+ 	stddev = 0;
+@@ -238,7 +242,11 @@ again:
+ 			stddev += diff * diff;
+ 		}
+ 	}
+-	do_div(stddev, divisor);
++	if (divisor == INTERVALS)
++		stddev >>= INTERVAL_SHIFT;
++	else
++		do_div(stddev, divisor);
++
+ 	/*
+ 	 * The typical interval is obtained when standard deviation is small
+ 	 * or standard deviation is small compared to the average interval.

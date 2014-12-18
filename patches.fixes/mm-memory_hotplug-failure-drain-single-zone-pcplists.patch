@@ -1,0 +1,79 @@
+From: Vlastimil Babka <vbabka@suse.cz>
+Date: Wed, 10 Dec 2014 15:43:10 -0800
+Subject: mm, memory_hotplug/failure: drain single zone pcplists
+Git-commit: c05543293e0bf586842844c14fd8c598f494a107
+Patch-mainline: v3.19-rc1
+References: VM Performance, bnc#904177
+
+Memory hotplug and failure mechanisms have several places where pcplists
+are drained so that pages are returned to the buddy allocator and can be
+e.g. prepared for offlining.  This is always done in the context of a
+single zone, we can reduce the pcplists drain to the single zone, which
+is now possible.
+
+The change should make memory offlining due to hotremove or failure
+faster and not disturbing unrelated pcplists anymore.
+
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Yasuaki Ishimatsu <isimatu.yasuaki@jp.fujitsu.com>
+Cc: Zhang Yanfei <zhangyanfei@cn.fujitsu.com>
+Cc: Xishi Qiu <qiuxishi@huawei.com>
+Cc: Vladimir Davydov <vdavydov@parallels.com>
+Cc: Joonsoo Kim <iamjoonsoo.kim@lge.com>
+Cc: Michal Nazarewicz <mina86@mina86.com>
+Cc: Marek Szyprowski <m.szyprowski@samsung.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/memory-failure.c | 4 ++--
+ mm/memory_hotplug.c | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/mm/memory-failure.c b/mm/memory-failure.c
+index 851b4d7..84e7ded 100644
+--- a/mm/memory-failure.c
++++ b/mm/memory-failure.c
+@@ -233,7 +233,7 @@ void shake_page(struct page *p, int access)
+ 		lru_add_drain_all();
+ 		if (PageLRU(p))
+ 			return;
+-		drain_all_pages(NULL);
++		drain_all_pages(page_zone(p));
+ 		if (PageLRU(p) || is_free_buddy_page(p))
+ 			return;
+ 	}
+@@ -1661,7 +1661,7 @@ static int __soft_offline_page(struct page *page, int flags)
+ 			if (!is_free_buddy_page(page))
+ 				lru_add_drain_all();
+ 			if (!is_free_buddy_page(page))
+-				drain_all_pages(NULL);
++				drain_all_pages(page_zone(page));
+ 			SetPageHWPoison(page);
+ 			if (!is_free_buddy_page(page))
+ 				pr_info("soft offline: %#lx: page leaked\n",
+diff --git a/mm/memory_hotplug.c b/mm/memory_hotplug.c
+index aa0c6e5..9fab107 100644
+--- a/mm/memory_hotplug.c
++++ b/mm/memory_hotplug.c
+@@ -1725,7 +1725,7 @@ repeat:
+ 	if (drain) {
+ 		lru_add_drain_all();
+ 		cond_resched();
+-		drain_all_pages(NULL);
++		drain_all_pages(zone);
+ 	}
+ 
+ 	pfn = scan_movable_pages(start_pfn, end_pfn);
+@@ -1747,7 +1747,7 @@ repeat:
+ 	lru_add_drain_all();
+ 	yield();
+ 	/* drain pcp pages, this is synchronous. */
+-	drain_all_pages(NULL);
++	drain_all_pages(zone);
+ 	/*
+ 	 * dissolve free hugepages in the memory block before doing offlining
+ 	 * actually in order to make hugetlbfs's object counting consistent.
+
