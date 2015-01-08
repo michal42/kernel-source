@@ -70,25 +70,23 @@ cc: Serge E. Hallyn <serge.hallyn@ubuntu.com>
 cc: Eric W. Biederman <ebiederm@xmission.com>
 Acked-by: Lee, Chun-Yi <jlee@suse.com>
 ---
- include/linux/user_namespace.h |    6 ++
- include/uapi/linux/keyctl.h    |    1 +
- kernel/user.c                  |    4 +
- kernel/user_namespace.c        |    6 ++
+ include/linux/user_namespace.h |    6 +
+ include/uapi/linux/keyctl.h    |    1 
+ kernel/user.c                  |    4 
+ kernel/user_namespace.c        |    6 +
  security/keys/Kconfig          |   17 ++++
- security/keys/Makefile         |    1 +
- security/keys/compat.c         |    3 +
+ security/keys/Makefile         |    1 
+ security/keys/compat.c         |    3 
  security/keys/internal.h       |    9 ++
- security/keys/keyctl.c         |    3 +
- security/keys/persistent.c     |  169 ++++++++++++++++++++++++++++++++++++++++
- security/keys/sysctl.c         |   11 +++
- 11 files changed, 230 insertions(+), 0 deletions(-)
+ security/keys/keyctl.c         |    3 
+ security/keys/persistent.c     |  169 +++++++++++++++++++++++++++++++++++++++++
+ security/keys/sysctl.c         |   11 ++
+ 11 files changed, 230 insertions(+)
  create mode 100644 security/keys/persistent.c
 
-diff --git a/include/linux/user_namespace.h b/include/linux/user_namespace.h
-index 4db2985..4836ba3 100644
 --- a/include/linux/user_namespace.h
 +++ b/include/linux/user_namespace.h
-@@ -27,6 +27,12 @@ struct user_namespace {
+@@ -31,6 +31,12 @@ struct user_namespace {
  	kuid_t			owner;
  	kgid_t			group;
  	unsigned int		proc_inum;
@@ -98,11 +96,9 @@ index 4db2985..4836ba3 100644
 +	struct key		*persistent_keyring_register;
 +	struct rw_semaphore	persistent_keyring_register_sem;
 +#endif
- };
- 
- extern struct user_namespace init_user_ns;
-diff --git a/include/uapi/linux/keyctl.h b/include/uapi/linux/keyctl.h
-index c9b7f4f..840cb99 100644
+ #ifndef __GENKSYMS__
+ 	unsigned long		flags;
+ #endif
 --- a/include/uapi/linux/keyctl.h
 +++ b/include/uapi/linux/keyctl.h
 @@ -56,5 +56,6 @@
@@ -112,14 +108,12 @@ index c9b7f4f..840cb99 100644
 +#define KEYCTL_GET_PERSISTENT		22	/* get a user's persistent keyring */
  
  #endif /*  _LINUX_KEYCTL_H */
-diff --git a/kernel/user.c b/kernel/user.c
-index 5bbb919..a3a0dbf 100644
 --- a/kernel/user.c
 +++ b/kernel/user.c
-@@ -51,6 +51,10 @@ struct user_namespace init_user_ns = {
- 	.owner = GLOBAL_ROOT_UID,
+@@ -52,6 +52,10 @@ struct user_namespace init_user_ns = {
  	.group = GLOBAL_ROOT_GID,
  	.proc_inum = PROC_USER_INIT_INO,
+ 	.flags = USERNS_INIT_FLAGS,
 +#ifdef CONFIG_KEYS_KERBEROS_CACHE
 +	.krb_cache_register_sem =
 +	__RWSEM_INITIALIZER(init_user_ns.krb_cache_register_sem),
@@ -127,11 +121,9 @@ index 5bbb919..a3a0dbf 100644
  };
  EXPORT_SYMBOL_GPL(init_user_ns);
  
-diff --git a/kernel/user_namespace.c b/kernel/user_namespace.c
-index 13fb113..240fb62 100644
 --- a/kernel/user_namespace.c
 +++ b/kernel/user_namespace.c
-@@ -101,6 +101,9 @@ int create_user_ns(struct cred *new)
+@@ -107,6 +107,9 @@ int create_user_ns(struct cred *new)
  
  	set_cred_user_ns(new, ns);
  
@@ -141,7 +133,7 @@ index 13fb113..240fb62 100644
  	return 0;
  }
  
-@@ -130,6 +133,9 @@ void free_user_ns(struct user_namespace *ns)
+@@ -136,6 +139,9 @@ void free_user_ns(struct user_namespace
  
  	do {
  		parent = ns->parent;
@@ -151,8 +143,6 @@ index 13fb113..240fb62 100644
  		proc_free_inum(ns->proc_inum);
  		kmem_cache_free(user_ns_cachep, ns);
  		ns = parent;
-diff --git a/security/keys/Kconfig b/security/keys/Kconfig
-index b563622..53d8748 100644
 --- a/security/keys/Kconfig
 +++ b/security/keys/Kconfig
 @@ -20,6 +20,23 @@ config KEYS
@@ -179,8 +169,6 @@ index b563622..53d8748 100644
  config BIG_KEYS
  	tristate "Large payload keys"
  	depends on KEYS
-diff --git a/security/keys/Makefile b/security/keys/Makefile
-index c487c77..dfb3a7b 100644
 --- a/security/keys/Makefile
 +++ b/security/keys/Makefile
 @@ -18,6 +18,7 @@ obj-y := \
@@ -191,11 +179,9 @@ index c487c77..dfb3a7b 100644
  
  #
  # Key types
-diff --git a/security/keys/compat.c b/security/keys/compat.c
-index d65fa7f..bbd32c7 100644
 --- a/security/keys/compat.c
 +++ b/security/keys/compat.c
-@@ -138,6 +138,9 @@ asmlinkage long compat_sys_keyctl(u32 option,
+@@ -138,6 +138,9 @@ asmlinkage long compat_sys_keyctl(u32 op
  	case KEYCTL_INVALIDATE:
  		return keyctl_invalidate_key(arg2);
  
@@ -205,11 +191,9 @@ index d65fa7f..bbd32c7 100644
  	default:
  		return -EOPNOTSUPP;
  	}
-diff --git a/security/keys/internal.h b/security/keys/internal.h
-index 581c6f6..80b2aac 100644
 --- a/security/keys/internal.h
 +++ b/security/keys/internal.h
-@@ -255,6 +255,15 @@ extern long keyctl_invalidate_key(key_serial_t);
+@@ -255,6 +255,15 @@ extern long keyctl_invalidate_key(key_se
  extern long keyctl_instantiate_key_common(key_serial_t,
  					  const struct iovec *,
  					  unsigned, size_t, key_serial_t);
@@ -225,11 +209,9 @@ index 581c6f6..80b2aac 100644
  
  /*
   * Debugging key validation
-diff --git a/security/keys/keyctl.c b/security/keys/keyctl.c
-index 33cfd27..cee72ce 100644
 --- a/security/keys/keyctl.c
 +++ b/security/keys/keyctl.c
-@@ -1667,6 +1667,9 @@ SYSCALL_DEFINE5(keyctl, int, option, unsigned long, arg2, unsigned long, arg3,
+@@ -1667,6 +1667,9 @@ SYSCALL_DEFINE5(keyctl, int, option, uns
  	case KEYCTL_INVALIDATE:
  		return keyctl_invalidate_key((key_serial_t) arg2);
  
@@ -239,9 +221,6 @@ index 33cfd27..cee72ce 100644
  	default:
  		return -EOPNOTSUPP;
  	}
-diff --git a/security/keys/persistent.c b/security/keys/persistent.c
-new file mode 100644
-index 0000000..82f4957
 --- /dev/null
 +++ b/security/keys/persistent.c
 @@ -0,0 +1,169 @@
@@ -414,8 +393,6 @@ index 0000000..82f4957
 +	key_ref_put(dest_ref);
 +	return ret;
 +}
-diff --git a/security/keys/sysctl.c b/security/keys/sysctl.c
-index ee32d18..8c0af08 100644
 --- a/security/keys/sysctl.c
 +++ b/security/keys/sysctl.c
 @@ -61,5 +61,16 @@ ctl_table key_sysctls[] = {
@@ -435,6 +412,3 @@ index ee32d18..8c0af08 100644
 +#endif
  	{ }
  };
--- 
-1.6.4.2
-

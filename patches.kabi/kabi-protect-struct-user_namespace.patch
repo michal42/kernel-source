@@ -1,0 +1,33 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct user_namespace
+Patch-mainline: never, kabi
+
+In 3.12.36, commit 84c4e718c006d4e37e1d0a8d1928dd80927e1127 (userns:
+Add a knob to disable setgroups on a per user namespace basis),
+upstream commit 9cc46516ddf497ea16e8d7cb986ae03a0f6b92f8 added flags
+member to struct user_namespace. It indeed changed the layout of that
+structure.
+
+struct user_namespace is allowed to be allocated only in
+create_user_ns or defined statically as a singleton init_user_ns.
+Everyone else is allowed to hold only a pointer to these. Hence we can
+simply fix this by leaving flags at the end of struct user_namespace
+and protecting it the usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/user_namespace.h |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/include/linux/user_namespace.h
++++ b/include/linux/user_namespace.h
+@@ -31,7 +31,9 @@ struct user_namespace {
+ 	kuid_t			owner;
+ 	kgid_t			group;
+ 	unsigned int		proc_inum;
++#ifndef __GENKSYMS__
+ 	unsigned long		flags;
++#endif
+ };
+ 
+ extern struct user_namespace init_user_ns;

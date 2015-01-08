@@ -40,13 +40,11 @@ Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/huge_mm.h |  3 ++-
- mm/huge_memory.c        | 43 +++++++++++++++++++++++++++----------------
- mm/rmap.c               | 13 +++++--------
- 3 files changed, 34 insertions(+), 25 deletions(-)
+ include/linux/huge_mm.h |    3 ++-
+ mm/huge_memory.c        |   45 ++++++++++++++++++++++++++++-----------------
+ mm/rmap.c               |   13 +++++--------
+ 3 files changed, 35 insertions(+), 26 deletions(-)
 
-diff --git a/include/linux/huge_mm.h b/include/linux/huge_mm.h
-index 4aca0d8..91672e2 100644
 --- a/include/linux/huge_mm.h
 +++ b/include/linux/huge_mm.h
 @@ -54,7 +54,8 @@ enum page_check_address_pmd_flag {
@@ -59,11 +57,9 @@ index 4aca0d8..91672e2 100644
  
  #define HPAGE_PMD_ORDER (HPAGE_PMD_SHIFT-PAGE_SHIFT)
  #define HPAGE_PMD_NR (1<<HPAGE_PMD_ORDER)
-diff --git a/mm/huge_memory.c b/mm/huge_memory.c
-index f2637f0..6727e126 100644
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -1561,23 +1561,33 @@ int __pmd_trans_huge_lock(pmd_t *pmd, struct vm_area_struct *vma,
+@@ -1578,30 +1578,40 @@ int __pmd_trans_huge_lock(pmd_t *pmd, st
  	return 0;
  }
  
@@ -82,6 +78,8 @@ index f2637f0..6727e126 100644
 +			      enum page_check_address_pmd_flag flag,
 +			      spinlock_t **ptl)
  {
+ 	pgd_t *pgd;
+ 	pud_t *pud;
 -	pmd_t *pmd, *ret = NULL;
 +	pmd_t *pmd;
  
@@ -89,12 +87,18 @@ index f2637f0..6727e126 100644
 -		goto out;
 +		return NULL;
  
- 	pmd = mm_find_pmd(mm, address);
- 	if (!pmd)
+ 	pgd = pgd_offset(mm, address);
+ 	if (!pgd_present(*pgd))
 -		goto out;
 +		return NULL;
+ 	pud = pud_offset(pgd, address);
+ 	if (!pud_present(*pud))
+-		goto out;
++		return NULL;
+ 	pmd = pmd_offset(pud, address);
+ 
 +	*ptl = pmd_lock(mm, pmd);
- 	if (pmd_none(*pmd))
+ 	if (!pmd_present(*pmd))
 -		goto out;
 +		goto unlock;
  	if (pmd_page(*pmd) != page)
@@ -103,7 +107,7 @@ index f2637f0..6727e126 100644
  	/*
  	 * split_vma() may create temporary aliased mappings. There is
  	 * no risk as long as all huge pmd are found and have their
-@@ -1587,14 +1597,15 @@ pmd_t *page_check_address_pmd(struct page *page,
+@@ -1611,14 +1621,15 @@ pmd_t *page_check_address_pmd(struct pag
  	 */
  	if (flag == PAGE_CHECK_ADDRESS_PMD_NOTSPLITTING_FLAG &&
  	    pmd_trans_splitting(*pmd))
@@ -123,7 +127,7 @@ index f2637f0..6727e126 100644
  }
  
  static int __split_huge_page_splitting(struct page *page,
-@@ -1602,6 +1613,7 @@ static int __split_huge_page_splitting(struct page *page,
+@@ -1626,6 +1637,7 @@ static int __split_huge_page_splitting(s
  				       unsigned long address)
  {
  	struct mm_struct *mm = vma->vm_mm;
@@ -131,7 +135,7 @@ index f2637f0..6727e126 100644
  	pmd_t *pmd;
  	int ret = 0;
  	/* For mmu_notifiers */
-@@ -1609,9 +1621,8 @@ static int __split_huge_page_splitting(struct page *page,
+@@ -1633,9 +1645,8 @@ static int __split_huge_page_splitting(s
  	const unsigned long mmun_end   = address + HPAGE_PMD_SIZE;
  
  	mmu_notifier_invalidate_range_start(mm, mmun_start, mmun_end);
@@ -142,7 +146,7 @@ index f2637f0..6727e126 100644
  	if (pmd) {
  		/*
  		 * We can't temporarily set the pmd to null in order
-@@ -1622,8 +1633,8 @@ static int __split_huge_page_splitting(struct page *page,
+@@ -1646,8 +1657,8 @@ static int __split_huge_page_splitting(s
  		 */
  		pmdp_splitting_flush(vma, address, pmd);
  		ret = 1;
@@ -152,7 +156,7 @@ index f2637f0..6727e126 100644
  	mmu_notifier_invalidate_range_end(mm, mmun_start, mmun_end);
  
  	return ret;
-@@ -1754,14 +1765,14 @@ static int __split_huge_page_map(struct page *page,
+@@ -1778,14 +1789,14 @@ static int __split_huge_page_map(struct
  				 unsigned long address)
  {
  	struct mm_struct *mm = vma->vm_mm;
@@ -169,7 +173,7 @@ index f2637f0..6727e126 100644
  	if (pmd) {
  		pgtable = pgtable_trans_huge_withdraw(mm, pmd);
  		pmd_populate(mm, &_pmd, pgtable);
-@@ -1816,8 +1827,8 @@ static int __split_huge_page_map(struct page *page,
+@@ -1843,8 +1854,8 @@ static int __split_huge_page_map(struct
  		pmdp_invalidate(vma, address, pmd);
  		pmd_populate(mm, pmd, pgtable);
  		ret = 1;
@@ -179,11 +183,9 @@ index f2637f0..6727e126 100644
  
  	return ret;
  }
-diff --git a/mm/rmap.c b/mm/rmap.c
-index fd3ee7a..b59d741 100644
 --- a/mm/rmap.c
 +++ b/mm/rmap.c
-@@ -665,25 +665,23 @@ int page_referenced_one(struct page *page, struct vm_area_struct *vma,
+@@ -677,25 +677,23 @@ int page_referenced_one(struct page *pag
  			unsigned long *vm_flags)
  {
  	struct mm_struct *mm = vma->vm_mm;
@@ -213,7 +215,7 @@ index fd3ee7a..b59d741 100644
  			*mapcount = 0;	/* break early from loop */
  			*vm_flags |= VM_LOCKED;
  			goto out;
-@@ -692,10 +690,9 @@ int page_referenced_one(struct page *page, struct vm_area_struct *vma,
+@@ -704,10 +702,9 @@ int page_referenced_one(struct page *pag
  		/* go ahead even if the pmd is pmd_trans_splitting() */
  		if (pmdp_clear_flush_young_notify(vma, address, pmd))
  			referenced++;
