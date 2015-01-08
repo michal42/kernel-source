@@ -1,0 +1,38 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kgr: fix unwinder and user addresses
+Patch-mainline: no, depends on unwinder
+References: fate#313296, bnc#908803
+
+Since unwinder stores userspace addresses into stacktraces, we have to
+skip them when eliminating processes from lazy migration.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/x86/include/asm/kgraft.h |    8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+--- a/arch/x86/include/asm/kgraft.h
++++ b/arch/x86/include/asm/kgraft.h
+@@ -39,16 +39,20 @@ static inline void kgr_set_regs_ip(struc
+  */
+ static inline bool kgr_needs_lazy_migration(struct task_struct *p)
+ {
+-	unsigned long s[3];
++	unsigned long s[4];
+ 	struct stack_trace t = {
+ 		.nr_entries = 0,
+ 		.skip = 0,
+-		.max_entries = 3,
++		.max_entries = 4,
+ 		.entries = s,
+ 	};
+ 
+ 	save_stack_trace_tsk(p, &t);
+ 
++	/* unwinder is crazy, it stores user addresses too */
++	if (t.nr_entries >= 2 && !__kernel_text_address(s[1]))
++		t.nr_entries--;
++
+ 	return t.nr_entries > 2;
+ }
+ #else
