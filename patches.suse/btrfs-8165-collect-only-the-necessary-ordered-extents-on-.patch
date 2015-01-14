@@ -1,0 +1,90 @@
+From: Filipe Manana <fdmanana@suse.com>
+Date: Thu, 13 Nov 2014 17:00:35 +0000
+Patch-mainline: 3.19
+Git-commit: 0870295b2371673b3563735825ad559409d8cedc
+References: bnc#912946
+Subject: [PATCH] Btrfs: collect only the necessary ordered extents on
+ ranged fsync
+
+Instead of collecting all ordered extents from the inode's ordered tree
+and then wait for all of them to complete, just collect the ones that
+overlap the fsync range.
+
+Signed-off-by: Filipe Manana <fdmanana@suse.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+---
+ fs/btrfs/ordered-data.c | 16 +++++++++++++---
+ fs/btrfs/ordered-data.h |  4 +++-
+ fs/btrfs/tree-log.c     |  2 +-
+ 3 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/fs/btrfs/ordered-data.c b/fs/btrfs/ordered-data.c
+index 659b008..dcde04b 100644
+--- a/fs/btrfs/ordered-data.c
++++ b/fs/btrfs/ordered-data.c
+@@ -432,21 +432,31 @@ out:
+ 
+ /* Needs to either be called under a log transaction or the log_mutex */
+ void btrfs_get_logged_extents(struct inode *inode,
+-			      struct list_head *logged_list)
++			      struct list_head *logged_list,
++			      const loff_t start,
++			      const loff_t end)
+ {
+ 	struct btrfs_ordered_inode_tree *tree;
+ 	struct btrfs_ordered_extent *ordered;
+ 	struct rb_node *n;
++	struct rb_node *prev;
+ 
+ 	tree = &BTRFS_I(inode)->ordered_tree;
+ 	spin_lock_irq(&tree->lock);
+-	for (n = rb_first(&tree->tree); n; n = rb_next(n)) {
++	n = __tree_search(&tree->tree, end, &prev);
++	if (!n)
++		n = prev;
++	for (; n; n = rb_prev(n)) {
+ 		ordered = rb_entry(n, struct btrfs_ordered_extent, rb_node);
++		if (ordered->file_offset > end)
++			continue;
++		if (entry_end(ordered) <= start)
++			break;
+ 		if (!list_empty(&ordered->log_list))
+ 			continue;
+ 		if (test_bit(BTRFS_ORDERED_LOGGED, &ordered->flags))
+ 			continue;
+-		list_add_tail(&ordered->log_list, logged_list);
++		list_add(&ordered->log_list, logged_list);
+ 		atomic_inc(&ordered->refs);
+ 	}
+ 	spin_unlock_irq(&tree->lock);
+diff --git a/fs/btrfs/ordered-data.h b/fs/btrfs/ordered-data.h
+index dff87cc..a4fce14 100644
+--- a/fs/btrfs/ordered-data.h
++++ b/fs/btrfs/ordered-data.h
+@@ -203,7 +203,9 @@ void btrfs_add_ordered_operation(struct btrfs_trans_handle *trans,
+ int btrfs_wait_ordered_extents(struct btrfs_root *root, int nr);
+ void btrfs_wait_ordered_roots(struct btrfs_fs_info *fs_info, int nr);
+ void btrfs_get_logged_extents(struct inode *inode,
+-			      struct list_head *logged_list);
++			      struct list_head *logged_list,
++			      const loff_t start,
++			      const loff_t end);
+ void btrfs_put_logged_extents(struct list_head *logged_list);
+ void btrfs_submit_logged_extents(struct list_head *logged_list,
+ 				 struct btrfs_root *log);
+diff --git a/fs/btrfs/tree-log.c b/fs/btrfs/tree-log.c
+index 088672b..fe6a686 100644
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -3968,7 +3968,7 @@ static int btrfs_log_inode(struct btrfs_trans_handle *trans,
+ 
+ 	mutex_lock(&BTRFS_I(inode)->log_mutex);
+ 
+-	btrfs_get_logged_extents(inode, &logged_list);
++	btrfs_get_logged_extents(inode, &logged_list, start, end);
+ 
+ 	/*
+ 	 * a brute force approach to making sure we get the most uptodate
+-- 
+1.8.4.5
+
