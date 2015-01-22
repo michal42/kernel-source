@@ -1,0 +1,99 @@
+From 206bc81267c0f8e3723295af3b47a5e4cafc17f5 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Tue, 16 Sep 2014 18:36:52 +0200
+Subject: [PATCH 3/9] uas: Add no-report-opcodes quirk
+References: bnc#914254
+Git-Commit: 734016b00b50a3c6a0e1fc1b7b217e783f5123a1
+Patch-Mainline: v3.18
+
+Besides the ASM1051 (*) needing sdev->no_report_opcodes = 1, it turns out that
+the JMicron JMS567 also needs it to work properly with uas (usb-storage always
+sets it). Since some of the scsi devs were not to keen on the idea to
+outrightly set sdev->no_report_opcodes = 1 for all uas devices, so add a quirk
+for this, and set it for the JMS567.
+
+*) Which has become a non-issue since we've completely blacklisted uas on
+the ASM1051 for other reasons
+
+Cc: stable@vger.kernel.org
+Reported-and-tested-by: Claudio Bizzarri <claudio.bizzarri@gmail.com>
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+
+Conflicts:
+	drivers/usb/storage/unusual_uas.h
+---
+ Documentation/kernel-parameters.txt | 2 ++
+ drivers/usb/storage/uas.c           | 4 ++++
+ drivers/usb/storage/usb.c           | 5 ++++-
+ include/linux/usb_usual.h           | 2 ++
+ 4 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index d126f02..7773d9e 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -3389,6 +3389,8 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 					READ_DISC_INFO command);
+ 				e = NO_READ_CAPACITY_16 (don't use
+ 					READ_CAPACITY_16 command);
++				f = NO_REPORT_OPCODES (don't use report opcodes
++					command, uas only);
+ 				h = CAPACITY_HEURISTICS (decrease the
+ 					reported device capacity by one
+ 					sector if the number is odd);
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index 8c7d4a2..cad02ac 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -961,6 +961,10 @@ static int uas_slave_alloc(struct scsi_device *sdev)
+ static int uas_slave_configure(struct scsi_device *sdev)
+ {
+ 	struct uas_dev_info *devinfo = sdev->hostdata;
++
++	if (devinfo->flags & US_FL_NO_REPORT_OPCODES)
++		sdev->no_report_opcodes = 1;
++
+ 	scsi_set_tag_type(sdev, MSG_ORDERED_TAG);
+ 	scsi_activate_tcq(sdev, devinfo->qdepth - 2);
+ 	return 0;
+diff --git a/drivers/usb/storage/usb.c b/drivers/usb/storage/usb.c
+index 77035b5..574f88e 100644
+--- a/drivers/usb/storage/usb.c
++++ b/drivers/usb/storage/usb.c
+@@ -487,7 +487,7 @@ void usb_stor_adjust_quirks(struct usb_device *udev, unsigned long *fflags)
+ 			US_FL_SINGLE_LUN | US_FL_NO_WP_DETECT |
+ 			US_FL_NO_READ_DISC_INFO | US_FL_NO_READ_CAPACITY_16 |
+ 			US_FL_INITIAL_READ10 | US_FL_WRITE_CACHE |
+-			US_FL_NO_ATA_1X);
++			US_FL_NO_ATA_1X | US_FL_NO_REPORT_OPCODES);
+ 
+ 	p = quirks;
+ 	while (*p) {
+@@ -525,6 +525,9 @@ void usb_stor_adjust_quirks(struct usb_device *udev, unsigned long *fflags)
+ 		case 'e':
+ 			f |= US_FL_NO_READ_CAPACITY_16;
+ 			break;
++		case 'f':
++			f |= US_FL_NO_REPORT_OPCODES;
++			break;
+ 		case 'h':
+ 			f |= US_FL_CAPACITY_HEURISTICS;
+ 			break;
+diff --git a/include/linux/usb_usual.h b/include/linux/usb_usual.h
+index d271f88..a7f2604 100644
+--- a/include/linux/usb_usual.h
++++ b/include/linux/usb_usual.h
+@@ -75,6 +75,8 @@
+ 		/* Cannot handle FUA in WRITE or READ CDBs */	\
+ 	US_FLAG(NO_ATA_1X,	0x02000000)			\
+ 		/* Cannot handle ATA_12 or ATA_16 CDBs */	\
++	US_FLAG(NO_REPORT_OPCODES,	0x04000000)		\
++		/* Cannot handle MI_REPORT_SUPPORTED_OPERATION_CODES */	\
+ 
+ #define US_FLAG(name, value)	US_FL_##name = value ,
+ enum { US_DO_ALL_FLAGS };
+-- 
+1.8.4.5
+
