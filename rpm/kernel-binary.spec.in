@@ -74,10 +74,7 @@ BuildRequires:  hmaccalc
 %endif
 BuildRequires:  modutils
 # Used to sign the kernel in the buildservice
-# Have the buildservice sign the kernel image (on x86_64), modules
-# and firmware files
-BuildRequires:  openssl
-BuildRequires:  pesign-obs-integration
+BuildRequires:  pesign-obs-integration openssl
 Provides:       %name = %version-%source_rel
 # bnc#901925
 Provides:       %name-%version-%source_rel
@@ -418,9 +415,10 @@ BRP_PESIGN_FILES="$BRP_PESIGN_FILES /boot/vmlinuz-%kernelrelease-%build_flavor"
 export NO_BRP_STRIP_DEBUG=true
 export STRIP_KEEP_SYMTAB='*/vmlinux-*'
 
-# /lib/modules/%kernelrelease-%build_flavor/build will be a stale symlink until the
-# kernel-devel package is installed. Don't check for stale symlinks
-# in the brp-symlink check:
+# /lib/modules/%kernelrelease-%build_flavor/source points to the source
+# directory installed by kernel-devel. The kernel-%build_flavor-devel package
+# has a correct dependency on kernel-devel, but the brp check does not see
+# kernel-devel during build.
 export NO_BRP_STALE_LINK_ERROR=yes
 
 cd %kernel_build_dir
@@ -744,8 +742,8 @@ shopt -s nullglob dotglob
 > %my_builddir/kernel-devel.files
 for file in %buildroot/boot/symtypes* %buildroot/lib/modules/*/{build,source}; do
 	f=${file##%buildroot}
-	echo "$f" >> %my_builddir/kernel-devel.files
-done
+	echo "$f"
+done | add_dirs_to_filelist >%my_builddir/kernel-devel.files
 
 {   cd %buildroot
     for f in boot/*; do
