@@ -14,10 +14,37 @@ Alan tells me that binutils has been doing this for 9 years.
 Signed-off-by: Anton Blanchard <anton@samba.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
-Index: linux-3.12-SLE12/arch/powerpc/boot/util.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/boot/util.S
-+++ linux-3.12-SLE12/arch/powerpc/boot/util.S
+---
+ arch/powerpc/boot/util.S                    |    4 
+ arch/powerpc/include/asm/context_tracking.h |    4 
+ arch/powerpc/include/asm/exception-64e.h    |    6 -
+ arch/powerpc/include/asm/exception-64s.h    |    2 
+ arch/powerpc/include/asm/irqflags.h         |    4 
+ arch/powerpc/include/asm/ppc_asm.h          |    2 
+ arch/powerpc/kernel/cpu_setup_fsl_booke.S   |   28 ++--
+ arch/powerpc/kernel/entry_64.S              |   86 +++++++--------
+ arch/powerpc/kernel/exceptions-64e.S        |  158 ++++++++++++++--------------
+ arch/powerpc/kernel/exceptions-64s.S        |  138 ++++++++++++------------
+ arch/powerpc/kernel/head_64.S               |   66 +++++------
+ arch/powerpc/kernel/idle_book3e.S           |    2 
+ arch/powerpc/kernel/idle_power4.S           |    2 
+ arch/powerpc/kernel/idle_power7.S           |    4 
+ arch/powerpc/kernel/misc_64.S               |   10 -
+ arch/powerpc/kvm/book3s_hv_interrupts.S     |    2 
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S     |    6 -
+ arch/powerpc/lib/copypage_64.S              |    2 
+ arch/powerpc/lib/copypage_power7.S          |    4 
+ arch/powerpc/lib/copyuser_power7.S          |    8 -
+ arch/powerpc/lib/hweight_64.S               |    8 -
+ arch/powerpc/lib/mem_64.S                   |    4 
+ arch/powerpc/lib/memcpy_power7.S            |    6 -
+ arch/powerpc/mm/hash_low_64.S               |    8 -
+ arch/powerpc/platforms/pasemi/powersave.S   |    2 
+ arch/powerpc/platforms/pseries/hvCall.S     |    4 
+ 26 files changed, 290 insertions(+), 280 deletions(-)
+
+--- a/arch/powerpc/boot/util.S
++++ b/arch/powerpc/boot/util.S
 @@ -45,7 +45,7 @@ udelay:
  	mfspr	r4,SPRN_PVR
  	srwi	r4,r4,16
@@ -36,10 +63,8 @@ Index: linux-3.12-SLE12/arch/powerpc/boot/util.S
  	mulli	r4,r3,1000	/* nanoseconds */
  	/*  Change r4 to be the number of ticks using:
  	 *	(nanoseconds + (timebase_period_ns - 1 )) / timebase_period_ns
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/context_tracking.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/context_tracking.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/context_tracking.h
+--- a/arch/powerpc/include/asm/context_tracking.h
++++ b/arch/powerpc/include/asm/context_tracking.h
 @@ -2,9 +2,9 @@
  #define _ASM_POWERPC_CONTEXT_TRACKING_H
  
@@ -52,10 +77,8 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/context_tracking.h
  #endif
  
  #endif
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/exception-64e.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/exception-64e.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/exception-64e.h
+--- a/arch/powerpc/include/asm/exception-64e.h
++++ b/arch/powerpc/include/asm/exception-64e.h
 @@ -185,10 +185,10 @@ exc_##label##_book3e:
  	mtlr	r16;
  #define TLB_MISS_STATS_D(name)						    \
@@ -78,10 +101,8 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/exception-64e.h
  #define TLB_MISS_STATS_SAVE_INFO					    \
  	std	r14,EX_TLB_ESR(r12);	/* save ESR */
  #define TLB_MISS_STATS_SAVE_INFO_BOLTED					    \
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/exception-64s.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/exception-64s.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/exception-64s.h
+--- a/arch/powerpc/include/asm/exception-64s.h
++++ b/arch/powerpc/include/asm/exception-64s.h
 @@ -490,7 +490,7 @@ label##_relon_hv:							\
  #define DISABLE_INTS	RECONCILE_IRQ_STATE(r10,r11)
  
@@ -91,10 +112,8 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/exception-64s.h
  
  #define RUNLATCH_ON				\
  BEGIN_FTR_SECTION				\
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/irqflags.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/irqflags.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/irqflags.h
+--- a/arch/powerpc/include/asm/irqflags.h
++++ b/arch/powerpc/include/asm/irqflags.h
 @@ -36,8 +36,8 @@
   * have to call a C function so call a wrapper that saves all the
   * C-clobbered registers.
@@ -106,10 +125,8 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/irqflags.h
  
  /*
   * This is used by assembly code to soft-disable interrupts first and
-Index: linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/include/asm/ppc_asm.h
-+++ linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
+--- a/arch/powerpc/include/asm/ppc_asm.h
++++ b/arch/powerpc/include/asm/ppc_asm.h
 @@ -57,7 +57,7 @@ BEGIN_FW_FTR_SECTION;							\
  	LDX_BE	r10,0,r10;		/* get log write index */	\
  	cmpd	cr1,r11,r10;						\
@@ -119,10 +136,8 @@ Index: linux-3.12-SLE12/arch/powerpc/include/asm/ppc_asm.h
  	ld	r12,_MSR(r1);						\
  	andi.	r10,r12,MSR_PR;		/* Restore cr0 (coming from user) */ \
  33:									\
-Index: linux-3.12-SLE12/arch/powerpc/kernel/cpu_setup_fsl_booke.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/cpu_setup_fsl_booke.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/cpu_setup_fsl_booke.S
+--- a/arch/powerpc/kernel/cpu_setup_fsl_booke.S
++++ b/arch/powerpc/kernel/cpu_setup_fsl_booke.S
 @@ -94,12 +94,12 @@ _GLOBAL(setup_altivec_idle)
  _GLOBAL(__setup_cpu_e6500)
  	mflr	r6
@@ -202,10 +217,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/cpu_setup_fsl_booke.S
  	b	2f
  1:
  	ld	r10,CPU_SPEC_FEATURES(r4)
-Index: linux-3.12-SLE12/arch/powerpc/kernel/entry_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/entry_64.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/entry_64.S
+--- a/arch/powerpc/kernel/entry_64.S
++++ b/arch/powerpc/kernel/entry_64.S
 @@ -106,7 +106,7 @@ BEGIN_FW_FTR_SECTION
  	LDX_BE	r10,0,r10		/* get log write index */
  	cmpd	cr1,r11,r10
@@ -450,10 +463,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/entry_64.S
  	nop
  
  	/* return value has real return address */
-Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/exceptions-64e.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
+--- a/arch/powerpc/kernel/exceptions-64e.S
++++ b/arch/powerpc/kernel/exceptions-64e.S
 @@ -267,7 +267,7 @@ exc_##n##_bad_stack:							    \
  	CHECK_NAPPING();						\
  	addi	r3,r1,STACK_FRAME_OVERHEAD;				\
@@ -812,10 +823,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64e.S
  
  	/* Return to common init code at proper virtual address.
  	 *
-Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/exceptions-64s.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
+--- a/arch/powerpc/kernel/exceptions-64s.S
++++ b/arch/powerpc/kernel/exceptions-64s.S
 @@ -140,12 +140,12 @@ BEGIN_FTR_SECTION
  #endif
  
@@ -1089,7 +1098,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	ld	r12,_MSR(r1)
  #ifdef	CONFIG_PPC_P7_NAP
  	/*
-@@ -1385,11 +1385,11 @@ machine_check_handle_early:
+@@ -1385,7 +1385,7 @@ machine_check_handle_early:
  	/* Supervisor state loss */
  	li	r0,1
  	stb	r0,PACA_NAPSTATELOST(r13)
@@ -1098,11 +1107,6 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	MACHINE_CHECK_HANDLER_WINDUP
  	GET_PACA(r13)
  	ld	r1,PACAR1(r13)
--	b	.power7_enter_nap_mode
-+	b	power7_enter_nap_mode
- 4:
- #endif
- 	/*
 @@ -1421,7 +1421,7 @@ machine_check_handle_early:
  	andi.	r11,r12,MSR_RI
  	bne	2f
@@ -1218,10 +1222,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/exceptions-64s.S
  	cmpdi	r3,0
  	bne-	handle_page_fault
  	b	fast_exception_return
-Index: linux-3.12-SLE12/arch/powerpc/kernel/head_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/head_64.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/head_64.S
+--- a/arch/powerpc/kernel/head_64.S
++++ b/arch/powerpc/kernel/head_64.S
 @@ -70,7 +70,7 @@ _GLOBAL(__start)
  	/* NOP this out unconditionally */
  BEGIN_FTR_SECTION
@@ -1473,10 +1475,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/head_64.S
  
  	/* Not reached */
  	BUG_OPCODE
-Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_book3e.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_book3e.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/idle_book3e.S
+--- a/arch/powerpc/kernel/idle_book3e.S
++++ b/arch/powerpc/kernel/idle_book3e.S
 @@ -43,7 +43,7 @@ _GLOBAL(\name)
  	 */
  #ifdef CONFIG_TRACE_IRQFLAGS
@@ -1486,10 +1486,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_book3e.S
  	addi    r1,r1,128
  #endif
  	li	r0,1
-Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power4.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_power4.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/idle_power4.S
+--- a/arch/powerpc/kernel/idle_power4.S
++++ b/arch/powerpc/kernel/idle_power4.S
 @@ -46,7 +46,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_CAN_NAP)
  	mflr	r0
  	std	r0,16(r1)
@@ -1499,10 +1497,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power4.S
  	addi    r1,r1,128
  	ld	r0,16(r1)
  	mtlr	r0
-Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/idle_power7.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
+--- a/arch/powerpc/kernel/idle_power7.S
++++ b/arch/powerpc/kernel/idle_power7.S
 @@ -58,7 +58,7 @@ _GLOBAL(power7_powersave_common)
  	/* Make sure FPU, VSX etc... are flushed as we may lose
  	 * state when going to nap mode
@@ -1512,7 +1508,7 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  #endif /* CONFIG_SMP */
  
  	/* Hard disable interrupts */
-@@ -168,7 +168,7 @@ _GLOBAL(power7_wakeup_loss)
+@@ -184,7 +184,7 @@ _GLOBAL(power7_wakeup_loss)
  _GLOBAL(power7_wakeup_noloss)
  	lbz	r0,PACA_NAPSTATELOST(r13)
  	cmpwi	r0,0
@@ -1521,10 +1517,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/idle_power7.S
  	ld	r1,PACAR1(r13)
  	ld	r4,_MSR(r1)
  	ld	r5,_NIP(r1)
-Index: linux-3.12-SLE12/arch/powerpc/kernel/misc_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kernel/misc_64.S
-+++ linux-3.12-SLE12/arch/powerpc/kernel/misc_64.S
+--- a/arch/powerpc/kernel/misc_64.S
++++ b/arch/powerpc/kernel/misc_64.S
 @@ -34,7 +34,7 @@ _GLOBAL(call_do_softirq)
  	std	r0,16(r1)
  	stdu	r1,THREAD_SIZE-STACK_FRAME_OVERHEAD(r3)
@@ -1570,10 +1564,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kernel/misc_64.S
  1:	/* assume normal blr return */
  
  	/* release other cpus to the new kernel secondary start at 0x60 */
-Index: linux-3.12-SLE12/arch/powerpc/kvm/book3s_hv_interrupts.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kvm/book3s_hv_interrupts.S
-+++ linux-3.12-SLE12/arch/powerpc/kvm/book3s_hv_interrupts.S
+--- a/arch/powerpc/kvm/book3s_hv_interrupts.S
++++ b/arch/powerpc/kvm/book3s_hv_interrupts.S
 @@ -149,7 +149,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_201)
  #endif /* CONFIG_SMP */
  
@@ -1583,10 +1575,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kvm/book3s_hv_interrupts.S
  	nop
  
  /*
-Index: linux-3.12-SLE12/arch/powerpc/kvm/book3s_hv_rmhandlers.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/kvm/book3s_hv_rmhandlers.S
-+++ linux-3.12-SLE12/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
 @@ -1280,7 +1280,7 @@ kvmppc_hdsi:
  	/* Search the hash table. */
  	mr	r3, r9			/* vcpu pointer */
@@ -1614,10 +1604,8 @@ Index: linux-3.12-SLE12/arch/powerpc/kvm/book3s_hv_rmhandlers.S
  	nop
  	cmpdi	r3, 0		/* continue exiting from guest? */
  	ld	r9, HSTATE_KVM_VCPU(r13)
-Index: linux-3.12-SLE12/arch/powerpc/lib/copypage_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/lib/copypage_64.S
-+++ linux-3.12-SLE12/arch/powerpc/lib/copypage_64.S
+--- a/arch/powerpc/lib/copypage_64.S
++++ b/arch/powerpc/lib/copypage_64.S
 @@ -20,7 +20,7 @@ _GLOBAL(copy_page)
  BEGIN_FTR_SECTION
  	lis	r5,PAGE_SIZE@h
@@ -1627,10 +1615,8 @@ Index: linux-3.12-SLE12/arch/powerpc/lib/copypage_64.S
  ALT_FTR_SECTION_END_IFCLR(CPU_FTR_VMX_COPY)
  	ori	r5,r5,PAGE_SIZE@l
  BEGIN_FTR_SECTION
-Index: linux-3.12-SLE12/arch/powerpc/lib/copypage_power7.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/lib/copypage_power7.S
-+++ linux-3.12-SLE12/arch/powerpc/lib/copypage_power7.S
+--- a/arch/powerpc/lib/copypage_power7.S
++++ b/arch/powerpc/lib/copypage_power7.S
 @@ -60,7 +60,7 @@ _GLOBAL(copypage_power7)
  	std	r4,56(r1)
  	std	r0,16(r1)
@@ -1649,10 +1635,8 @@ Index: linux-3.12-SLE12/arch/powerpc/lib/copypage_power7.S
  
  #else
  	li	r0,(PAGE_SIZE/128)
-Index: linux-3.12-SLE12/arch/powerpc/lib/copyuser_power7.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/lib/copyuser_power7.S
-+++ linux-3.12-SLE12/arch/powerpc/lib/copyuser_power7.S
+--- a/arch/powerpc/lib/copyuser_power7.S
++++ b/arch/powerpc/lib/copyuser_power7.S
 @@ -66,7 +66,7 @@
  	ld	r15,STK_REG(R15)(r1)
  	ld	r14,STK_REG(R14)(r1)
@@ -1687,10 +1671,8 @@ Index: linux-3.12-SLE12/arch/powerpc/lib/copyuser_power7.S
 -	b	.exit_vmx_usercopy	/* tail call optimise */
 +	b	exit_vmx_usercopy	/* tail call optimise */
  #endif /* CONFiG_ALTIVEC */
-Index: linux-3.12-SLE12/arch/powerpc/lib/hweight_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/lib/hweight_64.S
-+++ linux-3.12-SLE12/arch/powerpc/lib/hweight_64.S
+--- a/arch/powerpc/lib/hweight_64.S
++++ b/arch/powerpc/lib/hweight_64.S
 @@ -24,7 +24,7 @@
  
  _GLOBAL(__arch_hweight8)
@@ -1727,10 +1709,8 @@ Index: linux-3.12-SLE12/arch/powerpc/lib/hweight_64.S
  	nop
  	nop
  	nop
-Index: linux-3.12-SLE12/arch/powerpc/lib/mem_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/lib/mem_64.S
-+++ linux-3.12-SLE12/arch/powerpc/lib/mem_64.S
+--- a/arch/powerpc/lib/mem_64.S
++++ b/arch/powerpc/lib/mem_64.S
 @@ -79,8 +79,8 @@ _GLOBAL(memset)
  
  _GLOBAL(memmove)
@@ -1742,10 +1722,8 @@ Index: linux-3.12-SLE12/arch/powerpc/lib/mem_64.S
  
  _GLOBAL(backwards_memcpy)
  	rlwinm.	r7,r5,32-3,3,31		/* r0 = r5 >> 3 */
-Index: linux-3.12-SLE12/arch/powerpc/lib/memcpy_power7.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/lib/memcpy_power7.S
-+++ linux-3.12-SLE12/arch/powerpc/lib/memcpy_power7.S
+--- a/arch/powerpc/lib/memcpy_power7.S
++++ b/arch/powerpc/lib/memcpy_power7.S
 @@ -230,7 +230,7 @@ _GLOBAL(memcpy_power7)
  	std	r5,64(r1)
  	std	r0,16(r1)
@@ -1771,10 +1749,8 @@ Index: linux-3.12-SLE12/arch/powerpc/lib/memcpy_power7.S
 -	b	.exit_vmx_copy		/* tail call optimise */
 +	b	exit_vmx_copy		/* tail call optimise */
  #endif /* CONFiG_ALTIVEC */
-Index: linux-3.12-SLE12/arch/powerpc/mm/hash_low_64.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/mm/hash_low_64.S
-+++ linux-3.12-SLE12/arch/powerpc/mm/hash_low_64.S
+--- a/arch/powerpc/mm/hash_low_64.S
++++ b/arch/powerpc/mm/hash_low_64.S
 @@ -156,7 +156,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEG
  BEGIN_FTR_SECTION
  	mr	r4,r30
@@ -1811,10 +1787,8 @@ Index: linux-3.12-SLE12/arch/powerpc/mm/hash_low_64.S
  END_FTR_SECTION(CPU_FTR_NOEXECUTE|CPU_FTR_COHERENT_ICACHE, CPU_FTR_NOEXECUTE)
  
  	/* At this point, r3 contains new PP bits, save them in
-Index: linux-3.12-SLE12/arch/powerpc/platforms/pasemi/powersave.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/platforms/pasemi/powersave.S
-+++ linux-3.12-SLE12/arch/powerpc/platforms/pasemi/powersave.S
+--- a/arch/powerpc/platforms/pasemi/powersave.S
++++ b/arch/powerpc/platforms/pasemi/powersave.S
 @@ -66,7 +66,7 @@ sleep_common:
  	std	r3, 48(r1)
  
@@ -1824,10 +1798,8 @@ Index: linux-3.12-SLE12/arch/powerpc/platforms/pasemi/powersave.S
  	cmpwi	r3,0
  	bne	1f
  
-Index: linux-3.12-SLE12/arch/powerpc/platforms/pseries/hvCall.S
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/platforms/pseries/hvCall.S
-+++ linux-3.12-SLE12/arch/powerpc/platforms/pseries/hvCall.S
+--- a/arch/powerpc/platforms/pseries/hvCall.S
++++ b/arch/powerpc/platforms/pseries/hvCall.S
 @@ -49,7 +49,7 @@ END_FTR_SECTION(0, 1);						\
  	std	r0,16(r1);					\
  	addi	r4,r1,STK_PARAM(FIRST_REG);			\

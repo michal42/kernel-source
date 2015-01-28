@@ -14,11 +14,17 @@ Signed-off-by: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
 Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
-diff --git a/arch/powerpc/include/asm/mce.h b/arch/powerpc/include/asm/mce.h
-index 87cad2a..3276b40 100644
+---
+ arch/powerpc/include/asm/mce.h        |    3 
+ arch/powerpc/kernel/entry_64.S        |    5 +
+ arch/powerpc/kernel/exceptions-64s.S  |    7 +
+ arch/powerpc/kernel/mce.c             |  154 ++++++++++++++++++++++++++++++++++
+ arch/powerpc/platforms/powernv/opal.c |   97 ---------------------
+ 5 files changed, 168 insertions(+), 98 deletions(-)
+
 --- a/arch/powerpc/include/asm/mce.h
 +++ b/arch/powerpc/include/asm/mce.h
-@@ -190,5 +190,8 @@ extern void save_mce_event(struct pt_regs *regs, long handled,
+@@ -190,5 +190,8 @@ extern void save_mce_event(struct pt_reg
  			   struct mce_error_info *mce_err, uint64_t addr);
  extern int get_mce_event(struct machine_check_event *mce, bool release);
  extern void release_mce_event(void);
@@ -27,8 +33,6 @@ index 87cad2a..3276b40 100644
 +extern void machine_check_print_event_info(struct machine_check_event *evt);
  
  #endif /* __ASM_PPC64_MCE_H__ */
-diff --git a/arch/powerpc/kernel/entry_64.S b/arch/powerpc/kernel/entry_64.S
-index bbfb029..770d6d6 100644
 --- a/arch/powerpc/kernel/entry_64.S
 +++ b/arch/powerpc/kernel/entry_64.S
 @@ -184,6 +184,11 @@ syscall_exit:
@@ -43,11 +47,9 @@ index bbfb029..770d6d6 100644
  	CURRENT_THREAD_INFO(r12, r1)
  
  	ld	r8,_MSR(r1)
-diff --git a/arch/powerpc/kernel/exceptions-64s.S b/arch/powerpc/kernel/exceptions-64s.S
-index 1aec302..862b9dd 100644
 --- a/arch/powerpc/kernel/exceptions-64s.S
 +++ b/arch/powerpc/kernel/exceptions-64s.S
-@@ -855,7 +855,8 @@ BEGIN_FTR_SECTION
+@@ -829,7 +829,8 @@ BEGIN_FTR_SECTION
  	/* Supervisor state loss */
  	li	r0,1
  	stb	r0,PACA_NAPSTATELOST(r13)
@@ -56,8 +58,8 @@ index 1aec302..862b9dd 100644
 +	MACHINE_CHECK_HANDLER_WINDUP
  	GET_PACA(r13)
  	ld	r1,PACAR1(r13)
- 	b	.power7_enter_nap_mode
-@@ -895,8 +896,10 @@ BEGIN_FTR_SECTION
+ 	b	power7_enter_nap_mode
+@@ -869,8 +870,10 @@ BEGIN_FTR_SECTION
  2:
  	/*
  	 * Return from MC interrupt.
@@ -69,8 +71,6 @@ index 1aec302..862b9dd 100644
  	MACHINE_CHECK_HANDLER_WINDUP
  	rfid
  9:
-diff --git a/arch/powerpc/kernel/mce.c b/arch/powerpc/kernel/mce.c
-index aeecdf1..1c6d157 100644
 --- a/arch/powerpc/kernel/mce.c
 +++ b/arch/powerpc/kernel/mce.c
 @@ -31,6 +31,10 @@
@@ -238,11 +238,9 @@ index aeecdf1..1c6d157 100644
 +		break;
 +	}
 +}
-diff --git a/arch/powerpc/platforms/powernv/opal.c b/arch/powerpc/platforms/powernv/opal.c
-index c5e71d7..245096f 100644
 --- a/arch/powerpc/platforms/powernv/opal.c
 +++ b/arch/powerpc/platforms/powernv/opal.c
-@@ -258,29 +258,6 @@ int opal_put_chars(uint32_t vtermno, const char *data, int total_len)
+@@ -258,29 +258,6 @@ int opal_put_chars(uint32_t vtermno, con
  int opal_machine_check(struct pt_regs *regs)
  {
  	struct machine_check_event evt;
@@ -272,7 +270,7 @@ index c5e71d7..245096f 100644
  
  	if (!get_mce_event(&evt, MCE_EVENT_RELEASE))
  		return 0;
-@@ -291,80 +268,8 @@ int opal_machine_check(struct pt_regs *regs)
+@@ -291,80 +268,8 @@ int opal_machine_check(struct pt_regs *r
  		       evt.version);
  		return 0;
  	}

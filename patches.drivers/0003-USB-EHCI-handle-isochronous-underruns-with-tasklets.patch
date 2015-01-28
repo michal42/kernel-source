@@ -35,12 +35,10 @@ CC: Ming Lei <tom.leiming@gmail.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
- drivers/usb/host/ehci-sched.c | 150 ++++++++++++++++++++++++++----------------
- drivers/usb/host/ehci.h       |   1 +
- 2 files changed, 96 insertions(+), 55 deletions(-)
+ drivers/usb/host/ehci-sched.c |  154 ++++++++++++++++++++++++++----------------
+ drivers/usb/host/ehci.h       |    1 
+ 2 files changed, 98 insertions(+), 57 deletions(-)
 
-diff --git a/drivers/usb/host/ehci-sched.c b/drivers/usb/host/ehci-sched.c
-index 208518b..dcbaad9 100644
 --- a/drivers/usb/host/ehci-sched.c
 +++ b/drivers/usb/host/ehci-sched.c
 @@ -1370,10 +1370,12 @@ iso_stream_schedule (
@@ -58,7 +56,7 @@ index 208518b..dcbaad9 100644
  
  	period = urb->interval;
  	span = sched->span;
-@@ -1384,6 +1386,19 @@ iso_stream_schedule (
+@@ -1384,22 +1386,35 @@ iso_stream_schedule (
  
  	now = ehci_read_frame_index(ehci) & (mod - 1);
  
@@ -68,17 +66,21 @@ index 208518b..dcbaad9 100644
 +	else
 +		next = (now + 2 + 7) & ~0x07;	/* full frame cache */
 +
-+	/*
+ 	/* If needed, initialize last_iso_frame so that this URB will be seen */
+ 	if (ehci->isoc_count == 0)
+ 		ehci->last_iso_frame = now >> 3;
+ 
+ 	/*
 +	 * Use ehci->last_iso_frame as the base.  There can't be any
 +	 * TDs scheduled for earlier than that.
 +	 */
 +	base = ehci->last_iso_frame << 3;
 +	next = (next - base) & (mod - 1);
 +
- 	/*
++	/*
  	 * Need to schedule; when's the next (u)frame we could start?
  	 * This is bigger than ehci->i_thresh allows; scheduling itself
-@@ -1391,11 +1406,11 @@ iso_stream_schedule (
+ 	 * isn't free, the delay should handle reasonably slow cpus.  It
  	 * can also help high bandwidth if the dma and irq loads don't
  	 * jump until after the queue is primed.
  	 */
@@ -93,7 +95,7 @@ index 208518b..dcbaad9 100644
  
  		/* find a uframe slot with enough bandwidth.
  		 * Early uframes are more precious because full-speed
-@@ -1426,6 +1441,9 @@ iso_stream_schedule (
+@@ -1430,6 +1445,9 @@ iso_stream_schedule (
  			status = -ENOSPC;
  			goto fail;
  		}
@@ -103,7 +105,7 @@ index 208518b..dcbaad9 100644
  	}
  
  	/*
-@@ -1434,72 +1452,85 @@ iso_stream_schedule (
+@@ -1438,68 +1456,81 @@ iso_stream_schedule (
  	 * (irq delays etc).  If there are, the behavior depends on
  	 * whether URB_ISO_ASAP is set.
  	 */
@@ -146,18 +148,11 @@ index 208518b..dcbaad9 100644
 -		/* Behind the scheduling threshold? */
 -		if (unlikely(start < next)) {
 -			unsigned now2 = (now - base) & (mod - 1);
-+		/* URB_ISO_ASAP: make sure that start >= next */
-+		if (unlikely(start < next &&
-+				(urb->transfer_flags & URB_ISO_ASAP)))
-+			goto do_ASAP;
- 
+-
 -			/* USB_ISO_ASAP: Round up to the first available slot */
 -			if (urb->transfer_flags & URB_ISO_ASAP)
 -				start += (next - start + period - 1) & -period;
-+		/* Otherwise use start, if it's not in the past */
-+		if (likely(start >= now2))
-+			goto use_start;
- 
+-
 -			/*
 -			 * Not ASAP: Use the next slot in the stream,
 -			 * no matter what.
@@ -168,6 +163,16 @@ index 208518b..dcbaad9 100644
 -						span - period, now2 + base);
 -			}
 -		}
++		/* URB_ISO_ASAP: make sure that start >= next */
++		if (unlikely(start < next &&
++				(urb->transfer_flags & URB_ISO_ASAP)))
++			goto do_ASAP;
++
++		/* Otherwise use start, if it's not in the past */
++		if (likely(start >= now2))
++			goto use_start;
+ 
+-		start += base;
 +	/* Otherwise we got an underrun while the queue was empty */
 +	} else {
 +		if (urb->transfer_flags & URB_ISO_ASAP)
@@ -175,8 +180,7 @@ index 208518b..dcbaad9 100644
 +		wrap = mod;
 +		now2 += mod;
 +	}
- 
--		start += base;
++
 +	/* How many uframes and packets do we need to skip? */
 +	skip = (now2 - start + period - 1) & -period;
 +	if (skip >= span) {		/* Entirely in the past? */
@@ -199,11 +203,11 @@ index 208518b..dcbaad9 100644
 +	if (sched)
 +		sched->first_packet = urb->error_count;
 +	goto use_start;
- 
++
 + do_ASAP:
 +	/* Use the first slot after "next" */
 +	start = next + ((start - next) & (period - 1));
-+
+ 
 + use_start:
  	/* Tried to schedule too far into the future? */
 -	if (unlikely(start - base + span - period >= mod)) {
@@ -224,10 +228,6 @@ index 208518b..dcbaad9 100644
 +	urb->start_frame = start & (mod - 1);
  	if (!stream->highspeed)
  		urb->start_frame >>= 3;
- 
- 	/* Make sure scan_isoc() sees these */
- 	if (ehci->isoc_count == 0)
- 		ehci->last_iso_frame = now >> 3;
 -	return 0;
 +	return status;
  
@@ -243,7 +243,7 @@ index 208518b..dcbaad9 100644
  		if (itd == NULL) {
  			/* ASSERT:  we have all necessary itds */
  			// BUG_ON (list_empty (&iso_sched->td_list));
-@@ -1806,10 +1838,14 @@ static int itd_submit (struct ehci_hcd *ehci, struct urb *urb,
+@@ -1806,10 +1838,14 @@ static int itd_submit (struct ehci_hcd *
  	if (unlikely(status))
  		goto done_not_linked;
  	status = iso_stream_schedule(ehci, urb, stream);
@@ -269,7 +269,7 @@ index 208518b..dcbaad9 100644
  			packet < urb->number_of_packets;
  			packet++) {
  
-@@ -2180,10 +2216,14 @@ static int sitd_submit (struct ehci_hcd *ehci, struct urb *urb,
+@@ -2180,10 +2216,14 @@ static int sitd_submit (struct ehci_hcd
  	if (unlikely(status))
  		goto done_not_linked;
  	status = iso_stream_schedule(ehci, urb, stream);
@@ -286,11 +286,9 @@ index 208518b..dcbaad9 100644
   done_not_linked:
  	spin_unlock_irqrestore (&ehci->lock, flags);
   done:
-diff --git a/drivers/usb/host/ehci.h b/drivers/usb/host/ehci.h
-index 291db7d..2d40192 100644
 --- a/drivers/usb/host/ehci.h
 +++ b/drivers/usb/host/ehci.h
-@@ -434,6 +434,7 @@ struct ehci_iso_packet {
+@@ -435,6 +435,7 @@ struct ehci_iso_packet {
  struct ehci_iso_sched {
  	struct list_head	td_list;
  	unsigned		span;
@@ -298,6 +296,3 @@ index 291db7d..2d40192 100644
  	struct ehci_iso_packet	packet [0];
  };
  
--- 
-1.8.4
-
