@@ -1200,7 +1200,7 @@ Acked-by: jbeulich@suse.com
  		pte = pfn_pte(phys >> PAGE_SHIFT, flags);
  		set_pte_vaddr_pud(level3_user_pgt, address, pte);
  		break;
---- sle12.orig/drivers/gpu/drm/i915/intel_pm.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/gpu/drm/i915/intel_pm.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/gpu/drm/i915/intel_pm.c	2013-09-26 13:01:58.000000000 +0200
 @@ -3643,7 +3643,11 @@ void gen6_update_ring_freq(struct drm_de
  	 * over
@@ -1632,7 +1632,7 @@ Acked-by: jbeulich@suse.com
  	sysfs_remove_group(&pdev->dev.kobj, &via_cputemp_group);
  	return 0;
  }
---- sle12.orig/drivers/iommu/Kconfig	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/iommu/Kconfig	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/iommu/Kconfig	2011-09-09 17:53:01.000000000 +0200
 @@ -4,6 +4,7 @@ config IOMMU_API
  
@@ -1642,7 +1642,7 @@ Acked-by: jbeulich@suse.com
  	default y
  	---help---
  	  Say Y here if you want to compile device drivers for IO Memory
---- sle12.orig/drivers/virtio/Kconfig	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/virtio/Kconfig	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/virtio/Kconfig	2013-03-21 15:26:31.000000000 +0100
 @@ -6,6 +6,7 @@ config VIRTIO
  	  CONFIG_RPMSG or CONFIG_S390_GUEST.
@@ -1931,7 +1931,7 @@ Acked-by: jbeulich@suse.com
  
  MODULE_LICENSE("Dual BSD/GPL");
 +MODULE_ALIAS("xen-backend:vbd");
---- sle12.orig/drivers/xen/blkback/blkback-pagemap.h	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/blkback/blkback-pagemap.h	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/blkback/blkback-pagemap.h	2014-05-06 08:32:24.000000000 +0200
 @@ -13,7 +13,7 @@ struct blkback_pagemap {
  	grant_ref_t      gref;
@@ -2033,92 +2033,120 @@ Acked-by: jbeulich@suse.com
  MODULE_LICENSE("Dual BSD/GPL");
 +MODULE_ALIAS("xen-backend:vif");
 --- sle12.orig/drivers/xen/netfront/accel.c	2011-02-01 14:38:38.000000000 +0100
-+++ sle12/drivers/xen/netfront/accel.c	2013-01-30 11:56:09.000000000 +0100
-@@ -545,7 +545,8 @@ static void accelerator_remove_hooks(str
++++ sle12/drivers/xen/netfront/accel.c	2015-01-30 14:44:26.000000000 +0100
+@@ -545,7 +545,9 @@ static void accelerator_remove_hooks(str
  
  			/* Last chance to get statistics from the accelerator */
  			vif_state->hooks->get_stats(vif_state->np->netdev,
 -						    &vif_state->np->netdev->stats);
 +						    &vif_state->np->netdev->stats,
-+						    this_cpu_ptr(vif_state->np->stats));
++						    this_cpu_ptr(vif_state->np->rx_stats),
++						    this_cpu_ptr(vif_state->np->tx_stats));
  
  			spin_unlock_irqrestore(&accelerator->vif_states_lock,
  					       flags);
-@@ -602,7 +603,8 @@ static int do_remove(struct netfront_inf
+@@ -602,7 +604,9 @@ static int do_remove(struct netfront_inf
  
  		/* Last chance to get statistics from the accelerator */
  		np->accel_vif_state.hooks->get_stats(np->netdev,
 -						     &np->netdev->stats);
 +						     &np->netdev->stats,
-+						     this_cpu_ptr(np->stats));
++						     this_cpu_ptr(np->rx_stats),
++						     this_cpu_ptr(np->tx_stats));
  
  		spin_unlock_irqrestore(&accelerator->vif_states_lock, 
  				       flags);
-@@ -816,8 +818,8 @@ int netfront_accelerator_call_get_stats(
+@@ -816,8 +820,9 @@ int netfront_accelerator_call_get_stats(
  		spin_lock_irqsave(&accelerator->vif_states_lock, flags); 
  		if (np->accel_vif_state.hooks && 
  		    np->accelerator == accelerator)
 - 			rc = np->accel_vif_state.hooks->get_stats(dev,
 -								  &dev->stats);
-+ 			rc = np->accel_vif_state.hooks->get_stats(dev, &dev->stats,
-+								  this_cpu_ptr(np->stats));
++			rc = np->accel_vif_state.hooks->get_stats(dev, &dev->stats,
++								  this_cpu_ptr(np->rx_stats),
++								  this_cpu_ptr(np->tx_stats));
  		spin_unlock_irqrestore(&accelerator->vif_states_lock, flags);
  	}
  	return rc;
 --- sle12.orig/drivers/xen/netfront/netfront.c	2014-01-23 11:21:18.000000000 +0100
-+++ sle12/drivers/xen/netfront/netfront.c	2014-01-23 11:21:24.000000000 +0100
-@@ -317,6 +317,8 @@ static int __devexit netfront_remove(str
++++ sle12/drivers/xen/netfront/netfront.c	2015-01-21 14:31:25.000000000 +0100
+@@ -235,6 +235,15 @@ static inline int xennet_can_sg(struct n
+ 	return dev->features & NETIF_F_SG;
+ }
+ 
++static void netfront_free_netdev(struct net_device *netdev)
++{
++	struct netfront_info *np = netdev_priv(netdev);
++
++	free_percpu(np->rx_stats);
++	free_percpu(np->tx_stats);
++	free_netdev(netdev);
++}
++
+ /*
+  * Work around net.ipv4.conf.*.arp_notify not being enabled by default.
+  */
+@@ -296,7 +305,7 @@ static int __devinit netfront_probe(stru
+ 	return 0;
+ 
+  fail:
+-	free_netdev(netdev);
++	netfront_free_netdev(netdev);
+ 	dev_set_drvdata(&dev->dev, NULL);
+ 	return err;
+ }
+@@ -317,7 +326,7 @@ static int __devexit netfront_remove(str
  
  	unregister_netdev(info->netdev);
  
-+	free_percpu(info->stats);
-+
- 	free_netdev(info->netdev);
+-	free_netdev(info->netdev);
++	netfront_free_netdev(info->netdev);
  
  	return 0;
-@@ -930,6 +932,7 @@ static int network_start_xmit(struct sk_
+ }
+@@ -930,6 +939,7 @@ static int network_start_xmit(struct sk_
  {
  	unsigned short id;
  	struct netfront_info *np = netdev_priv(dev);
-+	struct netfront_stats *stats = this_cpu_ptr(np->stats);
++	struct netfront_stats *stats = this_cpu_ptr(np->tx_stats);
  	struct netif_tx_request *tx;
  	struct netif_extra_info *extra;
  	char *data = skb->data;
-@@ -1029,8 +1032,10 @@ static int network_start_xmit(struct sk_
+@@ -1029,8 +1039,10 @@ static int network_start_xmit(struct sk_
  	if (notify)
  		notify_remote_via_irq(np->irq);
  
 -	dev->stats.tx_bytes += skb->len;
 -	dev->stats.tx_packets++;
 +	u64_stats_update_begin(&stats->syncp);
-+	stats->tx_bytes += skb->len;
-+	stats->tx_packets++;
++	stats->bytes += skb->len;
++	stats->packets++;
 +	u64_stats_update_end(&stats->syncp);
  	dev->trans_start = jiffies;
  
  	/* Note: It is not safe to access skb after network_tx_buf_gc()! */
-@@ -1324,6 +1329,7 @@ static int xennet_set_skb_gso(struct sk_
+@@ -1324,6 +1336,7 @@ static int xennet_set_skb_gso(struct sk_
  static int netif_poll(struct napi_struct *napi, int budget)
  {
  	struct netfront_info *np = container_of(napi, struct netfront_info, napi);
-+	struct netfront_stats *stats = this_cpu_ptr(np->stats);
++	struct netfront_stats *stats = this_cpu_ptr(np->rx_stats);
  	struct net_device *dev = np->netdev;
  	struct sk_buff *skb;
  	struct netfront_rx_info rinfo;
-@@ -1478,8 +1484,10 @@ err:	
+@@ -1478,8 +1491,10 @@ err:	
  			continue;
  		}
  
 -		dev->stats.rx_packets++;
 -		dev->stats.rx_bytes += skb->len;
 +		u64_stats_update_begin(&stats->syncp);
-+		stats->rx_packets++;
-+		stats->rx_bytes += skb->len;
++		stats->packets++;
++		stats->bytes += skb->len;
 +		u64_stats_update_end(&stats->syncp);
  
  		/* Pass it up. */
  		netif_receive_skb(skb);
-@@ -1678,14 +1686,6 @@ static int network_close(struct net_devi
+@@ -1678,14 +1693,6 @@ static int network_close(struct net_devi
  }
  
  
@@ -2133,7 +2161,7 @@ Acked-by: jbeulich@suse.com
  static int xennet_set_mac_address(struct net_device *dev, void *p)
  {
  	struct netfront_info *np = netdev_priv(dev);
-@@ -1714,6 +1714,40 @@ static int xennet_change_mtu(struct net_
+@@ -1714,6 +1721,46 @@ static int xennet_change_mtu(struct net_
  	return 0;
  }
  
@@ -2146,23 +2174,29 @@ Acked-by: jbeulich@suse.com
 +	netfront_accelerator_call_get_stats(np, dev);
 +
 +	for_each_possible_cpu(cpu) {
-+		struct netfront_stats *stats = per_cpu_ptr(np->stats, cpu);
-+		u64 rx_packets, rx_bytes, tx_packets, tx_bytes;
++		struct netfront_stats *stats = per_cpu_ptr(np->rx_stats, cpu);
++		u64 packets, bytes;
 +		unsigned int start;
 +
 +		do {
 +			start = u64_stats_fetch_begin_bh(&stats->syncp);
-+
-+			rx_packets = stats->rx_packets;
-+			tx_packets = stats->tx_packets;
-+			rx_bytes = stats->rx_bytes;
-+			tx_bytes = stats->tx_bytes;
++			packets = stats->packets;
++			bytes = stats->bytes;
 +		} while (u64_stats_fetch_retry_bh(&stats->syncp, start));
 +
-+		tot->rx_packets += rx_packets;
-+		tot->tx_packets += tx_packets;
-+		tot->rx_bytes   += rx_bytes;
-+		tot->tx_bytes   += tx_bytes;
++		tot->rx_packets += packets;
++		tot->rx_bytes   += bytes;
++
++		stats = per_cpu_ptr(np->tx_stats, cpu);
++
++		do {
++			start = u64_stats_fetch_begin_bh(&stats->syncp);
++			packets = stats->packets;
++			bytes = stats->bytes;
++		} while (u64_stats_fetch_retry_bh(&stats->syncp, start));
++
++		tot->tx_packets += packets;
++		tot->tx_bytes   += bytes;
 +	}
 +
 +	tot->rx_errors  = dev->stats.rx_errors;
@@ -2174,7 +2208,7 @@ Acked-by: jbeulich@suse.com
  static const struct xennet_stat {
  	char name[ETH_GSTRING_LEN];
  	u16 offset;
-@@ -2066,7 +2100,7 @@ static const struct net_device_ops xenne
+@@ -2066,7 +2113,7 @@ static const struct net_device_ops xenne
  	.ndo_fix_features       = xennet_fix_features,
  	.ndo_set_features       = xennet_set_features,
  	.ndo_change_mtu	        = xennet_change_mtu,
@@ -2183,68 +2217,62 @@ Acked-by: jbeulich@suse.com
  };
  
  static struct net_device * __devinit create_netdev(struct xenbus_device *dev)
-@@ -2098,6 +2132,11 @@ static struct net_device * __devinit cre
+@@ -2098,6 +2145,14 @@ static struct net_device * __devinit cre
  	np->rx_refill_timer.data = (unsigned long)netdev;
  	np->rx_refill_timer.function = rx_refill_timeout;
  
 +	err = -ENOMEM;
-+	np->stats = alloc_percpu(struct netfront_stats);
-+	if (np->stats == NULL)
++	np->rx_stats = alloc_percpu(struct netfront_stats);
++	if (np->rx_stats == NULL)
++		goto exit;
++	np->tx_stats = alloc_percpu(struct netfront_stats);
++	if (np->tx_stats == NULL)
 +		goto exit;
 +
  	/* Initialise {tx,rx}_skbs as a free chain containing every entry. */
  	for (i = 0; i <= NET_TX_RING_SIZE; i++) {
  		np->tx_skbs[i] = (void *)((unsigned long) i+1);
-@@ -2114,7 +2153,7 @@ static struct net_device * __devinit cre
- 					  &np->gref_tx_head) < 0) {
- 		pr_alert("#### netfront can't alloc tx grant refs\n");
- 		err = -ENOMEM;
--		goto exit;
-+		goto exit_free_stats;
- 	}
- 	/* A grant for every rx ring slot */
- 	if (gnttab_alloc_grant_references(RX_MAX_TARGET,
-@@ -2153,6 +2192,8 @@ static struct net_device * __devinit cre
- 
+@@ -2154,7 +2209,7 @@ static struct net_device * __devinit cre
   exit_free_tx:
  	gnttab_free_grant_references(np->gref_tx_head);
-+ exit_free_stats:
-+	free_percpu(np->stats);
   exit:
- 	free_netdev(netdev);
+-	free_netdev(netdev);
++	netfront_free_netdev(netdev);
  	return ERR_PTR(err);
+ }
+ 
 --- sle12.orig/drivers/xen/netfront/netfront.h	2012-06-06 14:03:54.000000000 +0200
-+++ sle12/drivers/xen/netfront/netfront.h	2012-06-08 10:37:25.000000000 +0200
-@@ -49,6 +49,14 @@
++++ sle12/drivers/xen/netfront/netfront.h	2015-01-21 15:22:38.000000000 +0100
+@@ -49,6 +49,12 @@
  #include <xen/platform-compat.h>
  #endif
  
 +struct netfront_stats {
-+	u64			rx_packets;
-+	u64			tx_packets;
-+	u64			rx_bytes;
-+	u64			tx_bytes;
++	u64			packets;
++	u64			bytes;
 +	struct u64_stats_sync	syncp;
 +};
 +
  /* 
   * Function pointer table for hooks into a network acceleration
   * plugin.  These are called at appropriate points from the netfront
-@@ -91,7 +99,8 @@ struct netfront_accel_hooks {
+@@ -91,7 +97,9 @@ struct netfront_accel_hooks {
  	 * Get the fastpath network statistics
  	 */
  	int (*get_stats)(struct net_device *dev,
 -			 struct net_device_stats *stats);
 +			 struct net_device_stats *dev_stats,
-+			 struct netfront_stats *link_stats);
++			 struct netfront_stats *rx_stats,
++			 struct netfront_stats *tx_stats);
  };
  
  
-@@ -195,6 +204,7 @@ struct netfront_info {
+@@ -195,6 +203,8 @@ struct netfront_info {
  	struct mmu_update rx_mmu[NET_RX_RING_SIZE];
  
  	/* Statistics */
-+	struct netfront_stats __percpu *stats;
++	struct netfront_stats __percpu *rx_stats;
++	struct netfront_stats __percpu *tx_stats;
  	unsigned long rx_gso_csum_fixups;
  
  	/* Private pointer to state internal to accelerator module */
@@ -2266,38 +2294,43 @@ Acked-by: jbeulich@suse.com
  MODULE_DESCRIPTION("Xen SCSI backend driver");
  MODULE_LICENSE("Dual BSD/GPL");
 +MODULE_ALIAS("xen-backend:vscsi");
---- sle12.orig/drivers/xen/sfc_netfront/accel_netfront.c	2014-10-14 15:17:27.000000000 +0200
-+++ sle12/drivers/xen/sfc_netfront/accel_netfront.c	2011-09-12 11:46:42.000000000 +0200
-@@ -189,7 +189,8 @@ static int netfront_accel_check_ready(st
+--- sle12.orig/drivers/xen/sfc_netfront/accel_netfront.c	2015-01-30 14:33:55.000000000 +0100
++++ sle12/drivers/xen/sfc_netfront/accel_netfront.c	2015-01-21 15:25:58.000000000 +0100
+@@ -189,7 +189,9 @@ static int netfront_accel_check_ready(st
  
  
  static int netfront_accel_get_stats(struct net_device *net_dev,
 -				    struct net_device_stats *stats)
 +				    struct net_device_stats *devst,
-+				    struct netfront_stats *lnkst)
++				    struct netfront_stats *rxst,
++				    struct netfront_stats *txst)
  {
  	netfront_accel_vnic *vnic = NETFRONT_ACCEL_VNIC_FROM_NETDEV(net_dev);
  	struct netfront_accel_netdev_stats now;
-@@ -203,17 +204,17 @@ static int netfront_accel_get_stats(stru
+@@ -203,17 +205,21 @@ static int netfront_accel_get_stats(stru
  	now.fastpath_tx_bytes  = vnic->netdev_stats.fastpath_tx_bytes;
  	now.fastpath_tx_errors = vnic->netdev_stats.fastpath_tx_errors;
  	
 -	stats->rx_packets += (now.fastpath_rx_pkts - 
-+	lnkst->rx_packets += (now.fastpath_rx_pkts -
++	u64_stats_update_begin(&rxst->syncp);
++	rxst->packets     += (now.fastpath_rx_pkts -
  			      vnic->stats_last_read.fastpath_rx_pkts);
 -	stats->rx_bytes   += (now.fastpath_rx_bytes -
-+	lnkst->rx_bytes   += (now.fastpath_rx_bytes -
++	rxst->bytes       += (now.fastpath_rx_bytes -
  			      vnic->stats_last_read.fastpath_rx_bytes);
 -	stats->rx_errors  += (now.fastpath_rx_errors - 
++	u64_stats_update_end(&rxst->syncp);
 +	devst->rx_errors  += (now.fastpath_rx_errors -
  			      vnic->stats_last_read.fastpath_rx_errors);
 -	stats->tx_packets += (now.fastpath_tx_pkts - 
-+	lnkst->tx_packets += (now.fastpath_tx_pkts -
++	u64_stats_update_begin(&txst->syncp);
++	txst->packets     += (now.fastpath_tx_pkts -
  			      vnic->stats_last_read.fastpath_tx_pkts);
 -	stats->tx_bytes   += (now.fastpath_tx_bytes - 
-+	lnkst->tx_bytes   += (now.fastpath_tx_bytes -
++	txst->bytes       += (now.fastpath_tx_bytes -
  			      vnic->stats_last_read.fastpath_tx_bytes);
 -	stats->tx_errors  += (now.fastpath_tx_errors - 
++	u64_stats_update_end(&txst->syncp);
 +	devst->tx_errors  += (now.fastpath_tx_errors -
  			      vnic->stats_last_read.fastpath_tx_errors);
  	
@@ -2316,7 +2349,7 @@ Acked-by: jbeulich@suse.com
  MODULE_DESCRIPTION("Xen USB backend driver (usbback)");
  MODULE_LICENSE("Dual BSD/GPL");
 +MODULE_ALIAS("xen-backend:vusb");
---- sle12.orig/drivers/xen/xen-pciback/Makefile	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/Makefile	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/Makefile	2011-09-19 13:15:03.000000000 +0200
 @@ -1,7 +1,13 @@
 -obj-$(CONFIG_XEN_PCIDEV_BACKEND) += xen-pciback.o
@@ -2337,7 +2370,7 @@ Acked-by: jbeulich@suse.com
 +$(pcibk-y)-$(CONFIG_XEN_PCIDEV_BACKEND_PASSTHROUGH) += passthrough.o
 +$(pcibk-y)-$(CONFIG_XEN_PCIDEV_BACKEND_SLOT) += slot.o
 +$(pcibk-y)-$(CONFIG_XEN_PCIDEV_BACKEND_CONTROLLER) += controller.o
---- sle12.orig/drivers/xen/xen-pciback/conf_space_capability.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/conf_space_capability.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/conf_space_capability.c	2011-09-16 14:20:03.000000000 +0200
 @@ -140,6 +140,21 @@ static int pm_ctrl_write(struct pci_dev 
  		goto out;
@@ -2361,7 +2394,7 @@ Acked-by: jbeulich@suse.com
   out:
  	return err;
  }
---- sle12.orig/drivers/xen/xen-pciback/conf_space_header.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/conf_space_header.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/conf_space_header.c	2013-08-09 15:23:26.000000000 +0200
 @@ -41,10 +41,11 @@ static int command_read(struct pci_dev *
  
@@ -2397,7 +2430,7 @@ Acked-by: jbeulich@suse.com
  	}
  
  	if (!dev->is_busmaster && is_master_cmd(value)) {
---- sle12.orig/drivers/xen/xen-pciback/controller.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/controller.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/controller.c	2011-09-19 14:55:15.000000000 +0200
 @@ -25,9 +25,6 @@
   */
@@ -2603,7 +2636,7 @@ Acked-by: jbeulich@suse.com
 +	.add		= _xen_pcibk_add_pci_dev,
 +	.get		= _xen_pcibk_get_pci_dev,
 +};
---- sle12.orig/drivers/xen/xen-pciback/pciback.h	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/pciback.h	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/pciback.h	2012-04-10 17:21:33.000000000 +0200
 @@ -10,12 +10,16 @@
  #include <linux/interrupt.h>
@@ -2674,7 +2707,7 @@ Acked-by: jbeulich@suse.com
  extern const struct xen_pcibk_backend *xen_pcibk_backend;
  
  static inline int xen_pcibk_add_pci_dev(struct xen_pcibk_device *pdev,
---- sle12.orig/drivers/xen/xen-pciback/pciback_ops.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/pciback_ops.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/pciback_ops.c	2013-08-09 15:23:36.000000000 +0200
 @@ -9,13 +9,18 @@
  #include <linux/module.h>
@@ -2889,7 +2922,7 @@ Acked-by: jbeulich@suse.com
  	return IRQ_NONE;
  }
 +#endif
---- sle12.orig/drivers/xen/xen-pciback/pci_stub.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/pci_stub.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/pci_stub.c	2013-08-09 15:23:41.000000000 +0200
 @@ -17,9 +17,14 @@
  #include <linux/wait.h>
@@ -3144,7 +3177,7 @@ Acked-by: jbeulich@suse.com
 +	.add		= _xen_pcibk_add_pci_dev,
 +	.get		= _xen_pcibk_get_pci_dev,
 +};
---- sle12.orig/drivers/xen/xen-pciback/vpci.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/vpci.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/vpci.c	2014-04-09 13:13:41.000000000 +0200
 @@ -134,9 +134,11 @@ static int __xen_pcibk_add_pci_dev(struc
  unlock:
@@ -3160,7 +3193,7 @@ Acked-by: jbeulich@suse.com
  
  out:
  	return err;
---- sle12.orig/drivers/xen/xen-pciback/xenbus.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-pciback/xenbus.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-pciback/xenbus.c	2014-07-29 11:14:52.000000000 +0200
 @@ -9,30 +9,77 @@
  #include <linux/module.h>
@@ -3384,7 +3417,7 @@ Acked-by: jbeulich@suse.com
  	pr_info("backend is %s\n", xen_pcibk_backend->name);
  	return xenbus_register_backend(&xen_pcibk_driver);
  }
---- sle12.orig/drivers/xen/xen-selfballoon.c	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/drivers/xen/xen-selfballoon.c	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/drivers/xen/xen-selfballoon.c	2013-09-26 13:02:05.000000000 +0200
 @@ -78,6 +78,10 @@
  #include <xen/tmem.h>
@@ -3592,7 +3625,7 @@ Acked-by: jbeulich@suse.com
 +#endif
 +
  #endif /* __XEN_BALLOON_H__ */
---- sle12.orig/include/xen/firmware.h	2014-10-14 15:17:27.000000000 +0200
+--- sle12.orig/include/xen/firmware.h	2015-01-30 14:33:55.000000000 +0100
 +++ sle12/include/xen/firmware.h	2014-05-06 08:32:24.000000000 +0200
 @@ -1,7 +1,7 @@
  #ifndef __XEN_FIRMWARE_H__
