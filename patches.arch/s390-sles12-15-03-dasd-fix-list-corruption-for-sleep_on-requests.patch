@@ -1,0 +1,36 @@
+From: Stefan Haberland <stefan.haberland@de.ibm.com>
+Subject: dasd: List corruption in error recovery.
+Patch-mainline: v3.19-rc1
+Git-commit: 932f0549f872cde022eed200910ee3291b1d3c69
+References: bnc#914291, LTC#120865
+
+Description:  dasd: List corruption in error recovery.
+Symptom:      List corruption during error recovery.
+Problem:      SLEEP_ON_END_TAG is set in interrupt handler. This 
+              causes a race for sleep_on requests leading to list 
+              corruption.
+Solution:     Remove setting of SLEEP_ON_END_TAG from interrupt handler
+              because it is set during CQR clean up correctly.
+Reproduction: Storage server errors leading to error recovery 
+              during path verification.
+
+Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/block/dasd.c |    3 ---
+ 1 file changed, 3 deletions(-)
+
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -1667,11 +1667,8 @@ void dasd_int_handler(struct ccw_device
+ 	if (cqr->status == DASD_CQR_CLEAR_PENDING &&
+ 	    scsw_fctl(&irb->scsw) & SCSW_FCTL_CLEAR_FUNC) {
+ 		cqr->status = DASD_CQR_CLEARED;
+-		if (cqr->callback_data == DASD_SLEEPON_START_TAG)
+-			cqr->callback_data = DASD_SLEEPON_END_TAG;
+ 		dasd_device_clear_timer(device);
+ 		wake_up(&dasd_flush_wq);
+-		wake_up(&generic_waitq);
+ 		dasd_schedule_device_bh(device);
+ 		return;
+ 	}
