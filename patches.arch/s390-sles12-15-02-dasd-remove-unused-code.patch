@@ -1,0 +1,57 @@
+From: Stefan Haberland <stefan.haberland@de.ibm.com>
+Subject: s390/dasd: remove unused code
+Patch-mainline: v3.19-rc1
+Git-commit: 590aeeddc6c6d9b9c93bec56fc68512631489d2a
+References: bnc#914291, LTC#120608
+
+Description:  dasd: Infinite loop during format.
+Symptom:      The formatting process hangs forever.
+Problem:      Error recovery requests may not be cleaned up correctly
+              so that other needed erp requests can not be build 
+              because of insufficient memory. This would lead to an 
+              infinite loop trying to build erp requests.
+Solution:     Every time an error recovery process request was build
+              process it first.
+Reproduction: Format a device while a storage server gives errors to
+              the DASD device driver.
+
+Upstream-Description:
+
+              s390/dasd: remove unused code
+
+              Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/block/dasd.c |   14 ++------------
+ 1 file changed, 2 insertions(+), 12 deletions(-)
+
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -2305,21 +2305,11 @@ retry:
+ 			return -EAGAIN;
+ 
+ 		/* normal recovery for basedev IO */
+-		if (__dasd_sleep_on_erp(cqr)) {
++		if (__dasd_sleep_on_erp(cqr))
++			/* handle erp first */
+ 			goto retry;
+-			/* remember that ERP was needed */
+-			rc = 1;
+-			/* skip processing for active cqr */
+-			if (cqr->status != DASD_CQR_TERMINATED &&
+-			    cqr->status != DASD_CQR_NEED_ERP)
+-				break;
+-		}
+ 	}
+ 
+-	/* start ERP requests in upper loop */
+-	if (rc)
+-		goto retry;
+-
+ 	return 0;
+ }
+ 
