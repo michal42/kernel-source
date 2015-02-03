@@ -1,0 +1,83 @@
+From: Stefan Haberland <stefan.haberland@de.ibm.com>
+Subject: s390/dasd: fix infinite loop during format
+Patch-mainline: v3.18-rc1
+Git-commit: 362ce84f43aac61589a8b60e5bb3fcfae9801b13
+References: bnc#914291, LTC#120608
+
+Description:  dasd: Infinite loop during format.
+Symptom:      The formatting process hangs forever.
+Problem:      Error recovery requests may not be cleaned up correctly
+              so that other needed erp requests can not be build 
+              because of insufficient memory. This would lead to an 
+              infinite loop trying to build erp requests.
+Solution:     Every time an error recovery process request was build
+              process it first.
+Reproduction: Format a device while a storage server gives errors to
+              the DASD device driver.
+
+Upstream-Description:
+
+              s390/dasd: fix infinite loop during format
+
+              Error recovery requests may not be cleaned up correctly so that other
+              needed erp requests can not be build because of insufficient memory.
+              This would lead to an infinite loop trying to build erp requests.
+
+              Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/block/dasd.c |   25 +++++++++++++++----------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -2248,8 +2248,8 @@ static inline int _wait_for_wakeup_queue
+ static int _dasd_sleep_on_queue(struct list_head *ccw_queue, int interruptible)
+ {
+ 	struct dasd_device *device;
+-	int rc;
+ 	struct dasd_ccw_req *cqr, *n;
++	int rc;
+ 
+ retry:
+ 	list_for_each_entry_safe(cqr, n, ccw_queue, blocklist) {
+@@ -2297,21 +2297,26 @@ retry:
+ 		/*
+ 		 * for alias devices simplify error recovery and
+ 		 * return to upper layer
++		 * do not skip ERP requests
+ 		 */
+-		if (cqr->startdev != cqr->basedev &&
++		if (cqr->startdev != cqr->basedev && !cqr->refers &&
+ 		    (cqr->status == DASD_CQR_TERMINATED ||
+ 		     cqr->status == DASD_CQR_NEED_ERP))
+ 			return -EAGAIN;
+-		else {
+-			/* normal recovery for basedev IO */
+-			if (__dasd_sleep_on_erp(cqr)) {
+-				if (!cqr->status == DASD_CQR_TERMINATED &&
+-				    !cqr->status == DASD_CQR_NEED_ERP)
+-					break;
+-				rc = 1;
+-			}
++
++		/* normal recovery for basedev IO */
++		if (__dasd_sleep_on_erp(cqr)) {
++			goto retry;
++			/* remember that ERP was needed */
++			rc = 1;
++			/* skip processing for active cqr */
++			if (cqr->status != DASD_CQR_TERMINATED &&
++			    cqr->status != DASD_CQR_NEED_ERP)
++				break;
+ 		}
+ 	}
++
++	/* start ERP requests in upper loop */
+ 	if (rc)
+ 		goto retry;
+ 
