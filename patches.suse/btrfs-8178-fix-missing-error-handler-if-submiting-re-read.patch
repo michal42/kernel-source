@@ -1,0 +1,31 @@
+From: Miao Xie <miaox@cn.fujitsu.com>
+Date: Fri, 12 Sep 2014 18:43:57 +0800
+Patch-mainline: 3.19
+Git-commit: 6c387ab20db15f2bd448f7c508e2638101b16ea1
+Subject: [PATCH] Btrfs: fix missing error handler if submiting re-read
+ bio fails
+
+We forgot to free failure record and bio after submitting re-read bio failed,
+fix it.
+
+Signed-off-by: Miao Xie <miaox@cn.fujitsu.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/extent_io.c |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+--- a/fs/btrfs/extent_io.c
++++ b/fs/btrfs/extent_io.c
+@@ -2377,6 +2377,11 @@ static int bio_readpage_error(struct bio
+ 	ret = tree->ops->submit_bio_hook(inode, read_mode, bio,
+ 					 failrec->this_mirror,
+ 					 failrec->bio_flags, 0);
++	if (ret) {
++		free_io_failure(inode, failrec, 0);
++		bio_put(bio);
++	}
++
+ 	return ret;
+ }
+ 
