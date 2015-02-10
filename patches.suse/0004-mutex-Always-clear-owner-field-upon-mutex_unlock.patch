@@ -1,0 +1,49 @@
+From adb71edf98d66c47a6d28db246579c5dd76943c5 Mon Sep 17 00:00:00 2001
+From: Chris Wilson <chris@chris-wilson.co.uk>
+Date: Mon, 9 Feb 2015 22:38:22 -0800
+Subject: [PATCH] mutex-debug: Always clear owner field upon mutex_unlock()
+Git-commit: a63b03e2d2477586440741677ecac45bcf28d7b1
+Patch-mainline: v3.20-rc1
+References: mutex bugfix
+
+Currently if DEBUG_MUTEXES is enabled, the mutex->owner field is only
+cleared iff debug_locks is active. This exposes a race to other users of
+the field where the mutex->owner may be still set to a stale value,
+potentially upsetting mutex_spin_on_owner() among others.
+
+References: https://bugs.freedesktop.org/show_bug.cgi?id=87955
+Signed-off-by: Chris Wilson <chris@chris-wilson.co.uk>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Acked-by: Davidlohr Bueso <dave@stgolabs.net>
+Cc: Daniel Vetter <daniel.vetter@ffwll.ch>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/1420540175-30204-1-git-send-email-chris@chris-wilson.co.uk
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Davidlohr Bueso <dbueso@suse.de>
+
+---
+ kernel/locking/mutex-debug.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/locking/mutex-debug.c b/kernel/locking/mutex-debug.c
+index 5cf6731..3ef3736 100644
+--- a/kernel/locking/mutex-debug.c
++++ b/kernel/locking/mutex-debug.c
+@@ -80,13 +80,13 @@ void debug_mutex_unlock(struct mutex *lock)
+ 			DEBUG_LOCKS_WARN_ON(lock->owner != current);
+ 
+ 		DEBUG_LOCKS_WARN_ON(!lock->wait_list.prev && !lock->wait_list.next);
+-		mutex_clear_owner(lock);
+ 	}
+ 
+ 	/*
+ 	 * __mutex_slowpath_needs_to_unlock() is explicitly 0 for debug
+ 	 * mutexes so that we can do it here after we've verified state.
+ 	 */
++	mutex_clear_owner(lock);
+ 	atomic_set(&lock->count, 1);
+ }
+ 
+-- 
+2.1.4
+
