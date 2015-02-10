@@ -1,0 +1,39 @@
+From 958d8b0222bf6ff45298281b187c8cb6257c6f47 Mon Sep 17 00:00:00 2001
+From: Davidlohr Bueso <dave@stgolabs.net>
+Date: Mon, 9 Feb 2015 22:22:42 -0800
+Subject: [PATCH] locking/mutex: Explicitly mark task as running after wakeup
+Git-commit: 51587bcf31d070119d37de6103543c807f5ccdb3
+Patch-mainline: v3.20-rc1
+References: mutex scalability
+
+By the time we wake up and get the lock after being asleep
+in the slowpath, we better be running. As good practice,
+be explicit about this and avoid any mischief.
+
+Signed-off-by: Davidlohr Bueso <dbueso@suse.de>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: "Paul E. McKenney" <paulmck@linux.vnet.ibm.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/1421717961.4903.11.camel@stgolabs.net
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+
+---
+ kernel/locking/mutex.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/kernel/locking/mutex.c b/kernel/locking/mutex.c
+index 5bbfc87..a8efd35 100644
+--- a/kernel/locking/mutex.c
++++ b/kernel/locking/mutex.c
+@@ -532,6 +532,8 @@ slowpath:
+ 		schedule_preempt_disabled();
+ 		spin_lock_mutex(&lock->wait_lock, flags);
+ 	}
++	__set_task_state(task, TASK_RUNNING);
++
+ 	mutex_remove_waiter(lock, &waiter, current_thread_info());
+ 	/* set it to 0 if there are no waiters left: */
+ 	if (likely(list_empty(&lock->wait_list)))
+-- 
+2.1.4
+
