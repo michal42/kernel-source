@@ -1,0 +1,51 @@
+From 7b1aafef4278002a0e12c9434cd19daea1d6eb59 Mon Sep 17 00:00:00 2001
+From: Nicholas Mc Guire <der.herr@hofr.at>
+Date: Mon, 9 Feb 2015 23:57:13 -0800
+Subject: [PATCH] sched/completion: Add lock-free checking of the blocking case
+Git-commit: 7c34e3180a01c800a40bc8535654d5735802fc1b
+Patch-mainline: v3.20-rc1
+References: scheduler scalability
+
+The "thread would block" case can be checked without grabbing ->wait.lock.
+
+[ If the check does not return early then grab the lock and recheck.
+  A memory barrier is not needed as complete() and complete_all() imply
+  a barrier.
+
+  The ACCESS_ONCE() is needed for calls in a loop that, if inlined, could
+  optimize out the re-fetching of x->done. ]
+
+Signed-off-by: Nicholas Mc Guire <der.herr@hofr.at>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/1422013307-13200-1-git-send-email-der.herr@hofr.at
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Davidlohr Bueso <dbueso@suse.de>
+
+---
+ kernel/sched/core.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 016d822..e253d44 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -3022,6 +3022,15 @@ bool try_wait_for_completion(struct completion *x)
+ 	unsigned long flags;
+ 	int ret = 1;
+ 
++	/*
++	 * Since x->done will need to be locked only
++	 * in the non-blocking case, we check x->done
++	 * first without taking the lock so we can
++	 * return early in the blocking case.
++	 */
++	if (!ACCESS_ONCE(x->done))
++		return 0;
++
+ 	spin_lock_irqsave(&x->wait.lock, flags);
+ 	if (!x->done)
+ 		ret = 0;
+-- 
+2.1.4
+
