@@ -1,0 +1,43 @@
+From 283341ae46c12c1060705bac621bc093585709cb Mon Sep 17 00:00:00 2001
+From: Oliver Neukum <oneukum@suse.de>
+Date: Mon, 9 Feb 2015 14:04:52 +0100
+Subject: [PATCH] usb-storage: support for more than 8 LUNs
+Git-Commit: 283341ae46c12c1060705bac621bc093585709cb
+Patch-Mainline: v3.20
+References: bsc#906196
+
+This is necessary to make some storage arrays work.
+
+Some storage devices have more than 8 LUNs. In addition
+you can hook up a WideSCSI bus to USB. In these cases even
+level 2 devices can have more than 8 LUNs. For them
+it is necessary to simply believe the class specific
+command and report its result back to the SCSI layer.
+
+Off by one Alan noticed is fixed.
+
+Signed-off-by: Oliver Neukum <oneukum@suse.de>
+---
+ drivers/usb/storage/usb.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/usb/storage/usb.c b/drivers/usb/storage/usb.c
+index 574f88e..5e528f2 100644
+--- a/drivers/usb/storage/usb.c
++++ b/drivers/usb/storage/usb.c
+@@ -895,6 +895,12 @@ static void usb_stor_scan_dwork(struct work_struct *work)
+ 	if (us->protocol == USB_PR_BULK && !(us->fflags & US_FL_SINGLE_LUN)) {
+ 		mutex_lock(&us->dev_mutex);
+ 		us->max_lun = usb_stor_Bulk_max_lun(us);
++		/*
++		 * Allow proper scanning of devices that present more than 8 LUNs
++		 * While not affecting other devices that may need the previous behavior
++		 */
++		if (us->max_lun >= 8)
++			us_to_host(us)->max_lun = us->max_lun+1;
+ 		mutex_unlock(&us->dev_mutex);
+ 	}
+ 	scsi_scan_host(us_to_host(us));
+-- 
+1.8.4.5
+
