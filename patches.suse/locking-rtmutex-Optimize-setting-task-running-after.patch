@@ -1,0 +1,73 @@
+From a38f1c965baaf2c711070e22d4b1ea1ea0686a3a Mon Sep 17 00:00:00 2001
+From: Davidlohr Bueso <dave@stgolabs.net>
+Date: Mon, 9 Feb 2015 21:56:34 -0800
+Subject: [PATCH] locking/rtmutex: Optimize setting task running after being blocked
+Git-commit: afffc6c1805d98e08e778cddb644a666e78cfcfd
+Patch-mainline: v3.20-rc1
+References: mutex scalability
+
+We explicitly mark the task running after returning from
+a __rt_mutex_slowlock() call, which does the actual sleeping
+via wait-wake-trylocking. As such, this patch does two things:
+
+(1) refactors the code so that setting current to TASK_RUNNING
+    is done by __rt_mutex_slowlock(), and not by the callers. The
+    downside to this is that it becomes a bit unclear when at what
+    point we block. As such I've added a comment that the task
+    blocks when calling __rt_mutex_slowlock() so readers can figure
+    out when it is running again.
+
+(2) relaxes setting current's state through __set_current_state(),
+    instead of it's more expensive barrier alternative. There was no
+    need for the implied barrier as we're obviously not planning on
+    blocking.
+
+Signed-off-by: Davidlohr Bueso <dbueso@suse.de>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/1422857784.18096.1.camel@stgolabs.net
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+
+---
+ kernel/locking/rtmutex.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
+index 911829b..2db5dae 100644
+--- a/kernel/locking/rtmutex.c
++++ b/kernel/locking/rtmutex.c
+@@ -772,6 +772,7 @@ __rt_mutex_slowlock(struct rt_mutex *lock, int state,
+ 		set_current_state(state);
+ 	}
+ 
++	__set_current_state(TASK_RUNNING);
+ 	return ret;
+ }
+ 
+@@ -828,10 +829,9 @@ rt_mutex_slowlock(struct rt_mutex *lock, int state,
+ 	ret = task_blocks_on_rt_mutex(lock, &waiter, current, detect_deadlock);
+ 
+ 	if (likely(!ret))
++		/* sleep on the mutex */
+ 		ret = __rt_mutex_slowlock(lock, state, timeout, &waiter);
+ 
+-	set_current_state(TASK_RUNNING);
+-
+ 	if (unlikely(ret)) {
+ 		remove_waiter(lock, &waiter);
+ 		rt_mutex_handle_deadlock(ret, detect_deadlock, &waiter);
+@@ -1250,10 +1250,9 @@ int rt_mutex_finish_proxy_lock(struct rt_mutex *lock,
+ 
+ 	set_current_state(TASK_INTERRUPTIBLE);
+ 
++	/* sleep on the mutex */
+ 	ret = __rt_mutex_slowlock(lock, TASK_INTERRUPTIBLE, to, waiter);
+ 
+-	set_current_state(TASK_RUNNING);
+-
+ 	if (unlikely(ret))
+ 		remove_waiter(lock, waiter);
+ 
+-- 
+2.1.4
+
