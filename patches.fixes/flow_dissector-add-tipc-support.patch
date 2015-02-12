@@ -1,0 +1,55 @@
+From: Erik Hugne <erik.hugne@ericsson.com>
+Date: Thu, 22 Jan 2015 17:10:32 +0100
+Subject: flow_dissector: add tipc support
+Patch-mainline: v3.20-rc1
+Git-commit: 08bfc9cb76e26d2489c401fb1d2de58d06fd1ded
+References: bnc#916513
+
+The flows are hashed on the sending node address, which allows us
+to spread out the TIPC link processing to RPS enabled cores. There
+is no point to include the destination address in the hash as that
+will always be the same for all inbound links. We have experimented
+with a 3-tuple hash over [srcnode, sport, dport], but this showed to
+give slightly lower performance because of increased lock contention
+when the same link was handled by multiple cores.
+
+Signed-off-by: Ying Xue <ying.xue@windriver.com>
+Signed-off-by: Erik Hugne <erik.hugne@ericsson.com>
+Reviewed-by: Jon Maloy <jon.maloy@ericsson.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+
+Conflicts:
+	net/core/flow_dissector.c
+
+---
+ net/core/flow_dissector.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/net/core/flow_dissector.c b/net/core/flow_dissector.c
+index 4d56112..0f92944 100644
+--- a/net/core/flow_dissector.c
++++ b/net/core/flow_dissector.c
+@@ -123,6 +123,19 @@ ipv6:
+ 			return false;
+ 		}
+ 	}
++	case htons(ETH_P_TIPC): {
++		struct {
++			__be32 pre[3];
++			__be32 srcnode;
++		} *hdr, _hdr;
++		hdr = skb_header_pointer(skb, nhoff, sizeof(_hdr), &_hdr);
++		if (!hdr)
++			return false;
++		flow->src = hdr->srcnode;
++		flow->dst = 0;
++		flow->thoff = (u16)nhoff;
++		return true;
++	}
+ 	default:
+ 		return false;
+ 	}
+-- 
+1.8.4.5
+
