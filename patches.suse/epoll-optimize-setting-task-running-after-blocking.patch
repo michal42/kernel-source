@@ -1,0 +1,43 @@
+From 4d5755b147665912c938504033d958f1115b68ff Mon Sep 17 00:00:00 2001
+From: Davidlohr Bueso <dave@stgolabs.net>
+Date: Fri, 13 Feb 2015 14:39:08 -0800
+Subject: [PATCH] epoll: optimize setting task running after blocking
+Git-commit: 4d5755b147665912c938504033d958f1115b68ff
+Patch-mainline: v3.20-rc1
+References: epoll-performance
+
+After waking up a task waiting for an event, we explicitly mark it as
+TASK_RUNNING (which is necessary as we do the checks for wakeups as
+TASK_INTERRUPTIBLE).  Once running and dealing with actually delivering
+the events, we're obviously not planning on calling schedule, thus we can
+relax the implied barrier and simply update the state with
+__set_current_state().
+
+Signed-off-by: Davidlohr Bueso <dbueso@suse.de>
+Cc: Alexander Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ fs/eventpoll.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/fs/eventpoll.c b/fs/eventpoll.c
+index d77f944..1e009ca 100644
+--- a/fs/eventpoll.c
++++ b/fs/eventpoll.c
+@@ -1639,9 +1639,9 @@ fetch_events:
+ 
+ 			spin_lock_irqsave(&ep->lock, flags);
+ 		}
+-		__remove_wait_queue(&ep->wq, &wait);
+ 
+-		set_current_state(TASK_RUNNING);
++		__remove_wait_queue(&ep->wq, &wait);
++		__set_current_state(TASK_RUNNING);
+ 	}
+ check_events:
+ 	/* Is it worth to try to dig for events ? */
+-- 
+2.1.4
+
