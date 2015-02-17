@@ -1,0 +1,47 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct ak4113/4
+Patch-mainline: never, kabi
+
+In 3.12.38, commit acccc0891b814bb82566dbbf76e96f47497c3dd8 (ALSA:
+ak411x: Fix stall in work callback), upstream commit
+4161b4505f1690358ac0a9ee59845a7887336b21 changed init member of
+structs ak4113 and ak4114 to wq_processing.  It indeed changed the
+layout of that structure.
+
+Since atomic_t is of the same size as aligned uint bitfield, we can just
+protect the change the usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/sound/ak4113.h |    4 ++++
+ include/sound/ak4114.h |    4 ++++
+ 2 files changed, 8 insertions(+)
+
+--- a/include/sound/ak4113.h
++++ b/include/sound/ak4113.h
+@@ -286,7 +286,11 @@ struct ak4113 {
+ 	ak4113_write_t *write;
+ 	ak4113_read_t *read;
+ 	void *private_data;
++#ifdef __GENKSYMS__
++	unsigned int init:1;
++#else
+ 	atomic_t wq_processing;
++#endif
+ 	spinlock_t lock;
+ 	unsigned char regmap[AK4113_WRITABLE_REGS];
+ 	struct snd_kcontrol *kctls[AK4113_CONTROLS];
+--- a/include/sound/ak4114.h
++++ b/include/sound/ak4114.h
+@@ -168,7 +168,11 @@ struct ak4114 {
+ 	ak4114_write_t * write;
+ 	ak4114_read_t * read;
+ 	void * private_data;
++#ifdef __GENKSYMS__
++	unsigned int init:1;
++#else
+ 	atomic_t wq_processing;
++#endif
+ 	spinlock_t lock;
+ 	unsigned char regmap[7];
+ 	unsigned char txcsb[5];

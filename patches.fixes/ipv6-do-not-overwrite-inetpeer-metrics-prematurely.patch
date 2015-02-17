@@ -57,14 +57,12 @@ net-next as it is quite late in the cycle.
 
 Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
 ---
- include/net/dst.h     | 11 +++++++++--
- include/net/ip6_fib.h |  4 +++-
- net/ipv6/ip6_fib.c    | 47 ++++++++++++++++++++++++++++++++++++++++++++---
- net/ipv6/route.c      | 44 +++++++++++---------------------------------
+ include/net/dst.h     |   11 +++++++++--
+ include/net/ip6_fib.h |    4 +++-
+ net/ipv6/ip6_fib.c    |   47 ++++++++++++++++++++++++++++++++++++++++++++---
+ net/ipv6/route.c      |   44 +++++++++++---------------------------------
  4 files changed, 67 insertions(+), 39 deletions(-)
 
-diff --git a/include/net/dst.h b/include/net/dst.h
-index 3c4c944..a9ffed5 100644
 --- a/include/net/dst.h
 +++ b/include/net/dst.h
 @@ -109,9 +109,11 @@ struct dst_entry {
@@ -81,7 +79,7 @@ index 3c4c944..a9ffed5 100644
  #define DST_METRICS_PTR(X)	__DST_METRICS_PTR((X)->_metrics)
  
  static inline bool dst_metrics_read_only(const struct dst_entry *dst)
-@@ -119,6 +121,11 @@ static inline bool dst_metrics_read_only(const struct dst_entry *dst)
+@@ -119,6 +121,11 @@ static inline bool dst_metrics_read_only
  	return dst->_metrics & DST_METRICS_READ_ONLY;
  }
  
@@ -93,11 +91,9 @@ index 3c4c944..a9ffed5 100644
  extern void __dst_destroy_metrics_generic(struct dst_entry *dst, unsigned long old);
  
  static inline void dst_destroy_metrics_generic(struct dst_entry *dst)
-diff --git a/include/net/ip6_fib.h b/include/net/ip6_fib.h
-index 5e661a9..4895e35 100644
 --- a/include/net/ip6_fib.h
 +++ b/include/net/ip6_fib.h
-@@ -292,7 +292,9 @@ extern void			fib6_clean_all(struct net *net,
+@@ -292,7 +292,9 @@ extern void			fib6_clean_all(struct net
  
  extern int			fib6_add(struct fib6_node *root,
  					 struct rt6_info *rt,
@@ -108,12 +104,10 @@ index 5e661a9..4895e35 100644
  
  extern int			fib6_del(struct rt6_info *rt,
  					 struct nl_info *info);
-diff --git a/net/ipv6/ip6_fib.c b/net/ipv6/ip6_fib.c
-index 5bec666..d3aa9b4 100644
 --- a/net/ipv6/ip6_fib.c
 +++ b/net/ipv6/ip6_fib.c
-@@ -638,12 +638,41 @@ static inline bool rt6_qualify_for_ecmp(struct rt6_info *rt)
- 	       RTF_GATEWAY;
+@@ -661,12 +661,41 @@ static void fib6_purge_rt(struct rt6_inf
+ 	}
  }
  
 +static int fib6_commit_metrics(struct dst_entry *dst,
@@ -155,7 +149,7 @@ index 5bec666..d3aa9b4 100644
  {
  	struct rt6_info *iter = NULL;
  	struct rt6_info **ins;
-@@ -653,6 +682,7 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
+@@ -676,6 +705,7 @@ static int fib6_add_rt2node(struct fib6_
  		   (info->nlh->nlmsg_flags & NLM_F_CREATE));
  	int found = 0;
  	bool rt_can_ecmp = rt6_qualify_for_ecmp(rt);
@@ -163,7 +157,7 @@ index 5bec666..d3aa9b4 100644
  
  	ins = &fn->leaf;
  
-@@ -751,6 +781,11 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
+@@ -774,6 +804,11 @@ static int fib6_add_rt2node(struct fib6_
  			pr_warn("NLM_F_CREATE should be set when creating new route\n");
  
  add:
@@ -175,7 +169,7 @@ index 5bec666..d3aa9b4 100644
  		rt->dst.rt6_next = iter;
  		*ins = rt;
  		rt->rt6i_node = fn;
-@@ -770,6 +805,11 @@ add:
+@@ -793,6 +828,11 @@ add:
  			pr_warn("NLM_F_REPLACE set, but no existing node found!\n");
  			return -ENOENT;
  		}
@@ -187,7 +181,7 @@ index 5bec666..d3aa9b4 100644
  		*ins = rt;
  		rt->rt6i_node = fn;
  		rt->dst.rt6_next = iter->dst.rt6_next;
-@@ -806,7 +846,8 @@ void fib6_force_start_gc(struct net *net)
+@@ -830,7 +870,8 @@ void fib6_force_start_gc(struct net *net
   *	with source addr info in sub-trees
   */
  
@@ -197,7 +191,7 @@ index 5bec666..d3aa9b4 100644
  {
  	struct fib6_node *fn, *pn = NULL;
  	int err = -ENOMEM;
-@@ -900,7 +941,7 @@ int fib6_add(struct fib6_node *root, struct rt6_info *rt, struct nl_info *info)
+@@ -924,7 +965,7 @@ int fib6_add(struct fib6_node *root, str
  	}
  #endif
  
@@ -206,11 +200,9 @@ index 5bec666..d3aa9b4 100644
  	if (!err) {
  		fib6_start_gc(info->nl_net, rt);
  		if (!(rt->rt6i_flags & RTF_CACHE))
-diff --git a/net/ipv6/route.c b/net/ipv6/route.c
-index b521f70e..17fe6a7 100644
 --- a/net/ipv6/route.c
 +++ b/net/ipv6/route.c
-@@ -119,7 +119,8 @@ static u32 *ipv6_cow_metrics(struct dst_entry *dst, unsigned long old)
+@@ -119,7 +119,8 @@ static u32 *ipv6_cow_metrics(struct dst_
  		unsigned long prev, new;
  
  		p = peer->metrics;
@@ -247,7 +239,7 @@ index b521f70e..17fe6a7 100644
  }
  
  static struct rt6_info *rt6_alloc_cow(struct rt6_info *ort,
-@@ -1534,17 +1536,11 @@ int ip6_route_add(struct fib6_config *cfg)
+@@ -1532,17 +1534,11 @@ int ip6_route_add(struct fib6_config *cf
  
  	ipv6_addr_prefix(&rt->rt6i_dst.addr, &cfg->fc_dst, cfg->fc_dst_len);
  	rt->rt6i_dst.plen = cfg->fc_dst_len;
@@ -269,7 +261,7 @@ index b521f70e..17fe6a7 100644
  #ifdef CONFIG_IPV6_SUBTREES
  	ipv6_addr_prefix(&rt->rt6i_src.addr, &cfg->fc_src, cfg->fc_src_len);
  	rt->rt6i_src.plen = cfg->fc_src_len;
-@@ -1663,31 +1659,13 @@ int ip6_route_add(struct fib6_config *cfg)
+@@ -1661,31 +1657,13 @@ int ip6_route_add(struct fib6_config *cf
  	rt->rt6i_flags = cfg->fc_flags;
  
  install_route:
@@ -302,6 +294,3 @@ index b521f70e..17fe6a7 100644
  
  out:
  	if (dev)
--- 
-1.8.1.4
-

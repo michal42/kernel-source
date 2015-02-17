@@ -12,12 +12,10 @@ Signed-off-by: Hannes Reinecke <hare@suse.de>
 Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
 Acked-by: Hannes Reinecke <hare@suse.de>
 ---
- drivers/target/loopback/tcm_loop.c | 71 +++++++++++++++++++++++++++++++++++---
- drivers/target/loopback/tcm_loop.h |  2 ++
- 2 files changed, 69 insertions(+), 4 deletions(-)
+ drivers/target/loopback/tcm_loop.c |   55 ++++++++++++++++++++++++++++++++++---
+ drivers/target/loopback/tcm_loop.h |    2 +
+ 2 files changed, 54 insertions(+), 3 deletions(-)
 
-diff --git a/drivers/target/loopback/tcm_loop.c b/drivers/target/loopback/tcm_loop.c
-index 783675f..04811ca 100644
 --- a/drivers/target/loopback/tcm_loop.c
 +++ b/drivers/target/loopback/tcm_loop.c
 @@ -135,6 +135,21 @@ static int tcm_loop_change_queue_depth(
@@ -42,7 +40,7 @@ index 783675f..04811ca 100644
  /*
   * Locate the SAM Task Attr from struct scsi_cmnd *
   */
-@@ -236,6 +251,7 @@ static int tcm_loop_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *sc)
+@@ -236,6 +251,7 @@ static int tcm_loop_queuecommand(struct
  	}
  
  	tl_cmd->sc = sc;
@@ -50,16 +48,16 @@ index 783675f..04811ca 100644
  	INIT_WORK(&tl_cmd->work, tcm_loop_submission_work);
  	queue_work(tcm_loop_workqueue, &tl_cmd->work);
  	return 0;
-@@ -247,7 +263,7 @@ static int tcm_loop_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *sc)
+@@ -246,7 +262,7 @@ static int tcm_loop_queuecommand(struct
+  * to struct scsi_device
   */
  static int tcm_loop_issue_tmr(struct tcm_loop_tpg *tl_tpg,
- 			      struct tcm_loop_nexus *tl_nexus,
 -			      int lun, enum tcm_tmreq_table tmr)
 +			      int lun, int task, enum tcm_tmreq_table tmr)
  {
  	struct se_cmd *se_cmd = NULL;
  	struct se_session *se_sess;
-@@ -283,6 +299,9 @@ static int tcm_loop_issue_tmr(struct tcm_loop_tpg *tl_tpg,
+@@ -293,6 +309,9 @@ static int tcm_loop_issue_tmr(struct tcm
  	if (rc < 0)
  		goto release;
  
@@ -69,14 +67,13 @@ index 783675f..04811ca 100644
  	/*
  	 * Locate the underlying TCM struct se_lun
  	 */
-@@ -310,6 +329,36 @@ release:
+@@ -320,6 +339,22 @@ release:
  	return ret;
  }
  
 +static int tcm_loop_abort_task(struct scsi_cmnd *sc)
 +{
 +	struct tcm_loop_hba *tl_hba;
-+	struct tcm_loop_nexus *tl_nexus;
 +	struct tcm_loop_tpg *tl_tpg;
 +	int ret = FAILED;
 +
@@ -84,21 +81,8 @@ index 783675f..04811ca 100644
 +	 * Locate the tcm_loop_hba_t pointer
 +	 */
 +	tl_hba = *(struct tcm_loop_hba **)shost_priv(sc->device->host);
-+	/*
-+	 * Locate the tl_nexus and se_sess pointers
-+	 */
-+	tl_nexus = tl_hba->tl_nexus;
-+	if (!tl_nexus) {
-+		pr_err("Unable to perform device reset without"
-+				" active I_T Nexus\n");
-+		return FAILED;
-+	}
-+
-+	/*
-+	 * Locate the tl_tpg pointer from TargetID in sc->device->id
-+	 */
 +	tl_tpg = &tl_hba->tl_hba_tpgs[sc->device->id];
-+	ret = tcm_loop_issue_tmr(tl_tpg, tl_nexus, sc->device->lun,
++	ret = tcm_loop_issue_tmr(tl_tpg, sc->device->lun,
 +				 sc->tag, TMR_ABORT_TASK);
 +	return (ret == TMR_FUNCTION_COMPLETE) ? SUCCESS : FAILED;
 +}
@@ -106,18 +90,16 @@ index 783675f..04811ca 100644
  /*
   * Called from SCSI EH process context to issue a LUN_RESET TMR
   * to struct scsi_device
-@@ -338,8 +387,8 @@ static int tcm_loop_device_reset(struct scsi_cmnd *sc)
- 	 * Locate the tl_tpg pointer from TargetID in sc->device->id
- 	 */
+@@ -340,7 +375,7 @@ static int tcm_loop_device_reset(struct
  	tl_tpg = &tl_hba->tl_hba_tpgs[sc->device->id];
--	ret = tcm_loop_issue_tmr(tl_tpg, tl_nexus,
--				 sc->device->lun, TMR_LUN_RESET);
-+	ret = tcm_loop_issue_tmr(tl_tpg, tl_nexus, sc->device->lun,
+ 
+ 	ret = tcm_loop_issue_tmr(tl_tpg, sc->device->lun,
+-				 TMR_LUN_RESET);
 +				 0, TMR_LUN_RESET);
  	return (ret == TMR_FUNCTION_COMPLETE) ? SUCCESS : FAILED;
  }
  
-@@ -351,6 +400,15 @@ static int tcm_loop_slave_alloc(struct scsi_device *sd)
+@@ -352,6 +387,15 @@ static int tcm_loop_slave_alloc(struct s
  
  static int tcm_loop_slave_configure(struct scsi_device *sd)
  {
@@ -133,7 +115,7 @@ index 783675f..04811ca 100644
  	return 0;
  }
  
-@@ -360,6 +418,8 @@ static struct scsi_host_template tcm_loop_driver_template = {
+@@ -361,6 +405,8 @@ static struct scsi_host_template tcm_loo
  	.name			= "TCM_Loopback",
  	.queuecommand		= tcm_loop_queuecommand,
  	.change_queue_depth	= tcm_loop_change_queue_depth,
@@ -142,7 +124,7 @@ index 783675f..04811ca 100644
  	.eh_device_reset_handler = tcm_loop_device_reset,
  	.can_queue		= 1024,
  	.this_id		= -1,
-@@ -719,7 +779,10 @@ static void tcm_loop_set_default_node_attributes(struct se_node_acl *se_acl)
+@@ -720,7 +766,10 @@ static void tcm_loop_set_default_node_at
  
  static u32 tcm_loop_get_task_tag(struct se_cmd *se_cmd)
  {
@@ -154,8 +136,6 @@ index 783675f..04811ca 100644
  }
  
  static int tcm_loop_get_cmd_state(struct se_cmd *se_cmd)
-diff --git a/drivers/target/loopback/tcm_loop.h b/drivers/target/loopback/tcm_loop.h
-index 56528f7..54c59d0 100644
 --- a/drivers/target/loopback/tcm_loop.h
 +++ b/drivers/target/loopback/tcm_loop.h
 @@ -10,6 +10,8 @@
@@ -167,6 +147,3 @@ index 56528f7..54c59d0 100644
  	/* Pointer to the CDB+Data descriptor from Linux/SCSI subsystem */
  	struct scsi_cmnd *sc;
  	/* The TCM I/O descriptor that is accessed via container_of() */
--- 
-1.7.12.4
-
