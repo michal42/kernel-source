@@ -1,0 +1,41 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 28 Nov 2014 11:51:21 +0100
+Subject: x86, crash: Allocate enough low-mem when crashkernel=high
+Git-commit: dd0f5e0cdc8b171dbc5f5b8e97e8c0739b347fc2
+Patch-mainline: not yet
+References: bsc#905783
+
+When the crashkernel is loaded above 4GiB in memory the
+first kernel only allocates 72MiB of low-memory for the DMA
+requirements of the second kernel. On systems with many
+devices this is not enough and causes device driver
+initialization errors and failed crash dumps.
+
+Tests have shown that a value of 192MiB is enough for the
+kdump to success. So we set the default value to 256MiB
+since the testing data showed it's sufficient now and should
+be save for a long time.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+Acked-by: Baoquan He <bhe@redhat.com>
+---
+ arch/x86/kernel/setup.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+Index: linux-3.12-SLE12/arch/x86/kernel/setup.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/x86/kernel/setup.c
++++ linux-3.12-SLE12/arch/x86/kernel/setup.c
+@@ -536,8 +536,11 @@ static void __init reserve_crashkernel_l
+ 		 *	swiotlb overflow buffer: now is hardcoded to 32k.
+ 		 *		We round it to 8M for other buffers that
+ 		 *		may need to stay low too.
++		 *		Also make sure we allocate enough extra memory
++		 *		low memory so that we don't run out of DMA
++		 *		buffers for 32bit devices.
+ 		 */
+-		low_size = swiotlb_size_or_default() + (8UL<<20);
++		low_size = max(swiotlb_size_or_default() + (8UL<<20), 256UL<<20);
+ 		auto_set = true;
+ 	} else {
+ 		/* passed with crashkernel=0,low ? */
