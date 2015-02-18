@@ -1,0 +1,96 @@
+From 1c4bab550f5dc0dc8beb3121b00a1554018f9fad Mon Sep 17 00:00:00 2001
+From: Al Viro <viro@zeniv.linux.org.uk>
+Date: Fri, 25 Oct 2013 16:39:14 -0400
+Subject: [PATCH] take read_seqbegin_or_lock() and friends to seqlock.h
+
+References: Time scalability
+Patch-mainline: v3.13
+Git-commit: 2bc74feba12fb
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ fs/dcache.c             | 29 -----------------------------
+ include/linux/seqlock.h | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 29 insertions(+), 29 deletions(-)
+
+diff --git a/fs/dcache.c b/fs/dcache.c
+index 0b36c868e2d5..91cc15e4fa4d 100644
+--- a/fs/dcache.c
++++ b/fs/dcache.c
+@@ -88,35 +88,6 @@ EXPORT_SYMBOL(rename_lock);
+ 
+ static struct kmem_cache *dentry_cache __read_mostly;
+ 
+-/**
+- * read_seqbegin_or_lock - begin a sequence number check or locking block
+- * @lock: sequence lock
+- * @seq : sequence number to be checked
+- *
+- * First try it once optimistically without taking the lock. If that fails,
+- * take the lock. The sequence number is also used as a marker for deciding
+- * whether to be a reader (even) or writer (odd).
+- * N.B. seq must be initialized to an even number to begin with.
+- */
+-static inline void read_seqbegin_or_lock(seqlock_t *lock, int *seq)
+-{
+-	if (!(*seq & 1))	/* Even */
+-		*seq = read_seqbegin(lock);
+-	else			/* Odd */
+-		read_seqlock_excl(lock);
+-}
+-
+-static inline int need_seqretry(seqlock_t *lock, int seq)
+-{
+-	return !(seq & 1) && read_seqretry(lock, seq);
+-}
+-
+-static inline void done_seqretry(seqlock_t *lock, int seq)
+-{
+-	if (seq & 1)
+-		read_sequnlock_excl(lock);
+-}
+-
+ /*
+  * This is the single most critical data structure when it comes
+  * to the dcache: the hashtable for lookups. Somebody should try
+diff --git a/include/linux/seqlock.h b/include/linux/seqlock.h
+index 21a209336e79..2c61a24d74a7 100644
+--- a/include/linux/seqlock.h
++++ b/include/linux/seqlock.h
+@@ -289,6 +289,35 @@ static inline void read_sequnlock_excl(seqlock_t *sl)
+ 	spin_unlock(&sl->lock);
+ }
+ 
++/**
++ * read_seqbegin_or_lock - begin a sequence number check or locking block
++ * @lock: sequence lock
++ * @seq : sequence number to be checked
++ *
++ * First try it once optimistically without taking the lock. If that fails,
++ * take the lock. The sequence number is also used as a marker for deciding
++ * whether to be a reader (even) or writer (odd).
++ * N.B. seq must be initialized to an even number to begin with.
++ */
++static inline void read_seqbegin_or_lock(seqlock_t *lock, int *seq)
++{
++	if (!(*seq & 1))	/* Even */
++		*seq = read_seqbegin(lock);
++	else			/* Odd */
++		read_seqlock_excl(lock);
++}
++
++static inline int need_seqretry(seqlock_t *lock, int seq)
++{
++	return !(seq & 1) && read_seqretry(lock, seq);
++}
++
++static inline void done_seqretry(seqlock_t *lock, int seq)
++{
++	if (seq & 1)
++		read_sequnlock_excl(lock);
++}
++
+ static inline void read_seqlock_excl_bh(seqlock_t *sl)
+ {
+ 	spin_lock_bh(&sl->lock);
