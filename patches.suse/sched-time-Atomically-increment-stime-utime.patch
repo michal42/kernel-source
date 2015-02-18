@@ -1,0 +1,59 @@
+From 5fff0275a1a3e1f18b7c4ad7cb4e94db2df4c990 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 15 Aug 2014 16:05:38 -0400
+Subject: [PATCH] sched, time: Atomically increment stime & utime
+
+References: Time scalability
+Patch-mainline: v3.18
+Git-commit: eb1b4af0a64ac7bb0ee36f579c1c7cefcbc3ac2c
+
+The functions task_cputime_adjusted and thread_group_cputime_adjusted()
+can be called locklessly, as well as concurrently on many different CPUs.
+
+This can occasionally lead to the utime and stime reported by times(), and
+other syscalls like it, going backward. The cause for this appears to be
+multiple threads racing in cputime_adjust(), both with values for utime or
+stime that is larger than the original, but each with a different value.
+
+Sometimes the larger value gets saved first, only to be immediately
+overwritten with a smaller value by another thread.
+
+Using atomic exchange prevents that problem, and ensures time
+progresses monotonically.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: umgwanakikbuti@gmail.com
+Cc: fweisbec@gmail.com
+Cc: akpm@linux-foundation.org
+Cc: srao@redhat.com
+Cc: lwoodman@redhat.com
+Cc: atheurer@redhat.com
+Cc: oleg@redhat.com
+Link: http://lkml.kernel.org/r/1408133138-22048-4-git-send-email-riel@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/cputime.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/cputime.c b/kernel/sched/cputime.c
+index ff9cfde647a3..1e7ab861250e 100644
+--- a/kernel/sched/cputime.c
++++ b/kernel/sched/cputime.c
+@@ -596,9 +596,12 @@ static void cputime_adjust(struct task_cputime *curr,
+ 	 * If the tick based count grows faster than the scheduler one,
+ 	 * the result of the scaling may go backward.
+ 	 * Let's enforce monotonicity.
++	 * Atomic exchange protects against concurrent cputime_adjust().
+ 	 */
+-	prev->stime = max(prev->stime, stime);
+-	prev->utime = max(prev->utime, utime);
++	while (stime > (rtime = ACCESS_ONCE(prev->stime)))
++		cmpxchg(&prev->stime, rtime, stime);
++	while (utime > (rtime = ACCESS_ONCE(prev->utime)))
++		cmpxchg(&prev->utime, rtime, utime);
+ 
+ out:
+ 	*ut = prev->utime;
