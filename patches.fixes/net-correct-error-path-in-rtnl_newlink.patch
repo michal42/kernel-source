@@ -1,0 +1,64 @@
+From: Cong Wang <cwang@twopensource.com>
+Date: Tue, 11 Feb 2014 15:51:30 -0800
+Subject: net: correct error path in rtnl_newlink()
+Patch-mainline: v3.14-rc4
+Git-commit: 0e0eee2465df77bcec2e8ff75432b8e57897b143
+References: bnc#915660
+
+I saw the following BUG when ->newlink() fails in rtnl_newlink():
+
+[   40.240058] kernel BUG at net/core/dev.c:6438!
+
+this is due to free_netdev() is not supposed to be called before
+netdev is completely unregistered, therefore it is not correct
+to call free_netdev() here, at least for ops->newlink!=NULL case,
+many drivers call it in ->destructor so that rtnl_unlock() will
+take care of it, we probably don't need to do anything here.
+
+Cc: David S. Miller <davem@davemloft.net>
+Cc: Eric Dumazet <eric.dumazet@gmail.com>
+Signed-off-by: Cong Wang <xiyou.wangcong@gmail.com>
+Signed-off-by: Cong Wang <cwang@twopensource.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/core/rtnetlink.c | 19 ++++++++++++-------
+ 1 file changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
+index 9574a51..1f1ef0f 100644
+--- a/net/core/rtnetlink.c
++++ b/net/core/rtnetlink.c
+@@ -2037,16 +2037,21 @@ replay:
+ 
+ 		dev->ifindex = ifm->ifi_index;
+ 
+-		if (ops->newlink)
++		if (ops->newlink) {
+ 			err = ops->newlink(net, dev, tb, data);
+-		else
++			/* Drivers should call free_netdev() in ->destructor
++			 * and unregister it on failure so that device could be
++			 * finally freed in rtnl_unlock.
++			 */
++			if (err < 0)
++				goto out;
++		} else {
+ 			err = register_netdevice(dev);
+-
+-		if (err < 0) {
+-			free_netdev(dev);
+-			goto out;
++			if (err < 0) {
++				free_netdev(dev);
++				goto out;
++			}
+ 		}
+-
+ 		err = rtnl_configure_link(dev, ifm);
+ 		if (err < 0)
+ 			unregister_netdevice(dev);
+-- 
+1.8.4.5
+
