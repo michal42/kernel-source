@@ -1,0 +1,167 @@
+Subject: powerpc/pseries: Fix endian problems with LE migration
+From: Cyril Bur <cyrilbur@gmail.com>
+Reference: bsc#918584
+Git-commit: 3df76a9dcc74d5f012b94ea01ed6e7aaf8362c5a 
+Patch-mainline: v4.0-rc1
+
+RTAS events require arguments be passed in big endian while hypercalls
+have their arguments passed in registers and the values should therefore
+be in CPU endian.
+
+The "ibm,suspend_me" 'RTAS' call makes a sequence of hypercalls to setup
+one true RTAS call. This means that "ibm,suspend_me" is handled
+specially in the ppc_rtas() syscall.
+
+The ppc_rtas() syscall has its arguments in big endian and can therefore
+pass these arguments directly to the RTAS call. "ibm,suspend_me" is
+handled specially from within ppc_rtas() (by calling rtas_ibm_suspend_me())
+which has left an endian bug on little endian systems due to the
+requirement of hypercalls. The return value from rtas_ibm_suspend_me()
+gets returned in cpu endian, and is left unconverted, also a bug on
+little endian systems.
+
+rtas_ibm_suspend_me() does not actually make use of the rtas_args that
+it is passed. This patch removes the convoluted use of the rtas_args
+struct to pass params to rtas_ibm_suspend_me() in favour of passing what
+it needs as actual arguments. This patch also ensures the two callers of
+rtas_ibm_suspend_me() pass function parameters in cpu endian and in the
+case of ppc_rtas(), converts the return value.
+
+migrate_store() (the other caller of rtas_ibm_suspend_me()) is from a
+sysfs file which deals with everything in cpu endian so this function
+only underwent cleanup.
+
+This patch has been tested with KVM both LE and BE and on PowerVM both
+LE and BE. Under QEMU/KVM the migration happens without touching these
+code pathes.
+
+For PowerVM there is no obvious regression on BE and the LE code path
+now provides the correct parameters to the hypervisor.
+
+Signed-off-by: Cyril Bur <cyrilbur@gmail.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+
+Index: linux-3.12-SLE12/arch/powerpc/include/asm/rtas.h
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/include/asm/rtas.h
++++ linux-3.12-SLE12/arch/powerpc/include/asm/rtas.h
+@@ -327,7 +327,7 @@ extern int rtas_suspend_cpu(struct rtas_
+ extern int rtas_suspend_last_cpu(struct rtas_suspend_me_data *data);
+ extern int rtas_online_cpus_mask(cpumask_var_t cpus);
+ extern int rtas_offline_cpus_mask(cpumask_var_t cpus);
+-extern int rtas_ibm_suspend_me(struct rtas_args *);
++extern int rtas_ibm_suspend_me(u64 handle, int *vasi_return);
+ 
+ struct rtc_time;
+ extern unsigned long rtas_get_boot_time(void);
+Index: linux-3.12-SLE12/arch/powerpc/kernel/rtas.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/kernel/rtas.c
++++ linux-3.12-SLE12/arch/powerpc/kernel/rtas.c
+@@ -897,7 +897,7 @@ int rtas_offline_cpus_mask(cpumask_var_t
+ }
+ EXPORT_SYMBOL(rtas_offline_cpus_mask);
+ 
+-int rtas_ibm_suspend_me(struct rtas_args *args)
++int rtas_ibm_suspend_me(u64 handle, int *vasi_return)
+ {
+ 	long state;
+ 	long rc;
+@@ -911,8 +911,7 @@ int rtas_ibm_suspend_me(struct rtas_args
+ 		return -ENOSYS;
+ 
+ 	/* Make sure the state is valid */
+-	rc = plpar_hcall(H_VASI_STATE, retbuf,
+-			 ((u64)args->args[0] << 32) | args->args[1]);
++	rc = plpar_hcall(H_VASI_STATE, retbuf, handle);
+ 
+ 	state = retbuf[0];
+ 
+@@ -920,12 +919,12 @@ int rtas_ibm_suspend_me(struct rtas_args
+ 		printk(KERN_ERR "rtas_ibm_suspend_me: vasi_state returned %ld\n",rc);
+ 		return rc;
+ 	} else if (state == H_VASI_ENABLED) {
+-		args->args[args->nargs] = RTAS_NOT_SUSPENDABLE;
++		*vasi_return = RTAS_NOT_SUSPENDABLE;
+ 		return 0;
+ 	} else if (state != H_VASI_SUSPENDING) {
+ 		printk(KERN_ERR "rtas_ibm_suspend_me: vasi_state returned state %ld\n",
+ 		       state);
+-		args->args[args->nargs] = -1;
++		*vasi_return = -1;
+ 		return 0;
+ 	}
+ 
+@@ -973,7 +972,7 @@ out:
+ 	return atomic_read(&data.error);
+ }
+ #else /* CONFIG_PPC_PSERIES */
+-int rtas_ibm_suspend_me(struct rtas_args *args)
++int rtas_ibm_suspend_me(u64 handle, int *vasi_return)
+ {
+ 	return -ENOSYS;
+ }
+@@ -1053,7 +1052,16 @@ asmlinkage int ppc_rtas(struct rtas_args
+ 
+ 	/* Need to handle ibm,suspend_me call specially */
+ 	if (token == ibm_suspend_me_token) {
+-		rc = rtas_ibm_suspend_me(&args);
++
++		/*
++		* rtas_ibm_suspend_me assumes args are in cpu endian, or at least the
++		* hcall within it requires it.
++		*/
++		int vasi_rc = 0;
++		u64 handle = ((u64)be32_to_cpu(args.args[0]) << 32)
++	        		| be32_to_cpu(args.args[1]);
++		rc = rtas_ibm_suspend_me(handle, &vasi_rc);
++		args.rets[0] = cpu_to_be32(vasi_rc);
+ 		if (rc)
+ 			return rc;
+ 		goto copy_return;
+Index: linux-3.12-SLE12/arch/powerpc/platforms/pseries/mobility.c
+===================================================================
+--- linux-3.12-SLE12.orig/arch/powerpc/platforms/pseries/mobility.c
++++ linux-3.12-SLE12/arch/powerpc/platforms/pseries/mobility.c
+@@ -315,34 +315,24 @@ void post_mobility_fixup(void)
+ static ssize_t migrate_store(struct class *class, struct class_attribute *attr,
+ 			     const char *buf, size_t count)
+ {
+-	struct rtas_args args;
+ 	u64 streamid;
+ 	int rc;
++	int vasi_rc = 0;
+ 
+ 	rc = strict_strtoull(buf, 0, &streamid);
+ 	if (rc)
+ 		return rc;
+ 
+-	memset(&args, 0, sizeof(args));
+-	args.token = rtas_token("ibm,suspend-me");
+-	args.nargs = 2;
+-	args.nret = 1;
+-
+-	args.args[0] = streamid >> 32 ;
+-	args.args[1] = streamid & 0xffffffff;
+-	args.rets = &args.args[args.nargs];
+-
+ 	do {
+-		args.rets[0] = 0;
+-		rc = rtas_ibm_suspend_me(&args);
+-		if (!rc && args.rets[0] == RTAS_NOT_SUSPENDABLE)
++		rc = rtas_ibm_suspend_me(streamid, &vasi_rc);
++		if (!rc && vasi_rc == RTAS_NOT_SUSPENDABLE)
+ 			ssleep(1);
+-	} while (!rc && args.rets[0] == RTAS_NOT_SUSPENDABLE);
++	} while (!rc && vasi_rc == RTAS_NOT_SUSPENDABLE);
+ 
+ 	if (rc)
+ 		return rc;
+-	else if (args.rets[0])
+-		return args.rets[0];
++	if (vasi_rc)
++		return vasi_rc;
+ 
+ 	post_mobility_fixup();
+ 	return count;
