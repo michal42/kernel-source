@@ -1,0 +1,95 @@
+Subject: [PATCH] kernel/sched/clock.c: add another clock for use with the soft
+ lockup watchdog
+From: Cyril Bur <cyrilbur@gmail.com>
+Git-commit: 545a2bf742fb41f17d03486dd8a8c74ad511dec2
+Patch-mainline: v4.0-rc1
+References: bsc#919939
+
+When the hypervisor pauses a virtualised kernel the kernel will observe a
+jump in timebase, this can cause spurious messages from the softlockup
+detector.
+
+Whilst these messages are harmless, they are accompanied with a stack
+trace which causes undue concern and more problematically the stack trace
+in the guest has nothing to do with the observed problem and can only be
+misleading.
+
+Futhermore, on POWER8 this is completely avoidable with the introduction
+of the Virtual Time Base (VTB) register.
+
+This patch (of 2):
+
+This permits the use of arch specific clocks for which virtualised kernels
+can use their notion of 'running' time, not the elpased wall time which
+will include host execution time.
+
+Signed-off-by: Cyril Bur <cyrilbur@gmail.com>
+Cc: Michael Ellerman <mpe@ellerman.id.au>
+Cc: Andrew Jones <drjones@redhat.com>
+Acked-by: Don Zickus <dzickus@redhat.com>
+Cc: Ingo Molnar <mingo@kernel.org>
+Cc: Ulrich Obergfell <uobergfe@redhat.com>
+Cc: chai wen <chaiw.fnst@cn.fujitsu.com>
+Cc: Fabian Frederick <fabf@skynet.be>
+Cc: Aaron Tomlin <atomlin@redhat.com>
+Cc: Ben Zhang <benzh@chromium.org>
+Cc: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Cc: John Stultz <john.stultz@linaro.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ include/linux/sched.h |  1 +
+ kernel/sched/clock.c  | 13 +++++++++++++
+ kernel/watchdog.c     |  2 +-
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 22ee0d5..048b91b 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -2147,6 +2147,7 @@ extern unsigned long long notrace sched_clock(void);
+  */
+ extern u64 cpu_clock(int cpu);
+ extern u64 local_clock(void);
++extern u64 running_clock(void);
+ extern u64 sched_clock_cpu(int cpu);
+ 
+ 
+diff --git a/kernel/sched/clock.c b/kernel/sched/clock.c
+index c27e4f8..c0a2051 100644
+--- a/kernel/sched/clock.c
++++ b/kernel/sched/clock.c
+@@ -420,3 +420,16 @@ u64 local_clock(void)
+ 
+ EXPORT_SYMBOL_GPL(cpu_clock);
+ EXPORT_SYMBOL_GPL(local_clock);
++
++/*
++ * Running clock - returns the time that has elapsed while a guest has been
++ * running.
++ * On a guest this value should be local_clock minus the time the guest was
++ * suspended by the hypervisor (for any reason).
++ * On bare metal this function should return the same as local_clock.
++ * Architectures and sub-architectures can override this.
++ */
++u64 __weak running_clock(void)
++{
++	return local_clock();
++}
+diff --git a/kernel/watchdog.c b/kernel/watchdog.c
+index 70bf118..3174bf8 100644
+--- a/kernel/watchdog.c
++++ b/kernel/watchdog.c
+@@ -154,7 +154,7 @@ static int get_softlockup_thresh(void)
+  */
+ static unsigned long get_timestamp(void)
+ {
+-	return local_clock() >> 30LL;  /* 2^30 ~= 10^9 */
++	return running_clock() >> 30LL;  /* 2^30 ~= 10^9 */
+ }
+ 
+ static void set_sample_period(void)
+-- 
+2.1.4
