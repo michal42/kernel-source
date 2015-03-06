@@ -1,0 +1,44 @@
+From: <clg@fr.ibm.com>
+Subject: [PATCH] KVM: PPC: Book3S HV: ptes are big endian
+Git-commit: ffada016fb22fbbb9849d3cc5ec72ca8f0377681
+References: bsc#920839
+Patch-mainline: v3.19-rc1
+
+When being restored from qemu, the kvm_get_htab_header are in native
+endian, but the ptes are big endian.
+
+This patch fixes restore on a KVM LE host. Qemu also needs a fix for
+this :
+
+     http://lists.nongnu.org/archive/html/qemu-ppc/2014-11/msg00008.html
+
+Signed-off-by: Cédric Le Goater <clg@fr.ibm.com>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ arch/powerpc/kvm/book3s_64_mmu_hv.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/kvm/book3s_64_mmu_hv.c b/arch/powerpc/kvm/book3s_64_mmu_hv.c
+index 41f96c5..59425f1 100644
+--- a/arch/powerpc/kvm/book3s_64_mmu_hv.c
++++ b/arch/powerpc/kvm/book3s_64_mmu_hv.c
+@@ -1542,9 +1542,15 @@ static ssize_t kvm_htab_write(struct file *file, const char __user *buf,
+ 		hptp = (__be64 *)(kvm->arch.hpt_virt + (i * HPTE_SIZE));
+ 		lbuf = (unsigned long __user *)buf;
+ 		for (j = 0; j < hdr.n_valid; ++j) {
++			__be64 hpte_v;
++			__be64 hpte_r;
++
+ 			err = -EFAULT;
+-			if (__get_user(v, lbuf) || __get_user(r, lbuf + 1))
++			if (__get_user(hpte_v, lbuf) ||
++			    __get_user(hpte_r, lbuf + 1))
+ 				goto out;
++			v = be64_to_cpu(hpte_v);
++			r = be64_to_cpu(hpte_r);
+ 			err = -EINVAL;
+ 			if (!(v & HPTE_V_VALID))
+ 				goto out;
+-- 
+2.1.4
