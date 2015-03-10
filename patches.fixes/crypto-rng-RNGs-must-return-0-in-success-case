@@ -1,0 +1,58 @@
+From: Stephan Mueller <smueller@chronox.de>
+Subject: crypto: rng - RNGs must return 0 in success case
+Git-commit: cde001e4c3c3625c60b68a83eb1f1c2572dee07a
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git.kernel.org/cgit/linux/kernel/git/herbert/cryptodev-2.6.git
+References: bsc#920805
+
+ crypto: rng - RNGs must return 0 in success case
+
+Change the RNGs to always return 0 in success case.
+
+This patch ensures that seqiv.c works with RNGs other than krng. seqiv
+expects that any return code other than 0 is an error. Without the
+patch, rfc4106(gcm(aes)) will not work when using a DRBG or an ANSI
+X9.31 RNG.
+
+Signed-off-by: Stephan Mueller <smueller@chronox.de>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+--- a/crypto/ansi_cprng.c
++++ b/crypto/ansi_cprng.c
+@@ -210,7 +210,11 @@ static int get_prng_bytes(char *buf, siz
+ 		byte_count = DEFAULT_BLK_SZ;
+ 	}
+ 
+-	err = byte_count;
++	/*
++	 * Return 0 in case of success as mandated by the kernel
++	 * crypto API interface definition.
++	 */
++	err = 0;
+ 
+ 	dbgprint(KERN_CRIT "getting %d random bytes for context %p\n",
+ 		byte_count, ctx);
+--- a/crypto/drbg.c
++++ b/crypto/drbg.c
+@@ -1322,7 +1322,7 @@ static void drbg_restore_shadow(struct d
+  *	  as defined in SP800-90A. The additional input is mixed into
+  *	  the state in addition to the pulled entropy.
+  *
+- * return: generated number of bytes
++ * return: 0 when all bytes are generated; < 0 in case of an error
+  */
+ static int drbg_generate(struct drbg_state *drbg,
+ 			 unsigned char *buf, unsigned int buflen,
+@@ -1463,6 +1463,11 @@ static int drbg_generate(struct drbg_sta
+ 	}
+ #endif
+ 
++	/*
++	 * All operations were successful, return 0 as mandated by
++	 * the kernel crypto API interface.
++	 */
++	len = 0;
+ err:
+ 	if (shadow->d_ops->crypto_fini)
+ 		shadow->d_ops->crypto_fini(shadow);
