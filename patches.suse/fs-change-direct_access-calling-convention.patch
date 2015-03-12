@@ -9,18 +9,16 @@ that address.
 Signed-off-by: Matthew Wilcox <matthew.r.wilcox@intel.com>
 Signed-off-by: Jan Kara <jack@suse.cz>
 ---
- Documentation/filesystems/xip.txt | 15 +++++++++------
- arch/powerpc/sysdev/axonram.c     |  6 +++---
- drivers/block/brd.c               |  8 +++++---
- drivers/s390/block/dcssblk.c      | 19 ++++++++++---------
- fs/ext2/xip.c                     | 30 +++++++++++++-----------------
- include/linux/blkdev.h            |  4 ++--
+ Documentation/filesystems/xip.txt |   15 +++++++++------
+ arch/powerpc/sysdev/axonram.c     |    6 +++---
+ drivers/block/brd.c               |    8 +++++---
+ drivers/s390/block/dcssblk.c      |   19 ++++++++++---------
+ fs/ext2/xip.c                     |   30 +++++++++++++-----------------
+ include/linux/blkdev.h            |    4 ++--
  6 files changed, 42 insertions(+), 40 deletions(-)
 
-Index: linux-3.12-SLE12/Documentation/filesystems/xip.txt
-===================================================================
---- linux-3.12-SLE12.orig/Documentation/filesystems/xip.txt
-+++ linux-3.12-SLE12/Documentation/filesystems/xip.txt
+--- a/Documentation/filesystems/xip.txt
++++ b/Documentation/filesystems/xip.txt
 @@ -28,12 +28,15 @@ Implementation
  Execute-in-place is implemented in three steps: block device operation,
  address space operation, and file operations.
@@ -43,10 +41,8 @@ Index: linux-3.12-SLE12/Documentation/filesystems/xip.txt
  
  The block device operation is optional, these block devices support it as of
  today:
-Index: linux-3.12-SLE12/arch/powerpc/sysdev/axonram.c
-===================================================================
---- linux-3.12-SLE12.orig/arch/powerpc/sysdev/axonram.c
-+++ linux-3.12-SLE12/arch/powerpc/sysdev/axonram.c
+--- a/arch/powerpc/sysdev/axonram.c
++++ b/arch/powerpc/sysdev/axonram.c
 @@ -138,9 +138,9 @@ axon_ram_make_request(struct request_que
   * axon_ram_direct_access - direct_access() method for block device
   * @device, @sector, @data: see block_device_operations method
@@ -61,17 +57,15 @@ Index: linux-3.12-SLE12/arch/powerpc/sysdev/axonram.c
  	loff_t offset;
 @@ -157,7 +157,7 @@ axon_ram_direct_access(struct block_devi
  	*kaddr = (void *)(bank->ph_addr + offset);
- 	*pfn = virt_to_phys(kaddr) >> PAGE_SHIFT;
+ 	*pfn = virt_to_phys(*kaddr) >> PAGE_SHIFT;
  
 -	return 0;
 +	return min_t(unsigned long, size, bank->size - offset);
  }
  
  static const struct block_device_operations axon_ram_devops = {
-Index: linux-3.12-SLE12/drivers/block/brd.c
-===================================================================
---- linux-3.12-SLE12.orig/drivers/block/brd.c
-+++ linux-3.12-SLE12/drivers/block/brd.c
+--- a/drivers/block/brd.c
++++ b/drivers/block/brd.c
 @@ -361,8 +361,8 @@ out:
  }
  
@@ -94,10 +88,8 @@ Index: linux-3.12-SLE12/drivers/block/brd.c
  }
  #endif
  
-Index: linux-3.12-SLE12/drivers/s390/block/dcssblk.c
-===================================================================
---- linux-3.12-SLE12.orig/drivers/s390/block/dcssblk.c
-+++ linux-3.12-SLE12/drivers/s390/block/dcssblk.c
+--- a/drivers/s390/block/dcssblk.c
++++ b/drivers/s390/block/dcssblk.c
 @@ -28,8 +28,8 @@
  static int dcssblk_open(struct block_device *bdev, fmode_t mode);
  static void dcssblk_release(struct gendisk *disk, fmode_t mode);
@@ -143,10 +135,8 @@ Index: linux-3.12-SLE12/drivers/s390/block/dcssblk.c
  }
  
  static void
-Index: linux-3.12-SLE12/fs/ext2/xip.c
-===================================================================
---- linux-3.12-SLE12.orig/fs/ext2/xip.c
-+++ linux-3.12-SLE12/fs/ext2/xip.c
+--- a/fs/ext2/xip.c
++++ b/fs/ext2/xip.c
 @@ -13,18 +13,13 @@
  #include "ext2.h"
  #include "xip.h"
@@ -170,7 +160,7 @@ Index: linux-3.12-SLE12/fs/ext2/xip.c
  }
  
  static inline int
-@@ -52,12 +47,13 @@ ext2_clear_xip_target(struct inode *inod
+@@ -53,12 +48,13 @@ ext2_clear_xip_target(struct inode *inod
  {
  	void *kaddr;
  	unsigned long pfn;
@@ -189,7 +179,7 @@ Index: linux-3.12-SLE12/fs/ext2/xip.c
  }
  
  void ext2_xip_verify_sb(struct super_block *sb)
-@@ -76,7 +72,7 @@ void ext2_xip_verify_sb(struct super_blo
+@@ -77,7 +73,7 @@ void ext2_xip_verify_sb(struct super_blo
  int ext2_get_xip_mem(struct address_space *mapping, pgoff_t pgoff, int create,
  				void **kmem, unsigned long *pfn)
  {
@@ -198,7 +188,7 @@ Index: linux-3.12-SLE12/fs/ext2/xip.c
  	sector_t block;
  
  	/* first, retrieve the sector number */
-@@ -85,6 +81,6 @@ int ext2_get_xip_mem(struct address_spac
+@@ -86,6 +82,6 @@ int ext2_get_xip_mem(struct address_spac
  		return rc;
  
  	/* retrieve address of the target data */
@@ -207,11 +197,9 @@ Index: linux-3.12-SLE12/fs/ext2/xip.c
 +	rc = __inode_direct_access(mapping->host, block, kmem, pfn, PAGE_SIZE);
 +	return (rc < 0) ? rc : 0;
  }
-Index: linux-3.12-SLE12/include/linux/blkdev.h
-===================================================================
---- linux-3.12-SLE12.orig/include/linux/blkdev.h
-+++ linux-3.12-SLE12/include/linux/blkdev.h
-@@ -1525,8 +1525,8 @@ struct block_device_operations {
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -1524,8 +1524,8 @@ struct block_device_operations {
  	void (*release) (struct gendisk *, fmode_t);
  	int (*ioctl) (struct block_device *, fmode_t, unsigned, unsigned long);
  	int (*compat_ioctl) (struct block_device *, fmode_t, unsigned, unsigned long);

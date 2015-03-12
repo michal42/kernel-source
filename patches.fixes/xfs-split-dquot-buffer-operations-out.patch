@@ -16,22 +16,20 @@ Signed-off-by: Ben Myers <bpm@sgi.com>
 Signed-off-by: Jan Kara <jack@suse.cz>
 
 ---
- fs/xfs/Makefile          |    1 +
- fs/xfs/xfs_dquot.c       |  117 +------------------
- fs/xfs/xfs_dquot_buf.c   |  288 ++++++++++++++++++++++++++++++++++++++++++++++
- fs/xfs/xfs_log_recover.c |  133 +---------------------
- fs/xfs/xfs_qm.c          |   22 +---
- fs/xfs/xfs_qm.h          |    2 -
- fs/xfs/xfs_quota.h       |    2 -
- fs/xfs/xfs_quota_defs.h  |    4 +
+ fs/xfs/Makefile          |    1 
+ fs/xfs/xfs_dquot.c       |  117 -------------------
+ fs/xfs/xfs_dquot_buf.c   |  288 +++++++++++++++++++++++++++++++++++++++++++++++
+ fs/xfs/xfs_log_recover.c |  133 ---------------------
+ fs/xfs/xfs_qm.c          |   22 ---
+ fs/xfs/xfs_qm.h          |    2 
+ fs/xfs/xfs_quota.h       |    2 
+ fs/xfs/xfs_quota_defs.h  |    4 
  8 files changed, 303 insertions(+), 266 deletions(-)
  create mode 100644 fs/xfs/xfs_dquot_buf.c
 
-diff --git a/fs/xfs/Makefile b/fs/xfs/Makefile
-index 29fce91..9e361dc 100644
 --- a/fs/xfs/Makefile
 +++ b/fs/xfs/Makefile
-@@ -74,6 +74,7 @@ xfs-y				+= xfs_alloc.o \
+@@ -72,6 +72,7 @@ xfs-y				+= xfs_alloc.o \
  				   xfs_dir2_leaf.o \
  				   xfs_dir2_node.o \
  				   xfs_dir2_sf.o \
@@ -39,11 +37,9 @@ index 29fce91..9e361dc 100644
  				   xfs_ialloc.o \
  				   xfs_ialloc_btree.o \
  				   xfs_icreate_item.o \
-diff --git a/fs/xfs/xfs_dquot.c b/fs/xfs/xfs_dquot.c
-index f2b74e4..9ee11f9 100644
 --- a/fs/xfs/xfs_dquot.c
 +++ b/fs/xfs/xfs_dquot.c
-@@ -292,118 +292,6 @@ xfs_dquot_set_prealloc_limits(struct xfs_dquot *dqp)
+@@ -292,118 +292,6 @@ xfs_dquot_set_prealloc_limits(struct xfs
  	dqp->q_low_space[XFS_QLOWSP_5_PCNT] = space * 5;
  }
  
@@ -179,7 +175,7 @@ index f2b74e4..9ee11f9 100644
  				       dqp->dq_flags & XFS_DQ_ALLTYPES,
  				       XFS_QMOPT_DQREPAIR, "xfs_qm_dqrepair");
  		if (error) {
-@@ -1134,7 +1023,7 @@ xfs_qm_dqflush(
+@@ -1135,7 +1024,7 @@ xfs_qm_dqflush(
  	/*
  	 * A simple sanity check in case we got a corrupted dquot..
  	 */
@@ -188,9 +184,6 @@ index f2b74e4..9ee11f9 100644
  			   XFS_QMOPT_DOWARN, "dqflush (incore copy)");
  	if (error) {
  		xfs_buf_relse(bp);
-diff --git a/fs/xfs/xfs_dquot_buf.c b/fs/xfs/xfs_dquot_buf.c
-new file mode 100644
-index 0000000..ad2c18f
 --- /dev/null
 +++ b/fs/xfs/xfs_dquot_buf.c
 @@ -0,0 +1,288 @@
@@ -482,11 +475,9 @@ index 0000000..ad2c18f
 +	.verify_write = xfs_dquot_buf_write_verify,
 +};
 +
-diff --git a/fs/xfs/xfs_log_recover.c b/fs/xfs/xfs_log_recover.c
-index 898b689..f80afa7 100644
 --- a/fs/xfs/xfs_log_recover.c
 +++ b/fs/xfs/xfs_log_recover.c
-@@ -2371,7 +2371,7 @@ xlog_recover_do_reg_buffer(
+@@ -2374,7 +2374,7 @@ xlog_recover_do_reg_buffer(
  					item->ri_buf[i].i_len, __func__);
  				goto next;
  			}
@@ -495,7 +486,7 @@ index 898b689..f80afa7 100644
  					       -1, 0, XFS_QMOPT_DOWARN,
  					       "dquot_buf_recover");
  			if (error)
-@@ -2403,133 +2403,6 @@ xlog_recover_do_reg_buffer(
+@@ -2397,133 +2397,6 @@ xlog_recover_do_reg_buffer(
  }
  
  /*
@@ -629,7 +620,7 @@ index 898b689..f80afa7 100644
   * Perform a dquot buffer recovery.
   * Simple algorithm: if we have found a QUOTAOFF log item of the same type
   * (ie. USR or GRP), then just toss this buffer away; don't recover it.
-@@ -3134,7 +3007,7 @@ xlog_recover_dquot_pass2(
+@@ -3145,7 +3018,7 @@ xlog_recover_dquot_pass2(
  	 */
  	dq_f = item->ri_buf[0].i_addr;
  	ASSERT(dq_f);
@@ -638,7 +629,7 @@ index 898b689..f80afa7 100644
  			   "xlog_recover_dquot_pass2 (log copy)");
  	if (error)
  		return XFS_ERROR(EIO);
-@@ -3154,7 +3027,7 @@ xlog_recover_dquot_pass2(
+@@ -3165,7 +3038,7 @@ xlog_recover_dquot_pass2(
  	 * was among a chunk of dquots created earlier, and we did some
  	 * minimal initialization then.
  	 */
@@ -647,8 +638,6 @@ index 898b689..f80afa7 100644
  			   "xlog_recover_dquot_pass2");
  	if (error) {
  		xfs_buf_relse(bp);
-diff --git a/fs/xfs/xfs_qm.c b/fs/xfs/xfs_qm.c
-index 0093548..0849aeb 100644
 --- a/fs/xfs/xfs_qm.c
 +++ b/fs/xfs/xfs_qm.c
 @@ -693,20 +693,6 @@ xfs_qm_dqdetach(
@@ -692,14 +681,12 @@ index 0093548..0849aeb 100644
 -				      "xfs_quotacheck");
 +		xfs_dqcheck(mp, ddq, id+j, type, XFS_QMOPT_DQREPAIR,
 +			    "xfs_quotacheck");
- 		ddq->d_bcount = 0;
- 		ddq->d_icount = 0;
- 		ddq->d_rtbcount = 0;
-diff --git a/fs/xfs/xfs_qm.h b/fs/xfs/xfs_qm.h
-index 2b602df..a788b66 100644
+ 		/*
+ 		 * Reset type in case we are reusing group quota file for
+ 		 * project quotas or vice versa
 --- a/fs/xfs/xfs_qm.h
 +++ b/fs/xfs/xfs_qm.h
-@@ -103,8 +103,6 @@ xfs_dq_to_quota_inode(struct xfs_dquot *dqp)
+@@ -103,8 +103,6 @@ xfs_dq_to_quota_inode(struct xfs_dquot *
  	return NULL;
  }
  
@@ -708,11 +695,9 @@ index 2b602df..a788b66 100644
  extern void	xfs_trans_mod_dquot(struct xfs_trans *,
  					struct xfs_dquot *, uint, long);
  extern int	xfs_trans_reserve_quota_bydquots(struct xfs_trans *,
-diff --git a/fs/xfs/xfs_quota.h b/fs/xfs/xfs_quota.h
-index e7d84d2..b8ef6b8 100644
 --- a/fs/xfs/xfs_quota.h
 +++ b/fs/xfs/xfs_quota.h
-@@ -150,8 +150,6 @@ static inline int xfs_trans_reserve_quota_bydquots(struct xfs_trans *tp,
+@@ -150,8 +150,6 @@ static inline int xfs_trans_reserve_quot
  	xfs_trans_reserve_quota_bydquots(tp, mp, ud, gd, pd, nb, ni, \
  				f | XFS_QMOPT_RES_REGBLKS)
  
@@ -721,8 +706,6 @@ index e7d84d2..b8ef6b8 100644
  extern int xfs_mount_reset_sbqflags(struct xfs_mount *);
  
  extern const struct xfs_buf_ops xfs_dquot_buf_ops;
-diff --git a/fs/xfs/xfs_quota_defs.h b/fs/xfs/xfs_quota_defs.h
-index e6b0d6e..b3b2b10 100644
 --- a/fs/xfs/xfs_quota_defs.h
 +++ b/fs/xfs/xfs_quota_defs.h
 @@ -154,4 +154,8 @@ typedef __uint16_t	xfs_qwarncnt_t;
@@ -734,6 +717,3 @@ index e6b0d6e..b3b2b10 100644
 +extern int xfs_calc_dquots_per_chunk(struct xfs_mount *mp, unsigned int nbblks);
 +
  #endif	/* __XFS_QUOTA_H__ */
--- 
-1.6.0.2
-

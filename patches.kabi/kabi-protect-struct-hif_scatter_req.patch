@@ -1,0 +1,36 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct hif_scatter_req
+Patch-mainline: never, kabi
+
+In 3.12.39, commit 52235599ac1399ae8e7fe3ffa4d19ff9a1ca1652 (ath6kl:
+fix struct hif_scatter_req list handling), upstream commit
+31b9cc9a873dcab161999622314f98a75d838975 moved scat_list to the end of
+the structure and made it [0] from [1]. It indeed changed the layout
+of that structure.
+
+However the structure is internal only, so protect the change of the
+member the usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ drivers/net/wireless/ath/ath6kl/hif.h |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/wireless/ath/ath6kl/hif.h
++++ b/drivers/net/wireless/ath/ath6kl/hif.h
+@@ -196,10 +196,13 @@ struct hif_scatter_req {
+ 
+ 	/* bounce buffer for upper layers to copy to/from */
+ 	u8 *virt_dma_buf;
+-
++#ifdef __GENKSYMS__
++	struct hif_scatter_item scat_list[1];
++#endif
+ 	u32 scat_q_depth;
+-
++#ifndef __GENKSYMS__
+ 	struct hif_scatter_item scat_list[0];
++#endif
+ };
+ 
+ struct ath6kl_irq_proc_registers {
