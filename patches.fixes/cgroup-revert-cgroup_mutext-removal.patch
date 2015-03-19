@@ -79,11 +79,14 @@ This patch adds the missing lock back. Thanks to Cray developers for their
 analysis and Li Zefan (from Huawei) to point out the cgroup_diput path which I
 haven't noticed.
 
+We do not want to take cgroup_mutex around deactivate_super(sb) though because
+that could lead to a deadlock if we are racing with unmount.
+
 Signed-off-by: Michal Hocko <mhocko@suse.cz>
 
 ---
- kernel/cgroup.c |    4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
+ kernel/cgroup.c |    2 ++
+ 1 file changed, 2 insertions(+)
 
 --- a/kernel/cgroup.c
 +++ b/kernel/cgroup.c
@@ -98,14 +101,3 @@ Signed-off-by: Michal Hocko <mhocko@suse.cz>
  
  		call_rcu(&cgrp->rcu_head, cgroup_free_rcu);
  	} else {
-@@ -4557,9 +4559,9 @@ err_free_all:
- 	}
- 	idr_remove(&root->cgroup_idr, cgrp->id);
- err_unlock:
--	mutex_unlock(&cgroup_mutex);
- 	/* Release the reference count that we took on the superblock */
- 	deactivate_super(sb);
-+	mutex_unlock(&cgroup_mutex);
- err_free_name:
- 	kfree(rcu_dereference_raw(cgrp->name));
- err_free_cgrp:
