@@ -1,22 +1,24 @@
 From: "K. Y. Srinivasan" <kys@microsoft.com>
-Date: Mon, 9 Mar 2015 20:45:06 -0700
+Date: Mon, 23 Mar 2015 14:06:41 -0700
 Subject: scsi: storvsc: Set the tablesize based on the information given by the host
 Patch-mainline: submitted
 
-Set the tablesize based on what the host has informed us.
+Set the tablesize based on the information given by the host.
 
 Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
 Reviewed-by: Long Li <longli@microsoft.com>
 Acked-by: <ohering@suse.de>
 ---
- drivers/scsi/storvsc_drv.c | 70 ++++++++++++++++++++++++++++++++++++----------
- 1 file changed, 55 insertions(+), 15 deletions(-)
+	v2: Rebase the code and enable clustering
+
+ drivers/scsi/storvsc_drv.c |   89 ++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 64 insertions(+), 25 deletions(-)
 
 diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
-index 132b3ac..7bbe4e7 100644
+index a599677..71871f2 100644
 --- a/drivers/scsi/storvsc_drv.c
 +++ b/drivers/scsi/storvsc_drv.c
-@@ -351,7 +351,10 @@ struct storvsc_cmd_request {
+@@ -362,7 +362,10 @@ struct storvsc_cmd_request {
  	struct completion wait_event;
  
  	unsigned char *sense_buffer;
@@ -28,7 +30,7 @@ index 132b3ac..7bbe4e7 100644
  	struct vstor_packet vstor_packet;
  };
  
-@@ -1119,15 +1122,19 @@ static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
+@@ -1150,7 +1153,7 @@ static void storvsc_command_completion(s
  					 sense_hdr.ascq);
  
  	scsi_set_resid(scmnd,
@@ -37,19 +39,18 @@ index 132b3ac..7bbe4e7 100644
  		vm_srb->data_transfer_length);
  
  	scsi_done_fn = scmnd->scsi_done;
-
-	scmnd->host_scribble = NULL;
-	scmnd->scsi_done = NULL;
-
-	scsi_done_fn(scmnd);
-+
+@@ -1160,6 +1163,10 @@ static void storvsc_command_completion(s
+ 
+ 	scsi_done_fn(scmnd);
+ 
 +	if (cmd_request->payload_sz >
 +		sizeof(struct vmbus_channel_packet_multipage_buffer))
 +		kfree(cmd_request->payload);
- 
++
  	mempool_free(cmd_request, memp->request_mempool);
  }
-@@ -1324,7 +1331,7 @@ static int storvsc_dev_remove(struct hv_device *device)
+ 
+@@ -1362,7 +1369,7 @@ static int storvsc_dev_remove(struct hv_
  }
  
  static int storvsc_do_io(struct hv_device *device,
@@ -58,7 +59,7 @@ index 132b3ac..7bbe4e7 100644
  {
  	struct storvsc_device *stor_device;
  	struct vstor_packet *vstor_packet;
-@@ -1356,13 +1363,14 @@ static int storvsc_do_io(struct hv_device *device,
+@@ -1394,13 +1401,14 @@ static int storvsc_do_io(struct hv_devic
  
  
  	vstor_packet->vm_srb.data_transfer_length =
@@ -77,10 +78,10 @@ index 132b3ac..7bbe4e7 100644
  				vstor_packet,
  				(sizeof(struct vstor_packet) -
  				vmscsi_size_delta),
-@@ -1535,6 +1543,10 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
- 	unsigned int sg_count = 0;
+@@ -1625,6 +1633,10 @@ static int storvsc_queuecommand(struct S
  	struct vmscsi_request *vm_srb;
  	struct stor_mem_pools *memp = scmnd->device->hostdata;
+ 	struct scatterlist *cur_sgl;
 +	struct vmbus_packet_mpb_array  *payload;
 +	u32 payload_sz;
 +	u32 pfn_cnt;
@@ -88,20 +89,47 @@ index 132b3ac..7bbe4e7 100644
  
  	if (vmstor_current_major <= VMSTOR_WIN8_MAJOR) {
  		/*
-@@ -1588,7 +1600,11 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
+@@ -1697,16 +1709,19 @@ static int storvsc_queuecommand(struct S
  	cmd_request->sense_buffer = scmnd->sense_buffer;
  
  
 -	cmd_request->data_buffer.len = scsi_bufflen(scmnd);
+-	if (scsi_sg_count(scmnd)) {
+-		sgl = (struct scatterlist *)scsi_sglist(scmnd);
+-		sg_count = scsi_sg_count(scmnd);
 +	sgl = (struct scatterlist *)scsi_sglist(scmnd);
++	sg_count = scsi_sg_count(scmnd);
+ 
 +	length = scsi_bufflen(scmnd);
 +	payload = (struct vmbus_packet_mpb_array *)&cmd_request->mpb;
 +	payload_sz = sizeof(cmd_request->mpb);
 +
- 	if (scsi_sg_count(scmnd)) {
- 		sgl = (struct scatterlist *)scsi_sglist(scmnd);
- 		sg_count = scsi_sg_count(scmnd);
-@@ -1615,19 +1631,40 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
++	if (sg_count) {
+ 		/* check if we need to bounce the sgl */
+ 		if (do_bounce_buffer(sgl, scsi_sg_count(scmnd)) != -1) {
+ 			cmd_request->bounce_sgl =
+-				create_bounce_buffer(sgl, scsi_sg_count(scmnd),
+-						     scsi_bufflen(scmnd),
++				create_bounce_buffer(sgl, sg_count,
++						     length,
+ 						     vm_srb->data_in);
+ 			if (!cmd_request->bounce_sgl) {
+ 				ret = SCSI_MLQUEUE_HOST_BUSY;
+@@ -1714,33 +1729,54 @@ static int storvsc_queuecommand(struct S
+ 			}
+ 
+ 			cmd_request->bounce_sgl_count =
+-				ALIGN(scsi_bufflen(scmnd), PAGE_SIZE) >>
+-					PAGE_SHIFT;
++				ALIGN(length, PAGE_SIZE) >> PAGE_SHIFT;
+ 
+ 			if (vm_srb->data_in == WRITE_TYPE)
+ 				copy_to_bounce_buffer(sgl,
+-					cmd_request->bounce_sgl,
+-					scsi_sg_count(scmnd));
++					cmd_request->bounce_sgl, sg_count);
+ 
+ 			sgl = cmd_request->bounce_sgl;
  			sg_count = cmd_request->bounce_sgl_count;
  		}
  
@@ -112,24 +140,27 @@ index 132b3ac..7bbe4e7 100644
 +
 +			payload_sz = (pfn_cnt * sizeof(void *) +
 +				      sizeof(struct vmbus_packet_mpb_array));
-+			payload = kzalloc(payload_sz, GFP_ATOMIC);
++			payload = kmalloc(payload_sz, GFP_ATOMIC);
 +			if (!payload) {
 +				if (cmd_request->bounce_sgl_count)
 +					destroy_bounce_buffer(
 +					cmd_request->bounce_sgl,
 +					cmd_request->bounce_sgl_count);
 +
-+				return SCSI_MLQUEUE_DEVICE_BUSY;
++					return SCSI_MLQUEUE_DEVICE_BUSY;
 +			}
 +		}
 +
 +		payload->range.len = length;
 +		payload->range.offset = sgl[0].offset;
- 
- 		for (i = 0; i < sg_count; i++)
++
+ 		cur_sgl = sgl;
+ 		for (i = 0; i < sg_count; i++) {
 -			cmd_request->data_buffer.pfn_array[i] =
 +			payload->range.pfn_array[i] =
- 				page_to_pfn(sg_page((&sgl[i])));
+ 				page_to_pfn(sg_page((cur_sgl)));
+ 			cur_sgl = sg_next(cur_sgl);
+ 		}
  
  	} else if (scsi_sglist(scmnd)) {
 -		cmd_request->data_buffer.offset =
@@ -143,20 +174,23 @@ index 132b3ac..7bbe4e7 100644
  
 +	cmd_request->payload = payload;
 +	cmd_request->payload_sz = payload_sz;
++
  	/* Invokes the vsc to start an IO */
  	ret = storvsc_do_io(dev, cmd_request);
  
-@@ -1656,9 +1693,6 @@ static struct scsi_host_template scsi_driver = {
+@@ -1775,10 +1811,7 @@ static struct scsi_host_template scsi_dr
  	.slave_configure =	storvsc_device_configure,
  	.cmd_per_lun =		255,
  	.this_id =		-1,
 -	/* no use setting to 0 since ll_blk_rw reset it to 1 */
 -	/* currently 32 */
 -	.sg_tablesize =		MAX_MULTIPAGE_BUFFER_COUNT,
- 	.use_clustering =	DISABLE_CLUSTERING,
+-	.use_clustering =	DISABLE_CLUSTERING,
++	.use_clustering =	ENABLE_CLUSTERING,
  	/* Make sure we dont get a sg segment crosses a page boundary */
  	.dma_boundary =		PAGE_SIZE-1,
-@@ -1796,6 +1830,12 @@ static int storvsc_probe(struct hv_device *device,
+ 	.no_write_same =	1,
+@@ -1915,6 +1948,12 @@ static int storvsc_probe(struct hv_devic
  	/* max cmd length */
  	host->max_cmd_len = STORVSC_MAX_CMD_LEN;
  
