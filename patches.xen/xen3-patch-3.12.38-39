@@ -1,0 +1,83 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: Linux 3.12.39
+Patch-mainline: 3.12.39
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Automatically created from "patches.kernel.org/patch-3.12.38-39" by xen-port-patches.py
+
+--- sle12.orig/arch/x86/kernel/entry_64-xen.S	2014-11-27 16:33:02.000000000 +0100
++++ sle12/arch/x86/kernel/entry_64-xen.S	2015-03-24 10:52:23.000000000 +0100
+@@ -577,11 +577,14 @@ ENTRY(ret_from_fork)
+ 	testl $3, CS-ARGOFFSET(%rsp)		# from kernel_thread?
+ 	jz   1f
+ 
+-	testl $_TIF_IA32, TI_flags(%rcx)	# 32-bit compat task needs IRET
+-	jnz  int_ret_from_sys_call
+-
+-	RESTORE_TOP_OF_STACK %rdi, -ARGOFFSET
+-	jmp ret_from_sys_call			# go to the SYSRET fastpath
++	/*
++	 * By the time we get here, we have no idea whether our pt_regs,
++	 * ti flags, and ti status came from the 64-bit SYSCALL fast path,
++	 * the slow path, or one of the ia32entry paths.
++	 * Use int_ret_from_sys_call to return, since it can safely handle
++	 * all of the above.
++	 */
++	jmp  int_ret_from_sys_call
+ 
+ 1:
+ 	/* Need to set the proper %ss (not NULL) for ring 3 iretq */
+--- sle12.orig/arch/x86/mm/fault-xen.c	2014-03-31 14:01:42.000000000 +0200
++++ sle12/arch/x86/mm/fault-xen.c	2015-03-24 10:52:23.000000000 +0100
+@@ -821,11 +821,8 @@ do_sigbus(struct pt_regs *regs, unsigned
+ 	  unsigned int fault)
+ {
+ 	struct task_struct *tsk = current;
+-	struct mm_struct *mm = tsk->mm;
+ 	int code = BUS_ADRERR;
+ 
+-	up_read(&mm->mmap_sem);
+-
+ 	/* Kernel mode? Handle exceptions or die: */
+ 	if (!(error_code & PF_USER)) {
+ 		no_context(regs, error_code, address, SIGBUS, BUS_ADRERR);
+@@ -856,7 +853,6 @@ mm_fault_error(struct pt_regs *regs, uns
+ 	       unsigned long address, unsigned int fault)
+ {
+ 	if (fatal_signal_pending(current) && !(error_code & PF_USER)) {
+-		up_read(&current->mm->mmap_sem);
+ 		no_context(regs, error_code, address, 0, 0);
+ 		return;
+ 	}
+@@ -864,14 +860,11 @@ mm_fault_error(struct pt_regs *regs, uns
+ 	if (fault & VM_FAULT_OOM) {
+ 		/* Kernel mode? Handle exceptions or die: */
+ 		if (!(error_code & PF_USER)) {
+-			up_read(&current->mm->mmap_sem);
+ 			no_context(regs, error_code, address,
+ 				   SIGSEGV, SEGV_MAPERR);
+ 			return;
+ 		}
+ 
+-		up_read(&current->mm->mmap_sem);
+-
+ 		/*
+ 		 * We ran out of memory, call the OOM killer, and return the
+ 		 * userspace (which will retry the fault, or kill us if we got
+@@ -882,6 +875,8 @@ mm_fault_error(struct pt_regs *regs, uns
+ 		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON|
+ 			     VM_FAULT_HWPOISON_LARGE))
+ 			do_sigbus(regs, error_code, address, fault);
++		else if (fault & VM_FAULT_SIGSEGV)
++			bad_area_nosemaphore(regs, error_code, address);
+ 		else
+ 			BUG();
+ 	}
+@@ -1219,6 +1214,7 @@ good_area:
+ 		return;
+ 
+ 	if (unlikely(fault & VM_FAULT_ERROR)) {
++		up_read(&mm->mmap_sem);
+ 		mm_fault_error(regs, error_code, address, fault);
+ 		return;
+ 	}
