@@ -1,0 +1,126 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: s390/sclp: Consolidate early sclp init calls to sclp_early_detect()
+Patch-mainline: v3.13-rc1
+Git-commit: 7b50da53f6ad2048241bef232bfc22a132a40283
+References: bnc#917125, LTC#122429
+
+Description:  s390/sclp: Determine HSA size dynamically for zfcpdump
+Symptom:      For future s390 machines that potentially use more than
+              the current 32 MiB HSA for zfcpdump, the memory in kernel
+              dumps in the range [32 MiB, HSA size] will contain invalid data.
+Problem:      Currently the first 32 MiB (hardcoded) are copied from HSA and
+              everything above is copied from real memory (which
+              potentially will be overwritten by the firmware).
+Solution:     Determine current HSA size dynamically via SCLP in "early.c"
+              and copy everything that is contained in HSA.
+              To be prepared for upcoming sclp commits, also pull various
+              upstream commits to have a solid base for future sclp related
+              backports.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/sclp: Consolidate early sclp init calls to sclp_early_detect()
+
+              The new function calls the old ones. The sclp_event_mask_early() is removed
+              and replaced by one invocation of sclp_set_event_mask(0, 0).
+
+              Reviewed-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/sclp.h   |    3 +--
+ arch/s390/kernel/early.c       |    3 +--
+ drivers/s390/char/sclp_early.c |   27 +++++++++------------------
+ 3 files changed, 11 insertions(+), 22 deletions(-)
+
+--- a/arch/s390/include/asm/sclp.h
++++ b/arch/s390/include/asm/sclp.h
+@@ -44,7 +44,6 @@ struct sclp_cpu_info {
+ int sclp_get_cpu_info(struct sclp_cpu_info *info);
+ int sclp_cpu_configure(u8 cpu);
+ int sclp_cpu_deconfigure(u8 cpu);
+-void sclp_facilities_detect(void);
+ unsigned long long sclp_get_rnmax(void);
+ unsigned long long sclp_get_rzm(void);
+ int sclp_sdias_blk_count(void);
+@@ -58,7 +57,7 @@ bool sclp_has_vt220(void);
+ int sclp_pci_configure(u32 fid);
+ int sclp_pci_deconfigure(u32 fid);
+ int memcpy_hsa(void *dest, unsigned long src, size_t count, int mode);
+-void sclp_hsa_size_detect(void);
+ unsigned long sclp_get_hsa_size(void);
++void sclp_early_detect(void);
+ 
+ #endif /* _ASM_S390_SCLP_H */
+--- a/arch/s390/kernel/early.c
++++ b/arch/s390/kernel/early.c
+@@ -478,7 +478,6 @@ void __init startup_init(void)
+ 	detect_diag44();
+ 	detect_machine_facilities();
+ 	setup_topology();
+-	sclp_facilities_detect();
+-	sclp_hsa_size_detect();
++	sclp_early_detect();
+ 	lockdep_on();
+ }
+--- a/drivers/s390/char/sclp_early.c
++++ b/drivers/s390/char/sclp_early.c
+@@ -93,20 +93,7 @@ static void __init sclp_read_info_early(
+ 	}
+ }
+ 
+-static void __init sclp_event_mask_early(void)
+-{
+-	struct init_sccb *sccb = &early_event_mask_sccb;
+-	int rc;
+-
+-	do {
+-		memset(sccb, 0, sizeof(*sccb));
+-		sccb->header.length = sizeof(*sccb);
+-		sccb->mask_length = sizeof(sccb_mask_t);
+-		rc = sclp_cmd_sync_early(SCLP_CMDW_WRITE_EVENT_MASK, sccb);
+-	} while (rc == -EBUSY);
+-}
+-
+-void __init sclp_facilities_detect(void)
++static void __init sclp_facilities_detect(void)
+ {
+ 	struct read_info_sccb *sccb;
+ 
+@@ -122,8 +109,6 @@ void __init sclp_facilities_detect(void)
+ 	sclp_rnmax = sccb->rnmax ? sccb->rnmax : sccb->rnmax2;
+ 	sclp_rzm = sccb->rnsize ? sccb->rnsize : sccb->rnsize2;
+ 	sclp_rzm <<= 20;
+-
+-	sclp_event_mask_early();
+ }
+ 
+ bool __init sclp_has_linemode(void)
+@@ -246,7 +231,7 @@ unsigned long sclp_get_hsa_size(void)
+ 	return sclp_hsa_size;
+ }
+ 
+-void __init sclp_hsa_size_detect(void)
++static void __init sclp_hsa_size_detect(void)
+ {
+ 	long size;
+ 
+@@ -268,6 +253,12 @@ void __init sclp_hsa_size_detect(void)
+ 	if (size < 0)
+ 		return;
+ out:
+-	sclp_set_event_mask(0, 0);
+ 	sclp_hsa_size = size;
+ }
++
++void __init sclp_early_detect(void)
++{
++	sclp_facilities_detect();
++	sclp_hsa_size_detect();
++	sclp_set_event_mask(0, 0);
++}
