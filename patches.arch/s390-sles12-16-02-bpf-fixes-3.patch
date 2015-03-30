@@ -1,0 +1,62 @@
+Subject: s390/bpf: Fix JMP_JGE_K (A >= K) and JMP_JGT_K (A > K)
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Patch-mainline: v3.19-rc6
+Git-commit: 5a80244246d503df688341a10e1d244d15bb8ce5
+References: bnc#917125,LTC#121759
+
+Description:  s390/bpf: Fix several corner cases
+Symptom:      In rare cases BPF filters may return wrong results or you
+              even can get a kernel panic.
+Problem:      The s390x BPF JIT code generation has several bugs.
+Solution:     Fix the following bugs:
+              - Zero extend parameters before calling C function
+              - Fix sk_load_byte_msh()
+              - Fix offset parameter for skb_copy_bits()
+              - Fix skb_copy_bits() parameter passing
+              - Fix JMP_JGE_K (A >= K) and JMP_JGT_K (A > K)
+              - Fix JMP_JGE_X (A > X) and JMP_JGT_X (A >= X)
+              - Fix ALU_NEG (A = -A)
+Reproduction: Use tcpdump and generate network traffic to trigger
+              the corner cases.
+
+Upstream-Description:
+
+              s390/bpf: Fix JMP_JGE_K (A >= K) and JMP_JGT_K (A > K)
+
+              Currently the signed COMPARE HALFWORD IMMEDIATE (chi) and COMPARE (c)
+              instructions are used to compare "A" with "K". This is not correct
+              because "A" and "K" are both unsigned. To fix this remove the
+              chi instruction (no unsigned analogon available) and use the
+              unsigned COMPARE LOGICAL (cl) instruction instead of COMPARE (c).
+
+              Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/net/bpf_jit_comp.c |    9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+--- a/arch/s390/net/bpf_jit_comp.c
++++ b/arch/s390/net/bpf_jit_comp.c
+@@ -482,15 +482,12 @@ static int bpf_jit_insn(struct bpf_jit *
+ 		mask = 0x800000; /* je */
+ kbranch:	/* Emit compare if the branch targets are different */
+ 		if (filter->jt != filter->jf) {
+-			if (K <= 16383)
+-				/* chi %r5,<K> */
+-				EMIT4_IMM(0xa75e0000, K);
+-			else if (test_facility(21))
++			if (test_facility(21))
+ 				/* clfi %r5,<K> */
+ 				EMIT6_IMM(0xc25f0000, K);
+ 			else
+-				/* c %r5,<d(K)>(%r13) */
+-				EMIT4_DISP(0x5950d000, EMIT_CONST(K));
++				/* cl %r5,<d(K)>(%r13) */
++				EMIT4_DISP(0x5550d000, EMIT_CONST(K));
+ 		}
+ branch:		if (filter->jt == filter->jf) {
+ 			if (filter->jt == 0)
