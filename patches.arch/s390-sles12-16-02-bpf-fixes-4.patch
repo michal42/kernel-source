@@ -1,0 +1,95 @@
+Subject: s390/bpf: Fix skb_copy_bits() parameter passing
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Patch-mainline: v3.19-rc6
+Git-commit: db9aa8f432b83b270686e68172c6d2895babdc26
+References: bnc#917125,LTC#121759
+
+Description:  s390/bpf: Fix several corner cases
+Symptom:      In rare cases BPF filters may return wrong results or you
+              even can get a kernel panic.
+Problem:      The s390x BPF JIT code generation has several bugs.
+Solution:     Fix the following bugs:
+              - Zero extend parameters before calling C function
+              - Fix sk_load_byte_msh()
+              - Fix offset parameter for skb_copy_bits()
+              - Fix skb_copy_bits() parameter passing
+              - Fix JMP_JGE_K (A >= K) and JMP_JGT_K (A > K)
+              - Fix JMP_JGE_X (A > X) and JMP_JGT_X (A >= X)
+              - Fix ALU_NEG (A = -A)
+Reproduction: Use tcpdump and generate network traffic to trigger
+              the corner cases.
+
+Upstream-Description:
+
+              s390/bpf: Fix skb_copy_bits() parameter passing
+
+              The skb_copy_bits() function has the following signature:
+              int skb_copy_bits(const struct sk_buff *skb, int offset, void *to, int len)
+
+              Currently in bpf_jit.S the "to" and "len" parameters have been
+              exchanged. So fix this and call the function with the correct
+              parameters.
+
+              Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+--- a/arch/s390/net/bpf_jit.S
++++ b/arch/s390/net/bpf_jit.S
+@@ -22,8 +22,8 @@
+  * skb_copy_bits takes 4 parameters:
+  *   %r2 = skb pointer
+  *   %r3 = offset into skb data
+- *   %r4 = length to copy
+- *   %r5 = pointer to temp buffer
++ *   %r4 = pointer to temp buffer
++ *   %r5 = length to copy
+  */
+ #define SKBDATA	%r8
+ 
+@@ -44,8 +44,8 @@ ENTRY(sk_load_word)
+ 
+ sk_load_word_slow:
+ 	lgr	%r9,%r2			# save %r2
+-	lhi	%r4,4			# 4 bytes
+-	la	%r5,160(%r15)		# pointer to temp buffer
++	la	%r4,160(%r15)		# pointer to temp buffer
++	lhi	%r5,4			# 4 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	l	%r5,160(%r15)		# load result from temp buffer
+ 	ltgr	%r2,%r2			# set cc to (%r2 != 0)
+@@ -69,8 +69,8 @@ ENTRY(sk_load_half)
+ 
+ sk_load_half_slow:
+ 	lgr	%r9,%r2			# save %r2
+-	lhi	%r4,2			# 2 bytes
+-	la	%r5,162(%r15)		# pointer to temp buffer
++	la	%r4,162(%r15)		# pointer to temp buffer
++	lhi	%r5,2			# 2 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(2,%r15),160(%r15)
+ 	l	%r5,160(%r15)		# load result from temp buffer
+@@ -95,8 +95,8 @@ ENTRY(sk_load_byte)
+ 
+ sk_load_byte_slow:
+ 	lgr	%r9,%r2			# save %r2
+-	lhi	%r4,1			# 1 bytes
+-	la	%r5,163(%r15)		# pointer to temp buffer
++	la	%r4,163(%r15)		# pointer to temp buffer
++	lhi	%r5,1			# 1 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(3,%r15),160(%r15)
+ 	l	%r5,160(%r15)		# load result from temp buffer
+@@ -118,8 +118,8 @@ ENTRY(sk_load_byte_msh)
+ 
+ sk_load_byte_msh_slow:
+ 	lgr	%r9,%r2			# save %r2
+-	lhi	%r4,2			# 2 bytes
+-	la	%r5,162(%r15)		# pointer to temp buffer
++	la	%r4,162(%r15)		# pointer to temp buffer
++	lhi	%r5,2			# 2 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(3,%r15),160(%r15)
+ 	l	%r12,160(%r15)		# load result from temp buffer
