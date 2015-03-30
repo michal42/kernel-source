@@ -1,0 +1,155 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: s390/sclp_early: Get rid of sclp_early_read_info_sccb_valid
+Patch-mainline: v3.14-rc1
+Git-commit: 333cce91f384409fb6a3e656dc11e21e872c5ea2
+References: bnc#917125, LTC#122429
+
+Description:  s390/sclp: Determine HSA size dynamically for zfcpdump
+Symptom:      For future s390 machines that potentially use more than
+              the current 32 MiB HSA for zfcpdump, the memory in kernel
+              dumps in the range [32 MiB, HSA size] will contain invalid data.
+Problem:      Currently the first 32 MiB (hardcoded) are copied from HSA and
+              everything above is copied from real memory (which
+              potentially will be overwritten by the firmware).
+Solution:     Determine current HSA size dynamically via SCLP in "early.c"
+              and copy everything that is contained in HSA.
+              To be prepared for upcoming sclp commits, also pull various
+              upstream commits to have a solid base for future sclp related
+              backports.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/sclp_early: Get rid of sclp_early_read_info_sccb_valid
+
+              The early sclp detect functions gather the available SCLP facility
+              information. The sclp_early_read_info_sccb_valid indicates whether the
+              early sclp request was valid.  However, one external reference to it
+              checks for particular sclp facility bits and this should be sufficient.
+              Another occurance is in the sclp_get_ipl_info() function that is called
+              later.  Because all information are available at the early stage, save
+              the ipl information when detecting the sclp facilities.  Hence, no more
+              checks for sclp_early_read_info_sccb_valid are required.
+
+              Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+              Reviewed-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Reviewed-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/char/sclp.h       |    1 -
+ drivers/s390/char/sclp_cmd.c   |    2 --
+ drivers/s390/char/sclp_early.c |   36 ++++++++++++++++--------------------
+ 3 files changed, 16 insertions(+), 23 deletions(-)
+
+--- a/drivers/s390/char/sclp.h
++++ b/drivers/s390/char/sclp.h
+@@ -183,7 +183,6 @@ extern unsigned long sclp_console_full;
+ extern u8 sclp_fac84;
+ extern unsigned long long sclp_rzm;
+ extern unsigned long long sclp_rnmax;
+-extern __initdata int sclp_early_read_info_sccb_valid;
+ 
+ /* useful inlines */
+ 
+--- a/drivers/s390/char/sclp_cmd.c
++++ b/drivers/s390/char/sclp_cmd.c
+@@ -455,8 +455,6 @@ static int __init sclp_detect_standby_me
+ 
+ 	if (OLDMEM_BASE) /* No standby memory in kdump mode */
+ 		return 0;
+-	if (!sclp_early_read_info_sccb_valid)
+-		return 0;
+ 	if ((sclp_facilities & 0xe00000000000ULL) != 0xe00000000000ULL)
+ 		return 0;
+ 	rc = -ENOMEM;
+--- a/drivers/s390/char/sclp_early.c
++++ b/drivers/s390/char/sclp_early.c
+@@ -38,8 +38,8 @@ struct read_info_sccb {
+ static __initdata struct read_info_sccb early_read_info_sccb;
+ static __initdata char sccb_early[PAGE_SIZE] __aligned(PAGE_SIZE);
+ static unsigned long sclp_hsa_size;
++static struct sclp_ipl_info sclp_ipl_info;
+ 
+-__initdata int sclp_early_read_info_sccb_valid;
+ u64 sclp_facilities;
+ u8 sclp_fac84;
+ unsigned long long sclp_rzm;
+@@ -63,10 +63,9 @@ out:
+ 	return rc;
+ }
+ 
+-static void __init sclp_read_info_early(void)
++static int __init sclp_read_info_early(void)
+ {
+-	int rc;
+-	int i;
++	int rc, i;
+ 	struct read_info_sccb *sccb;
+ 	sclp_cmdw_t commands[] = {SCLP_CMDW_READ_SCP_INFO_FORCED,
+ 				  SCLP_CMDW_READ_SCP_INFO};
+@@ -83,21 +82,19 @@ static void __init sclp_read_info_early(
+ 
+ 		if (rc)
+ 			break;
+-		if (sccb->header.response_code == 0x10) {
+-			sclp_early_read_info_sccb_valid = 1;
+-			break;
+-		}
++		if (sccb->header.response_code == 0x10)
++			return 0;
+ 		if (sccb->header.response_code != 0x1f0)
+ 			break;
+ 	}
++	return -EIO;
+ }
+ 
+ static void __init sclp_facilities_detect(void)
+ {
+ 	struct read_info_sccb *sccb;
+ 
+-	sclp_read_info_early();
+-	if (!sclp_early_read_info_sccb_valid)
++	if (sclp_read_info_early())
+ 		return;
+ 
+ 	sccb = &early_read_info_sccb;
+@@ -108,6 +105,12 @@ static void __init sclp_facilities_detec
+ 	sclp_rnmax = sccb->rnmax ? sccb->rnmax : sccb->rnmax2;
+ 	sclp_rzm = sccb->rnsize ? sccb->rnsize : sccb->rnsize2;
+ 	sclp_rzm <<= 20;
++
++	/* Save IPL information */
++	sclp_ipl_info.is_valid = 1;
++	if (sccb->flags & 0x2)
++		sclp_ipl_info.has_dump = 1;
++	memcpy(&sclp_ipl_info.loadparm, &sccb->loadparm, LOADPARM_LEN);
+ }
+ 
+ bool __init sclp_has_linemode(void)
+@@ -146,19 +149,12 @@ unsigned long long sclp_get_rzm(void)
+ 
+ /*
+  * This function will be called after sclp_facilities_detect(), which gets
+- * called from early.c code. Therefore the sccb should have valid contents.
++ * called from early.c code. The sclp_facilities_detect() function retrieves
++ * and saves the IPL information.
+  */
+ void __init sclp_get_ipl_info(struct sclp_ipl_info *info)
+ {
+-	struct read_info_sccb *sccb;
+-
+-	if (!sclp_early_read_info_sccb_valid)
+-		return;
+-	sccb = &early_read_info_sccb;
+-	info->is_valid = 1;
+-	if (sccb->flags & 0x2)
+-		info->has_dump = 1;
+-	memcpy(&info->loadparm, &sccb->loadparm, LOADPARM_LEN);
++	*info = sclp_ipl_info;
+ }
+ 
+ static int __init sclp_cmd_early(sclp_cmdw_t cmd, void *sccb)
