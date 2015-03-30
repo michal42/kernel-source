@@ -1,0 +1,67 @@
+Subject: s390/bpf: Fix sk_load_byte_msh()
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Patch-mainline: v3.19-rc6
+Git-commit: 1a92b2deaf5c1b71f995ef571076200a391aac66
+References: bnc#917125,LTC#121759
+
+Description:  s390/bpf: Fix several corner cases
+Symptom:      In rare cases BPF filters may return wrong results or you
+              even can get a kernel panic.
+Problem:      The s390x BPF JIT code generation has several bugs.
+Solution:     Fix the following bugs:
+              - Zero extend parameters before calling C function
+              - Fix sk_load_byte_msh()
+              - Fix offset parameter for skb_copy_bits()
+              - Fix skb_copy_bits() parameter passing
+              - Fix JMP_JGE_K (A >= K) and JMP_JGT_K (A > K)
+              - Fix JMP_JGE_X (A > X) and JMP_JGT_X (A >= X)
+              - Fix ALU_NEG (A = -A)
+Reproduction: Use tcpdump and generate network traffic to trigger
+              the corner cases.
+
+Upstream-Description:
+
+              s390/bpf: Fix sk_load_byte_msh()
+
+              In sk_load_byte_msh() sk_load_byte_slow() is called instead of
+              sk_load_byte_msh_slow(). Fix this and call the correct function.
+
+              Besides of this load only one byte instead of two and fix the comment.
+
+              Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/net/bpf_jit.S |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+--- a/arch/s390/net/bpf_jit.S
++++ b/arch/s390/net/bpf_jit.S
+@@ -106,11 +106,11 @@ sk_load_byte_slow:
+ 	lgr	%r2,%r9			# restore %r2
+ 	br	%r8
+ 
+-	/* A = (*(u8 *)(skb->data+K) & 0xf) << 2 */
++	/* X = (*(u8 *)(skb->data+K) & 0xf) << 2 */
+ ENTRY(sk_load_byte_msh)
+ 	llgfr	%r1,%r3			# extend offset
+ 	clr	%r11,%r3		# hlen < offset ?
+-	jle	sk_load_byte_slow
++	jle	sk_load_byte_msh_slow
+ 	lhi	%r12,0
+ 	ic	%r12,0(%r1,%r10)	# get byte from skb
+ 	nill	%r12,0x0f
+@@ -120,8 +120,8 @@ ENTRY(sk_load_byte_msh)
+ 
+ sk_load_byte_msh_slow:
+ 	lgr	%r9,%r2			# save %r2
+-	la	%r4,162(%r15)		# pointer to temp buffer
+-	lhi	%r5,2			# 2 bytes
++	la	%r4,163(%r15)		# pointer to temp buffer
++	lhi	%r5,1			# 1 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(3,%r15),160(%r15)
+ 	l	%r12,160(%r15)		# load result from temp buffer
