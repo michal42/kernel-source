@@ -1,0 +1,63 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: s390/sclp_early: Return correct HSA block count also for zero
+Patch-mainline: v3.15-rc1
+Git-commit: 9499934f70deac0cdb96aa2d90f2a0a2de69d80c
+References: bnc#917125, LTC#122429
+
+Description:  s390/sclp: Determine HSA size dynamically for zfcpdump
+Symptom:      For future s390 machines that potentially use more than
+              the current 32 MiB HSA for zfcpdump, the memory in kernel
+              dumps in the range [32 MiB, HSA size] will contain invalid data.
+Problem:      Currently the first 32 MiB (hardcoded) are copied from HSA and
+              everything above is copied from real memory (which
+              potentially will be overwritten by the firmware).
+Solution:     Determine current HSA size dynamically via SCLP in "early.c"
+              and copy everything that is contained in HSA.
+              To be prepared for upcoming sclp commits, also pull various
+              upstream commits to have a solid base for future sclp related
+              backports.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/sclp_early: Return correct HSA block count also for zero
+
+              Currently we return a negative block count if SCLP returns HSA block
+              count zero. The reason is that we subtract one for the header page.
+
+              So fix this and correctly return zero block count if SCLP returns zero.
+
+              Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/char/sclp_early.c |    8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+--- a/drivers/s390/char/sclp_early.c
++++ b/drivers/s390/char/sclp_early.c
+@@ -184,9 +184,9 @@ static long __init sclp_hsa_size_init(st
+ 	sccb_init_eq_size(sccb);
+ 	if (sclp_cmd_early(SCLP_CMDW_WRITE_EVENT_DATA, sccb))
+ 		return -EIO;
+-	if (sccb->evbuf.blk_cnt != 0)
+-		return (sccb->evbuf.blk_cnt - 1) * PAGE_SIZE;
+-	return 0;
++	if (sccb->evbuf.blk_cnt == 0)
++		return 0;
++	return (sccb->evbuf.blk_cnt - 1) * PAGE_SIZE;
+ }
+ 
+ static long __init sclp_hsa_copy_wait(struct sccb_header *sccb)
+@@ -195,6 +195,8 @@ static long __init sclp_hsa_copy_wait(st
+ 	sccb->length = PAGE_SIZE;
+ 	if (sclp_cmd_early(SCLP_CMDW_READ_EVENT_DATA, sccb))
+ 		return -EIO;
++	if (((struct sdias_sccb *) sccb)->evbuf.blk_cnt == 0)
++		return 0;
+ 	return (((struct sdias_sccb *) sccb)->evbuf.blk_cnt - 1) * PAGE_SIZE;
+ }
+ 
