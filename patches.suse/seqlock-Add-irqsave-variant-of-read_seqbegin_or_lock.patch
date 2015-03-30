@@ -1,0 +1,63 @@
+From 2a632ac36874f291375c27dee06afeb25a8717d2 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 12 Sep 2014 09:12:14 -0400
+Subject: [PATCH] seqlock: Add irqsave variant of read_seqbegin_or_lock()
+
+References: Time scalability
+Patch-mainline: v3.18
+Git-commit: ef8ac06359ddf95431cf6bb04ad2b36fff562328
+
+There are cases where read_seqbegin_or_lock() needs to block irqs,
+because the seqlock in question nests inside a lock that is also
+be taken from irq context.
+
+Add read_seqbegin_or_lock_irqsave() and done_seqretry_irqrestore(), which
+are almost identical to read_seqbegin_or_lock() and done_seqretry().
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: prarit@redhat.com
+Cc: oleg@redhat.com
+Cc: sgruszka@redhat.com
+Cc: Al Viro <viro@zeniv.linux.org.uk>
+Cc: John Stultz <john.stultz@linaro.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Mathieu Desnoyers <mathieu.desnoyers@efficios.com>
+Cc: Stephen Boyd <sboyd@codeaurora.org>
+Cc: Trond Myklebust <trond.myklebust@primarydata.com>
+Link: http://lkml.kernel.org/r/1410527535-9814-2-git-send-email-riel@redhat.com
+[ Improved the readability of the code a bit. ]
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/seqlock.h | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/include/linux/seqlock.h b/include/linux/seqlock.h
+index 2c61a24d74a7..41b5a17f54a8 100644
+--- a/include/linux/seqlock.h
++++ b/include/linux/seqlock.h
+@@ -355,4 +355,23 @@ read_sequnlock_excl_irqrestore(seqlock_t *sl, unsigned long flags)
+ 	spin_unlock_irqrestore(&sl->lock, flags);
+ }
+ 
++static inline unsigned long
++read_seqbegin_or_lock_irqsave(seqlock_t *lock, int *seq)
++{
++	unsigned long flags = 0;
++
++	if (!(*seq & 1))	/* Even */
++		*seq = read_seqbegin(lock);
++	else			/* Odd */
++		read_seqlock_excl_irqsave(lock, flags);
++
++	return flags;
++}
++
++static inline void
++done_seqretry_irqrestore(seqlock_t *lock, int seq, unsigned long flags)
++{
++	if (seq & 1)
++		read_sequnlock_excl_irqrestore(lock, flags);
++}
+ #endif /* __LINUX_SEQLOCK_H */
