@@ -1,0 +1,70 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: s390/sclp: replace uninitialized early_event_mask_sccb variable with sccb_early
+Patch-mainline: v3.13-rc4
+Git-commit: 9e3ea19e35635ecd8373fc04f5dfb072be5f6d2c
+References: bnc#917125, LTC#122429
+
+Description:  s390/sclp: Determine HSA size dynamically for zfcpdump
+Symptom:      For future s390 machines that potentially use more than
+              the current 32 MiB HSA for zfcpdump, the memory in kernel
+              dumps in the range [32 MiB, HSA size] will contain invalid data.
+Problem:      Currently the first 32 MiB (hardcoded) are copied from HSA and
+              everything above is copied from real memory (which
+              potentially will be overwritten by the firmware).
+Solution:     Determine current HSA size dynamically via SCLP in "early.c"
+              and copy everything that is contained in HSA.
+              To be prepared for upcoming sclp commits, also pull various
+              upstream commits to have a solid base for future sclp related
+              backports.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/sclp: replace uninitialized early_event_mask_sccb variable with sccb_early
+
+              Commit "s390/sclp: Consolidate early sclp init calls to sclp_early_detect()"
+              (7b50da53f6ad2048241bef232bfc22a132a40283) replaced the sclp_event_mask_early()
+              with sclp_set_event_mask().  The early_event_mask_sccb variable is no longer
+              initialized but is still used in sclp_has_linemode() and sclp_has_vt220().
+
+              Replace early_event_mask_sccb with the sccb_early variable in both
+              functions.
+
+              Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/char/sclp_early.c |    5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+--- a/drivers/s390/char/sclp_early.c
++++ b/drivers/s390/char/sclp_early.c
+@@ -35,7 +35,6 @@ struct read_info_sccb {
+ 	u8	_reserved5[4096 - 112];	/* 112-4095 */
+ } __packed __aligned(PAGE_SIZE);
+ 
+-static __initdata struct init_sccb early_event_mask_sccb __aligned(PAGE_SIZE);
+ static __initdata struct read_info_sccb early_read_info_sccb;
+ static __initdata char sccb_early[PAGE_SIZE] __aligned(PAGE_SIZE);
+ static unsigned long sclp_hsa_size;
+@@ -113,7 +112,7 @@ static void __init sclp_facilities_detec
+ 
+ bool __init sclp_has_linemode(void)
+ {
+-	struct init_sccb *sccb = &early_event_mask_sccb;
++	struct init_sccb *sccb = (void *) &sccb_early;
+ 
+ 	if (sccb->header.response_code != 0x20)
+ 		return 0;
+@@ -126,7 +125,7 @@ bool __init sclp_has_linemode(void)
+ 
+ bool __init sclp_has_vt220(void)
+ {
+-	struct init_sccb *sccb = &early_event_mask_sccb;
++	struct init_sccb *sccb = (void *) &sccb_early;
+ 
+ 	if (sccb->header.response_code != 0x20)
+ 		return 0;

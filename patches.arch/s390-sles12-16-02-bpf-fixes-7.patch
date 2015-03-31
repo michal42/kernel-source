@@ -1,0 +1,80 @@
+Subject: s390/bpf: Zero extend parameters before calling C function
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Patch-mainline: v3.19-rc6
+Git-commit: fe82bbae36943fbead5e326aab1665d001a87dd7
+References: bnc#917125,LTC#121759
+
+Description:  s390/bpf: Fix several corner cases
+Symptom:      In rare cases BPF filters may return wrong results or you
+              even can get a kernel panic.
+Problem:      The s390x BPF JIT code generation has several bugs.
+Solution:     Fix the following bugs:
+              - Zero extend parameters before calling C function
+              - Fix sk_load_byte_msh()
+              - Fix offset parameter for skb_copy_bits()
+              - Fix skb_copy_bits() parameter passing
+              - Fix JMP_JGE_K (A >= K) and JMP_JGT_K (A > K)
+              - Fix JMP_JGE_X (A > X) and JMP_JGT_X (A >= X)
+              - Fix ALU_NEG (A = -A)
+Reproduction: Use tcpdump and generate network traffic to trigger
+              the corner cases.
+
+Upstream-Description:
+
+              s390/bpf: Zero extend parameters before calling C function
+
+              The s390x ABI requires to zero extend parameters before functions
+              are called.
+
+              Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/net/bpf_jit.S |   10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+--- a/arch/s390/net/bpf_jit.S
++++ b/arch/s390/net/bpf_jit.S
+@@ -46,7 +46,7 @@ sk_load_word_slow:
+ 	lgr	%r9,%r2			# save %r2
+ 	lgr	%r3,%r1			# offset
+ 	la	%r4,160(%r15)		# pointer to temp buffer
+-	lhi	%r5,4			# 4 bytes
++	lghi	%r5,4			# 4 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	l	%r5,160(%r15)		# load result from temp buffer
+ 	ltgr	%r2,%r2			# set cc to (%r2 != 0)
+@@ -72,7 +72,7 @@ sk_load_half_slow:
+ 	lgr	%r9,%r2			# save %r2
+ 	lgr	%r3,%r1			# offset
+ 	la	%r4,162(%r15)		# pointer to temp buffer
+-	lhi	%r5,2			# 2 bytes
++	lghi	%r5,2			# 2 bytes
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(2,%r15),160(%r15)
+ 	l	%r5,160(%r15)		# load result from temp buffer
+@@ -97,8 +97,9 @@ ENTRY(sk_load_byte)
+ 
+ sk_load_byte_slow:
+ 	lgr	%r9,%r2			# save %r2
++	lgr	%r3,%r1			# offset
+ 	la	%r4,163(%r15)		# pointer to temp buffer
+-	lhi	%r5,1			# 1 bytes
++	lghi	%r5,1			# 1 byte
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(3,%r15),160(%r15)
+ 	l	%r5,160(%r15)		# load result from temp buffer
+@@ -120,8 +121,9 @@ ENTRY(sk_load_byte_msh)
+ 
+ sk_load_byte_msh_slow:
+ 	lgr	%r9,%r2			# save %r2
++	lgr	%r3,%r1			# offset
+ 	la	%r4,163(%r15)		# pointer to temp buffer
+-	lhi	%r5,1			# 1 bytes
++	lghi	%r5,1			# 1 byte
+ 	brasl	%r14,skb_copy_bits	# get data from skb
+ 	xc	160(3,%r15),160(%r15)
+ 	l	%r12,160(%r15)		# load result from temp buffer

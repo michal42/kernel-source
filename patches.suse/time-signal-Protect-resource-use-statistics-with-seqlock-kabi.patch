@@ -18,7 +18,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  4 files changed, 20 insertions(+), 9 deletions(-)
 
 diff --git a/include/linux/sched.h b/include/linux/sched.h
-index 9da892635af0..388df04ac5b1 100644
+index 5c998b90314d..9a81386a0071 100644
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
 @@ -557,7 +557,6 @@ struct signal_struct {
@@ -82,7 +82,7 @@ index ac23046327d2..db785bd427dc 100644
  	}
  
 diff --git a/kernel/fork.c b/kernel/fork.c
-index 18b138b1ea1d..8ca73955c319 100644
+index 6c380a9f6e68..759d75be506e 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -224,6 +224,7 @@ static inline void free_signal_struct(struct signal_struct *sig)
@@ -117,26 +117,26 @@ index 18b138b1ea1d..8ca73955c319 100644
  	hrtimer_init(&sig->real_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
  	sig->real_timer.function = it_real_fn;
 diff --git a/kernel/sched/cputime.c b/kernel/sched/cputime.c
-index ff9cfde647a3..081869525869 100644
+index e3202268b86a..edc46072340c 100644
 --- a/kernel/sched/cputime.c
 +++ b/kernel/sched/cputime.c
-@@ -289,7 +289,7 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
+@@ -290,7 +290,7 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
  	nextseq = 0;
  	do {
  		seq = nextseq;
--		read_seqbegin_or_lock(&sig->stats_lock, &seq);
-+		read_seqbegin_or_lock(sig->stats_lock, &seq);
+-		flags = read_seqbegin_or_lock_irqsave(&sig->stats_lock, &seq);
++		flags = read_seqbegin_or_lock_irqsave(sig->stats_lock, &seq);
  		times->utime = sig->utime;
  		times->stime = sig->stime;
  		times->sum_exec_runtime = sig->sum_sched_runtime;
-@@ -302,8 +302,8 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
+@@ -303,8 +303,8 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
  		}
  		/* If lockless access failed, take the lock. */
  		nextseq = 1;
 -	} while (need_seqretry(&sig->stats_lock, seq));
--	done_seqretry(&sig->stats_lock, seq);
+-	done_seqretry_irqrestore(&sig->stats_lock, seq, flags);
 +	} while (need_seqretry(sig->stats_lock, seq));
-+	done_seqretry(sig->stats_lock, seq);
++	done_seqretry_irqrestore(sig->stats_lock, seq, flags);
  	rcu_read_unlock();
  }
  

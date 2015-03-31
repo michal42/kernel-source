@@ -1,0 +1,82 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: s390/sclp_early: Replace early_read_info_sccb with sccb_early
+Patch-mainline: v3.14-rc1
+Git-commit: 56e57a84a7856130f45009ce1713dc8ec8e59887
+References: bnc#917125, LTC#122429
+
+Description:  s390/sclp: Determine HSA size dynamically for zfcpdump
+Symptom:      For future s390 machines that potentially use more than
+              the current 32 MiB HSA for zfcpdump, the memory in kernel
+              dumps in the range [32 MiB, HSA size] will contain invalid data.
+Problem:      Currently the first 32 MiB (hardcoded) are copied from HSA and
+              everything above is copied from real memory (which
+              potentially will be overwritten by the firmware).
+Solution:     Determine current HSA size dynamically via SCLP in "early.c"
+              and copy everything that is contained in HSA.
+              To be prepared for upcoming sclp commits, also pull various
+              upstream commits to have a solid base for future sclp related
+              backports.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/sclp_early: Replace early_read_info_sccb with sccb_early
+
+              Replace early_read_info_sccb and use sccb_early instead.
+              Also saves some memory.
+
+              Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+              Reviewed-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+              Reviewed-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/char/sclp_early.c |   12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+--- a/drivers/s390/char/sclp_early.c
++++ b/drivers/s390/char/sclp_early.c
+@@ -35,8 +35,7 @@ struct read_info_sccb {
+ 	u8	_reserved5[4096 - 112];	/* 112-4095 */
+ } __packed __aligned(PAGE_SIZE);
+ 
+-static __initdata struct read_info_sccb early_read_info_sccb;
+-static __initdata char sccb_early[PAGE_SIZE] __aligned(PAGE_SIZE);
++static char sccb_early[PAGE_SIZE] __aligned(PAGE_SIZE) __initdata;
+ static unsigned long sclp_hsa_size;
+ static struct sclp_ipl_info sclp_ipl_info;
+ 
+@@ -63,14 +62,12 @@ out:
+ 	return rc;
+ }
+ 
+-static int __init sclp_read_info_early(void)
++static int __init sclp_read_info_early(struct read_info_sccb *sccb)
+ {
+ 	int rc, i;
+-	struct read_info_sccb *sccb;
+ 	sclp_cmdw_t commands[] = {SCLP_CMDW_READ_SCP_INFO_FORCED,
+ 				  SCLP_CMDW_READ_SCP_INFO};
+ 
+-	sccb = &early_read_info_sccb;
+ 	for (i = 0; i < ARRAY_SIZE(commands); i++) {
+ 		do {
+ 			memset(sccb, 0, sizeof(*sccb));
+@@ -92,12 +89,11 @@ static int __init sclp_read_info_early(v
+ 
+ static void __init sclp_facilities_detect(void)
+ {
+-	struct read_info_sccb *sccb;
++	struct read_info_sccb *sccb = (void *) &sccb_early;
+ 
+-	if (sclp_read_info_early())
++	if (sclp_read_info_early(sccb))
+ 		return;
+ 
+-	sccb = &early_read_info_sccb;
+ 	sclp_facilities = sccb->facilities;
+ 	sclp_fac84 = sccb->fac84;
+ 	if (sccb->fac85 & 0x02)
