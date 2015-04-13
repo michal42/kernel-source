@@ -17,31 +17,29 @@ functionality under CONFIG_MICROCODE_INTEL as it was its only user.
 Signed-off-by: Borislav Petkov <bp@suse.de>
 Tested-by: Aravind Gopalakrishnan <Aravind.Gopalakrishnan@amd.com>
 ---
- arch/x86/Kconfig                            |   4 -
- arch/x86/kernel/Makefile                    |   9 -
- arch/x86/kernel/cpu/Makefile                |   1 +
- arch/x86/kernel/cpu/microcode/Makefile      |   7 +
- arch/x86/kernel/cpu/microcode/amd.c         | 492 +++++++++++++++++
- arch/x86/kernel/cpu/microcode/amd_early.c   | 380 ++++++++++++++
- arch/x86/kernel/cpu/microcode/core.c        | 645 +++++++++++++++++++++++
- arch/x86/kernel/cpu/microcode/core_early.c  | 141 +++++
- arch/x86/kernel/cpu/microcode/intel.c       | 333 ++++++++++++
- arch/x86/kernel/cpu/microcode/intel_early.c | 787 ++++++++++++++++++++++++++++
- arch/x86/kernel/cpu/microcode/intel_lib.c   | 174 ++++++
- arch/x86/kernel/microcode_amd.c             | 492 -----------------
- arch/x86/kernel/microcode_amd_early.c       | 380 --------------
- arch/x86/kernel/microcode_core.c            | 645 -----------------------
- arch/x86/kernel/microcode_core_early.c      | 141 -----
- arch/x86/kernel/microcode_intel.c           | 333 ------------
- arch/x86/kernel/microcode_intel_early.c     | 787 ----------------------------
- arch/x86/kernel/microcode_intel_lib.c       | 174 ------
+ arch/x86/Kconfig                            |    4 
+ arch/x86/kernel/Makefile                    |    9 
+ arch/x86/kernel/cpu/Makefile                |    1 
+ arch/x86/kernel/cpu/microcode/Makefile      |    7 
+ arch/x86/kernel/cpu/microcode/amd.c         |  492 +++++++++++++++++
+ arch/x86/kernel/cpu/microcode/amd_early.c   |  380 +++++++++++++
+ arch/x86/kernel/cpu/microcode/core.c        |  645 ++++++++++++++++++++++
+ arch/x86/kernel/cpu/microcode/core_early.c  |  141 +++++
+ arch/x86/kernel/cpu/microcode/intel.c       |  333 +++++++++++
+ arch/x86/kernel/cpu/microcode/intel_early.c |  787 ++++++++++++++++++++++++++++
+ arch/x86/kernel/cpu/microcode/intel_lib.c   |  174 ++++++
+ arch/x86/kernel/microcode_amd.c             |  492 -----------------
+ arch/x86/kernel/microcode_amd_early.c       |  380 -------------
+ arch/x86/kernel/microcode_core.c            |  645 ----------------------
+ arch/x86/kernel/microcode_core_early.c      |  141 -----
+ arch/x86/kernel/microcode_intel.c           |  333 -----------
+ arch/x86/kernel/microcode_intel_early.c     |  787 ----------------------------
+ arch/x86/kernel/microcode_intel_lib.c       |  174 ------
  18 files changed, 2960 insertions(+), 2965 deletions(-)
 
-diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
-index 0952ecd60eca..01bfb9e6ba55 100644
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -1080,10 +1080,6 @@ config MICROCODE_OLD_INTERFACE
+@@ -1097,10 +1097,6 @@ config MICROCODE_OLD_INTERFACE
  	def_bool y
  	depends on MICROCODE
  
@@ -52,11 +50,9 @@ index 0952ecd60eca..01bfb9e6ba55 100644
  config MICROCODE_INTEL_EARLY
  	def_bool n
  
-diff --git a/arch/x86/kernel/Makefile b/arch/x86/kernel/Makefile
-index 9b0a34e2cd79..4d0094dbb6c9 100644
 --- a/arch/x86/kernel/Makefile
 +++ b/arch/x86/kernel/Makefile
-@@ -91,15 +91,6 @@ obj-$(CONFIG_PARAVIRT_CLOCK)	+= pvclock.o
+@@ -90,15 +90,6 @@ obj-$(CONFIG_PARAVIRT_CLOCK)	+= pvclock.
  
  obj-$(CONFIG_PCSPKR_PLATFORM)	+= pcspeaker.o
  
@@ -72,8 +68,6 @@ index 9b0a34e2cd79..4d0094dbb6c9 100644
  obj-$(CONFIG_X86_CHECK_BIOS_CORRUPTION) += check.o
  
  obj-$(CONFIG_SWIOTLB)			+= pci-swiotlb.o
-diff --git a/arch/x86/kernel/cpu/Makefile b/arch/x86/kernel/cpu/Makefile
-index 47b56a7e99cb..0710eeffcf51 100644
 --- a/arch/x86/kernel/cpu/Makefile
 +++ b/arch/x86/kernel/cpu/Makefile
 @@ -42,6 +42,7 @@ endif
@@ -84,9 +78,6 @@ index 47b56a7e99cb..0710eeffcf51 100644
  
  obj-$(CONFIG_X86_LOCAL_APIC)		+= perfctr-watchdog.o perf_event_amd_ibs.o
  
-diff --git a/arch/x86/kernel/cpu/microcode/Makefile b/arch/x86/kernel/cpu/microcode/Makefile
-new file mode 100644
-index 000000000000..285c85427c32
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/Makefile
 @@ -0,0 +1,7 @@
@@ -97,9 +88,6 @@ index 000000000000..285c85427c32
 +obj-$(CONFIG_MICROCODE_EARLY)		+= core_early.o
 +obj-$(CONFIG_MICROCODE_INTEL_EARLY)	+= intel_early.o
 +obj-$(CONFIG_MICROCODE_AMD_EARLY)	+= amd_early.o
-diff --git a/arch/x86/kernel/cpu/microcode/amd.c b/arch/x86/kernel/cpu/microcode/amd.c
-new file mode 100644
-index 000000000000..4a6ff747aaad
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/amd.c
 @@ -0,0 +1,492 @@
@@ -595,9 +583,6 @@ index 000000000000..4a6ff747aaad
 +{
 +	cleanup();
 +}
-diff --git a/arch/x86/kernel/cpu/microcode/amd_early.c b/arch/x86/kernel/cpu/microcode/amd_early.c
-new file mode 100644
-index 000000000000..8384c0fa206f
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/amd_early.c
 @@ -0,0 +1,380 @@
@@ -981,9 +966,6 @@ index 000000000000..8384c0fa206f
 +
 +	return 0;
 +}
-diff --git a/arch/x86/kernel/cpu/microcode/core.c b/arch/x86/kernel/cpu/microcode/core.c
-new file mode 100644
-index 000000000000..15c987698b0f
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/core.c
 @@ -0,0 +1,645 @@
@@ -1632,9 +1614,6 @@ index 000000000000..15c987698b0f
 +	pr_info("Microcode Update Driver: v" MICROCODE_VERSION " removed.\n");
 +}
 +module_exit(microcode_exit);
-diff --git a/arch/x86/kernel/cpu/microcode/core_early.c b/arch/x86/kernel/cpu/microcode/core_early.c
-new file mode 100644
-index 000000000000..be7f8514f577
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/core_early.c
 @@ -0,0 +1,141 @@
@@ -1779,9 +1758,6 @@ index 000000000000..be7f8514f577
 +
 +	return 0;
 +}
-diff --git a/arch/x86/kernel/cpu/microcode/intel.c b/arch/x86/kernel/cpu/microcode/intel.c
-new file mode 100644
-index 000000000000..5fb2cebf556b
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/intel.c
 @@ -0,0 +1,333 @@
@@ -2118,9 +2094,6 @@ index 000000000000..5fb2cebf556b
 +	return &microcode_intel_ops;
 +}
 +
-diff --git a/arch/x86/kernel/cpu/microcode/intel_early.c b/arch/x86/kernel/cpu/microcode/intel_early.c
-new file mode 100644
-index 000000000000..18f739129e72
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/intel_early.c
 @@ -0,0 +1,787 @@
@@ -2447,7 +2420,7 @@ index 000000000000..18f739129e72
 +	unsigned int mc_saved_count = mc_saved_data->mc_saved_count;
 +	int i;
 +
-+	while (leftover) {
++	while (leftover && mc_saved_count < ARRAY_SIZE(mc_saved_tmp)) {
 +		mc_header = (struct microcode_header_intel *)ucode_ptr;
 +
 +		mc_size = get_totalsize(mc_header);
@@ -2911,9 +2884,6 @@ index 000000000000..18f739129e72
 +		       initrd_start_addr, &uci);
 +	apply_microcode_early(mc_saved_data_p, &uci);
 +}
-diff --git a/arch/x86/kernel/cpu/microcode/intel_lib.c b/arch/x86/kernel/cpu/microcode/intel_lib.c
-new file mode 100644
-index 000000000000..ce69320d0179
 --- /dev/null
 +++ b/arch/x86/kernel/cpu/microcode/intel_lib.c
 @@ -0,0 +1,174 @@
@@ -3091,9 +3061,6 @@ index 000000000000..ce69320d0179
 +	return get_matching_sig(csig, cpf, mc, rev);
 +}
 +EXPORT_SYMBOL_GPL(get_matching_microcode);
-diff --git a/arch/x86/kernel/microcode_amd.c b/arch/x86/kernel/microcode_amd.c
-deleted file mode 100644
-index 4a6ff747aaad..000000000000
 --- a/arch/x86/kernel/microcode_amd.c
 +++ /dev/null
 @@ -1,492 +0,0 @@
@@ -3589,9 +3556,6 @@ index 4a6ff747aaad..000000000000
 -{
 -	cleanup();
 -}
-diff --git a/arch/x86/kernel/microcode_amd_early.c b/arch/x86/kernel/microcode_amd_early.c
-deleted file mode 100644
-index 8384c0fa206f..000000000000
 --- a/arch/x86/kernel/microcode_amd_early.c
 +++ /dev/null
 @@ -1,380 +0,0 @@
@@ -3975,9 +3939,6 @@ index 8384c0fa206f..000000000000
 -
 -	return 0;
 -}
-diff --git a/arch/x86/kernel/microcode_core.c b/arch/x86/kernel/microcode_core.c
-deleted file mode 100644
-index 15c987698b0f..000000000000
 --- a/arch/x86/kernel/microcode_core.c
 +++ /dev/null
 @@ -1,645 +0,0 @@
@@ -4626,9 +4587,6 @@ index 15c987698b0f..000000000000
 -	pr_info("Microcode Update Driver: v" MICROCODE_VERSION " removed.\n");
 -}
 -module_exit(microcode_exit);
-diff --git a/arch/x86/kernel/microcode_core_early.c b/arch/x86/kernel/microcode_core_early.c
-deleted file mode 100644
-index be7f8514f577..000000000000
 --- a/arch/x86/kernel/microcode_core_early.c
 +++ /dev/null
 @@ -1,141 +0,0 @@
@@ -4773,9 +4731,6 @@ index be7f8514f577..000000000000
 -
 -	return 0;
 -}
-diff --git a/arch/x86/kernel/microcode_intel.c b/arch/x86/kernel/microcode_intel.c
-deleted file mode 100644
-index 5fb2cebf556b..000000000000
 --- a/arch/x86/kernel/microcode_intel.c
 +++ /dev/null
 @@ -1,333 +0,0 @@
@@ -5112,9 +5067,6 @@ index 5fb2cebf556b..000000000000
 -	return &microcode_intel_ops;
 -}
 -
-diff --git a/arch/x86/kernel/microcode_intel_early.c b/arch/x86/kernel/microcode_intel_early.c
-deleted file mode 100644
-index 18f739129e72..000000000000
 --- a/arch/x86/kernel/microcode_intel_early.c
 +++ /dev/null
 @@ -1,787 +0,0 @@
@@ -5441,7 +5393,7 @@ index 18f739129e72..000000000000
 -	unsigned int mc_saved_count = mc_saved_data->mc_saved_count;
 -	int i;
 -
--	while (leftover) {
+-	while (leftover && mc_saved_count < ARRAY_SIZE(mc_saved_tmp)) {
 -		mc_header = (struct microcode_header_intel *)ucode_ptr;
 -
 -		mc_size = get_totalsize(mc_header);
@@ -5905,9 +5857,6 @@ index 18f739129e72..000000000000
 -		       initrd_start_addr, &uci);
 -	apply_microcode_early(mc_saved_data_p, &uci);
 -}
-diff --git a/arch/x86/kernel/microcode_intel_lib.c b/arch/x86/kernel/microcode_intel_lib.c
-deleted file mode 100644
-index ce69320d0179..000000000000
 --- a/arch/x86/kernel/microcode_intel_lib.c
 +++ /dev/null
 @@ -1,174 +0,0 @@
@@ -6085,4 +6034,3 @@ index ce69320d0179..000000000000
 -	return get_matching_sig(csig, cpf, mc, rev);
 -}
 -EXPORT_SYMBOL_GPL(get_matching_microcode);
-
