@@ -1,0 +1,47 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Tue, 11 Mar 2014 15:45:41 -0400
+Subject: sb_edac: use "event" instead of "exception" when MC wasnt signaled
+Git-commit: cf40f80cbe374e98283b9865c1295fc74a68fa29
+Patch-mainline: v3.15-rc1
+References: fate#318187
+
+Corrected Errors are MC events, not exceptions and reporting as the
+later might confuse users.
+
+Signed-off-by: Aristeu Rozanski <arozansk@redhat.com>
+Signed-off-by: Mauro Carvalho Chehab <m.chehab@samsung.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/edac/sb_edac.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+Index: current/drivers/edac/sb_edac.c
+===================================================================
+--- current.orig/drivers/edac/sb_edac.c	2015-04-20 21:13:26.432122401 +0200
++++ current/drivers/edac/sb_edac.c	2015-04-20 21:13:34.832122386 +0200
+@@ -1828,6 +1828,7 @@ static int sbridge_mce_check_error(struc
+ 	struct mce *mce = (struct mce *)data;
+ 	struct mem_ctl_info *mci;
+ 	struct sbridge_pvt *pvt;
++	char *type;
+ 
+ 	if (get_edac_report_status() == EDAC_REPORTING_DISABLED)
+ 		return NOTIFY_DONE;
+@@ -1846,10 +1847,15 @@ static int sbridge_mce_check_error(struc
+ 	if ((mce->status & 0xefff) >> 7 != 1)
+ 		return NOTIFY_DONE;
+ 
++	if (mce->mcgstatus & MCG_STATUS_MCIP)
++		type = "Exception";
++	else
++		type = "Event";
++
+ 	printk("sbridge: HANDLING MCE MEMORY ERROR\n");
+ 
+-	printk("CPU %d: Machine Check Exception: %Lx Bank %d: %016Lx\n",
+-	       mce->extcpu, mce->mcgstatus, mce->bank, mce->status);
++	printk("CPU %d: Machine Check %s: %Lx Bank %d: %016Lx\n",
++	       mce->extcpu, type, mce->mcgstatus, mce->bank, mce->status);
+ 	printk("TSC %llx ", mce->tsc);
+ 	printk("ADDR %llx ", mce->addr);
+ 	printk("MISC %llx ", mce->misc);
