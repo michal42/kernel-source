@@ -14,13 +14,11 @@ Signed-off-by: Aristeu Rozanski <arozansk@redhat.com>
 Signed-off-by: Mauro Carvalho Chehab <m.chehab@samsung.com>
 Acked-by: Borislav Petkov <bp@suse.de>
 ---
- drivers/edac/sb_edac.c | 446 +++++++++++++++++++++++++++++++++++++++++--------
- 1 file changed, 376 insertions(+), 70 deletions(-)
+ drivers/edac/sb_edac.c |  448 +++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 377 insertions(+), 71 deletions(-)
 
-Index: current/drivers/edac/sb_edac.c
-===================================================================
---- current.orig/drivers/edac/sb_edac.c	2015-04-20 21:12:19.160122520 +0200
-+++ current/drivers/edac/sb_edac.c	2015-04-20 21:12:24.692122511 +0200
+--- a/drivers/edac/sb_edac.c
++++ b/drivers/edac/sb_edac.c
 @@ -34,7 +34,7 @@ static int probed;
  /*
   * Alter this version for the module when modifications are made
@@ -85,9 +83,9 @@ Index: current/drivers/edac/sb_edac.c
  #define IS_RDIMM_ENABLED(reg)		GET_BITFIELD(reg, 11, 11)
  
  /*
-@@ -261,8 +288,14 @@ static const u32 correrrthrsld[] = {
- #define NUM_CHANNELS	4
- #define MAX_DIMMS	3		/* Max DIMMS per channel */
+@@ -262,8 +289,14 @@ static const u32 correrrthrsld[] = {
+ #define MAX_DIMMS		3	/* Max DIMMS per channel */
+ #define CHANNEL_UNSPECIFIED	0xf	/* Intel IA32 SDM 15-14 */
  
 +enum type {
 +	SANDY_BRIDGE,
@@ -100,7 +98,7 @@ Index: current/drivers/edac/sb_edac.c
  	u32		mcmtr;
  	u32		rankcfgr;
  	u64		(*get_tolm)(struct sbridge_pvt *pvt);
-@@ -302,8 +335,9 @@ struct sbridge_dev {
+@@ -303,8 +336,9 @@ struct sbridge_dev {
  
  struct sbridge_pvt {
  	struct pci_dev		*pci_ta, *pci_ddrio, *pci_ras;
@@ -112,7 +110,7 @@ Index: current/drivers/edac/sb_edac.c
  	struct pci_dev		*pci_tad[NUM_CHANNELS];
  
  	struct sbridge_dev	*sbridge_dev;
-@@ -361,11 +395,75 @@ static const struct pci_id_table pci_dev
+@@ -362,11 +396,75 @@ static const struct pci_id_table pci_dev
  	{0,}			/* 0 terminated list. */
  };
  
@@ -188,7 +186,7 @@ Index: current/drivers/edac/sb_edac.c
  	{0,}			/* 0 terminated list. */
  };
  
-@@ -472,6 +570,35 @@ static u64 sbridge_get_tohm(struct sbrid
+@@ -473,6 +571,35 @@ static u64 sbridge_get_tohm(struct sbrid
  	return GET_TOHM(reg);
  }
  
@@ -224,7 +222,7 @@ Index: current/drivers/edac/sb_edac.c
  /****************************************************************************
  			Memory check routines
   ****************************************************************************/
-@@ -534,8 +661,6 @@ static int get_dimm_config(struct mem_ct
+@@ -535,8 +662,6 @@ static int get_dimm_config(struct mem_ct
  	enum edac_type mode;
  	enum mem_type mtype;
  
@@ -233,7 +231,7 @@ Index: current/drivers/edac/sb_edac.c
  	pci_read_config_dword(pvt->pci_br0, SAD_TARGET, &reg);
  	pvt->sbridge_dev->source_id = SOURCE_ID(reg);
  
-@@ -810,12 +935,13 @@ static int get_memory_error_data(struct
+@@ -813,12 +938,13 @@ static int get_memory_error_data(struct
  {
  	struct mem_ctl_info	*new_mci;
  	struct sbridge_pvt *pvt = mci->pvt_info;
@@ -247,8 +245,8 @@ Index: current/drivers/edac/sb_edac.c
 +	u8			ch_way, sck_way, pkg, sad_ha = 0;
  	u32			tad_offset;
  	u32			rir_way;
- 	u32			mb, kb;
-@@ -866,45 +992,56 @@ static int get_memory_error_data(struct
+ 	u32			mb, gb;
+@@ -869,45 +995,56 @@ static int get_memory_error_data(struct
  
  	pci_read_config_dword(pvt->pci_sad0, pvt->info.interleave_list[n_sads],
  			      &reg);
@@ -342,7 +340,7 @@ Index: current/drivers/edac/sb_edac.c
  
  	/*
  	 * Move to the proper node structure, in order to access the
-@@ -923,9 +1060,16 @@ static int get_memory_error_data(struct
+@@ -926,9 +1063,16 @@ static int get_memory_error_data(struct
  	 * Step 2) Get memory channel
  	 */
  	prv = 0;
@@ -361,7 +359,7 @@ Index: current/drivers/edac/sb_edac.c
  		limit = TAD_LIMIT(reg);
  		if (limit <= prv) {
  			sprintf(msg, "Can't discover the memory channel");
-@@ -935,14 +1079,13 @@ static int get_memory_error_data(struct
+@@ -938,14 +1082,13 @@ static int get_memory_error_data(struct
  			break;
  		prv = limit;
  	}
@@ -381,7 +379,7 @@ Index: current/drivers/edac/sb_edac.c
  
  	if (ch_way == 3)
  		idx = addr >> 6;
-@@ -972,6 +1115,10 @@ static int get_memory_error_data(struct
+@@ -975,6 +1118,10 @@ static int get_memory_error_data(struct
  	}
  	*channel_mask = 1 << base_ch;
  
@@ -392,7 +390,7 @@ Index: current/drivers/edac/sb_edac.c
  	if (pvt->is_mirrored) {
  		*channel_mask |= 1 << ((base_ch + 2) % 4);
  		switch(ch_way) {
-@@ -1347,6 +1494,131 @@ error:
+@@ -1350,6 +1497,131 @@ error:
  	return -EINVAL;
  }
  
@@ -524,7 +522,7 @@ Index: current/drivers/edac/sb_edac.c
  /****************************************************************************
  			Error check routines
   ****************************************************************************/
-@@ -1367,7 +1639,7 @@ static void sbridge_mce_output_error(str
+@@ -1370,7 +1642,7 @@ static void sbridge_mce_output_error(str
  	bool ripv = GET_BITFIELD(m->mcgstatus, 0, 0);
  	bool overflow = GET_BITFIELD(m->status, 62, 62);
  	bool uncorrected_error = GET_BITFIELD(m->status, 61, 61);
@@ -533,7 +531,7 @@ Index: current/drivers/edac/sb_edac.c
  	u32 core_err_cnt = GET_BITFIELD(m->status, 38, 52);
  	u32 mscod = GET_BITFIELD(m->status, 16, 31);
  	u32 errcode = GET_BITFIELD(m->status, 0, 15);
-@@ -1378,6 +1650,11 @@ static void sbridge_mce_output_error(str
+@@ -1381,6 +1653,11 @@ static void sbridge_mce_output_error(str
  	int rc, dimm;
  	char *area_type = NULL;
  
@@ -545,7 +543,7 @@ Index: current/drivers/edac/sb_edac.c
  	if (uncorrected_error) {
  		if (ripv) {
  			type = "FATAL";
-@@ -1636,11 +1913,12 @@ static void sbridge_unregister_mci(struc
+@@ -1642,11 +1919,12 @@ static void sbridge_unregister_mci(struc
  	sbridge_dev->mci = NULL;
  }
  
@@ -559,7 +557,7 @@ Index: current/drivers/edac/sb_edac.c
  	int rc;
  
  	/* Check the number of active and not disabled channels */
-@@ -1662,7 +1940,7 @@ static int sbridge_register_mci(struct s
+@@ -1668,7 +1946,7 @@ static int sbridge_register_mci(struct s
  		return -ENOMEM;
  
  	edac_dbg(0, "MC: mci = %p, dev = %p\n",
@@ -568,7 +566,7 @@ Index: current/drivers/edac/sb_edac.c
  
  	pvt = mci->pvt_info;
  	memset(pvt, 0, sizeof(*pvt));
-@@ -1676,31 +1954,52 @@ static int sbridge_register_mci(struct s
+@@ -1682,31 +1960,52 @@ static int sbridge_register_mci(struct s
  	mci->edac_cap = EDAC_FLAG_NONE;
  	mci->mod_name = "sbridge_edac.c";
  	mci->mod_ver = SBRIDGE_REVISION;
@@ -635,7 +633,7 @@ Index: current/drivers/edac/sb_edac.c
  
  	/* add this new MC control structure to EDAC's list of MCs */
  	if (unlikely(edac_mc_add_mc(mci))) {
-@@ -1731,6 +2030,7 @@ static int sbridge_probe(struct pci_dev
+@@ -1737,6 +2036,7 @@ static int sbridge_probe(struct pci_dev
  	int rc;
  	u8 mc, num_mc = 0;
  	struct sbridge_dev *sbridge_dev;
@@ -643,7 +641,7 @@ Index: current/drivers/edac/sb_edac.c
  
  	/* get the pci devices we want to reserve for our use */
  	mutex_lock(&sbridge_edac_lock);
-@@ -1744,7 +2044,13 @@ static int sbridge_probe(struct pci_dev
+@@ -1750,7 +2050,13 @@ static int sbridge_probe(struct pci_dev
  	}
  	probed++;
  
@@ -658,7 +656,7 @@ Index: current/drivers/edac/sb_edac.c
  	if (unlikely(rc < 0))
  		goto fail0;
  	mc = 0;
-@@ -1753,7 +2059,7 @@ static int sbridge_probe(struct pci_dev
+@@ -1759,7 +2065,7 @@ static int sbridge_probe(struct pci_dev
  		edac_dbg(0, "Registering MC#%d (%d of %d)\n",
  			 mc, mc + 1, num_mc);
  		sbridge_dev->mc = mc++;
@@ -667,7 +665,7 @@ Index: current/drivers/edac/sb_edac.c
  		if (unlikely(rc < 0))
  			goto fail1;
  	}
-@@ -1868,5 +2174,5 @@ MODULE_PARM_DESC(edac_op_state, "EDAC Er
+@@ -1874,5 +2180,5 @@ MODULE_PARM_DESC(edac_op_state, "EDAC Er
  MODULE_LICENSE("GPL");
  MODULE_AUTHOR("Mauro Carvalho Chehab <mchehab@redhat.com>");
  MODULE_AUTHOR("Red Hat Inc. (http://www.redhat.com)");
