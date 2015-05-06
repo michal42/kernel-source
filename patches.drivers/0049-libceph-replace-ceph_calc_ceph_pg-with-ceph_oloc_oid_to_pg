@@ -3,7 +3,7 @@ Date: Mon, 27 Jan 2014 17:40:19 +0200
 Subject: libceph: replace ceph_calc_ceph_pg() with ceph_oloc_oid_to_pg()
 Git-commit: 7c13cb64352230deac24d3cb058387a6c0676f83
 Patch-mainline: v3.14-rc1
-Reference: FATE#318350 bsc#918255
+References: FATE#318350 bsc#918255 bsc#928500
 
 Switch ceph_calc_ceph_pg() to new oloc and oid abstractions and rename
 it to ceph_oloc_oid_to_pg() to make its purpose more clear.
@@ -12,19 +12,43 @@ Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
 Reviewed-by: Sage Weil <sage@inktank.com>
 Acked-by: Lee Duncan <lduncan@suse.com>
 ---
+ fs/ceph/ioctl.c             |  8 ++++++--
  include/linux/ceph/osdmap.h |  7 +++++--
  net/ceph/osd_client.c       |  4 ++--
  net/ceph/osdmap.c           | 29 +++++++++++++++++------------
+ 4 files changed, 30 insertions(+), 18 deletions(-)
 
----
- include/linux/ceph/osdmap.h |    7 +++++--
- net/ceph/osd_client.c       |    4 ++--
- net/ceph/osdmap.c           |   29 +++++++++++++++++------------
- 3 files changed, 24 insertions(+), 16 deletions(-)
-
+diff --git a/fs/ceph/ioctl.c b/fs/ceph/ioctl.c
+index 669622fd1ae3..dc66c9e023e4 100644
+--- a/fs/ceph/ioctl.c
++++ b/fs/ceph/ioctl.c
+@@ -183,6 +183,8 @@ static long ceph_ioctl_get_dataloc(struct file *file, void __user *arg)
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+ 	struct ceph_osd_client *osdc =
+ 		&ceph_sb_to_client(inode->i_sb)->client->osdc;
++	struct ceph_object_locator oloc;
++	struct ceph_object_id oid;
+ 	u64 len = 1, olen;
+ 	u64 tmp;
+ 	struct ceph_pg pgid;
+@@ -211,8 +213,10 @@ static long ceph_ioctl_get_dataloc(struct file *file, void __user *arg)
+ 	snprintf(dl.object_name, sizeof(dl.object_name), "%llx.%08llx",
+ 		 ceph_ino(inode), dl.object_no);
+ 
+-	r = ceph_calc_ceph_pg(&pgid, dl.object_name, osdc->osdmap,
+-				ceph_file_layout_pg_pool(ci->i_layout));
++	oloc.pool = ceph_file_layout_pg_pool(ci->i_layout);
++	ceph_oid_set_name(&oid, dl.object_name);
++
++	r = ceph_oloc_oid_to_pg(osdc->osdmap, &oloc, &oid, &pgid);
+ 	if (r < 0) {
+ 		up_read(&osdc->map_sem);
+ 		return r;
+diff --git a/include/linux/ceph/osdmap.h b/include/linux/ceph/osdmap.h
+index c85f7d43b861..ebb8ec285de6 100644
 --- a/include/linux/ceph/osdmap.h
 +++ b/include/linux/ceph/osdmap.h
-@@ -190,8 +190,11 @@ extern int ceph_calc_file_object_mapping
+@@ -163,8 +163,11 @@ extern int ceph_calc_file_object_mapping(struct ceph_file_layout *layout,
  					 u64 *bno, u64 *oxoff, u64 *oxlen);
  
  /* calculate mapping of object to a placement group */
@@ -38,9 +62,11 @@ Acked-by: Lee Duncan <lduncan@suse.com>
  extern int ceph_calc_pg_acting(struct ceph_osdmap *osdmap,
  			       struct ceph_pg pgid,
  			       int *acting);
+diff --git a/net/ceph/osd_client.c b/net/ceph/osd_client.c
+index 2988d68b24c6..10360dedcdad 100644
 --- a/net/ceph/osd_client.c
 +++ b/net/ceph/osd_client.c
-@@ -1269,8 +1269,8 @@ static int __map_request(struct ceph_osd
+@@ -1269,8 +1269,8 @@ static int __map_request(struct ceph_osd_client *osdc,
  	bool was_paused;
  
  	dout("map_request %p tid %lld\n", req, req->r_tid);
@@ -51,6 +77,8 @@ Acked-by: Lee Duncan <lduncan@suse.com>
  	if (err) {
  		list_move(&req->r_req_lru_item, &osdc->req_notarget);
  		return err;
+diff --git a/net/ceph/osdmap.c b/net/ceph/osdmap.c
+index 8b1a6b48bb5d..768dd04eb9b1 100644
 --- a/net/ceph/osdmap.c
 +++ b/net/ceph/osdmap.c
 @@ -1090,25 +1090,30 @@ invalid:
@@ -96,3 +124,4 @@ Acked-by: Lee Duncan <lduncan@suse.com>
  
  static int crush_do_rule_ary(const struct crush_map *map, int ruleno, int x,
  			     int *result, int result_max,
+
