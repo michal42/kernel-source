@@ -1,0 +1,39 @@
+Git-commit: 2c0a33f9861d38631245f7ef434ecad3413324fb
+From: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date: Fri, 17 Oct 2014 17:50:40 -0700
+Subject: [PATCH] powerpc/numa: ensure per-cpu NUMA mappings are correct on
+ topology update
+Reference: bsc#924809
+Patch-mainline: v3.18-rc3
+
+We received a report of warning in kernel/sched/core.c where the sched
+group was NULL on an LPAR after a topology update. This seems to occur
+because after the topology update has moved the CPUs, cpu_to_node is
+returning the old value still, which ends up breaking the consistency of
+the NUMA topology in the per-cpu maps. Ensure that we update the per-cpu
+fields when we re-map CPUs.
+
+Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ arch/powerpc/mm/numa.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- dev1/arch/powerpc/mm/numa.c	2015-03-30 18:51:31.300086334 -0500
++++ dev1/arch/powerpc/mm/numa.c	2015-03-30 18:51:36.490104724 -0500
+@@ -1496,11 +1496,14 @@ static int update_cpu_topology(void *dat
+ 	cpu = smp_processor_id();
+ 
+ 	for (update = data; update; update = update->next) {
++		int new_nid = update->new_nid;
+ 		if (cpu != update->cpu)
+ 			continue;
+ 
+ 		unmap_cpu_from_node(cpu);
+-		map_cpu_to_node(cpu, update->new_nid);
++		map_cpu_to_node(cpu, new_nid);
++		set_cpu_numa_node(cpu, new_nid);
++		set_cpu_numa_mem(cpu, local_memory_node(new_nid));
+ 		vdso_getcpu_init();
+ 	}
