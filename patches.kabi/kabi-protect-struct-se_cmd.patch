@@ -1,0 +1,33 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct se_cmd
+Patch-mainline: never, kabi
+
+In 3.12.43, commit 15a557ae69ea1e86aa8db5c9a48f7406d9235b72 (target:
+Fix COMPARE_AND_WRITE with SG_TO_MEM_NOALLOC handling), upstream
+commit c8e639852ad720499912acedfd6b072325fd2807 changed prototype of
+one hook in struct se_cmd. It indeed changed the layout of that
+structure.
+
+Since it did not change the size of that structure and is only
+relevant to target_core_sbc, we can just protect the change the usual
+way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/target/target_core_base.h |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -518,7 +518,11 @@ struct se_cmd {
+ 	sense_reason_t		(*execute_cmd)(struct se_cmd *);
+ 	sense_reason_t		(*execute_rw)(struct se_cmd *, struct scatterlist *,
+ 					      u32, enum dma_data_direction);
++#ifdef __GENKSYMS__
++	sense_reason_t (*transport_complete_callback)(struct se_cmd *);
++#else
+ 	sense_reason_t (*transport_complete_callback)(struct se_cmd *, bool);
++#endif
+ 
+ 	unsigned char		*t_task_cdb;
+ 	unsigned char		__t_task_cdb[TCM_MAX_COMMAND_SIZE];
