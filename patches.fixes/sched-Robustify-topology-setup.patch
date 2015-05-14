@@ -1,0 +1,48 @@
+Git-commit: 6ae72dff37596f736b795426306404f0793e4b1b
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Tue, 22 Jul 2014 11:47:40 +0200
+Subject: [PATCH] sched: Robustify topology setup
+Patch-mainline: v3.17-rc1 
+Reference: bsc#924809
+
+We hard assume that higher topology levels are supersets of lower
+levels.
+
+Detect, warn and try to fixup when we encounter this violated.
+
+Tested-by: Dietmar Eggemann <dietmar.eggemann@arm.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Josh Boyer <jwboyer@redhat.com>
+Cc: "H. Peter Anvin" <hpa@zytor.com>
+Cc: Bruno Wolff III <bruno@wolff.to>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20140722094740.GJ12054@laptop.lan
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ kernel/sched/core.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+--- a/kernel/sched/core.c	
++++ a/kernel/sched/core.c	
+@@ -6481,6 +6481,20 @@ struct sched_domain *build_sched_domain(struct sched_domain_topology_level *tl,
+ 		sched_domain_level_max = max(sched_domain_level_max, sd->level);
+ 		child->parent = sd;
+ 		sd->child = child;
++
++		if (!cpumask_subset(sched_domain_span(child),
++				    sched_domain_span(sd))) {
++			pr_err("BUG: arch topology borken\n");
++#ifdef CONFIG_SCHED_DEBUG
++			pr_err("     the %s domain not a subset of the %s domain\n",
++					child->name, sd->name);
++#endif
++			/* Fixup, ensure @sd has at least @child cpus. */
++			cpumask_or(sched_domain_span(sd),
++				   sched_domain_span(sd),
++				   sched_domain_span(child));
++		}
++
+ 	}
+ 	set_domain_attribute(sd, attr);
+
