@@ -1,0 +1,72 @@
+From 8741bb34027aac2f5c7d0e42ecddf8b4e845ab4b Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Thu, 12 Feb 2015 14:58:44 -0800
+Subject: [PATCH] mm: numa: avoid unnecessary TLB flushes when setting NUMA
+ hinting entries
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.0
+Git-commit: 10c1045f28e86ac90589a188f0be2d7a4347efdf
+
+If a PTE or PMD is already marked NUMA when scanning to mark entries for
+NUMA hinting then it is not necessary to update the entry and incur a TLB
+flush penalty.  Avoid the avoidhead where possible.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Cc: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Cc: Dave Jones <davej@redhat.com>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Kirill Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Paul Mackerras <paulus@samba.org>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Sasha Levin <sasha.levin@oracle.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/huge_memory.c | 14 ++++++++------
+ mm/mprotect.c    |  4 ++++
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index f0b6dd4ac34f..f195e8aeacf8 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1549,12 +1549,14 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+ 			return 0;
+ 		}
+ 
+-		ret = 1;
+-		entry = pmdp_get_and_clear(mm, addr, pmd);
+-		entry = pmd_modify(entry, newprot);
+-		ret = HPAGE_PMD_NR;
+-		set_pmd_at(mm, addr, pmd, entry);
+-		BUG_ON(pmd_write(entry));
++		if (!prot_numa || !pmd_protnone(*pmd)) {
++			ret = 1;
++			entry = pmdp_get_and_clear(mm, addr, pmd);
++			entry = pmd_modify(entry, newprot);
++			ret = HPAGE_PMD_NR;
++			set_pmd_at(mm, addr, pmd, entry);
++			BUG_ON(pmd_write(entry));
++		}
+ 		spin_unlock(ptl);
+ 	}
+ 
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index e2bacb7dfef9..c998c0923385 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -93,6 +93,10 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+ 				page = vm_normal_page(vma, addr, oldpte);
+ 				if (!page || PageKsm(page))
+ 					continue;
++
++				/* Avoid TLB flush if possible */
++				if (pte_protnone(oldpte))
++					continue;
+ 			}
+ 
+ 			ptent = ptep_modify_prot_start(mm, addr, pte);
