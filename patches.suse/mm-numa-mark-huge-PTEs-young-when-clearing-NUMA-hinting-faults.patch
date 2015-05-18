@@ -1,0 +1,41 @@
+From 95b57ba19d790fc0bb3ecce7fa12d162eeb97a32 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Wed, 25 Mar 2015 15:55:45 -0700
+Subject: [PATCH] mm: numa: mark huge PTEs young when clearing NUMA hinting
+ faults
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.0
+Git-commit: b7b04004ecd9e58cdc6c6ff92f251d5ac5c0adb2
+
+Base PTEs are marked young when the NUMA hinting information is cleared
+but the same does not happen for huge pages which this patch addresses.
+
+Note that migrated pages are not marked young as the base page migration
+code does not assume that migrated pages have been referenced.  This
+could be addressed but beyond the scope of this series which is aimed at
+Dave Chinners shrink workload that is unlikely to be affected by this
+issue.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: Dave Chinner <david@fromorbit.com>
+Cc: Ingo Molnar <mingo@kernel.org>
+Cc: Aneesh Kumar <aneesh.kumar@linux.vnet.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/huge_memory.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 6179350feedd..bc438a07b60a 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1394,6 +1394,7 @@ clear_pmdnuma:
+ 	BUG_ON(!PageLocked(page));
+ 	was_writable = pmd_write(pmd);
+ 	pmd = pmd_modify(pmd, vma->vm_page_prot);
++	pmd = pmd_mkyoung(pmd);
+ 	if (was_writable)
+ 		pmd = pmd_mkwrite(pmd);
+ 	set_pmd_at(mm, haddr, pmdp, pmd);
