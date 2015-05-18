@@ -1,0 +1,58 @@
+From ea09b04a2b2913c8df387288ae7ba480f94b5aca Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 23 Jun 2014 11:41:29 -0400
+Subject: [PATCH] sched/numa: Use group's max nid as task's preferred nid
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v3.17
+Git-commit: f0b8a4afd6a8c500161e45065a91738b490bf5ae
+
+From task_numa_placement, always try to consolidate the tasks
+in a group on the group's top nid.
+
+In case this task is part of a group that is interleaved over
+multiple nodes, task_numa_migrate will set the task's preferred
+nid to the best node it could find for the task, so this patch
+will cause at most one run through task_numa_migrate.
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Cc: mgorman@suse.de
+Cc: chegu_vinod@hp.com
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1403538095-31256-2-git-send-email-riel@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 17 +----------------
+ 1 file changed, 1 insertion(+), 16 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 136ac778d274..22e21a89e78b 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1649,23 +1649,8 @@ static void task_numa_placement(struct task_struct *p)
+ 
+ 	if (p->numa_group) {
+ 		update_numa_active_node_mask(p->numa_group);
+-		/*
+-		 * If the preferred task and group nids are different,
+-		 * iterate over the nodes again to find the best place.
+-		 */
+-		if (max_nid != max_group_nid) {
+-			unsigned long weight, max_weight = 0;
+-
+-			for_each_online_node(nid) {
+-				weight = task_weight(p, nid) + group_weight(p, nid);
+-				if (weight > max_weight) {
+-					max_weight = weight;
+-					max_nid = nid;
+-				}
+-			}
+-		}
+-
+ 		spin_unlock_irq(group_lock);
++		max_nid = max_group_nid;
+ 	}
+ 
+ 	if (max_faults) {
