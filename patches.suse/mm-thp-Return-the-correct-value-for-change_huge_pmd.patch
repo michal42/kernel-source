@@ -1,0 +1,45 @@
+From f02e102e43544cca4bda49f6c146c75289f0ba50 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Sat, 7 Mar 2015 15:20:48 +0000
+Subject: [PATCH] mm: thp: Return the correct value for change_huge_pmd
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.0
+Git-commit: ba68bc0115ebfc37f911db4e87bf5f7991f89698
+
+The wrong value is being returned by change_huge_pmd since commit
+10c1045f28e8 ("mm: numa: avoid unnecessary TLB flushes when setting
+NUMA hinting entries") which allows a fallthrough that tries to adjust
+non-existent PTEs. This patch corrects it.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/huge_memory.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 475732c6d190..79db6471f471 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1543,6 +1543,7 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+ 
+ 	if (__pmd_trans_huge_lock(pmd, vma, &ptl) == 1) {
+ 		pmd_t entry;
++		ret = 1;
+ 
+ 		/*
+ 		 * Avoid trapping faults against the zero page. The read-only
+@@ -1551,11 +1552,10 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+ 		 */
+ 		if (prot_numa && is_huge_zero_pmd(*pmd)) {
+ 			spin_unlock(ptl);
+-			return 0;
++			return ret;
+ 		}
+ 
+ 		if (!prot_numa || !pmd_protnone(*pmd)) {
+-			ret = 1;
+ 			entry = pmdp_get_and_clear(mm, addr, pmd);
+ 			entry = pmd_modify(entry, newprot);
+ 			ret = HPAGE_PMD_NR;
