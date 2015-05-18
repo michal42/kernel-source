@@ -1,0 +1,116 @@
+From 7b9f81b9e75d64de65454be92720966b6fcca0c5 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Thu, 12 Feb 2015 14:58:19 -0800
+Subject: [PATCH] mm: add p[te|md] protnone helpers for use by NUMA balancing
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.0
+Git-commit: e7bb4b6d1609cce391af1e7bc6f31d14f1a3a890
+
+This is a preparatory patch that introduces protnone helpers for automatic
+NUMA balancing.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Acked-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Tested-by: Sasha Levin <sasha.levin@oracle.com>
+Cc: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Cc: Dave Jones <davej@redhat.com>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Kirill Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Paul Mackerras <paulus@samba.org>
+Cc: Rik van Riel <riel@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ arch/powerpc/include/asm/pgtable.h | 16 ++++++++++++++++
+ arch/x86/include/asm/pgtable.h     | 16 ++++++++++++++++
+ include/asm-generic/pgtable.h      | 20 ++++++++++++++++++++
+ 3 files changed, 52 insertions(+)
+
+diff --git a/arch/powerpc/include/asm/pgtable.h b/arch/powerpc/include/asm/pgtable.h
+index b753249c2fa6..7ea0b18175ea 100644
+--- a/arch/powerpc/include/asm/pgtable.h
++++ b/arch/powerpc/include/asm/pgtable.h
+@@ -38,6 +38,22 @@ static inline int pte_none(pte_t pte)		{ return (pte_val(pte) & ~_PTE_NONE_MASK)
+ static inline pgprot_t pte_pgprot(pte_t pte)	{ return __pgprot(pte_val(pte) & PAGE_PROT_BITS); }
+ 
+ #ifdef CONFIG_NUMA_BALANCING
++/*
++ * These work without NUMA balancing but the kernel does not care. See the
++ * comment in include/asm-generic/pgtable.h . On powerpc, this will only
++ * work for user pages and always return true for kernel pages.
++ */
++static inline int pte_protnone(pte_t pte)
++{
++	return (pte_val(pte) &
++		(_PAGE_PRESENT | _PAGE_USER)) == _PAGE_PRESENT;
++}
++
++static inline int pmd_protnone(pmd_t pmd)
++{
++	return pte_protnone(pmd_pte(pmd));
++}
++
+ static inline int pte_present(pte_t pte)
+ {
+ 	return pte_val(pte) & _PAGE_NUMA_MASK;
+diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
+index 2a364e15028d..676967817b9f 100644
+--- a/arch/x86/include/asm/pgtable.h
++++ b/arch/x86/include/asm/pgtable.h
+@@ -493,6 +493,22 @@ static inline int pmd_present(pmd_t pmd)
+ 				 _PAGE_NUMA);
+ }
+ 
++#ifdef CONFIG_NUMA_BALANCING
++/*
++ * These work without NUMA balancing but the kernel does not care. See the
++ * comment in include/asm-generic/pgtable.h
++ */
++static inline int pte_protnone(pte_t pte)
++{
++	return pte_flags(pte) & _PAGE_PROTNONE;
++}
++
++static inline int pmd_protnone(pmd_t pmd)
++{
++	return pmd_flags(pmd) & _PAGE_PROTNONE;
++}
++#endif /* CONFIG_NUMA_BALANCING */
++
+ static inline int pmd_none(pmd_t pmd)
+ {
+ 	/* Only check low word on 32-bit platforms, since it might be
+diff --git a/include/asm-generic/pgtable.h b/include/asm-generic/pgtable.h
+index 77cae194d9f5..a650a8212942 100644
+--- a/include/asm-generic/pgtable.h
++++ b/include/asm-generic/pgtable.h
+@@ -646,6 +646,26 @@ static inline int pmd_trans_unstable(pmd_t *pmd)
+ #endif
+ }
+ 
++#ifndef CONFIG_NUMA_BALANCING
++/*
++ * Technically a PTE can be PROTNONE even when not doing NUMA balancing but
++ * the only case the kernel cares is for NUMA balancing and is only ever set
++ * when the VMA is accessible. For PROT_NONE VMAs, the PTEs are not marked
++ * _PAGE_PROTNONE so by by default, implement the helper as "always no". It
++ * is the responsibility of the caller to distinguish between PROT_NONE
++ * protections and NUMA hinting fault protections.
++ */
++static inline int pte_protnone(pte_t pte)
++{
++	return 0;
++}
++
++static inline int pmd_protnone(pmd_t pmd)
++{
++	return 0;
++}
++#endif /* CONFIG_NUMA_BALANCING */
++
+ #ifdef CONFIG_NUMA_BALANCING
+ /*
+  * _PAGE_NUMA distinguishes between an unmapped page table entry, an entry that
