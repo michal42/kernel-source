@@ -1,0 +1,122 @@
+From 08bfd6b3feaa77671102dbddef485cc188812a07 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Thu, 12 Feb 2015 14:58:35 -0800
+Subject: [PATCH] mm: numa: do not trap faults on the huge zero page
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.0
+Git-commit: e944fd67b625c02bda4a78ddf85e413c5e401474
+
+Faults on the huge zero page are pointless and there is a BUG_ON to catch
+them during fault time.  This patch reintroduces a check that avoids
+marking the zero page PAGE_NONE.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Cc: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Cc: Dave Jones <davej@redhat.com>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Kirill Shutemov <kirill.shutemov@linux.intel.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Paul Mackerras <paulus@samba.org>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Sasha Levin <sasha.levin@oracle.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ include/linux/huge_mm.h |  3 ++-
+ mm/huge_memory.c        | 13 ++++++++++++-
+ mm/memory.c             |  1 -
+ mm/mprotect.c           | 14 +++++++++++++-
+ 4 files changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/include/linux/huge_mm.h b/include/linux/huge_mm.h
+index 2a2ac91eafde..63579cb8d3dc 100644
+--- a/include/linux/huge_mm.h
++++ b/include/linux/huge_mm.h
+@@ -31,7 +31,8 @@ extern int move_huge_pmd(struct vm_area_struct *vma,
+ 			 unsigned long new_addr, unsigned long old_end,
+ 			 pmd_t *old_pmd, pmd_t *new_pmd);
+ extern int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+-			unsigned long addr, pgprot_t newprot);
++			unsigned long addr, pgprot_t newprot,
++			int prot_numa);
+ 
+ enum transparent_hugepage_flag {
+ 	TRANSPARENT_HUGEPAGE_FLAG,
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 22ffe263bb8c..fd933d4b44dd 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -1527,7 +1527,7 @@ out:
+  *  - HPAGE_PMD_NR is protections changed and TLB flush necessary
+  */
+ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+-		unsigned long addr, pgprot_t newprot)
++		unsigned long addr, pgprot_t newprot, int prot_numa)
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	spinlock_t *ptl;
+@@ -1535,6 +1535,17 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+ 
+ 	if (__pmd_trans_huge_lock(pmd, vma, &ptl) == 1) {
+ 		pmd_t entry;
++
++		/*
++		 * Avoid trapping faults against the zero page. The read-only
++		 * data is likely to be read-cached on the local CPU and
++		 * local/remote hits to the zero page are not interesting.
++		 */
++		if (prot_numa && is_huge_zero_pmd(*pmd)) {
++			spin_unlock(ptl);
++			return 0;
++		}
++
+ 		ret = 1;
+ 		entry = pmdp_get_and_clear(mm, addr, pmd);
+ 		entry = pmd_modify(entry, newprot);
+diff --git a/mm/memory.c b/mm/memory.c
+index 62cbfbb5da50..f7036bb79329 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -3573,7 +3573,6 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		pte_unmap_unlock(ptep, ptl);
+ 		return 0;
+ 	}
+-	BUG_ON(is_zero_pfn(page_to_pfn(page)));
+ 
+ 	/*
+ 	 * Avoid grouping on DSO/COW pages in specific and RO pages
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index 4eb9083c3b77..e2bacb7dfef9 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -83,6 +83,18 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+ 		if (pte_present(oldpte)) {
+ 			pte_t ptent;
+ 
++			/*
++			 * Avoid trapping faults against the zero or KSM
++			 * pages. See similar comment in change_huge_pmd.
++			 */
++			if (prot_numa) {
++				struct page *page;
++
++				page = vm_normal_page(vma, addr, oldpte);
++				if (!page || PageKsm(page))
++					continue;
++			}
++
+ 			ptent = ptep_modify_prot_start(mm, addr, pte);
+ 			ptent = pte_modify(ptent, newprot);
+ 
+@@ -146,7 +158,7 @@ static inline unsigned long change_pmd_range(struct vm_area_struct *vma,
+ 				split_huge_page_pmd(vma, addr, pmd);
+ 			else {
+ 				int nr_ptes = change_huge_pmd(vma, pmd, addr,
+-						newprot);
++						newprot, prot_numa);
+ 
+ 				if (nr_ptes) {
+ 					if (nr_ptes == HPAGE_PMD_NR) {
