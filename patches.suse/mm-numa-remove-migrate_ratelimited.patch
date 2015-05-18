@@ -1,0 +1,78 @@
+From 7e2cb8fa5880a5ac35496f7e94bb66d40ad33d4d Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Tue, 14 Apr 2015 15:48:15 -0700
+Subject: [PATCH] mm: numa: remove migrate_ratelimited
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.1
+Git-commit: 2a8e70026435ad97570a1e0a0c4c941e0f700a3e
+
+This code is dead since commit 9e645ab6d089 ("sched/numa: Continue PTE
+scanning even if migrate rate limited") so remove it.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ include/linux/migrate.h |  5 -----
+ mm/migrate.c            | 20 --------------------
+ 2 files changed, 25 deletions(-)
+
+diff --git a/include/linux/migrate.h b/include/linux/migrate.h
+index 0f91a8c2e72c..3707469d99eb 100644
+--- a/include/linux/migrate.h
++++ b/include/linux/migrate.h
+@@ -97,7 +97,6 @@ static inline int migrate_huge_page_move_mapping(struct address_space *mapping,
+ extern bool pmd_trans_migrating(pmd_t pmd);
+ extern int migrate_misplaced_page(struct page *page,
+ 				  struct vm_area_struct *vma, int node);
+-extern bool migrate_ratelimited(int node);
+ #else
+ static inline bool pmd_trans_migrating(pmd_t pmd)
+ {
+@@ -108,10 +107,6 @@ static inline int migrate_misplaced_page(struct page *page,
+ {
+ 	return -EAGAIN; /* can't migrate now */
+ }
+-static inline bool migrate_ratelimited(int node)
+-{
+-	return false;
+-}
+ #endif /* CONFIG_NUMA_BALANCING */
+ 
+ #if defined(CONFIG_NUMA_BALANCING) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
+diff --git a/mm/migrate.c b/mm/migrate.c
+index 6b3e96d11dc7..4a82c83432f5 100644
+--- a/mm/migrate.c
++++ b/mm/migrate.c
+@@ -1598,30 +1598,10 @@ static struct page *alloc_misplaced_dst_page(struct page *page,
+  * page migration rate limiting control.
+  * Do not migrate more than @pages_to_migrate in a @migrate_interval_millisecs
+  * window of time. Default here says do not migrate more than 1280M per second.
+- * If a node is rate-limited then PTE NUMA updates are also rate-limited. However
+- * as it is faults that reset the window, pte updates will happen unconditionally
+- * if there has not been a fault since @pteupdate_interval_millisecs after the
+- * throttle window closed.
+  */
+ static unsigned int migrate_interval_millisecs __read_mostly = 100;
+-static unsigned int pteupdate_interval_millisecs __read_mostly = 1000;
+ static unsigned int ratelimit_pages __read_mostly = 128 << (20 - PAGE_SHIFT);
+ 
+-/* Returns true if NUMA migration is currently rate limited */
+-bool migrate_ratelimited(int node)
+-{
+-	pg_data_t *pgdat = NODE_DATA(node);
+-
+-	if (time_after(jiffies, pgdat->numabalancing_migrate_next_window +
+-				msecs_to_jiffies(pteupdate_interval_millisecs)))
+-		return false;
+-
+-	if (pgdat->numabalancing_migrate_nr_pages < ratelimit_pages)
+-		return false;
+-
+-	return true;
+-}
+-
+ /* Returns true if the node is migrate rate-limited after the update */
+ static bool numamigrate_update_ratelimit(pg_data_t *pgdat,
+ 					unsigned long nr_pages)
