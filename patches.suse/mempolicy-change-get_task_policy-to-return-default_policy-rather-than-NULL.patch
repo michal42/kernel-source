@@ -1,0 +1,105 @@
+From cfbfc94539ea2584923c3ddcf0f660bcf8c13d8d Mon Sep 17 00:00:00 2001
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Thu, 9 Oct 2014 15:27:43 -0700
+Subject: [PATCH] mempolicy: change get_task_policy() to return default_policy
+ rather than NULL
+
+References: VM Performance
+Patch-mainline: v3.18
+Git-commit: f15ca78e33b0bb5acc0c5d9a5d5be3c55c4f0bb7
+
+Every caller of get_task_policy() falls back to default_policy if it
+returns NULL. Change get_task_policy() to do this.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+Cc: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Cc: David Rientjes <rientjes@google.com>
+Cc: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+Cc: Alexander Viro <viro@zeniv.linux.org.uk>
+Cc: Cyrill Gorcunov <gorcunov@openvz.org>
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Andi Kleen <andi@firstfloor.org>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mempolicy.c | 31 +++++++++++++------------------
+ 1 file changed, 13 insertions(+), 18 deletions(-)
+
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 350cec155c7b..f7995a66438f 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -123,22 +123,20 @@ static struct mempolicy preferred_node_policy[MAX_NUMNODES];
+ static struct mempolicy *get_task_policy(struct task_struct *p)
+ {
+ 	struct mempolicy *pol = p->mempolicy;
++	int node;
+ 
+-	if (!pol) {
+-		int node = numa_node_id();
++	if (pol)
++		return pol;
+ 
+-		if (node != NUMA_NO_NODE) {
+-			pol = &preferred_node_policy[node];
+-			/*
+-			 * preferred_node_policy is not initialised early in
+-			 * boot
+-			 */
+-			if (!pol->mode)
+-				pol = NULL;
+-		}
++	node = numa_node_id();
++	if (node != NUMA_NO_NODE) {
++		pol = &preferred_node_policy[node];
++		/* preferred_node_policy is not initialised early in boot */
++		if (pol->mode)
++			return pol;
+ 	}
+ 
+-	return pol;
++	return &default_policy;
+ }
+ 
+ static const struct mempolicy_operations {
+@@ -1642,14 +1640,14 @@ struct mempolicy *get_vma_policy(struct task_struct *task,
+ 				mpol_get(pol);
+ 		}
+ 	}
+-	if (!pol)
+-		pol = &default_policy;
++
+ 	return pol;
+ }
+ 
+ bool vma_policy_mof(struct task_struct *task, struct vm_area_struct *vma)
+ {
+ 	struct mempolicy *pol = get_task_policy(task);
++
+ 	if (vma) {
+ 		if (vma->vm_ops && vma->vm_ops->get_policy) {
+ 			bool ret = false;
+@@ -1665,9 +1663,6 @@ bool vma_policy_mof(struct task_struct *task, struct vm_area_struct *vma)
+ 		}
+ 	}
+ 
+-	if (!pol)
+-		return default_policy.flags & MPOL_F_MOF;
+-
+ 	return pol->flags & MPOL_F_MOF;
+ }
+ 
+@@ -2075,7 +2070,7 @@ struct page *alloc_pages_current(gfp_t gfp, unsigned order)
+ 	struct page *page;
+ 	unsigned int cpuset_mems_cookie;
+ 
+-	if (!pol || in_interrupt() || (gfp & __GFP_THISNODE))
++	if (in_interrupt() || (gfp & __GFP_THISNODE))
+ 		pol = &default_policy;
+ 
+ retry_cpuset:
