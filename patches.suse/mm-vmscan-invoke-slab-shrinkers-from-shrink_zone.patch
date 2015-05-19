@@ -1,0 +1,330 @@
+From 83bea5a2e18f81d09270f474ac8fa118c746883e Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Fri, 12 Dec 2014 16:56:13 -0800
+Subject: [PATCH] mm: vmscan: invoke slab shrinkers from shrink_zone()
+
+References: VM Performance
+Patch-mainline: v3.19
+Git-commit: 6b4f7799c6a5703ac6b8c0649f4c22f00fa07513
+
+The slab shrinkers are currently invoked from the zonelist walkers in
+kswapd, direct reclaim, and zone reclaim, all of which roughly gauge the
+eligible LRU pages and assemble a nodemask to pass to NUMA-aware
+shrinkers, which then again have to walk over the nodemask.  This is
+redundant code, extra runtime work, and fairly inaccurate when it comes to
+the estimation of actually scannable LRU pages.  The code duplication will
+only get worse when making the shrinkers cgroup-aware and requiring them
+to have out-of-band cgroup hierarchy walks as well.
+
+Instead, invoke the shrinkers from shrink_zone(), which is where all
+reclaimers end up, to avoid this duplication.
+
+Take the count for eligible LRU pages out of get_scan_count(), which
+considers many more factors than just the availability of swap space, like
+zone_reclaimable_pages() currently does.  Accumulate the number over all
+visited lruvecs to get the per-zone value.
+
+Some nodes have multiple zones due to memory addressing restrictions.  To
+avoid putting too much pressure on the shrinkers, only invoke them once
+for each such node, using the class zone of the allocation as the pivot
+zone.
+
+For now, this integrates the slab shrinking better into the reclaim logic
+and gets rid of duplicative invocations from kswapd, direct reclaim, and
+zone reclaim.  It also prepares for cgroup-awareness, allowing
+memcg-capable shrinkers to be added at the lruvec level without much
+duplication of both code and runtime work.
+
+This changes kswapd behavior, which used to invoke the shrinkers for each
+zone, but with scan ratios gathered from the entire node, resulting in
+meaningless pressure quantities on multi-zone nodes.
+
+Zone reclaim behavior also changes.  It used to shrink slabs until the
+same amount of pages were shrunk as were reclaimed from the LRUs.  Now it
+merely invokes the shrinkers once with the zone's scan ratio, which makes
+the shrinkers go easier on caches that implement aging and would prefer
+feeding back pressure from recently used slab objects to unused LRU pages.
+
+[vdavydov@parallels.com: assure class zone is populated]
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Dave Chinner <david@fromorbit.com>
+Signed-off-by: Vladimir Davydov <vdavydov@parallels.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ include/linux/cpuset.h | 37 +++++++--------------------------
+ kernel/cpuset.c        | 55 ++------------------------------------------------
+ mm/hugetlb.c           |  2 +-
+ mm/oom_kill.c          |  2 +-
+ mm/page_alloc.c        |  6 +++---
+ mm/slab.c              |  2 +-
+ mm/slub.c              |  3 ++-
+ mm/vmscan.c            |  5 +++--
+ 8 files changed, 20 insertions(+), 92 deletions(-)
+
+diff --git a/include/linux/cpuset.h b/include/linux/cpuset.h
+index a7ebb89ae9fb..c76ea55cabf7 100644
+--- a/include/linux/cpuset.h
++++ b/include/linux/cpuset.h
+@@ -48,29 +48,16 @@ extern nodemask_t cpuset_mems_allowed(struct task_struct *p);
+ void cpuset_init_current_mems_allowed(void);
+ int cpuset_nodemask_valid_mems_allowed(nodemask_t *nodemask);
+ 
+-extern int __cpuset_node_allowed_softwall(int node, gfp_t gfp_mask);
+-extern int __cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask);
++extern int __cpuset_node_allowed(int node, gfp_t gfp_mask);
+ 
+-static inline int cpuset_node_allowed_softwall(int node, gfp_t gfp_mask)
++static inline int cpuset_node_allowed(int node, gfp_t gfp_mask)
+ {
+-	return nr_cpusets() <= 1 ||
+-		__cpuset_node_allowed_softwall(node, gfp_mask);
++	return nr_cpusets() <= 1 || __cpuset_node_allowed(node, gfp_mask);
+ }
+ 
+-static inline int cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask)
++static inline int cpuset_zone_allowed(struct zone *z, gfp_t gfp_mask)
+ {
+-	return nr_cpusets() <= 1 ||
+-		__cpuset_node_allowed_hardwall(node, gfp_mask);
+-}
+-
+-static inline int cpuset_zone_allowed_softwall(struct zone *z, gfp_t gfp_mask)
+-{
+-	return cpuset_node_allowed_softwall(zone_to_nid(z), gfp_mask);
+-}
+-
+-static inline int cpuset_zone_allowed_hardwall(struct zone *z, gfp_t gfp_mask)
+-{
+-	return cpuset_node_allowed_hardwall(zone_to_nid(z), gfp_mask);
++	return cpuset_node_allowed(zone_to_nid(z), gfp_mask);
+ }
+ 
+ extern int cpuset_mems_allowed_intersects(const struct task_struct *tsk1,
+@@ -174,22 +161,12 @@ static inline int cpuset_nodemask_valid_mems_allowed(nodemask_t *nodemask)
+ 	return 1;
+ }
+ 
+-static inline int cpuset_node_allowed_softwall(int node, gfp_t gfp_mask)
+-{
+-	return 1;
+-}
+-
+-static inline int cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask)
+-{
+-	return 1;
+-}
+-
+-static inline int cpuset_zone_allowed_softwall(struct zone *z, gfp_t gfp_mask)
++static inline int cpuset_node_allowed(int node, gfp_t gfp_mask)
+ {
+ 	return 1;
+ }
+ 
+-static inline int cpuset_zone_allowed_hardwall(struct zone *z, gfp_t gfp_mask)
++static inline int cpuset_zone_allowed(struct zone *z, gfp_t gfp_mask)
+ {
+ 	return 1;
+ }
+diff --git a/kernel/cpuset.c b/kernel/cpuset.c
+index b5f0faa4bfbd..c16290d9ca94 100644
+--- a/kernel/cpuset.c
++++ b/kernel/cpuset.c
+@@ -2417,7 +2417,7 @@ static struct cpuset *nearest_hardwall_ancestor(struct cpuset *cs)
+ }
+ 
+ /**
+- * cpuset_node_allowed_softwall - Can we allocate on a memory node?
++ * cpuset_node_allowed - Can we allocate on a memory node?
+  * @node: is this an allowed node?
+  * @gfp_mask: memory allocation flags
+  *
+@@ -2429,13 +2429,6 @@ static struct cpuset *nearest_hardwall_ancestor(struct cpuset *cs)
+  * flag, yes.
+  * Otherwise, no.
+  *
+- * If __GFP_HARDWALL is set, cpuset_node_allowed_softwall() reduces to
+- * cpuset_node_allowed_hardwall().  Otherwise, cpuset_node_allowed_softwall()
+- * might sleep, and might allow a node from an enclosing cpuset.
+- *
+- * cpuset_node_allowed_hardwall() only handles the simpler case of hardwall
+- * cpusets, and never sleeps.
+- *
+  * The __GFP_THISNODE placement logic is really handled elsewhere,
+  * by forcibly using a zonelist starting at a specified node, and by
+  * (in get_page_from_freelist()) refusing to consider the zones for
+@@ -2471,20 +2464,14 @@ static struct cpuset *nearest_hardwall_ancestor(struct cpuset *cs)
+  *	TIF_MEMDIE   - any node ok
+  *	GFP_KERNEL   - any node in enclosing hardwalled cpuset ok
+  *	GFP_USER     - only nodes in current tasks mems allowed ok.
+- *
+- * Rule:
+- *    Don't call cpuset_node_allowed_softwall if you can't sleep, unless you
+- *    pass in the __GFP_HARDWALL flag set in gfp_flag, which disables
+- *    the code that might scan up ancestor cpusets and sleep.
+  */
+-int __cpuset_node_allowed_softwall(int node, gfp_t gfp_mask)
++int __cpuset_node_allowed(int node, gfp_t gfp_mask)
+ {
+ 	struct cpuset *cs;		/* current cpuset ancestors */
+ 	int allowed;			/* is allocation in zone z allowed? */
+ 
+ 	if (in_interrupt() || (gfp_mask & __GFP_THISNODE))
+ 		return 1;
+-	might_sleep_if(!(gfp_mask & __GFP_HARDWALL));
+ 	if (node_isset(node, current->mems_allowed))
+ 		return 1;
+ 	/*
+@@ -2511,44 +2498,6 @@ int __cpuset_node_allowed_softwall(int node, gfp_t gfp_mask)
+ 	return allowed;
+ }
+ 
+-/*
+- * cpuset_node_allowed_hardwall - Can we allocate on a memory node?
+- * @node: is this an allowed node?
+- * @gfp_mask: memory allocation flags
+- *
+- * If we're in interrupt, yes, we can always allocate.  If __GFP_THISNODE is
+- * set, yes, we can always allocate.  If node is in our task's mems_allowed,
+- * yes.  If the task has been OOM killed and has access to memory reserves as
+- * specified by the TIF_MEMDIE flag, yes.
+- * Otherwise, no.
+- *
+- * The __GFP_THISNODE placement logic is really handled elsewhere,
+- * by forcibly using a zonelist starting at a specified node, and by
+- * (in get_page_from_freelist()) refusing to consider the zones for
+- * any node on the zonelist except the first.  By the time any such
+- * calls get to this routine, we should just shut up and say 'yes'.
+- *
+- * Unlike the cpuset_node_allowed_softwall() variant, above,
+- * this variant requires that the node be in the current task's
+- * mems_allowed or that we're in interrupt.  It does not scan up the
+- * cpuset hierarchy for the nearest enclosing mem_exclusive cpuset.
+- * It never sleeps.
+- */
+-int __cpuset_node_allowed_hardwall(int node, gfp_t gfp_mask)
+-{
+-	if (in_interrupt() || (gfp_mask & __GFP_THISNODE))
+-		return 1;
+-	if (node_isset(node, current->mems_allowed))
+-		return 1;
+-	/*
+-	 * Allow tasks that have access to memory reserves because they have
+-	 * been OOM killed to get memory anywhere.
+-	 */
+-	if (unlikely(test_thread_flag(TIF_MEMDIE)))
+-		return 1;
+-	return 0;
+-}
+-
+ /**
+  * cpuset_mem_spread_node() - On which node to begin search for a file page
+  * cpuset_slab_spread_node() - On which node to begin search for a slab page
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 78decbcbcb2a..21f5c4e28dab 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -582,7 +582,7 @@ retry_cpuset:
+ 
+ 	for_each_zone_zonelist_nodemask(zone, z, zonelist,
+ 						MAX_NR_ZONES - 1, nodemask) {
+-		if (cpuset_zone_allowed_softwall(zone, htlb_alloc_mask(h))) {
++		if (cpuset_zone_allowed(zone, htlb_alloc_mask(h))) {
+ 			page = dequeue_huge_page_node(h, zone_to_nid(zone));
+ 			if (page) {
+ 				if (avoid_reserve)
+diff --git a/mm/oom_kill.c b/mm/oom_kill.c
+index 171c00f2e495..f66603bfe9c0 100644
+--- a/mm/oom_kill.c
++++ b/mm/oom_kill.c
+@@ -233,7 +233,7 @@ static enum oom_constraint constrained_alloc(struct zonelist *zonelist,
+ 	/* Check this allocation failure is caused by cpuset's wall function */
+ 	for_each_zone_zonelist_nodemask(zone, z, zonelist,
+ 			high_zoneidx, nodemask)
+-		if (!cpuset_zone_allowed_softwall(zone, gfp_mask))
++		if (!cpuset_zone_allowed(zone, gfp_mask))
+ 			cpuset_limited = true;
+ 
+ 	if (cpuset_limited) {
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 79c00819dbb1..70fb1ab06c03 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1997,7 +1997,7 @@ zonelist_scan:
+ 
+ 	/*
+ 	 * Scan zonelist, looking for a zone with enough free.
+-	 * See also __cpuset_node_allowed_softwall() comment in kernel/cpuset.c.
++	 * See also __cpuset_node_allowed() comment in kernel/cpuset.c.
+ 	 */
+ 	for_each_zone_zonelist_nodemask(zone, z, zonelist,
+ 						high_zoneidx, nodemask) {
+@@ -2008,7 +2008,7 @@ zonelist_scan:
+ 				continue;
+ 		if (cpusets_enabled() &&
+ 			(alloc_flags & ALLOC_CPUSET) &&
+-			!cpuset_zone_allowed_softwall(zone, gfp_mask))
++			!cpuset_zone_allowed(zone, gfp_mask))
+ 				continue;
+ 		/*
+ 		 * Distribute pages in proportion to the individual
+@@ -2543,7 +2543,7 @@ gfp_to_alloc_flags(gfp_t gfp_mask)
+ 			alloc_flags |= ALLOC_HARDER;
+ 		/*
+ 		 * Ignore cpuset mems for GFP_ATOMIC rather than fail, see the
+-		 * comment for __cpuset_node_allowed_softwall().
++		 * comment for __cpuset_node_allowed().
+ 		 */
+ 		alloc_flags &= ~ALLOC_CPUSET;
+ 	} else if (unlikely(rt_task(current)) && !in_interrupt())
+diff --git a/mm/slab.c b/mm/slab.c
+index c180fbb8460b..d47ec7326a6c 100644
+--- a/mm/slab.c
++++ b/mm/slab.c
+@@ -3226,7 +3226,7 @@ retry:
+ 	for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
+ 		nid = zone_to_nid(zone);
+ 
+-		if (cpuset_zone_allowed_hardwall(zone, flags) &&
++		if (cpuset_zone_allowed(zone, flags | __GFP_HARDWALL) &&
+ 			cache->node[nid] &&
+ 			cache->node[nid]->free_objects) {
+ 				obj = ____cache_alloc_node(cache,
+diff --git a/mm/slub.c b/mm/slub.c
+index a88d94cfee20..0a92e5c53bad 100644
+--- a/mm/slub.c
++++ b/mm/slub.c
+@@ -1642,7 +1642,8 @@ static void *get_any_partial(struct kmem_cache *s, gfp_t flags,
+ 
+ 			n = get_node(s, zone_to_nid(zone));
+ 
+-			if (n && cpuset_zone_allowed_hardwall(zone, flags) &&
++			if (n && cpuset_zone_allowed(zone,
++						     flags | __GFP_HARDWALL) &&
+ 					n->nr_partial > s->min_partial) {
+ 				object = get_partial_node(s, n, c, flags);
+ 				if (object) {
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 3de54ca3c19b..259db1140f93 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -2385,7 +2385,8 @@ static bool shrink_zones(struct zonelist *zonelist, struct scan_control *sc)
+ 		 * to global LRU.
+ 		 */
+ 		if (global_reclaim(sc)) {
+-			if (!cpuset_zone_allowed_hardwall(zone, GFP_KERNEL))
++			if (!cpuset_zone_allowed(zone,
++						 GFP_KERNEL | __GFP_HARDWALL))
+ 				continue;
+ 
+ 			lru_pages += zone_reclaimable_pages(zone);
+@@ -3381,7 +3382,7 @@ void wakeup_kswapd(struct zone *zone, int order, enum zone_type classzone_idx)
+ 	if (!populated_zone(zone))
+ 		return;
+ 
+-	if (!cpuset_zone_allowed_hardwall(zone, GFP_KERNEL))
++	if (!cpuset_zone_allowed(zone, GFP_KERNEL | __GFP_HARDWALL))
+ 		return;
+ 	pgdat = zone->zone_pgdat;
+ 	if (pgdat->kswapd_max_order < order) {
