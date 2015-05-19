@@ -1,0 +1,45 @@
+From eab8b5ea9e6f964b37c491b05b6759b4f2cab53b Mon Sep 17 00:00:00 2001
+From: David Rientjes <rientjes@google.com>
+Date: Tue, 14 Apr 2015 15:46:52 -0700
+Subject: [PATCH] mm, mempolicy: migrate_to_node should only migrate to node
+
+References: VM Performance
+Patch-mainline: v4.1
+Git-commit: b360edb43f8ed50aa7b8c9aae7d7557a1a6e32c8
+
+migrate_to_node() is intended to migrate a page from one source node to
+a target node.
+
+Today, migrate_to_node() could end up migrating to any node, not only
+the target node.  This is because the page migration allocator,
+new_node_page() does not pass __GFP_THISNODE to
+alloc_pages_exact_node().  This causes the target node to be preferred
+but allows fallback to any other node in order of affinity.
+
+Prevent this by allocating with __GFP_THISNODE.  If memory is not
+available, -ENOMEM will be returned as appropriate.
+
+Signed-off-by: David Rientjes <rientjes@google.com>
+Reviewed-by: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mempolicy.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 89d0b5ae3eda..669fc74eda0d 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -1033,7 +1033,8 @@ static struct page *new_node_page(struct page *page, unsigned long node, int **x
+ 		return alloc_huge_page_node(page_hstate(compound_head(page)),
+ 					node);
+ 	else
+-		return alloc_pages_exact_node(node, GFP_HIGHUSER_MOVABLE, 0);
++		return alloc_pages_exact_node(node, GFP_HIGHUSER_MOVABLE |
++						    __GFP_THISNODE, 0);
+ }
+ 
+ /*
