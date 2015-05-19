@@ -1,0 +1,57 @@
+From ac682b6b52f2d98109189a7cb3ec559f38b99161 Mon Sep 17 00:00:00 2001
+From: Zhihui Zhang <zzhsuny@gmail.com>
+Date: Thu, 18 Dec 2014 16:17:09 -0800
+Subject: [PATCH] mm/mempolicy.c: remove unnecessary is_valid_nodemask()
+
+References: VM Performance
+Patch-mainline: v3.19
+Git-commit: 859f7ef142a956676cb387b90f18e2e71e959c68
+
+When nodes is true, nsc->mask2 has already been filtered by nsc->mask1,
+which has already factored in node_states[N_MEMORY].
+
+Signed-off-by: Zhihui Zhang <zzhsuny@gmail.com>
+Cc: Mel Gorman <mgorman@suse.de>
+Cc: Oleg Nesterov <oleg@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mempolicy.c | 10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index b2332d3e43be..57ca9c0355bb 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -159,12 +159,6 @@ static const struct mempolicy_operations {
+ 			enum mpol_rebind_step step);
+ } mpol_ops[MPOL_MAX];
+ 
+-/* Check that the nodemask contains at least one populated zone */
+-static int is_valid_nodemask(const nodemask_t *nodemask)
+-{
+-	return nodes_intersects(*nodemask, node_states[N_MEMORY]);
+-}
+-
+ static inline int mpol_store_user_nodemask(const struct mempolicy *pol)
+ {
+ 	return pol->flags & MPOL_MODE_FLAGS;
+@@ -199,7 +193,7 @@ static int mpol_new_preferred(struct mempolicy *pol, const nodemask_t *nodes)
+ 
+ static int mpol_new_bind(struct mempolicy *pol, const nodemask_t *nodes)
+ {
+-	if (!is_valid_nodemask(nodes))
++	if (nodes_empty(*nodes))
+ 		return -EINVAL;
+ 	pol->v.nodes = *nodes;
+ 	return 0;
+@@ -231,7 +225,7 @@ static int mpol_set_nodemask(struct mempolicy *pol,
+ 		nodes = NULL;	/* explicit local allocation */
+ 	else {
+ 		if (pol->flags & MPOL_F_RELATIVE_NODES)
+-			mpol_relative_nodemask(&nsc->mask2, nodes,&nsc->mask1);
++			mpol_relative_nodemask(&nsc->mask2, nodes, &nsc->mask1);
+ 		else
+ 			nodes_and(nsc->mask2, *nodes, nsc->mask1);
+ 
