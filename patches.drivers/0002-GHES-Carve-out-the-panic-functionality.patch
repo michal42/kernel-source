@@ -1,0 +1,54 @@
+From: Borislav Petkov <bp@suse.de>
+Date: Wed, 18 Mar 2015 09:52:39 +0100
+Subject: GHES: Carve out the panic functionality
+Git-commit: e10be03f603d521d5c8ac0bb0f48e5723ce19d58
+Patch-mainline: v4.2-rc1
+References: bsc#917630
+
+... into another function for more clarity. No functionality change.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/acpi/apei/ghes.c |   24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+--- a/drivers/acpi/apei/ghes.c
++++ b/drivers/acpi/apei/ghes.c
+@@ -831,6 +831,18 @@ static void __process_error(struct ghes
+ #endif
+ }
+ 
++static void __ghes_panic(struct ghes *ghes)
++{
++	oops_begin();
++	ghes_print_queued_estatus();
++	__ghes_print_estatus(KERN_EMERG, ghes->generic, ghes->estatus);
++
++	/* reboot to log the error! */
++	if (panic_timeout == 0)
++		panic_timeout = ghes_panic_timeout;
++	panic("Fatal hardware error!");
++}
++
+ static int ghes_notify_nmi(unsigned int cmd, struct pt_regs *regs)
+ {
+ 	struct ghes *ghes, *ghes_global = NULL;
+@@ -854,16 +866,8 @@ static int ghes_notify_nmi(unsigned int
+ 	if (ret == NMI_DONE)
+ 		goto out;
+ 
+-	if (sev_global >= GHES_SEV_PANIC) {
+-		oops_begin();
+-		ghes_print_queued_estatus();
+-		__ghes_print_estatus(KERN_EMERG, ghes_global->generic,
+-				     ghes_global->estatus);
+-		/* reboot to log the error! */
+-		if (panic_timeout == 0)
+-			panic_timeout = ghes_panic_timeout;
+-		panic("Fatal hardware error!");
+-	}
++	if (sev_global >= GHES_SEV_PANIC)
++		__ghes_panic(ghes_global);
+ 
+ 	list_for_each_entry_rcu(ghes, &ghes_nmi, list) {
+ 		if (!(ghes->flags & GHES_TO_CLEAR))
