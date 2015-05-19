@@ -1,0 +1,42 @@
+From 88d6ee076046fc86635495d9393471570eb1570f Mon Sep 17 00:00:00 2001
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Tue, 29 Jul 2014 17:00:21 +0200
+Subject: [PATCH] sched/fair: Make calculate_imbalance() independent
+
+References: Scheduler Performance
+Patch-mainline: v3.18
+Git-commit: 743cb1ff191f00fee653212bdbcee1e56086d6ce
+
+Rik noticed that calculate_imbalance() relies on
+update_sd_pick_busiest() to guarantee that busiest->sum_nr_running >
+busiest->group_capacity_factor.
+
+Break this implicit assumption (with the intent of not providing it
+anymore) by having calculat_imbalance() verify it and not rely on
+others.
+
+Reported-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Acked-by: Vincent Guittot <vincent.guittot@linaro.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: linux-kernel@vger.kernel.org
+Link: http://lkml.kernel.org/r/20140729152631.GW12054@laptop.lan
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 6708121596bf..a2eea5df3898 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -6166,7 +6166,7 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
+ 		return fix_small_imbalance(env, sds);
+ 	}
+ 
+-	if (!busiest->group_imb) {
++	if (busiest->sum_nr_running > busiest->group_capacity_factor) {
+ 		/*
+ 		 * Don't want to pull so many tasks that a group would go idle.
+ 		 * Except of course for the group_imb case, since then we might
