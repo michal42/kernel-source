@@ -1,0 +1,109 @@
+From 1fd9bd65a10b6f4ab074746173f782e4e890a916 Mon Sep 17 00:00:00 2001
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Thu, 9 Oct 2014 15:27:45 -0700
+Subject: [PATCH] mempolicy: sanitize the usage of get_task_policy()
+
+References: VM Performance
+Patch-mainline: v3.18
+Git-commit: 8d90274b3b118c9babeefb1302947f33a1364fb5
+
+Cleanup + preparation. Every user of get_task_policy() calls it
+unconditionally, even if it is not going to use the result.
+
+get_task_policy() is cheap but still this does not look clean, plus
+the code looks simpler if get_task_policy() is called only when this
+is really needed.
+
+Note: I hope this is correct, but it is not clear why vma_policy_mof()
+doesn't fall back to get_task_policy() if ->get_policy() returns NULL.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+Cc: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Cc: David Rientjes <rientjes@google.com>
+Cc: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+Cc: Alexander Viro <viro@zeniv.linux.org.uk>
+Cc: Cyrill Gorcunov <gorcunov@openvz.org>
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Andi Kleen <andi@firstfloor.org>
+Cc: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/mempolicy.c | 25 ++++++++++++++-----------
+ 1 file changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index f7995a66438f..f54786284021 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -1619,14 +1619,11 @@ asmlinkage long compat_sys_mbind(compat_ulong_t start, compat_ulong_t len,
+ struct mempolicy *get_vma_policy(struct task_struct *task,
+ 		struct vm_area_struct *vma, unsigned long addr)
+ {
+-	struct mempolicy *pol = get_task_policy(task);
++	struct mempolicy *pol = NULL;
+ 
+ 	if (vma) {
+ 		if (vma->vm_ops && vma->vm_ops->get_policy) {
+-			struct mempolicy *vpol = vma->vm_ops->get_policy(vma,
+-									addr);
+-			if (vpol)
+-				pol = vpol;
++			pol = vma->vm_ops->get_policy(vma, addr);
+ 		} else if (vma->vm_policy) {
+ 			pol = vma->vm_policy;
+ 
+@@ -1641,12 +1638,15 @@ struct mempolicy *get_vma_policy(struct task_struct *task,
+ 		}
+ 	}
+ 
++	if (!pol)
++		pol = get_task_policy(task);
++
+ 	return pol;
+ }
+ 
+ bool vma_policy_mof(struct task_struct *task, struct vm_area_struct *vma)
+ {
+-	struct mempolicy *pol = get_task_policy(task);
++	struct mempolicy *pol = NULL;
+ 
+ 	if (vma) {
+ 		if (vma->vm_ops && vma->vm_ops->get_policy) {
+@@ -1658,11 +1658,14 @@ bool vma_policy_mof(struct task_struct *task, struct vm_area_struct *vma)
+ 			mpol_cond_put(pol);
+ 
+ 			return ret;
+-		} else if (vma->vm_policy) {
+-			pol = vma->vm_policy;
+ 		}
++
++		pol = vma->vm_policy;
+ 	}
+ 
++	if (!pol)
++		pol = get_task_policy(task);
++
+ 	return pol->flags & MPOL_F_MOF;
+ }
+ 
+@@ -2066,12 +2069,12 @@ retry_cpuset:
+  */
+ struct page *alloc_pages_current(gfp_t gfp, unsigned order)
+ {
+-	struct mempolicy *pol = get_task_policy(current);
++	struct mempolicy *pol = &default_policy;
+ 	struct page *page;
+ 	unsigned int cpuset_mems_cookie;
+ 
+-	if (in_interrupt() || (gfp & __GFP_THISNODE))
+-		pol = &default_policy;
++	if (!in_interrupt() && !(gfp & __GFP_THISNODE))
++		pol = get_task_policy(current);
+ 
+ retry_cpuset:
+ 	cpuset_mems_cookie = read_mems_allowed_begin();
