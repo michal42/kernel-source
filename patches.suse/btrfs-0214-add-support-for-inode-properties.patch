@@ -160,9 +160,9 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  fs/btrfs/props.c           |  427 +++++++++++++++++++++++++++++++++++++++++++++
  fs/btrfs/props.h           |   42 ++++
  fs/btrfs/super.c           |    3 
- fs/btrfs/xattr.c           |   12 +
+ fs/btrfs/xattr.c           |   11 +
  include/uapi/linux/xattr.h |    3 
- 10 files changed, 545 insertions(+), 10 deletions(-)
+ 10 files changed, 545 insertions(+), 9 deletions(-)
  create mode 100644 fs/btrfs/props.c
  create mode 100644 fs/btrfs/props.h
 
@@ -210,7 +210,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  struct btrfs_iget_args {
  	u64 ino;
-@@ -3271,7 +3272,8 @@ out:
+@@ -3283,7 +3284,8 @@ out:
   * slot is the slot the inode is in, objectid is the objectid of the inode
   */
  static noinline int acls_after_inode_item(struct extent_buffer *leaf,
@@ -220,7 +220,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  {
  	u32 nritems = btrfs_header_nritems(leaf);
  	struct btrfs_key found_key;
-@@ -3287,6 +3289,7 @@ static noinline int acls_after_inode_ite
+@@ -3299,6 +3301,7 @@ static noinline int acls_after_inode_ite
  	}
  
  	slot++;
@@ -228,7 +228,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	while (slot < nritems) {
  		btrfs_item_key_to_cpu(leaf, &found_key, slot);
  
-@@ -3296,6 +3299,8 @@ static noinline int acls_after_inode_ite
+@@ -3308,6 +3311,8 @@ static noinline int acls_after_inode_ite
  
  		/* we found an xattr, assume we've got an acl */
  		if (found_key.type == BTRFS_XATTR_ITEM_KEY) {
@@ -237,7 +237,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  			if (found_key.offset == xattr_access ||
  			    found_key.offset == xattr_default)
  				return 1;
-@@ -3324,6 +3329,8 @@ static noinline int acls_after_inode_ite
+@@ -3336,6 +3341,8 @@ static noinline int acls_after_inode_ite
  	 * something larger than an xattr.  We have to assume the inode
  	 * has acls
  	 */
@@ -246,7 +246,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	return 1;
  }
  
-@@ -3343,6 +3350,7 @@ static void btrfs_read_locked_inode(stru
+@@ -3355,6 +3362,7 @@ static void btrfs_read_locked_inode(stru
  	u32 rdev;
  	int ret;
  	bool filled = false;
@@ -254,7 +254,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  	ret = btrfs_fill_inode(inode, &rdev);
  	if (!ret)
-@@ -3352,7 +3360,6 @@ static void btrfs_read_locked_inode(stru
+@@ -3364,7 +3372,6 @@ static void btrfs_read_locked_inode(stru
  	if (!path)
  		goto make_bad;
  
@@ -262,7 +262,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	memcpy(&location, &BTRFS_I(inode)->location, sizeof(location));
  
  	ret = btrfs_lookup_inode(NULL, root, path, &location, 0);
-@@ -3435,12 +3442,21 @@ cache_acl:
+@@ -3447,12 +3454,21 @@ cache_acl:
  	 * any xattrs or acls
  	 */
  	maybe_acls = acls_after_inode_item(leaf, path->slots[0],
@@ -287,7 +287,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	switch (inode->i_mode & S_IFMT) {
  	case S_IFREG:
  		inode->i_mapping->a_ops = &btrfs_aops;
-@@ -5619,6 +5635,12 @@ static struct inode *btrfs_new_inode(str
+@@ -5636,6 +5652,12 @@ static struct inode *btrfs_new_inode(str
  
  	btrfs_update_root_times(trans, root);
  
@@ -300,7 +300,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	return inode;
  fail:
  	if (dir)
-@@ -7901,7 +7923,9 @@ out:
+@@ -7917,7 +7939,9 @@ out:
   * create a new subvolume directory/inode (helper for the ioctl).
   */
  int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,
@@ -311,7 +311,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  {
  	struct inode *inode;
  	int err;
-@@ -7919,6 +7943,12 @@ int btrfs_create_subvol_root(struct btrf
+@@ -7935,6 +7959,12 @@ int btrfs_create_subvol_root(struct btrf
  	set_nlink(inode, 1);
  	btrfs_i_size_write(inode, 0);
  
@@ -873,19 +873,18 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  
  ssize_t __btrfs_getxattr(struct inode *inode, const char *name,
-@@ -331,7 +332,8 @@ static bool btrfs_is_valid_xattr(const c
- 			XATTR_SECURITY_PREFIX_LEN) ||
- 	       !strncmp(name, XATTR_SYSTEM_PREFIX, XATTR_SYSTEM_PREFIX_LEN) ||
- 	       !strncmp(name, XATTR_TRUSTED_PREFIX, XATTR_TRUSTED_PREFIX_LEN) ||
--	       !strncmp(name, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN);
-+	       !strncmp(name, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN) ||
-+		!strncmp(name, XATTR_BTRFS_PREFIX, XATTR_BTRFS_PREFIX_LEN);
- }
- 
- ssize_t btrfs_getxattr(struct dentry *dentry, const char *name,
-@@ -373,6 +375,10 @@ int btrfs_setxattr(struct dentry *dentry
- 	if (!btrfs_is_valid_xattr(name))
+@@ -339,6 +340,8 @@ static int btrfs_is_valid_xattr(const ch
+ 		prefixlen = XATTR_TRUSTED_PREFIX_LEN;
+ 	else if (!strncmp(name, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN))
+ 		prefixlen = XATTR_USER_PREFIX_LEN;
++	else if (!strncmp(name, XATTR_BTRFS_PREFIX, XATTR_BTRFS_PREFIX_LEN))
++		prefixlen = XATTR_BTRFS_PREFIX_LEN;
+ 	else
  		return -EOPNOTSUPP;
+ 
+@@ -395,6 +398,10 @@ int btrfs_setxattr(struct dentry *dentry
+ 	if (ret)
+ 		return ret;
  
 +	if (!strncmp(name, XATTR_BTRFS_PREFIX, XATTR_BTRFS_PREFIX_LEN))
 +		return btrfs_set_prop(dentry->d_inode, name,
@@ -894,9 +893,9 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	if (size == 0)
  		value = "";  /* empty EA, do not remove */
  
-@@ -402,6 +408,10 @@ int btrfs_removexattr(struct dentry *den
- 	if (!btrfs_is_valid_xattr(name))
- 		return -EOPNOTSUPP;
+@@ -426,6 +433,10 @@ int btrfs_removexattr(struct dentry *den
+ 	if (ret)
+ 		return ret;
  
 +	if (!strncmp(name, XATTR_BTRFS_PREFIX, XATTR_BTRFS_PREFIX_LEN))
 +		return btrfs_set_prop(dentry->d_inode, name,
@@ -907,7 +906,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  }
 --- a/include/uapi/linux/xattr.h
 +++ b/include/uapi/linux/xattr.h
-@@ -20,6 +20,9 @@
+@@ -27,6 +27,9 @@
  #define XATTR_MAC_OSX_PREFIX "osx."
  #define XATTR_MAC_OSX_PREFIX_LEN (sizeof(XATTR_MAC_OSX_PREFIX) - 1)
  
