@@ -1,0 +1,45 @@
+From: Borislav Petkov <bp@suse.de>
+Date: Wed, 18 Mar 2015 10:12:35 +0100
+Subject: GHES: Elliminate double-loop in the NMI handler
+Git-commit: 2383844d4850888cfdf6d202563d2ddb4125a4e9
+Patch-mainline: v4.2-rc1
+References: bsc#917630
+
+There's no real need to iterate twice over the HW error sources in the
+NMI handler. With the previous cleanups, elliminating the second loop is
+almost trivial.
+
+Signed-off-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/acpi/apei/ghes.c |   10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+--- a/drivers/acpi/apei/ghes.c
++++ b/drivers/acpi/apei/ghes.c
+@@ -859,24 +859,18 @@ static int ghes_notify_nmi(unsigned int
+ 		if (sev >= GHES_SEV_PANIC)
+ 			__ghes_panic(ghes);
+ 
+-		ret = NMI_HANDLED;
+-	}
+-
+-	if (ret == NMI_DONE)
+-		goto out;
+-
+-	list_for_each_entry_rcu(ghes, &ghes_nmi, list) {
+ 		if (!(ghes->flags & GHES_TO_CLEAR))
+ 			continue;
+ 
+ 		__process_error(ghes);
+ 		ghes_clear_estatus(ghes);
++
++		ret = NMI_HANDLED;
+ 	}
+ #ifdef CONFIG_ARCH_HAVE_NMI_SAFE_CMPXCHG
+ 	irq_work_queue(&ghes_proc_irq_work);
+ #endif
+ 
+-out:
+ 	raw_spin_unlock(&ghes_nmi_lock);
+ 	return ret;
+ }
