@@ -1,0 +1,118 @@
+From 820e8feca06ff744f60e5036c3178dde40b91afc Mon Sep 17 00:00:00 2001
+From: Vivek Goyal <vgoyal@redhat.com>
+Date: Tue, 18 Mar 2014 15:26:38 -0400
+Subject: [PATCH 003/027] x86, boot: Move optimized memcpy() 32/64 bit versions to
+ compressed/string.c
+
+Git-commit: 820e8feca06ff744f60e5036c3178dde40b91afc
+Patch-mainline: v3.15-rc1
+Reference: fate#315018
+Target: sle12-sp1
+
+Move optimized versions of memcpy to compressed/string.c This will allow
+any other code to use these functions too if need be in future. Again
+trying to put definition in a common place instead of hiding it in misc.c
+
+Signed-off-by: Vivek Goyal <vgoyal@redhat.com>
+Link: http://lkml.kernel.org/r/1395170800-11059-4-git-send-email-vgoyal@redhat.com
+Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ arch/x86/boot/compressed/misc.c   |   31 +------------------------------
+ arch/x86/boot/compressed/string.c |   33 +++++++++++++++++++++++++++++++++
+ 2 files changed, 34 insertions(+), 30 deletions(-)
+
+--- a/arch/x86/boot/compressed/misc.c
++++ b/arch/x86/boot/compressed/misc.c
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include "misc.h"
++#include "../string.h"
+ 
+ /* WARNING!!
+  * This code is compiled with -fPIC and it is relocated dynamically
+@@ -110,7 +111,6 @@ static void error(char *m);
+ struct boot_params *real_mode;		/* Pointer to real-mode data */
+ 
+ void *memset(void *s, int c, size_t n);
+-void *memcpy(void *dest, const void *src, size_t n);
+ 
+ #ifdef CONFIG_X86_64
+ #define memptr long
+@@ -231,35 +231,6 @@ void *memset(void *s, int c, size_t n)
+ 		ss[i] = c;
+ 	return s;
+ }
+-#ifdef CONFIG_X86_32
+-void *memcpy(void *dest, const void *src, size_t n)
+-{
+-	int d0, d1, d2;
+-	asm volatile(
+-		"rep ; movsl\n\t"
+-		"movl %4,%%ecx\n\t"
+-		"rep ; movsb\n\t"
+-		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
+-		: "0" (n >> 2), "g" (n & 3), "1" (dest), "2" (src)
+-		: "memory");
+-
+-	return dest;
+-}
+-#else
+-void *memcpy(void *dest, const void *src, size_t n)
+-{
+-	long d0, d1, d2;
+-	asm volatile(
+-		"rep ; movsq\n\t"
+-		"movq %4,%%rcx\n\t"
+-		"rep ; movsb\n\t"
+-		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
+-		: "0" (n >> 3), "g" (n & 7), "1" (dest), "2" (src)
+-		: "memory");
+-
+-	return dest;
+-}
+-#endif
+ 
+ static void error(char *x)
+ {
+--- a/arch/x86/boot/compressed/string.c
++++ b/arch/x86/boot/compressed/string.c
+@@ -11,3 +11,36 @@ int memcmp(const void *s1, const void *s
+ }
+ 
+ #include "../string.c"
++
++/* misc.h might pull in string_32.h which has a macro for memcpy. undef that */
++#undef memcpy
++
++#ifdef CONFIG_X86_32
++void *memcpy(void *dest, const void *src, size_t n)
++{
++	int d0, d1, d2;
++	asm volatile(
++		"rep ; movsl\n\t"
++		"movl %4,%%ecx\n\t"
++		"rep ; movsb\n\t"
++		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
++		: "0" (n >> 2), "g" (n & 3), "1" (dest), "2" (src)
++		: "memory");
++
++	return dest;
++}
++#else
++void *memcpy(void *dest, const void *src, size_t n)
++{
++	long d0, d1, d2;
++	asm volatile(
++		"rep ; movsq\n\t"
++		"movq %4,%%rcx\n\t"
++		"rep ; movsb\n\t"
++		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
++		: "0" (n >> 3), "g" (n & 7), "1" (dest), "2" (src)
++		: "memory");
++
++	return dest;
++}
++#endif
