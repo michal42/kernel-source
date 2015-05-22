@@ -1,0 +1,72 @@
+From ca2c405ab90591dcb1bc3765467cbdf2b99a0f6a Mon Sep 17 00:00:00 2001
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Date: Tue, 4 Mar 2014 17:13:42 +0100
+Subject: [PATCH 009/027] kexec/compat: convert to COMPAT_SYSCALL_DEFINE with changing
+ parameter types
+
+Git-commit: ca2c405ab90591dcb1bc3765467cbdf2b99a0f6a
+Patch-mainline: v3.15-rc1
+Reference: fate#315018
+Target: sle12-sp1
+
+In order to allow the COMPAT_SYSCALL_DEFINE macro generate code that
+performs proper zero and sign extension convert all 64 bit parameters
+to their corresponding 32 bit compat counterparts.
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ include/linux/compat.h |    6 +++---
+ include/linux/kexec.h  |    6 ------
+ kernel/kexec.c         |    8 ++++----
+ 3 files changed, 7 insertions(+), 13 deletions(-)
+
+--- a/include/linux/compat.h
++++ b/include/linux/compat.h
+@@ -621,10 +621,10 @@ asmlinkage long compat_sys_futex(u32 __u
+ 		u32 val3);
+ asmlinkage long compat_sys_getsockopt(int fd, int level, int optname,
+ 				      char __user *optval, int __user *optlen);
+-asmlinkage long compat_sys_kexec_load(unsigned long entry,
+-				      unsigned long nr_segments,
++asmlinkage long compat_sys_kexec_load(compat_ulong_t entry,
++				      compat_ulong_t nr_segments,
+ 				      struct compat_kexec_segment __user *,
+-				      unsigned long flags);
++				      compat_ulong_t flags);
+ asmlinkage long compat_sys_mq_getsetattr(mqd_t mqdes,
+ 			const struct compat_mq_attr __user *u_mqstat,
+ 			struct compat_mq_attr __user *u_omqstat);
+--- a/include/linux/kexec.h
++++ b/include/linux/kexec.h
+@@ -127,12 +127,6 @@ extern asmlinkage long sys_kexec_load(un
+ 					struct kexec_segment __user *segments,
+ 					unsigned long flags);
+ extern int kernel_kexec(void);
+-#ifdef CONFIG_COMPAT
+-extern asmlinkage long compat_sys_kexec_load(unsigned long entry,
+-				unsigned long nr_segments,
+-				struct compat_kexec_segment __user *segments,
+-				unsigned long flags);
+-#endif
+ extern struct page *kimage_alloc_control_pages(struct kimage *image,
+ 						unsigned int order);
+ extern void crash_kexec(struct pt_regs *);
+--- a/kernel/kexec.c
++++ b/kernel/kexec.c
+@@ -1047,10 +1047,10 @@ void __weak crash_unmap_reserved_pages(v
+ {}
+ 
+ #ifdef CONFIG_COMPAT
+-asmlinkage long compat_sys_kexec_load(unsigned long entry,
+-				unsigned long nr_segments,
+-				struct compat_kexec_segment __user *segments,
+-				unsigned long flags)
++COMPAT_SYSCALL_DEFINE4(kexec_load, compat_ulong_t, entry,
++		       compat_ulong_t, nr_segments,
++		       struct compat_kexec_segment __user *, segments,
++		       compat_ulong_t, flags)
+ {
+ 	struct compat_kexec_segment in;
+ 	struct kexec_segment out, __user *ksegments;
