@@ -1,0 +1,106 @@
+From: Vincent Guittot <vincent.guittot@linaro.org>
+Date: Fri, 11 Apr 2014 11:44:38 +0200
+Subject: sched, s390: Create a dedicated topology table
+Git-commit: 2dfd747629e65f89d2dbceb92fffc763f66228b2
+Patch-mainline: v3.16-rc1
+References: fate#318547
+
+BOOK level is only relevant for s390 so we create a dedicated topology table
+with BOOK level and remove it from default table.
+
+Signed-off-by: Vincent Guittot <vincent.guittot@linaro.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: Heiko Carstens <heiko.carstens@de.ibm.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Cc: Philipp Hachtmann <phacht@linux.vnet.ibm.com>
+Cc: cmetcalf@tilera.com
+Cc: benh@kernel.crashing.org
+Cc: dietmar.eggemann@arm.com
+Cc: preeti@linux.vnet.ibm.com
+Cc: tony.luck@intel.com
+Cc: fenghua.yu@intel.com
+Cc: linux390@de.ibm.com
+Cc: linux-s390@vger.kernel.org
+Link: http://lkml.kernel.org/r/1397209481-28542-3-git-send-email-vincent.guittot@linaro.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ arch/s390/include/asm/topology.h |   11 +----------
+ arch/s390/kernel/topology.c      |   18 ++++++++++++++++++
+ kernel/sched/core.c              |    3 ---
+ 3 files changed, 19 insertions(+), 13 deletions(-)
+
+--- a/arch/s390/include/asm/topology.h
++++ b/arch/s390/include/asm/topology.h
+@@ -26,21 +26,12 @@ extern struct cpu_topology_s390 cpu_topo
+ 
+ #define mc_capable() 1
+ 
+-static inline const struct cpumask *cpu_coregroup_mask(int cpu)
+-{
+-	return &cpu_topology[cpu].core_mask;
+-}
+-
+-static inline const struct cpumask *cpu_book_mask(int cpu)
+-{
+-	return &cpu_topology[cpu].book_mask;
+-}
+-
+ int topology_cpu_init(struct cpu *);
+ int topology_set_cpu_management(int fc);
+ void topology_schedule_update(void);
+ void store_topology(struct sysinfo_15_1_x *info);
+ void topology_expect_change(void);
++const struct cpumask *cpu_coregroup_mask(int cpu);
+ 
+ #else /* CONFIG_SCHED_BOOK */
+ 
+--- a/arch/s390/kernel/topology.c
++++ b/arch/s390/kernel/topology.c
+@@ -443,6 +443,23 @@ int topology_cpu_init(struct cpu *cpu)
+ 	return sysfs_create_group(&cpu->dev.kobj, &topology_cpu_attr_group);
+ }
+ 
++const struct cpumask *cpu_coregroup_mask(int cpu)
++{
++	return &cpu_topology[cpu].core_mask;
++}
++
++static const struct cpumask *cpu_book_mask(int cpu)
++{
++	return &cpu_topology[cpu].book_mask;
++}
++
++static struct sched_domain_topology_level s390_topology[] = {
++	{ cpu_coregroup_mask, cpu_core_flags, SD_INIT_NAME(MC) },
++	{ cpu_book_mask, SD_INIT_NAME(BOOK) },
++	{ cpu_cpu_mask, SD_INIT_NAME(DIE) },
++	{ NULL, },
++};
++
+ static int __init topology_init(void)
+ {
+ 	if (!MACHINE_HAS_TOPOLOGY) {
+@@ -452,6 +469,7 @@ static int __init topology_init(void)
+ 	set_topology_timer();
+ out:
+ 	update_cpu_masks();
++	set_sched_topology(s390_topology);
+ 	return device_create_file(cpu_subsys.dev_root, &dev_attr_dispatching);
+ }
+ device_initcall(topology_init);
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -5859,9 +5859,6 @@ static struct sched_domain_topology_leve
+ #ifdef CONFIG_SCHED_MC
+ 	{ cpu_coregroup_mask, cpu_core_flags, SD_INIT_NAME(MC) },
+ #endif
+-#ifdef CONFIG_SCHED_BOOK
+-	{ cpu_book_mask, SD_INIT_NAME(BOOK) },
+-#endif
+ 	{ cpu_cpu_mask, SD_INIT_NAME(DIE) },
+ 	{ NULL, },
+ };
