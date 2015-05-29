@@ -1,0 +1,59 @@
+From: Miroslav Benes <mbenes@suse.cz>
+Subject: kgr: fix redirection on s390x arch
+References: bsc#903279
+Patch-mainline: never, SLE12-specific
+
+Due to module compatibility issues there is a hack in current SLE12. It
+allows to load modules compiled against GA kernel where the mcount
+prologue was different. All the records in __mcount_loc sections (that
+is ftrace records of fentry sites) are stored with +6 offsets. This
+breaks kGraft. ftrace_function_to_fentry returns address incremented by
+6. kGraft redirects all calls of the patched function to this address,
+thus skipping the first instruction of the old mcount prologue.
+
+        stg     %r14,8(%r15)
+        larl    %r1,<&counter>
+        brasl   %r14,_mcount
+        lg      %r14,8(%r15)
+
+Unfortunately there is the return address to the original caller in r14.
+If we skip the first instruction we will never retrieve the address
+back. This causes a BUG() upon returning from the patching (new)
+function.
+
+We just fix the redirection to take this into account. It is consistent
+with all the current hacks in ftrace.
+
+Note that there is no such problem if the patching function is compiled
+with hotpatch capable gcc. The prologue is 6 bytes long there so we
+would skip it and nothing would break.
+
+Signed-off-by: Miroslav Benes <mbenes@suse.cz>
+Reviewed-by: Jiri Kosina <jkosina@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/s390/include/asm/kgraft.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/s390/include/asm/kgraft.h b/arch/s390/include/asm/kgraft.h
+index 2bbe102..b8667702 100644
+--- a/arch/s390/include/asm/kgraft.h
++++ b/arch/s390/include/asm/kgraft.h
+@@ -17,12 +17,13 @@
+ #ifndef ASM_KGR_H
+ #define ASM_KGR_H
+ 
++#include <asm/ftrace.h>
+ #include <asm/ptrace.h>
+ #include <linux/stacktrace.h>
+ 
+ static inline void kgr_set_regs_ip(struct pt_regs *regs, unsigned long ip)
+ {
+-	regs->psw.addr = ip;
++	regs->psw.addr = ip - MCOUNT_IP_FIXUP;
+ }
+ 
+ static inline bool kgr_needs_lazy_migration(struct task_struct *p)
+-- 
+2.1.4
+
