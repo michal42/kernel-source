@@ -1,0 +1,40 @@
+From: "Aneesh Kumar K.V" <aneesh.kumar@linux.vnet.ibm.com>
+Date: Mon, 29 Sep 2014 13:32:38 +0530
+Subject: [PATCH] KVM: PPC: BOOK3S: HV: CMA: Reserve cma region only in
+ hypervisor mode
+Git-commit: cec26bc3c125b5dd12a02f04133cd91eae3f1622
+Reference: bsc#908491
+Patch-mainline: v3.18-rc1
+
+We use cma reserved area for creating guest hash page table.
+Don't do the reservation in non-hypervisor mode. This avoids unnecessary
+CMA reservation when booting with limited memory configs like
+fadump and kdump.
+
+Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Reviewed-by: Alexander Graf <agraf@suse.de>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ arch/powerpc/kvm/book3s_hv_builtin.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_builtin.c b/arch/powerpc/kvm/book3s_hv_builtin.c
+index b9615ba..4fdc27c 100644
+--- a/arch/powerpc/kvm/book3s_hv_builtin.c
++++ b/arch/powerpc/kvm/book3s_hv_builtin.c
+@@ -163,6 +163,12 @@ void __init kvm_cma_reserve(void)
+ 	unsigned long align_size;
+ 	struct memblock_region *reg;
+ 	phys_addr_t selected_size = 0;
++
++	/*
++	 * We need CMA reservation only when we are in HV mode
++	 */
++	if (!cpu_has_feature(CPU_FTR_HVMODE))
++		return;
+ 	/*
+ 	 * We cannot use memblock_phys_mem_size() here, because
+ 	 * memblock_analyze() has not been called yet.
+-- 
+2.1.4
