@@ -1,0 +1,53 @@
+From: Anton Blanchard <anton@samba.org>
+Date: Wed, 24 Sep 2014 16:59:58 +1000
+Subject: [PATCH] powerpc: Fill in si_addr_lsb siginfo field
+Git-commit: 9d57472f61acd7c3a33ebf5a79361e316d8ffbef
+Reference: bsc#929475
+Patch-mainline: v3.18-rc2
+
+Fill in the si_addr_lsb siginfo field so the hwpoison code can
+pass to userspace the length of memory that has been corrupted.
+
+Signed-off-by: Anton Blanchard <anton@samba.org>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ arch/powerpc/mm/fault.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/powerpc/mm/fault.c b/arch/powerpc/mm/fault.c
+index 588b6cc..24b3f49 100644
+--- a/arch/powerpc/mm/fault.c
++++ b/arch/powerpc/mm/fault.c
+@@ -33,6 +33,7 @@
+ #include <linux/magic.h>
+ #include <linux/ratelimit.h>
+ #include <linux/context_tracking.h>
++#include <linux/hugetlb.h>
+ 
+ #include <asm/firmware.h>
+ #include <asm/page.h>
+@@ -118,6 +119,7 @@ static int do_sigbus(struct pt_regs *regs, unsigned long address,
+ 		     unsigned int fault)
+ {
+ 	siginfo_t info;
++	unsigned int lsb = 0;
+ 
+ 	up_read(&current->mm->mmap_sem);
+ 
+@@ -135,7 +137,13 @@ static int do_sigbus(struct pt_regs *regs, unsigned long address,
+ 			current->comm, current->pid, address);
+ 		info.si_code = BUS_MCEERR_AR;
+ 	}
++
++	if (fault & VM_FAULT_HWPOISON_LARGE)
++		lsb = hstate_index_to_shift(VM_FAULT_GET_HINDEX(fault));
++	if (fault & VM_FAULT_HWPOISON)
++		lsb = PAGE_SHIFT;
+ #endif
++	info.si_addr_lsb = lsb;
+ 	force_sig_info(SIGBUS, &info, current);
+ 	return MM_FAULT_RETURN;
+ }
+-- 
+2.1.4
