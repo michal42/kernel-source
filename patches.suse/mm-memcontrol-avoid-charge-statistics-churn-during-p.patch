@@ -1,0 +1,116 @@
+From 6abb5a867ba0866cb21827b172cee6aa71244bd1 Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Fri, 8 Aug 2014 14:19:33 -0700
+Subject: [PATCH] mm: memcontrol: avoid charge statistics churn during page
+ migration
+Git-commit: 6abb5a867ba0866cb21827b172cee6aa71244bd1
+Patch-mainline: v3.17-rc1
+References: bnc#931454
+
+Charge migration currently disables IRQs twice to update the charge
+statistics for the old page and then again for the new page.
+
+But migration is a seamless transition of a charge from one physical
+page to another one of the same size, so this should be a non-event from
+an accounting point of view.  Leave the statistics alone.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Cc: Hugh Dickins <hughd@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |   34 +++++++++-------------------------
+ 1 file changed, 9 insertions(+), 25 deletions(-)
+
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -2763,7 +2763,7 @@ static void unlock_page_lru(struct page
+ }
+ 
+ static void commit_charge(struct page *page, struct mem_cgroup *memcg,
+-			  unsigned int nr_pages, bool lrucare)
++			  bool lrucare)
+ {
+ 	struct page_cgroup *pc = lookup_page_cgroup(page);
+ 	int isolated;
+@@ -2801,16 +2801,6 @@ static void commit_charge(struct page *p
+ 
+ 	if (lrucare)
+ 		unlock_page_lru(page, isolated);
+- 
+-	local_irq_disable();
+-	mem_cgroup_charge_statistics(memcg, page, nr_pages);
+-	/*
+-	 * "charge_statistics" updated event counter. Then, check it.
+-	 * Insert ancestor (and ancestor's ancestors), to softlimit RB-tree.
+-	 * if they exceeds softlimit.
+-	 */
+-	memcg_check_events(memcg, page);
+-	local_irq_enable();
+ }
+ 
+ static DEFINE_MUTEX(set_limit_mutex);
+@@ -6428,12 +6418,17 @@ void mem_cgroup_commit_charge(struct pag
+ 	if (!memcg)
+ 		return;
+ 
++	commit_charge(page, memcg, lrucare);
++
+ 	if (PageTransHuge(page)) {
+ 		nr_pages <<= compound_order(page);
+ 		VM_BUG_ON(!PageTransHuge(page));
+ 	}
+ 
+-	commit_charge(page, memcg, nr_pages, lrucare);
++	local_irq_disable();
++	mem_cgroup_charge_statistics(memcg, page, nr_pages);
++	memcg_check_events(memcg, page);
++	local_irq_enable();
+ 
+ 	if (do_swap_account && PageSwapCache(page)) {
+ 		swp_entry_t entry = { .val = page_private(page) };
+@@ -6621,7 +6616,6 @@ void mem_cgroup_uncharge_list(struct lis
+ void mem_cgroup_migrate(struct page *oldpage, struct page *newpage,
+ 			bool lrucare)
+ {
+-	unsigned int nr_pages = 1;
+ 	struct page_cgroup *pc;
+ 	int isolated;
+ 
+@@ -6630,6 +6624,7 @@ void mem_cgroup_migrate(struct page *old
+ 	VM_BUG_ON(!lrucare && PageLRU(oldpage));
+ 	VM_BUG_ON(!lrucare && PageLRU(newpage));
+ 	VM_BUG_ON(PageAnon(oldpage) != PageAnon(newpage));
++	VM_BUG_ON(PageTransHuge(oldpage) != PageTransHuge(newpage));
+ 
+ 	if (mem_cgroup_disabled())
+ 		return;
+@@ -6647,12 +6642,6 @@ void mem_cgroup_migrate(struct page *old
+ 	VM_BUG_ON(!(pc->flags & PCG_MEM));
+ 	VM_BUG_ON(do_swap_account && !(pc->flags & PCG_MEMSW));
+ 
+-	if (PageTransHuge(oldpage)) {
+-		nr_pages <<= compound_order(oldpage);
+-		VM_BUG_ON(!PageTransHuge(oldpage));
+-		VM_BUG_ON(!PageTransHuge(newpage));
+-	}
+-
+ 	if (lrucare)
+ 		lock_page_lru(oldpage, &isolated);
+ 
+@@ -6661,12 +6650,7 @@ void mem_cgroup_migrate(struct page *old
+ 	if (lrucare)
+ 		unlock_page_lru(oldpage, isolated);
+ 
+-	local_irq_disable();
+-	mem_cgroup_charge_statistics(pc->mem_cgroup, oldpage, -nr_pages);
+-	memcg_check_events(pc->mem_cgroup, oldpage);
+-	local_irq_enable();
+-
+-	commit_charge(newpage, pc->mem_cgroup, nr_pages, lrucare);
++	commit_charge(newpage, pc->mem_cgroup, lrucare);
+ }
+ 
+ /*
