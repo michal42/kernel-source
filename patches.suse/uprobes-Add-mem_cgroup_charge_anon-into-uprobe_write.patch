@@ -1,0 +1,87 @@
+From 29dedee0e693aa113164c820395ce51446a71ace Mon Sep 17 00:00:00 2001
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Mon, 5 May 2014 16:38:18 +0200
+Subject: [PATCH] uprobes: Add mem_cgroup_charge_anon() into
+ uprobe_write_opcode()
+Git-commit: 29dedee0e693aa113164c820395ce51446a71ace
+Patch-mainline: v3.16-rc1
+References: bnc#931454
+
+Hugh says:
+
+    The one I noticed was that it forgets all about memcg (because
+    it was copied from KSM, and there the replacement page has already
+    been charged to a memcg). See how mm/memory.c do_anonymous_page()
+    does a mem_cgroup_charge_anon().
+
+Hopefully not a big problem, uprobes is a system-wide thing and only
+root can insert the probes. But I agree, should be fixed anyway.
+
+Add mem_cgroup_{un,}charge_anon() into uprobe_write_opcode(). To simplify
+the error handling (and avoid the new "uncharge" label) the patch also
+moves anon_vma_prepare() up before we alloc/charge the new page.
+
+While at it fix the comment about ->mmap_sem, it is held for write.
+
+Suggested-by: Hugh Dickins <hughd@google.com>
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+Signed-off-by: Michal Hocko <mhocko@suse.cz>
+
+---
+ kernel/events/uprobes.c |   23 +++++++++++------------
+ 1 file changed, 11 insertions(+), 12 deletions(-)
+
+--- a/kernel/events/uprobes.c
++++ b/kernel/events/uprobes.c
+@@ -246,18 +246,13 @@ static int verify_opcode(struct page *pa
+  * supported by that architecture then we need to modify is_trap_at_addr and
+  * write_opcode accordingly. This would never be a problem for archs that
+  * have fixed length instructions.
+- */
+-
+-/*
++ *
+  * write_opcode - write the opcode at a given virtual address.
+  * @mm: the probed process address space.
+  * @vaddr: the virtual address to store the opcode.
+  * @opcode: opcode to be written at @vaddr.
+  *
+- * Called with mm->mmap_sem held (for read and with a reference to
+- * mm).
+- *
+- * For mm @mm, write the opcode at @vaddr.
++ * Called with mm->mmap_sem held for write.
+  * Return 0 (success) or a negative errno.
+  */
+ static int write_opcode(struct mm_struct *mm, unsigned long vaddr,
+@@ -277,21 +272,25 @@ retry:
+ 	if (ret <= 0)
+ 		goto put_old;
+ 
++	ret = anon_vma_prepare(vma);
++	if (ret)
++		goto put_old;
++
+ 	ret = -ENOMEM;
+ 	new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, vaddr);
+ 	if (!new_page)
+ 		goto put_old;
+ 
+-	__SetPageUptodate(new_page);
++	if (mem_cgroup_charge_anon(new_page, mm, GFP_KERNEL))
++		goto put_new;
+ 
++	__SetPageUptodate(new_page);
+ 	copy_highpage(new_page, old_page);
+ 	copy_to_page(new_page, vaddr, &opcode, UPROBE_SWBP_INSN_SIZE);
+ 
+-	ret = anon_vma_prepare(vma);
+-	if (ret)
+-		goto put_new;
+-
+ 	ret = __replace_page(vma, vaddr, old_page, new_page);
++	if (ret)
++		mem_cgroup_uncharge_page(new_page);
+ 
+ put_new:
+ 	page_cache_release(new_page);
