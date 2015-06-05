@@ -1,0 +1,45 @@
+From a203d5c7db7783f3cdc10a1abf31e3b91d5c43b3 Mon Sep 17 00:00:00 2001
+From: "Kirill A. Shutemov" <kirill@shutemov.name>
+Date: Wed, 10 Dec 2014 15:44:36 -0800
+Subject: [PATCH] mm: fix huge zero page accounting in smaps report
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v3.19
+
+As a small zero page, huge zero page should not be accounted in smaps
+report as normal page.
+
+For small pages we rely on vm_normal_page() to filter out zero page, but
+vm_normal_page() is not designed to handle pmds.  We only get here due
+hackish cast pmd to pte in smaps_pte_range() -- pte and pmd format is not
+necessary compatible on each and every architecture.
+
+Let's add separate codepath to handle pmds.  follow_trans_huge_pmd() will
+detect huge zero page for us.
+
+We would need pmd_dirty() helper to do this properly.  The patch adds it
+to THP-enabled architectures which don't yet have one.
+
+[akpm@linux-foundation.org: use do_div to fix 32-bit build]
+Signed-off-by: "Kirill A. Shutemov" <kirill@shutemov.name>
+Reported-by: Fengguang Wu <fengguang.wu@intel.com>
+Tested-by: Fengwei Yin <yfw.kernel@gmail.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Automatically created from "patches.suse/mm-fix-huge-zero-page-accounting-in-smaps-report.patch" by xen-port-patches.py
+
+--- a/arch/x86/include/mach-xen/asm/pgtable.h
++++ b/arch/x86/include/mach-xen/asm/pgtable.h
+@@ -90,6 +90,11 @@ static inline int pte_young(pte_t pte)
+ 	return pte_flags(pte) & _PAGE_ACCESSED;
+ }
+ 
++static inline int pmd_dirty(pmd_t pmd)
++{
++	return pmd_flags(pmd) & _PAGE_DIRTY;
++}
++
+ static inline int pmd_young(pmd_t pmd)
+ {
+ 	return pmd_flags(pmd) & _PAGE_ACCESSED;

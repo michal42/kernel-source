@@ -9,9 +9,9 @@ Acked-by: jbeulich@novell.com
 
 3.11/arch/x86/include/asm/acpi.h (acpi_suspend_lowlevel now is a pointer)
 
---- sle12.orig/arch/x86/Kconfig	2013-09-26 13:00:47.000000000 +0200
-+++ sle12/arch/x86/Kconfig	2014-01-23 11:20:57.000000000 +0100
-@@ -1296,7 +1296,7 @@ config ARCH_PHYS_ADDR_T_64BIT
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -1295,7 +1295,7 @@ config ARCH_PHYS_ADDR_T_64BIT
  
  config ARCH_DMA_ADDR_T_64BIT
  	def_bool y
@@ -20,7 +20,7 @@ Acked-by: jbeulich@novell.com
  
  config DIRECT_GBPAGES
  	bool "Enable 1GB pages for kernel pagetables" if EXPERT
-@@ -2219,7 +2219,7 @@ source "drivers/pci/Kconfig"
+@@ -2253,7 +2253,7 @@ source "drivers/pci/Kconfig"
  
  # x86_64 have no ISA slots, but can have ISA-style DMA.
  config ISA_DMA_API
@@ -29,7 +29,7 @@ Acked-by: jbeulich@novell.com
  	default y
  	help
  	  Enables ISA-style DMA support for devices requiring such controllers.
-@@ -2278,7 +2278,7 @@ config SCx200HR_TIMER
+@@ -2312,7 +2312,7 @@ config SCx200HR_TIMER
  
  config OLPC
  	bool "One Laptop Per Child support"
@@ -38,8 +38,8 @@ Acked-by: jbeulich@novell.com
  	select GPIOLIB
  	select OF
  	select OF_PROMTREE
---- sle12.orig/arch/x86/ia32/ia32entry-xen.S	2011-02-01 15:04:27.000000000 +0100
-+++ sle12/arch/x86/ia32/ia32entry-xen.S	2011-04-12 16:00:27.000000000 +0200
+--- a/arch/x86/ia32/ia32entry-xen.S
++++ b/arch/x86/ia32/ia32entry-xen.S
 @@ -20,6 +20,8 @@
  #define AUDIT_ARCH_I386		(EM_386|__AUDIT_ARCH_LE)
  #define __AUDIT_ARCH_LE	   0x40000000
@@ -78,8 +78,8 @@ Acked-by: jbeulich@novell.com
 +	.quad compat_sys_clock_adjtime
 +	.quad sys_syncfs
  ia32_syscall_end:
---- sle12.orig/arch/x86/include/mach-xen/asm/io.h	2011-02-01 15:09:47.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/io.h	2011-04-15 11:26:41.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/io.h
++++ b/arch/x86/include/mach-xen/asm/io.h
 @@ -352,6 +352,8 @@ extern void __iomem *early_ioremap(resou
  				   unsigned long size);
  extern void __iomem *early_memremap(resource_size_t phys_addr,
@@ -89,8 +89,18 @@ Acked-by: jbeulich@novell.com
  extern void early_iounmap(void __iomem *addr, unsigned long size);
  extern void fixup_early_ioremap(void);
  extern bool is_early_ioremap_ptep(pte_t *ptep);
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:10:05.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-04-12 15:59:10.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/irqflags.h
++++ b/arch/x86/include/mach-xen/asm/irqflags.h
+@@ -99,6 +99,7 @@ static inline void halt(void)
+ 
+ #define __DISABLE_INTERRUPTS	movb $1,evtchn_upcall_mask(__REG_si)
+ #define __ENABLE_INTERRUPTS	movb $0,evtchn_upcall_mask(__REG_si)
++#define __SAVE_INTERRUPTS(reg)	movzb evtchn_upcall_mask(__REG_si),%reg
+ #define __TEST_PENDING		cmpb $0,evtchn_upcall_pending(__REG_si)
+ #define DISABLE_INTERRUPTS(clb)	GET_VCPU_INFO				; \
+ 				__DISABLE_INTERRUPTS
+--- a/arch/x86/include/mach-xen/asm/pgtable_64.h
++++ b/arch/x86/include/mach-xen/asm/pgtable_64.h
 @@ -165,7 +165,6 @@ static inline int pgd_large(pgd_t pgd) {
  #define __swp_entry_to_pte(x)		((pte_t) { .pte = (x).val })
  
@@ -99,8 +109,8 @@ Acked-by: jbeulich@novell.com
  
  #define HAVE_ARCH_UNMAPPED_AREA
  #define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_types.h	2011-02-01 15:41:35.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_types.h	2011-05-23 11:27:06.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/pgtable_types.h
++++ b/arch/x86/include/mach-xen/asm/pgtable_types.h
 @@ -358,6 +358,8 @@ int phys_mem_access_prot_allowed(struct 
  /* Install a pte for a particular vaddr in kernel space. */
  void set_pte_vaddr(unsigned long vaddr, pte_t pte);
@@ -110,8 +120,8 @@ Acked-by: jbeulich@novell.com
  struct seq_file;
  extern void arch_report_meminfo(struct seq_file *m);
  
---- sle12.orig/arch/x86/include/mach-xen/asm/processor.h	2011-03-03 16:47:59.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/processor.h	2011-04-12 15:59:10.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/processor.h
++++ b/arch/x86/include/mach-xen/asm/processor.h
 @@ -103,10 +103,6 @@ struct cpuinfo_x86 {
  	int			x86_power;
  	unsigned long		loops_per_jiffy;
@@ -123,8 +133,8 @@ Acked-by: jbeulich@novell.com
  	/* cpuid returned max cores value: */
  	u16			 x86_max_cores;
  	u16			apicid;
---- sle12.orig/arch/x86/include/mach-xen/asm/smp.h	2011-03-03 16:12:54.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/smp.h	2011-04-13 17:01:31.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/smp.h
++++ b/arch/x86/include/mach-xen/asm/smp.h
 @@ -17,12 +17,24 @@
  #endif
  #include <asm/thread_info.h>
@@ -167,25 +177,25 @@ Acked-by: jbeulich@novell.com
  #endif
  
  #ifdef CONFIG_SMP
---- sle12.orig/arch/x86/kernel/Makefile	2013-09-26 13:00:33.000000000 +0200
-+++ sle12/arch/x86/kernel/Makefile	2013-09-26 13:01:30.000000000 +0200
-@@ -122,5 +122,5 @@ ifeq ($(CONFIG_X86_64),y)
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -123,5 +123,5 @@ ifeq ($(CONFIG_X86_64),y)
  endif
  
  disabled-obj-$(CONFIG_XEN) := crash.o early-quirks.o i8237.o i8253.o i8259.o \
 -	irqinit.o pci-swiotlb.o reboot.o smpboot.o tsc.o tsc_sync.o vsmp_64.o
 +	irqinit.o pci-swiotlb.o reboot.o smpboot.o trampoline%.o tsc%.o vsmp%.o
  disabled-obj-$(CONFIG_XEN_UNPRIVILEGED_GUEST) += probe_roms_32.o
---- sle12.orig/arch/x86/kernel/acpi/Makefile	2012-06-13 13:55:05.000000000 +0200
-+++ sle12/arch/x86/kernel/acpi/Makefile	2012-06-13 15:45:33.000000000 +0200
+--- a/arch/x86/kernel/acpi/Makefile
++++ b/arch/x86/kernel/acpi/Makefile
 @@ -8,4 +8,4 @@ obj-$(CONFIG_XEN)		+= processor_extcntl_
  endif
  endif
  
 -disabled-obj-$(CONFIG_XEN)	:= cstate.o wakeup_%.o
 +disabled-obj-$(CONFIG_XEN)	:= cstate.o sleep.o wakeup_%.o
---- sle12.orig/arch/x86/kernel/amd_nb.c	2013-09-26 12:44:30.000000000 +0200
-+++ sle12/arch/x86/kernel/amd_nb.c	2013-09-26 13:01:29.000000000 +0200
+--- a/arch/x86/kernel/amd_nb.c
++++ b/arch/x86/kernel/amd_nb.c
 @@ -168,6 +168,7 @@ struct resource *amd_get_mmconfig_range(
  	return res;
  }
@@ -202,8 +212,8 @@ Acked-by: jbeulich@novell.com
  
  static int amd_cache_gart(void)
  {
---- sle12.orig/arch/x86/kernel/apic/io_apic-xen.c	2011-02-17 10:30:00.000000000 +0100
-+++ sle12/arch/x86/kernel/apic/io_apic-xen.c	2011-05-09 11:46:50.000000000 +0200
+--- a/arch/x86/kernel/apic/io_apic-xen.c
++++ b/arch/x86/kernel/apic/io_apic-xen.c
 @@ -30,7 +30,7 @@
  #include <linux/compiler.h>
  #include <linux/acpi.h>
@@ -285,7 +295,7 @@ Acked-by: jbeulich@novell.com
  	else
  		irq_free_desc(at);
  	return cfg;
-@@ -868,7 +874,7 @@ static int EISA_ELCR(unsigned int irq)
+@@ -872,7 +878,7 @@ static int EISA_ELCR(unsigned int irq)
  #define default_MCA_trigger(idx)	(1)
  #define default_MCA_polarity(idx)	default_ISA_polarity(idx)
  
@@ -294,7 +304,7 @@ Acked-by: jbeulich@novell.com
  {
  	int bus = mp_irqs[idx].srcbus;
  	int polarity;
-@@ -910,7 +916,7 @@ static int MPBIOS_polarity(int idx)
+@@ -914,7 +920,7 @@ static int MPBIOS_polarity(int idx)
  	return polarity;
  }
  
@@ -303,7 +313,7 @@ Acked-by: jbeulich@novell.com
  {
  	int bus = mp_irqs[idx].srcbus;
  	int trigger;
-@@ -982,16 +988,6 @@ static int MPBIOS_trigger(int idx)
+@@ -986,16 +992,6 @@ static int MPBIOS_trigger(int idx)
  	return trigger;
  }
  
@@ -320,7 +330,7 @@ Acked-by: jbeulich@novell.com
  static int pin_2_irq(int idx, int apic, int pin)
  {
  	int irq;
-@@ -1240,7 +1236,7 @@ void __setup_vector_irq(int cpu)
+@@ -1244,7 +1240,7 @@ void __setup_vector_irq(int cpu)
  	raw_spin_lock(&vector_lock);
  	/* Mark the inuse vectors */
  	for_each_active_irq(irq) {
@@ -329,7 +339,7 @@ Acked-by: jbeulich@novell.com
  		if (!cfg)
  			continue;
  		/*
-@@ -1271,10 +1267,6 @@ void __setup_vector_irq(int cpu)
+@@ -1275,10 +1271,6 @@ void __setup_vector_irq(int cpu)
  static struct irq_chip ioapic_chip;
  static struct irq_chip ir_ioapic_chip;
  
@@ -340,7 +350,7 @@ Acked-by: jbeulich@novell.com
  #ifdef CONFIG_X86_32
  static inline int IO_APIC_irq_trigger(int irq)
  {
-@@ -1299,39 +1291,35 @@ static inline int IO_APIC_irq_trigger(in
+@@ -1303,39 +1295,35 @@ static inline int IO_APIC_irq_trigger(in
  }
  #endif
  
@@ -397,7 +407,7 @@ Acked-by: jbeulich@novell.com
  #endif
  
  static int setup_ioapic_entry(int apic_id, int irq,
-@@ -1438,7 +1426,7 @@ static void setup_ioapic_irq(int apic_id
+@@ -1442,7 +1430,7 @@ static void setup_ioapic_irq(int apic_id
  		return;
  	}
  
@@ -406,7 +416,7 @@ Acked-by: jbeulich@novell.com
  #ifndef CONFIG_XEN
  	if (irq < legacy_pic->nr_legacy_irqs)
  		legacy_pic->mask(irq);
-@@ -1451,33 +1439,26 @@ static struct {
+@@ -1455,33 +1443,26 @@ static struct {
  	DECLARE_BITMAP(pin_programmed, MP_MAX_IOAPIC_PIN + 1);
  } mp_ioapic_routing[MAX_IO_APICS];
  
@@ -454,7 +464,7 @@ Acked-by: jbeulich@novell.com
  
  		irq = pin_2_irq(idx, apic_id, pin);
  
-@@ -1493,26 +1474,25 @@ static void __init setup_IO_APIC_irqs(vo
+@@ -1497,26 +1478,25 @@ static void __init setup_IO_APIC_irqs(vo
  		 * installed and if it returns 1:
  		 */
  		if (apic->multi_timer_check &&
@@ -494,7 +504,7 @@ Acked-by: jbeulich@novell.com
  }
  
  /*
-@@ -1523,7 +1503,7 @@ static void __init setup_IO_APIC_irqs(vo
+@@ -1527,7 +1507,7 @@ static void __init setup_IO_APIC_irqs(vo
  void setup_IO_APIC_irq_extra(u32 gsi)
  {
  	int apic_id = 0, pin, idx, irq, node = cpu_to_node(0);
@@ -503,7 +513,7 @@ Acked-by: jbeulich@novell.com
  
  	/*
  	 * Convert 'gsi' to 'ioapic.pin'.
-@@ -1547,21 +1527,10 @@ void setup_IO_APIC_irq_extra(u32 gsi)
+@@ -1551,21 +1531,10 @@ void setup_IO_APIC_irq_extra(u32 gsi)
  	if (apic_id == 0 || irq < NR_IRQS_LEGACY)
  		return;
  
@@ -528,7 +538,7 @@ Acked-by: jbeulich@novell.com
  }
  
  #ifndef CONFIG_XEN
-@@ -1594,7 +1563,8 @@ static void __init setup_timer_IRQ0_pin(
+@@ -1598,7 +1567,8 @@ static void __init setup_timer_IRQ0_pin(
  	 * The timer IRQ doesn't have to know that behind the
  	 * scene we may have a 8259A-master in AEOI mode ...
  	 */
@@ -538,7 +548,7 @@ Acked-by: jbeulich@novell.com
  
  	/*
  	 * Add it to the IO-APIC irq-routing table:
-@@ -1701,7 +1671,7 @@ __apicdebuginit(void) print_IO_APIC(void
+@@ -1705,7 +1675,7 @@ __apicdebuginit(void) print_IO_APIC(void
  	for_each_active_irq(irq) {
  		struct irq_pin_list *entry;
  
@@ -547,7 +557,7 @@ Acked-by: jbeulich@novell.com
  		if (!cfg)
  			continue;
  		entry = cfg->irq_2_pin;
-@@ -1992,7 +1962,7 @@ void disable_IO_APIC(void)
+@@ -1996,7 +1966,7 @@ void disable_IO_APIC(void)
  	 *
  	 * With interrupt-remapping, for now we will use virtual wire A mode,
  	 * as virtual wire B is little complex (need to configure both
@@ -556,7 +566,7 @@ Acked-by: jbeulich@novell.com
  	 * As this gets called during crash dump, keep this simple for now.
  	 */
  	if (ioapic_i8259.pin != -1 && !intr_remapping_enabled) {
-@@ -2467,7 +2437,7 @@ static void irq_complete_move(struct irq
+@@ -2471,7 +2441,7 @@ static void irq_complete_move(struct irq
  
  void irq_force_complete_move(int irq)
  {
@@ -565,7 +575,7 @@ Acked-by: jbeulich@novell.com
  
  	if (!cfg)
  		return;
-@@ -2481,7 +2451,7 @@ static inline void irq_complete_move(str
+@@ -2485,7 +2455,7 @@ static inline void irq_complete_move(str
  static void ack_apic_edge(struct irq_data *data)
  {
  	irq_complete_move(data->chip_data);
@@ -574,7 +584,7 @@ Acked-by: jbeulich@novell.com
  	ack_APIC_irq();
  }
  
-@@ -2538,7 +2508,7 @@ static void ack_apic_level(struct irq_da
+@@ -2542,7 +2512,7 @@ static void ack_apic_level(struct irq_da
  	irq_complete_move(cfg);
  #ifdef CONFIG_GENERIC_PENDING_IRQ
  	/* If we are moving the irq we need to mask it */
@@ -583,7 +593,7 @@ Acked-by: jbeulich@novell.com
  		do_unmask_irq = 1;
  		mask_ioapic(cfg);
  	}
-@@ -2627,7 +2597,7 @@ static void ack_apic_level(struct irq_da
+@@ -2631,7 +2601,7 @@ static void ack_apic_level(struct irq_da
  		 * and you can go talk to the chipset vendor about it.
  		 */
  		if (!io_apic_level_ack_pending(cfg))
@@ -592,7 +602,7 @@ Acked-by: jbeulich@novell.com
  		unmask_ioapic(cfg);
  	}
  }
-@@ -2695,7 +2665,7 @@ static inline void init_IO_APIC_traps(vo
+@@ -2699,7 +2669,7 @@ static inline void init_IO_APIC_traps(vo
  		if (irq < PIRQ_BASE || irq >= PIRQ_BASE + nr_pirqs)
  			continue;
  #endif
@@ -601,7 +611,7 @@ Acked-by: jbeulich@novell.com
  		if (IO_APIC_IRQ(irq) && cfg && !cfg->vector) {
  			/*
  			 * Hmm.. We don't have an entry for this,
-@@ -2706,7 +2676,7 @@ static inline void init_IO_APIC_traps(vo
+@@ -2710,7 +2680,7 @@ static inline void init_IO_APIC_traps(vo
  				legacy_pic->make_irq(irq);
  			else
  				/* Strange. Oh, well.. */
@@ -610,7 +620,7 @@ Acked-by: jbeulich@novell.com
  		}
  	}
  }
-@@ -2747,7 +2717,7 @@ static struct irq_chip lapic_chip __read
+@@ -2751,7 +2721,7 @@ static struct irq_chip lapic_chip __read
  static void lapic_register_intr(int irq)
  {
  	irq_clear_status_flags(irq, IRQ_LEVEL);
@@ -619,7 +629,7 @@ Acked-by: jbeulich@novell.com
  				      "edge");
  }
  
-@@ -2831,7 +2801,7 @@ int timer_through_8259 __initdata;
+@@ -2835,7 +2805,7 @@ int timer_through_8259 __initdata;
   */
  static inline void __init check_timer(void)
  {
@@ -628,7 +638,7 @@ Acked-by: jbeulich@novell.com
  	int node = cpu_to_node(0);
  	int apic1, pin1, apic2, pin2;
  	unsigned long flags;
-@@ -3022,7 +2992,7 @@ void __init setup_IO_APIC(void)
+@@ -3026,7 +2996,7 @@ void __init setup_IO_APIC(void)
  }
  
  /*
@@ -637,7 +647,7 @@ Acked-by: jbeulich@novell.com
   *      APIC bugs then we can allow the modify fast path
   */
  
-@@ -3044,89 +3014,84 @@ static int __init io_apic_bug_finalize(v
+@@ -3048,89 +3018,84 @@ static int __init io_apic_bug_finalize(v
  late_initcall(io_apic_bug_finalize);
  
  #ifndef CONFIG_XEN
@@ -772,7 +782,7 @@ Acked-by: jbeulich@novell.com
  
  /*
   * Dynamic irq allocate and deallocation
-@@ -3156,7 +3121,7 @@ unsigned int create_irq_nr(unsigned int 
+@@ -3160,7 +3125,7 @@ unsigned int create_irq_nr(unsigned int 
  	raw_spin_unlock_irqrestore(&vector_lock, flags);
  
  	if (ret) {
@@ -781,7 +791,7 @@ Acked-by: jbeulich@novell.com
  		irq_clear_status_flags(irq, IRQ_NOREQUEST);
  	} else {
  		free_irq_at(irq, cfg);
-@@ -3181,7 +3146,7 @@ int create_irq(void)
+@@ -3185,7 +3150,7 @@ int create_irq(void)
  
  void destroy_irq(unsigned int irq)
  {
@@ -790,7 +800,7 @@ Acked-by: jbeulich@novell.com
  	unsigned long flags;
  
  	irq_set_status_flags(irq, IRQ_NOREQUEST|IRQ_NOPROBE);
-@@ -3216,7 +3181,7 @@ static int msi_compose_msg(struct pci_de
+@@ -3220,7 +3185,7 @@ static int msi_compose_msg(struct pci_de
  
  	dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
  
@@ -799,7 +809,7 @@ Acked-by: jbeulich@novell.com
  		struct irte irte;
  		int ir_index;
  		u16 sub_handle;
-@@ -3388,6 +3353,7 @@ static int msi_alloc_irte(struct pci_dev
+@@ -3392,6 +3357,7 @@ static int msi_alloc_irte(struct pci_dev
  
  static int setup_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int irq)
  {
@@ -807,7 +817,7 @@ Acked-by: jbeulich@novell.com
  	struct msi_msg msg;
  	int ret;
  
-@@ -3395,14 +3361,15 @@ static int setup_msi_irq(struct pci_dev 
+@@ -3399,14 +3365,15 @@ static int setup_msi_irq(struct pci_dev 
  	if (ret < 0)
  		return ret;
  
@@ -828,7 +838,7 @@ Acked-by: jbeulich@novell.com
  
  	dev_printk(KERN_DEBUG, &dev->dev, "irq %d for MSI/MSI-X\n", irq);
  
-@@ -3520,8 +3487,8 @@ int arch_setup_dmar_msi(unsigned int irq
+@@ -3524,8 +3491,8 @@ int arch_setup_dmar_msi(unsigned int irq
  	if (ret < 0)
  		return ret;
  	dmar_msi_write(irq, &msg);
@@ -839,7 +849,7 @@ Acked-by: jbeulich@novell.com
  	return 0;
  }
  #endif
-@@ -3579,6 +3546,7 @@ static struct irq_chip hpet_msi_type = {
+@@ -3583,6 +3550,7 @@ static struct irq_chip hpet_msi_type = {
  
  int arch_setup_hpet_msi(unsigned int irq, unsigned int id)
  {
@@ -847,7 +857,7 @@ Acked-by: jbeulich@novell.com
  	struct msi_msg msg;
  	int ret;
  
-@@ -3598,15 +3566,12 @@ int arch_setup_hpet_msi(unsigned int irq
+@@ -3602,15 +3570,12 @@ int arch_setup_hpet_msi(unsigned int irq
  	if (ret < 0)
  		return ret;
  
@@ -867,7 +877,7 @@ Acked-by: jbeulich@novell.com
  	return 0;
  }
  #endif
-@@ -3693,7 +3658,7 @@ int arch_setup_ht_irq(unsigned int irq, 
+@@ -3697,7 +3662,7 @@ int arch_setup_ht_irq(unsigned int irq, 
  
  		write_ht_irq_msg(irq, &msg);
  
@@ -876,7 +886,7 @@ Acked-by: jbeulich@novell.com
  					      handle_edge_irq, "edge");
  
  		dev_printk(KERN_DEBUG, &dev->dev, "irq %d for HT\n", irq);
-@@ -3702,7 +3667,40 @@ int arch_setup_ht_irq(unsigned int irq, 
+@@ -3706,7 +3671,40 @@ int arch_setup_ht_irq(unsigned int irq, 
  }
  #endif /* CONFIG_HT_IRQ */
  
@@ -918,7 +928,7 @@ Acked-by: jbeulich@novell.com
  {
  	union IO_APIC_reg_01	reg_01;
  	unsigned long flags;
-@@ -3758,105 +3756,32 @@ int __init arch_probe_nr_irqs(void)
+@@ -3762,105 +3760,32 @@ int __init arch_probe_nr_irqs(void)
  #endif
  #endif /* CONFIG_XEN */
  
@@ -976,8 +986,9 @@ Acked-by: jbeulich@novell.com
 +	node = dev ? dev_to_node(dev) : cpu_to_node(0);
  
 -	return 0;
--}
--
++	return io_apic_setup_irq_pin_once(irq, node, irq_attr);
+ }
+ 
 -int io_apic_set_pci_routing(struct device *dev, int irq,
 -				struct io_apic_irq_attr *irq_attr)
 -{
@@ -997,9 +1008,8 @@ Acked-by: jbeulich@novell.com
 -	set_bit(pin, mp_ioapic_routing[ioapic].pin_programmed);
 -
 -	return __io_apic_set_pci_routing(dev, irq, irq_attr);
-+	return io_apic_setup_irq_pin_once(irq, node, irq_attr);
- }
- 
+-}
+-
 -u8 __init io_apic_unique_id(u8 id)
 -{
  #ifdef CONFIG_X86_32
@@ -1031,7 +1041,7 @@ Acked-by: jbeulich@novell.com
  {
  	union IO_APIC_reg_00 reg_00;
  	static physid_mask_t apic_id_map = PHYSID_MASK_NONE;
-@@ -3931,7 +3856,34 @@ int __init io_apic_get_unique_id(int ioa
+@@ -3935,7 +3860,34 @@ int __init io_apic_get_unique_id(int ioa
  }
  #endif
  
@@ -1067,7 +1077,7 @@ Acked-by: jbeulich@novell.com
  {
  	union IO_APIC_reg_01	reg_01;
  	unsigned long flags;
-@@ -3977,8 +3929,8 @@ int acpi_get_override_irq(u32 gsi, int *
+@@ -3981,8 +3933,8 @@ int acpi_get_override_irq(u32 gsi, int *
  void __init setup_ioapic_dest(void)
  {
  	int pin, ioapic, irq, irq_entry;
@@ -1077,7 +1087,7 @@ Acked-by: jbeulich@novell.com
  
  	if (skip_ioapic_setup == 1)
  		return;
-@@ -3993,21 +3945,20 @@ void __init setup_ioapic_dest(void)
+@@ -3997,21 +3949,20 @@ void __init setup_ioapic_dest(void)
  		if ((ioapic > 0) && (irq > 16))
  			continue;
  
@@ -1104,7 +1114,7 @@ Acked-by: jbeulich@novell.com
  	}
  
  }
-@@ -4136,10 +4087,10 @@ int mp_find_ioapic_pin(int ioapic, u32 g
+@@ -4140,10 +4091,10 @@ int mp_find_ioapic_pin(int ioapic, u32 g
  	return gsi - mp_gsi_routing[ioapic].gsi_base;
  }
  
@@ -1117,7 +1127,7 @@ Acked-by: jbeulich@novell.com
  		       "(found %d), skipping\n", MAX_IO_APICS, nr_ioapics);
  		return 1;
  	}
-@@ -4199,21 +4150,17 @@ void __init mp_register_ioapic(int id, u
+@@ -4203,21 +4154,17 @@ void __init mp_register_ioapic(int id, u
  /* Enable IOAPIC early just for system timer */
  void __init pre_init_apic_IRQ0(void)
  {
@@ -1143,8 +1153,8 @@ Acked-by: jbeulich@novell.com
 +				      "edge");
  }
  #endif
---- sle12.orig/arch/x86/kernel/cpu/amd.c	2013-05-23 17:34:13.000000000 +0200
-+++ sle12/arch/x86/kernel/cpu/amd.c	2013-05-23 17:42:30.000000000 +0200
+--- a/arch/x86/kernel/cpu/amd.c
++++ b/arch/x86/kernel/cpu/amd.c
 @@ -722,6 +722,7 @@ static void init_amd(struct cpuinfo_x86 
  	if (c->x86 > 0x11)
  		set_cpu_cap(c, X86_FEATURE_ARAT);
@@ -1161,8 +1171,8 @@ Acked-by: jbeulich@novell.com
  }
  
  #ifdef CONFIG_X86_32
---- sle12.orig/arch/x86/kernel/cpu/common-xen.c	2012-08-01 12:03:50.000000000 +0200
-+++ sle12/arch/x86/kernel/cpu/common-xen.c	2012-08-01 12:05:30.000000000 +0200
+--- a/arch/x86/kernel/cpu/common-xen.c
++++ b/arch/x86/kernel/cpu/common-xen.c
 @@ -924,7 +924,7 @@ static void __cpuinit identify_cpu(struc
  
  	select_idle_routine(c);
@@ -1172,8 +1182,8 @@ Acked-by: jbeulich@novell.com
  	numa_add_cpu(smp_processor_id());
  #endif
  }
---- sle12.orig/arch/x86/kernel/e820-xen.c	2011-04-26 09:19:42.000000000 +0200
-+++ sle12/arch/x86/kernel/e820-xen.c	2011-09-23 16:02:14.000000000 +0200
+--- a/arch/x86/kernel/e820-xen.c
++++ b/arch/x86/kernel/e820-xen.c
 @@ -11,6 +11,7 @@
  #include <linux/kernel.h>
  #include <linux/types.h>
@@ -1230,8 +1240,8 @@ Acked-by: jbeulich@novell.com
  	e820_remove_range(mem_size, ULLONG_MAX - mem_size, E820_RAM, 1);
  
  	i = e820.nr_map - 1;
---- sle12.orig/arch/x86/kernel/entry_64-xen.S	2013-05-24 08:24:48.000000000 +0200
-+++ sle12/arch/x86/kernel/entry_64-xen.S	2011-10-07 11:41:39.000000000 +0200
+--- a/arch/x86/kernel/entry_64-xen.S
++++ b/arch/x86/kernel/entry_64-xen.S
 @@ -21,7 +21,7 @@
   * A note on terminology:
   * - top of stack: Architecture defined interrupt frame from SS to RIP
@@ -1259,8 +1269,8 @@ Acked-by: jbeulich@novell.com
   *
   * SYSCALL does not save anything on the stack and does not change the
   * stack pointer.
---- sle12.orig/arch/x86/kernel/head64-xen.c	2011-02-01 15:09:47.000000000 +0100
-+++ sle12/arch/x86/kernel/head64-xen.c	2011-04-12 15:59:10.000000000 +0200
+--- a/arch/x86/kernel/head64-xen.c
++++ b/arch/x86/kernel/head64-xen.c
 @@ -95,9 +95,6 @@ void __init x86_64_start_kernel(char * r
  	/* Make NULL pointers segfault */
  	zap_identity_mappings();
@@ -1271,8 +1281,8 @@ Acked-by: jbeulich@novell.com
  	for (i = 0; i < NUM_EXCEPTION_VECTORS; i++) {
  #ifdef CONFIG_EARLY_PRINTK
  		set_intr_gate(i, &early_idt_handlers[i]);
---- sle12.orig/arch/x86/kernel/ioport-xen.c	2011-02-01 14:55:46.000000000 +0100
-+++ sle12/arch/x86/kernel/ioport-xen.c	2011-04-12 16:53:32.000000000 +0200
+--- a/arch/x86/kernel/ioport-xen.c
++++ b/arch/x86/kernel/ioport-xen.c
 @@ -14,23 +14,10 @@
  #include <linux/slab.h>
  #include <linux/thread_info.h>
@@ -1310,8 +1320,8 @@ Acked-by: jbeulich@novell.com
  
  	return 0;
  }
---- sle12.orig/arch/x86/kernel/irq-xen.c	2013-05-24 10:37:17.000000000 +0200
-+++ sle12/arch/x86/kernel/irq-xen.c	2013-05-24 10:37:21.000000000 +0200
+--- a/arch/x86/kernel/irq-xen.c
++++ b/arch/x86/kernel/irq-xen.c
 @@ -8,6 +8,7 @@
  #include <linux/seq_file.h>
  #include <linux/smp.h>
@@ -1464,8 +1474,8 @@ Acked-by: jbeulich@novell.com
  			raw_spin_unlock(&desc->lock);
  		}
  	}
---- sle12.orig/arch/x86/kernel/mpparse-xen.c	2011-02-01 16:09:24.000000000 +0100
-+++ sle12/arch/x86/kernel/mpparse-xen.c	2011-04-12 15:59:10.000000000 +0200
+--- a/arch/x86/kernel/mpparse-xen.c
++++ b/arch/x86/kernel/mpparse-xen.c
 @@ -752,10 +752,6 @@ static void __init check_irq_src(struct 
  		*nr_m_spare += 1;
  	}
@@ -1506,8 +1516,8 @@ Acked-by: jbeulich@novell.com
  	} else {
  		maddr_t mpc_new_bus;
  
---- sle12.orig/arch/x86/kernel/process-xen.c	2011-03-03 16:13:18.000000000 +0100
-+++ sle12/arch/x86/kernel/process-xen.c	2011-04-13 17:01:32.000000000 +0200
+--- a/arch/x86/kernel/process-xen.c
++++ b/arch/x86/kernel/process-xen.c
 @@ -89,7 +89,7 @@ void exit_thread(void)
  void show_regs(struct pt_regs *regs)
  {
@@ -1533,8 +1543,8 @@ Acked-by: jbeulich@novell.com
  	printk(KERN_CONT "\n");
  }
  
---- sle12.orig/arch/x86/kernel/process_64-xen.c	2011-02-02 08:48:24.000000000 +0100
-+++ sle12/arch/x86/kernel/process_64-xen.c	2012-08-01 12:05:32.000000000 +0200
+--- a/arch/x86/kernel/process_64-xen.c
++++ b/arch/x86/kernel/process_64-xen.c
 @@ -579,6 +579,10 @@ void set_personality_64bit(void)
  	/* Make sure to be in 64bit mode */
  	clear_thread_flag(TIF_IA32);
@@ -1557,8 +1567,8 @@ Acked-by: jbeulich@novell.com
  	/* Prepare the first "return" to user space */
  	current_thread_info()->status |= TS_COMPAT;
  }
---- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 12:35:31.000000000 +0100
-+++ sle12/arch/x86/kernel/setup-xen.c	2014-01-23 12:35:35.000000000 +0100
+--- a/arch/x86/kernel/setup-xen.c
++++ b/arch/x86/kernel/setup-xen.c
 @@ -113,6 +113,7 @@
  #endif
  #include <asm/mce.h>
@@ -1567,7 +1577,7 @@ Acked-by: jbeulich@novell.com
  
  #ifdef CONFIG_XEN
  #include <asm/hypervisor.h>
-@@ -332,6 +333,9 @@ static void __init init_gbpages(void)
+@@ -333,6 +334,9 @@ static void __init init_gbpages(void)
  static inline void init_gbpages(void)
  {
  }
@@ -1577,7 +1587,7 @@ Acked-by: jbeulich@novell.com
  #endif
  
  static void __init reserve_brk(void)
-@@ -486,16 +490,30 @@ static void __init parse_setup_data(void
+@@ -487,16 +491,30 @@ static void __init parse_setup_data(void
  		return;
  	pa_data = boot_params.hdr.setup_data;
  	while (pa_data) {
@@ -1611,7 +1621,7 @@ Acked-by: jbeulich@novell.com
  	}
  #endif
  }
-@@ -667,28 +685,6 @@ void __init reserve_standard_io_resource
+@@ -668,28 +686,6 @@ void __init reserve_standard_io_resource
  
  }
  
@@ -1640,7 +1650,7 @@ Acked-by: jbeulich@novell.com
  static __init void reserve_ibft_region(void)
  {
  	unsigned long addr, size = 0;
-@@ -750,15 +746,6 @@ static int __init parse_reservelow(char 
+@@ -751,15 +747,6 @@ static int __init parse_reservelow(char 
  early_param("reservelow", parse_reservelow);
  #endif
  
@@ -1656,7 +1666,7 @@ Acked-by: jbeulich@novell.com
  /*
   * Determine if we were loaded by an EFI loader.  If so, then we have also been
   * passed the efi memmap, systab, etc., so we should use these data structures
-@@ -774,11 +761,8 @@ static u64 __init get_max_mapped(void)
+@@ -775,11 +762,8 @@ static u64 __init get_max_mapped(void)
  
  void __init setup_arch(char **cmdline_p)
  {
@@ -1668,7 +1678,7 @@ Acked-by: jbeulich@novell.com
  	unsigned long p2m_pages;
  	struct physdev_set_iopl set_iopl;
  
-@@ -1049,6 +1033,8 @@ void __init setup_arch(char **cmdline_p)
+@@ -1050,6 +1034,8 @@ void __init setup_arch(char **cmdline_p)
  	 */
  	reserve_brk();
  
@@ -1677,7 +1687,7 @@ Acked-by: jbeulich@novell.com
  	memblock.current_limit = get_max_mapped();
  	memblock_x86_fill();
  
-@@ -1062,15 +1048,10 @@ void __init setup_arch(char **cmdline_p)
+@@ -1063,15 +1049,10 @@ void __init setup_arch(char **cmdline_p)
  	printk(KERN_DEBUG "initial memory mapped : 0 - %08lx\n",
  			max_pfn_mapped<<PAGE_SHIFT);
  
@@ -1696,7 +1706,7 @@ Acked-by: jbeulich@novell.com
  	init_gbpages();
  
  	/* max_pfn_mapped is updated here */
-@@ -1118,19 +1099,7 @@ void __init setup_arch(char **cmdline_p)
+@@ -1119,19 +1100,7 @@ void __init setup_arch(char **cmdline_p)
  
  	early_acpi_boot_init();
  
@@ -1717,7 +1727,7 @@ Acked-by: jbeulich@novell.com
  	memblock_find_dma_reserve();
  	dma32_reserve_bootmem();
  
-@@ -1142,6 +1111,11 @@ void __init setup_arch(char **cmdline_p)
+@@ -1143,6 +1112,11 @@ void __init setup_arch(char **cmdline_p)
  	paging_init();
  	x86_init.paging.pagetable_setup_done(swapper_pg_dir);
  
@@ -1729,7 +1739,7 @@ Acked-by: jbeulich@novell.com
  #if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
  	/* sync back kernel address range */
  	clone_pgd_range(initial_page_table + KERNEL_PGD_BOUNDARY,
-@@ -1224,10 +1198,14 @@ void __init setup_arch(char **cmdline_p)
+@@ -1225,10 +1199,14 @@ void __init setup_arch(char **cmdline_p)
  			virt_to_mfn(pfn_to_mfn_frame_list_list);
  	}
  
@@ -1746,7 +1756,7 @@ Acked-by: jbeulich@novell.com
  #else /* CONFIG_XEN */
  	generic_apic_probe();
  
-@@ -1238,8 +1216,8 @@ void __init setup_arch(char **cmdline_p)
+@@ -1239,8 +1217,8 @@ void __init setup_arch(char **cmdline_p)
  	 * Read APIC and some other early information from ACPI tables.
  	 */
  	acpi_boot_init();
@@ -1756,7 +1766,7 @@ Acked-by: jbeulich@novell.com
  
  	/*
  	 * get boot-time SMP configuration:
-@@ -1249,9 +1227,7 @@ void __init setup_arch(char **cmdline_p)
+@@ -1250,9 +1228,7 @@ void __init setup_arch(char **cmdline_p)
  
  	prefill_possible_map();
  
@@ -1766,7 +1776,7 @@ Acked-by: jbeulich@novell.com
  
  #ifndef CONFIG_XEN
  	init_apic_mappings();
-@@ -1289,6 +1265,8 @@ void __init setup_arch(char **cmdline_p)
+@@ -1290,6 +1266,8 @@ void __init setup_arch(char **cmdline_p)
  #endif
  	x86_init.oem.banner();
  
@@ -1775,8 +1785,8 @@ Acked-by: jbeulich@novell.com
  	mcheck_init();
  
  	local_irq_save(flags);
---- sle12.orig/arch/x86/kernel/setup_percpu.c	2012-05-23 13:34:18.000000000 +0200
-+++ sle12/arch/x86/kernel/setup_percpu.c	2012-05-23 13:38:58.000000000 +0200
+--- a/arch/x86/kernel/setup_percpu.c
++++ b/arch/x86/kernel/setup_percpu.c
 @@ -231,7 +231,8 @@ void __init setup_per_cpu_areas(void)
  		 * are zeroed indicating that the static arrays are
  		 * gone.
@@ -1812,8 +1822,8 @@ Acked-by: jbeulich@novell.com
  #ifdef CONFIG_NUMA
  	early_per_cpu_ptr(x86_cpu_to_node_map) = NULL;
  #endif
---- sle12.orig/arch/x86/kernel/time-xen.c	2014-01-23 11:18:57.000000000 +0100
-+++ sle12/arch/x86/kernel/time-xen.c	2013-08-05 16:15:00.000000000 +0200
+--- a/arch/x86/kernel/time-xen.c
++++ b/arch/x86/kernel/time-xen.c
 @@ -19,6 +19,9 @@
  #include <linux/cpufreq.h>
  #include <linux/clocksource.h>
@@ -1824,8 +1834,8 @@ Acked-by: jbeulich@novell.com
  #include <asm/vsyscall.h>
  #include <asm/delay.h>
  #include <asm/time.h>
---- sle12.orig/arch/x86/kernel/x86_init-xen.c	2011-07-11 13:00:38.000000000 +0200
-+++ sle12/arch/x86/kernel/x86_init-xen.c	2011-07-11 13:01:21.000000000 +0200
+--- a/arch/x86/kernel/x86_init-xen.c
++++ b/arch/x86/kernel/x86_init-xen.c
 @@ -59,6 +59,10 @@ struct x86_init_ops x86_init __initdata 
  		.banner			= x86_init_noop,
  	},
@@ -1845,8 +1855,102 @@ Acked-by: jbeulich@novell.com
  	},
  
  	.iommu = {
---- sle12.orig/arch/x86/mm/init-xen.c	2011-02-01 15:41:35.000000000 +0100
-+++ sle12/arch/x86/mm/init-xen.c	2013-04-05 09:16:21.000000000 +0200
+--- /dev/null
++++ b/arch/x86/lib/cmpxchg16b_emu-xen.S
+@@ -0,0 +1,91 @@
++/*
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; version 2
++ *	of the License.
++ *
++ */
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++#include <asm/irqflags.h>
++#include <asm/percpu.h>
++#include <xen/interface/xen.h>
++
++.text
++
++/*
++ * Inputs:
++ * %rsi : memory location to compare
++ * %rax : low 64 bits of old value
++ * %rdx : high 64 bits of old value
++ * %rbx : low 64 bits of new value
++ * %rcx : high 64 bits of new value
++ * %al  : Operation successful
++ */
++ENTRY(this_cpu_cmpxchg16b_emu)
++	CFI_STARTPROC
++
++#
++# Emulate 'cmpxchg16b %gs:(%rsi)' except we return the result in %al not
++# via the ZF.  Caller will access %al to get result.
++#
++# Note that this is only useful for a cpuops operation.  Meaning that we
++# do *not* have a fully atomic operation but just an operation that is
++# *atomic* on a single cpu (as provided by the this_cpu_xx class of
++# macros).
++#
++	pushq_cfi %rbp
++	CFI_REL_OFFSET rbp, 0
++#ifndef __REG_si
++# error Out of sync with asm/irqflags.h!
++#endif
++#undef __REG_si
++#define __REG_si %rbp
++#define esi ebp
++	GET_VCPU_INFO
++	pushq_cfi %rdi
++	CFI_REL_OFFSET rdi, 0
++	__SAVE_INTERRUPTS(edi)
++	__DISABLE_INTERRUPTS
++
++	cmpq PER_CPU_VAR((%rsi)), %rax
++	jne .Lnot_same
++	cmpq PER_CPU_VAR(8(%rsi)), %rdx
++	jne .Lnot_same
++
++	movq %rbx, PER_CPU_VAR((%rsi))
++	movq %rcx, PER_CPU_VAR(8(%rsi))
++
++.Lnot_same:
++	sete %al
++
++	test %edi, %edi
++	jz .Lcheck_events
++	CFI_REMEMBER_STATE
++.Lexit:
++	popq_cfi %rdi
++	CFI_RESTORE rdi
++	popq_cfi %rbp
++	CFI_RESTORE rbp
++	ret
++
++	CFI_RESTORE_STATE
++.Lcheck_events:
++	__ENABLE_INTERRUPTS
++	__TEST_PENDING
++	jz .Lexit
++#undef __REG_si
++#undef esi
++	pushq_cfi %rsi
++	CFI_REL_OFFSET rsi, 0
++	pushq_cfi %rax
++	/* %edi is zero already */
++	xor %esi, %esi
++	call hypercall_page + __HYPERVISOR_xen_version * 32
++	popq_cfi %rax
++	popq_cfi %rsi
++	CFI_RESTORE rsi
++	jmp .Lexit
++
++	CFI_ENDPROC
++ENDPROC(this_cpu_cmpxchg16b_emu)
+--- a/arch/x86/mm/init-xen.c
++++ b/arch/x86/mm/init-xen.c
 @@ -19,9 +19,9 @@
  
  DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
@@ -1964,8 +2068,8 @@ Acked-by: jbeulich@novell.com
  
  	if (!after_bootmem)
  		early_memtest(start, end);
---- sle12.orig/arch/x86/mm/init_64-xen.c	2011-03-17 14:22:21.000000000 +0100
-+++ sle12/arch/x86/mm/init_64-xen.c	2014-09-01 15:50:58.000000000 +0200
+--- a/arch/x86/mm/init_64-xen.c
++++ b/arch/x86/mm/init_64-xen.c
 @@ -210,9 +210,9 @@ static __ref void *spp_getpage(void)
  
  	if (after_bootmem)
@@ -2291,8 +2395,8 @@ Acked-by: jbeulich@novell.com
  #ifdef CONFIG_SPARSEMEM_VMEMMAP
  /*
   * Initialise the sparsemem vmemmap using huge-pages at the PMD level.
---- sle12.orig/arch/x86/mm/ioremap-xen.c	2011-05-09 11:42:49.000000000 +0200
-+++ sle12/arch/x86/mm/ioremap-xen.c	2011-05-09 11:42:57.000000000 +0200
+--- a/arch/x86/mm/ioremap-xen.c
++++ b/arch/x86/mm/ioremap-xen.c
 @@ -758,6 +758,12 @@ early_memremap(resource_size_t phys_addr
  	return __early_ioremap(phys_to_machine(phys_addr), size, PAGE_KERNEL);
  }
@@ -2306,8 +2410,8 @@ Acked-by: jbeulich@novell.com
  void __init early_iounmap(void __iomem *addr, unsigned long size)
  {
  	unsigned long virt_addr;
---- sle12.orig/arch/x86/mm/pageattr-xen.c	2011-03-23 10:10:15.000000000 +0100
-+++ sle12/arch/x86/mm/pageattr-xen.c	2011-04-13 17:01:32.000000000 +0200
+--- a/arch/x86/mm/pageattr-xen.c
++++ b/arch/x86/mm/pageattr-xen.c
 @@ -310,7 +310,7 @@ static inline pgprot_t static_protection
  		 * these shared mappings are made of small page mappings.
  		 * Thus this don't enforce !RW mapping for small page kernel
@@ -2317,9 +2421,9 @@ Acked-by: jbeulich@novell.com
  		 */
  		if (lookup_address(address, &level) && (level != PG_LEVEL_4K))
  			pgprot_val(forbidden) |= _PAGE_RW;
---- sle12.orig/arch/x86/mm/pgtable-xen.c	2011-03-17 14:26:03.000000000 +0100
-+++ sle12/arch/x86/mm/pgtable-xen.c	2011-04-12 15:59:10.000000000 +0200
-@@ -528,8 +528,7 @@ void pud_populate(struct mm_struct *mm, 
+--- a/arch/x86/mm/pgtable-xen.c
++++ b/arch/x86/mm/pgtable-xen.c
+@@ -529,8 +529,7 @@ void pud_populate(struct mm_struct *mm, 
  	 * section 8.1: in PAE mode we explicitly have to flush the
  	 * TLB via cr3 if the top-level pgd is changed...
  	 */
@@ -2329,8 +2433,8 @@ Acked-by: jbeulich@novell.com
  }
  #else  /* !CONFIG_X86_PAE */
  
---- sle12.orig/arch/x86/vdso/vdso32-setup-xen.c	2012-02-29 14:18:20.000000000 +0100
-+++ sle12/arch/x86/vdso/vdso32-setup-xen.c	2012-02-29 14:19:15.000000000 +0100
+--- a/arch/x86/vdso/vdso32-setup-xen.c
++++ b/arch/x86/vdso/vdso32-setup-xen.c
 @@ -465,24 +465,25 @@ const char *arch_vma_name(struct vm_area
  	return NULL;
  }
@@ -2364,8 +2468,8 @@ Acked-by: jbeulich@novell.com
  {
  	return 0;
  }
---- sle12.orig/drivers/net/Kconfig	2013-08-09 14:56:46.000000000 +0200
-+++ sle12/drivers/net/Kconfig	2013-08-09 15:20:09.000000000 +0200
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
 @@ -326,15 +326,15 @@ config PARAVIRT_XEN_NETDEV_FRONTEND
  	  domain 0).
  
@@ -2394,8 +2498,8 @@ Acked-by: jbeulich@novell.com
  
  	  The backend driver presents a standard network device
  	  endpoint for each paravirtual network device to the driver
---- sle12.orig/drivers/net/Makefile	2013-08-09 12:20:23.000000000 +0200
-+++ sle12/drivers/net/Makefile	2013-08-09 15:20:16.000000000 +0200
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
 @@ -59,7 +59,7 @@ obj-$(CONFIG_IEEE802154) += ieee802154/
  
  obj-$(CONFIG_VMXNET3) += vmxnet3/
@@ -2405,15 +2509,15 @@ Acked-by: jbeulich@novell.com
  
  obj-$(CONFIG_USB_CATC)          += usb/
  obj-$(CONFIG_USB_KAWETH)        += usb/
---- sle12.orig/drivers/net/xen-netback/Makefile	2015-01-30 14:33:55.000000000 +0100
-+++ sle12/drivers/net/xen-netback/Makefile	2011-04-13 14:42:19.000000000 +0200
+--- a/drivers/net/xen-netback/Makefile
++++ b/drivers/net/xen-netback/Makefile
 @@ -1,3 +1,3 @@
 -obj-$(CONFIG_XEN_NETDEV_BACKEND) := xen-netback.o
 +obj-$(CONFIG_PARAVIRT_XEN_NETDEV_BACKEND) := xen-netback.o
  
  xen-netback-y := netback.o xenbus.o interface.o
---- sle12.orig/drivers/scsi/scsi_error.c	2015-01-30 14:33:55.000000000 +0100
-+++ sle12/drivers/scsi/scsi_error.c	2014-02-06 14:22:40.000000000 +0100
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
 @@ -1867,6 +1867,31 @@ int scsi_decide_disposition(struct scsi_
  		}
  	case DID_RESET:
@@ -2446,8 +2550,8 @@ Acked-by: jbeulich@novell.com
  	default:
  		return FAILED;
  	}
---- sle12.orig/drivers/watchdog/Kconfig	2015-01-30 14:33:55.000000000 +0100
-+++ sle12/drivers/watchdog/Kconfig	2013-09-26 13:01:14.000000000 +0200
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
 @@ -1284,7 +1284,7 @@ config WATCHDOG_RIO
  
  config XEN_WDT
@@ -2457,8 +2561,8 @@ Acked-by: jbeulich@novell.com
  	help
  	  Say Y here to support the hypervisor watchdog capability provided
  	  by Xen 4.0 and newer.  The watchdog timeout period is normally one
---- sle12.orig/drivers/watchdog/xen_wdt.c	2015-01-30 14:33:55.000000000 +0100
-+++ sle12/drivers/watchdog/xen_wdt.c	2012-04-10 17:11:39.000000000 +0200
+--- a/drivers/watchdog/xen_wdt.c
++++ b/drivers/watchdog/xen_wdt.c
 @@ -1,7 +1,8 @@
  /*
   *	Xen Watchdog Driver
@@ -2480,7 +2584,7 @@ Acked-by: jbeulich@novell.com
  #include <xen/interface/sched.h>
  
  static struct platform_device *platform_device;
-@@ -329,17 +332,19 @@ static int __init xen_wdt_init_module(vo
+@@ -329,8 +332,10 @@ static int __init xen_wdt_init_module(vo
  {
  	int err;
  
@@ -2489,11 +2593,9 @@ Acked-by: jbeulich@novell.com
  		return -ENODEV;
 +#endif
  
--	pr_info("Xen WatchDog Timer Driver v%s\n", DRV_VERSION);
-+	printk(KERN_INFO "Xen WatchDog Timer Driver v%s\n", DRV_VERSION);
+ 	pr_info("Xen WatchDog Timer Driver v%s\n", DRV_VERSION);
  
- 	err = platform_driver_register(&xen_wdt_driver);
- 	if (err)
+@@ -339,7 +344,7 @@ static int __init xen_wdt_init_module(vo
  		return err;
  
  	platform_device = platform_device_register_simple(DRV_NAME,
@@ -2502,9 +2604,9 @@ Acked-by: jbeulich@novell.com
  	if (IS_ERR(platform_device)) {
  		err = PTR_ERR(platform_device);
  		platform_driver_unregister(&xen_wdt_driver);
---- sle12.orig/drivers/xen/Kconfig	2014-02-06 14:21:57.000000000 +0100
-+++ sle12/drivers/xen/Kconfig	2014-02-06 14:22:34.000000000 +0100
-@@ -533,7 +533,7 @@ config XEN_GNTDEV
+--- a/drivers/xen/Kconfig
++++ b/drivers/xen/Kconfig
+@@ -537,7 +537,7 @@ config XEN_GNTDEV
  
  config XEN_GRANT_DEV_ALLOC
  	tristate "User-space grant reference allocator driver"
@@ -2513,8 +2615,8 @@ Acked-by: jbeulich@novell.com
  	default m
  	help
  	  Allows userspace processes to create pages with access granted
---- sle12.orig/drivers/xen/Makefile	2012-10-04 13:05:43.000000000 +0200
-+++ sle12/drivers/xen/Makefile	2012-10-04 13:07:47.000000000 +0200
+--- a/drivers/xen/Makefile
++++ b/drivers/xen/Makefile
 @@ -1,10 +1,10 @@
 -obj-$(CONFIG_PARAVIRT_XEN)	+= grant-table.o features.o events.o manage.o
 +obj-$(CONFIG_PARAVIRT_XEN)	+= grant-table.o features.o events.o manage.o balloon.o
@@ -2550,8 +2652,8 @@ Acked-by: jbeulich@novell.com
  
  xen-platform-pci-y			:= platform-pci.o
  
---- sle12.orig/drivers/xen/blkback/blkback.c	2013-06-20 15:25:36.000000000 +0200
-+++ sle12/drivers/xen/blkback/blkback.c	2013-06-20 15:26:43.000000000 +0200
+--- a/drivers/xen/blkback/blkback.c
++++ b/drivers/xen/blkback/blkback.c
 @@ -145,28 +145,6 @@ static void free_req(pending_req_t *req)
  		wake_up(&pending_free_wq);
  }
@@ -2691,8 +2793,8 @@ Acked-by: jbeulich@novell.com
  	msleep(1); /* back off a bit */
  	return;
  }
---- sle12.orig/drivers/xen/blkback/common.h	2013-06-20 15:25:57.000000000 +0200
-+++ sle12/drivers/xen/blkback/common.h	2013-02-20 09:20:37.000000000 +0100
+--- a/drivers/xen/blkback/common.h
++++ b/drivers/xen/blkback/common.h
 @@ -80,7 +80,6 @@ typedef struct blkif_st {
  	atomic_t            drain;
  	struct task_struct  *xenblkd;
@@ -2701,8 +2803,8 @@ Acked-by: jbeulich@novell.com
  
  	/* statistics */
  	unsigned long       st_print;
---- sle12.orig/drivers/xen/blktap2-new/device.c	2012-02-16 16:38:28.000000000 +0100
-+++ sle12/drivers/xen/blktap2-new/device.c	2012-02-16 16:38:39.000000000 +0100
+--- a/drivers/xen/blktap2-new/device.c
++++ b/drivers/xen/blktap2-new/device.c
 @@ -527,10 +527,9 @@ blktap_device_debug(struct blktap *tap, 
  		      queue_logical_block_size(q));
  
@@ -2716,8 +2818,8 @@ Acked-by: jbeulich@novell.com
  
  	bdev = bdget_disk(disk, 0);
  	if (bdev) {
---- sle12.orig/drivers/xen/core/evtchn.c	2013-01-30 11:53:55.000000000 +0100
-+++ sle12/drivers/xen/core/evtchn.c	2014-04-04 15:16:37.000000000 +0200
+--- a/drivers/xen/core/evtchn.c
++++ b/drivers/xen/core/evtchn.c
 @@ -33,7 +33,6 @@
  #include <linux/module.h>
  #include <linux/slab.h>
@@ -2792,7 +2894,7 @@ Acked-by: jbeulich@novell.com
 -			kstat_cpu(cpu).irqs[irq] = 0;
 -#endif
 -		}
-+		dynamic_irq_cleanup(irq);
++		irq_set_chip_and_handler(irq, NULL, NULL);
  	}
  
  	spin_unlock(&irq_mapping_update_lock);
@@ -2921,16 +3023,16 @@ Acked-by: jbeulich@novell.com
  					      handle_fasteoi_irq, "fasteoi");
  #endif
  	} else if (!xen_pirq) {
-@@ -1415,7 +1408,7 @@ int evtchn_map_pirq(int irq, int xen_pir
- 		 * when a driver didn't free_irq() its MSI(-X) IRQ(s), which
- 		 * then causes a warning in dynamic_irq_cleanup().
- 		 */
+@@ -1409,7 +1402,7 @@ int evtchn_map_pirq(int irq, int xen_pir
+ 
+ 		if (!cfg || unlikely(type_from_irq_cfg(cfg) != IRQT_PIRQ))
+ 			return -EINVAL;
 -		set_irq_chip_and_handler(irq, NULL, NULL);
 +		irq_set_chip_and_handler(irq, NULL, NULL);
  		cfg->info = IRQ_UNBOUND;
  #ifdef CONFIG_SPARSE_IRQ
  		cfg->bindcount--;
-@@ -1466,8 +1459,8 @@ void __init xen_init_IRQ(void)
+@@ -1460,8 +1453,8 @@ void __init xen_init_IRQ(void)
  
  #ifndef CONFIG_SPARSE_IRQ
  	for (i = DYNIRQ_BASE; i < (DYNIRQ_BASE + NR_DYNIRQS); i++) {
@@ -2941,7 +3043,7 @@ Acked-by: jbeulich@novell.com
  					      handle_fasteoi_irq, "fasteoi");
  	}
  
-@@ -1484,7 +1477,7 @@ void __init xen_init_IRQ(void)
+@@ -1478,7 +1471,7 @@ void __init xen_init_IRQ(void)
  			continue;
  #endif
  
@@ -2950,8 +3052,8 @@ Acked-by: jbeulich@novell.com
  					      handle_fasteoi_irq, "fasteoi");
  	}
  }
---- sle12.orig/drivers/xen/netback/netback.c	2013-07-04 08:39:51.000000000 +0200
-+++ sle12/drivers/xen/netback/netback.c	2013-07-04 13:23:53.000000000 +0200
+--- a/drivers/xen/netback/netback.c
++++ b/drivers/xen/netback/netback.c
 @@ -515,7 +515,7 @@ static int netbk_check_gop(unsigned int 
  	multicall_entry_t *mcl;
  	gnttab_transfer_t *gop;
@@ -3102,8 +3204,8 @@ Acked-by: jbeulich@novell.com
  
  	netif->tx.rsp_prod_pvt = ++i;
  	RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&netif->tx, notify);
---- sle12.orig/drivers/xen/netfront/netfront.c	2014-01-23 11:20:10.000000000 +0100
-+++ sle12/drivers/xen/netfront/netfront.c	2014-03-12 11:34:06.000000000 +0100
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
 @@ -655,7 +655,7 @@ static void network_tx_buf_gc(struct net
  			struct netif_tx_response *txrsp;
  
@@ -3182,8 +3284,8 @@ Acked-by: jbeulich@novell.com
  			skb->ip_summed = CHECKSUM_UNNECESSARY;
  		else
  			skb->ip_summed = CHECKSUM_NONE;
---- sle12.orig/drivers/xen/usbfront/usbfront-hub.c	2015-01-30 14:33:55.000000000 +0100
-+++ sle12/drivers/xen/usbfront/usbfront-hub.c	2011-04-14 17:50:18.000000000 +0200
+--- a/drivers/xen/usbfront/usbfront-hub.c
++++ b/drivers/xen/usbfront/usbfront-hub.c
 @@ -271,8 +271,8 @@ static void xenhcd_hub_descriptor(struct
  	desc->bDescLength = 7 + 2 * temp;
  
@@ -3195,8 +3297,8 @@ Acked-by: jbeulich@novell.com
  
  	/* per-port over current reporting and no power switching */
  	temp = 0x000a;
---- sle12.orig/drivers/xen/xenbus/xenbus_probe.c	2012-03-22 14:19:07.000000000 +0100
-+++ sle12/drivers/xen/xenbus/xenbus_probe.c	2012-03-22 14:22:22.000000000 +0100
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
 @@ -809,7 +809,7 @@ static struct xenbus_watch fe_watch = {
  
  static int __maybe_unused suspend_dev(struct device *dev, void *data)
@@ -3235,8 +3337,8 @@ Acked-by: jbeulich@novell.com
  void xenbus_suspend(void)
  {
  	DPRINTK("");
---- sle12.orig/drivers/xen/xenbus/xenbus_probe.h	2011-12-21 11:24:56.000000000 +0100
-+++ sle12/drivers/xen/xenbus/xenbus_probe.h	2011-12-21 11:28:53.000000000 +0100
+--- a/drivers/xen/xenbus/xenbus_probe.h
++++ b/drivers/xen/xenbus/xenbus_probe.h
 @@ -91,8 +91,9 @@ extern void xenbus_dev_changed(const cha
  
  extern void xenbus_dev_shutdown(struct device *_dev);
@@ -3248,8 +3350,8 @@ Acked-by: jbeulich@novell.com
  
  extern void xenbus_otherend_changed(struct xenbus_watch *watch,
  				    const char **vec, unsigned int len,
---- sle12.orig/drivers/xen/xenoprof/xenoprofile.c	2012-02-16 12:36:22.000000000 +0100
-+++ sle12/drivers/xen/xenoprof/xenoprofile.c	2011-04-15 12:46:57.000000000 +0200
+--- a/drivers/xen/xenoprof/xenoprofile.c
++++ b/drivers/xen/xenoprof/xenoprofile.c
 @@ -19,7 +19,7 @@
  #include <linux/notifier.h>
  #include <linux/smp.h>
@@ -3324,8 +3426,8 @@ Acked-by: jbeulich@novell.com
  
  static unsigned long long oprofile_samples;
  static unsigned long long p_oprofile_samples;
---- sle12.orig/include/xen/balloon.h	2011-01-31 18:07:35.000000000 +0100
-+++ sle12/include/xen/balloon.h	2011-04-13 17:01:31.000000000 +0200
+--- a/include/xen/balloon.h
++++ b/include/xen/balloon.h
 @@ -56,6 +56,31 @@ void balloon_release_driver_page(struct 
  extern spinlock_t balloon_lock;
  #define balloon_lock(__flags)   spin_lock_irqsave(&balloon_lock, __flags)
@@ -3359,9 +3461,9 @@ Acked-by: jbeulich@novell.com
 +#endif /* CONFIG_PARAVIRT_XEN */
  
  #endif /* __XEN_BALLOON_H__ */
---- sle12.orig/include/xen/interface/io/blkif.h	2014-03-12 10:47:46.000000000 +0100
-+++ sle12/include/xen/interface/io/blkif.h	2014-02-06 14:22:09.000000000 +0100
-@@ -535,8 +535,17 @@ struct blkif_request {
+--- a/include/xen/interface/io/blkif.h
++++ b/include/xen/interface/io/blkif.h
+@@ -567,8 +567,17 @@ struct blkif_request {
      uint8_t        nr_segments;  /* number of segments                   */
      blkif_vdev_t   handle;       /* only for read/write requests         */
      uint64_t       id;           /* private guest value, echoed in resp  */
@@ -3379,9 +3481,9 @@ Acked-by: jbeulich@novell.com
  };
  typedef struct blkif_request blkif_request_t;
  
---- sle12.orig/include/xen/interface/io/netif.h	2014-02-06 14:19:35.000000000 +0100
-+++ sle12/include/xen/interface/io/netif.h	2014-02-06 14:22:11.000000000 +0100
-@@ -94,20 +94,20 @@
+--- a/include/xen/interface/io/netif.h
++++ b/include/xen/interface/io/netif.h
+@@ -147,20 +147,20 @@
   */
  
  /* Protocol checksum field is blank in the packet (hardware offload)? */
@@ -3410,7 +3512,7 @@ Acked-by: jbeulich@novell.com
  
  #define XEN_NETIF_MAX_TX_SIZE 0xFFFF
  struct netif_tx_request {
-@@ -207,20 +207,24 @@ struct netif_rx_request {
+@@ -260,20 +260,24 @@ struct netif_rx_request {
  typedef struct netif_rx_request netif_rx_request_t;
  
  /* Packet data has been validated against protocol checksum. */
@@ -3443,7 +3545,7 @@ Acked-by: jbeulich@novell.com
  
  struct netif_rx_response {
      uint16_t id;
-@@ -251,10 +255,10 @@ DEFINE_RING_TYPES(xen_netif_rx,
+@@ -304,10 +308,10 @@ DEFINE_RING_TYPES(xen_netif_rx,
  #define xen_netif_extra_info netif_extra_info
  #endif
  
@@ -3458,8 +3560,19 @@ Acked-by: jbeulich@novell.com
 +#define XEN_NETIF_RSP_NULL	 1
  
  #endif
---- sle12.orig/include/uapi/xen/public/gntdev.h	2011-02-03 13:52:28.000000000 +0100
-+++ sle12/include/uapi/xen/public/gntdev.h	2011-04-13 15:21:38.000000000 +0200
+--- a/include/xen/interface/xen.h
++++ b/include/xen/interface/xen.h
+@@ -126,7 +126,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_ulong_t);
+  */
+ 
+ /* New sched_op hypercall introduced in 0x00030101. */
+-#if __XEN_INTERFACE_VERSION__ < 0x00030101 || (defined(CONFIG_PARAVIRT_XEN) && !defined(HAVE_XEN_PLATFORM_COMPAT_H))
++#if __XEN_INTERFACE_VERSION__ < 0x00030101 && (!defined(CONFIG_PARAVIRT_XEN) || defined(HAVE_XEN_PLATFORM_COMPAT_H))
+ #define __HYPERVISOR_sched_op __HYPERVISOR_sched_op_compat
+ #else
+ #define __HYPERVISOR_sched_op __HYPERVISOR_sched_op_new
+--- a/include/uapi/xen/public/gntdev.h
++++ b/include/uapi/xen/public/gntdev.h
 @@ -116,4 +116,35 @@ struct ioctl_gntdev_set_max_grants {
  	uint32_t count;
  };
@@ -3496,8 +3609,8 @@ Acked-by: jbeulich@novell.com
 +#define UNMAP_NOTIFY_SEND_EVENT 0x2
 +
  #endif /* __LINUX_PUBLIC_GNTDEV_H__ */
---- sle12.orig/include/xen/xenbus.h	2011-12-21 11:17:37.000000000 +0100
-+++ sle12/include/xen/xenbus.h	2011-04-13 15:43:04.000000000 +0200
+--- a/include/xen/xenbus.h
++++ b/include/xen/xenbus.h
 @@ -105,10 +105,8 @@ struct xenbus_driver {
  	void (*otherend_changed)(struct xenbus_device *dev,
  				 enum xenbus_state backend_state);

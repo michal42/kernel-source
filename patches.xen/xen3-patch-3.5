@@ -21,7 +21,16 @@ Acked-by: jbeulich@suse.com
  
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -40,7 +40,7 @@ config X86
+@@ -15,7 +15,7 @@ config X86_32
+ config X86_64
+ 	def_bool y
+ 	depends on 64BIT
+-	select X86_DEV_DMA_OPS
++	select X86_DEV_DMA_OPS if !XEN
+ 	select ARCH_USE_CMPXCHG_LOCKREF
+ 	select HAVE_KGRAFT
+ 
+@@ -39,7 +39,7 @@ config X86
  	select ARCH_WANT_OPTIONAL_GPIOLIB
  	select ARCH_WANT_FRAME_POINTERS
  	select HAVE_DMA_ATTRS
@@ -124,7 +133,7 @@ Acked-by: jbeulich@suse.com
  
  #if 0 /* All uses are in places potentially called asynchronously, but
         * asynchronous code should rather not make use of lazy mode at all.
---- a/dev/null
+--- /dev/null
 +++ b/arch/x86/include/mach-xen/asm/kbdleds.h
 @@ -0,0 +1,16 @@
 +#ifndef _ASM_X86_KBDLEDS_H
@@ -592,7 +601,7 @@ Acked-by: jbeulich@suse.com
  #else /* !CONFIG_XEN */
  static inline unsigned int io_apic_read(unsigned int apic, unsigned int reg)
  {
-@@ -929,7 +889,7 @@ static int __init find_isa_irq_apic(int 
+@@ -933,7 +893,7 @@ static int __init find_isa_irq_apic(int 
  }
  #endif
  
@@ -601,7 +610,7 @@ Acked-by: jbeulich@suse.com
  /*
   * EISA Edge/Level control register, ELCR
   */
-@@ -966,12 +926,6 @@ static int EISA_ELCR(unsigned int irq)
+@@ -970,12 +930,6 @@ static int EISA_ELCR(unsigned int irq)
  #define default_PCI_trigger(idx)	(1)
  #define default_PCI_polarity(idx)	(1)
  
@@ -614,7 +623,7 @@ Acked-by: jbeulich@suse.com
  static int irq_polarity(int idx)
  {
  	int bus = mp_irqs[idx].srcbus;
-@@ -1029,7 +983,7 @@ static int irq_trigger(int idx)
+@@ -1033,7 +987,7 @@ static int irq_trigger(int idx)
  				trigger = default_ISA_trigger(idx);
  			else
  				trigger = default_PCI_trigger(idx);
@@ -623,7 +632,7 @@ Acked-by: jbeulich@suse.com
  			switch (mp_bus_id_to_type[bus]) {
  				case MP_BUS_ISA: /* ISA pin */
  				{
-@@ -1046,11 +1000,6 @@ static int irq_trigger(int idx)
+@@ -1050,11 +1004,6 @@ static int irq_trigger(int idx)
  					/* set before the switch */
  					break;
  				}
@@ -635,7 +644,7 @@ Acked-by: jbeulich@suse.com
  				default:
  				{
  					printk(KERN_WARNING "broken BIOS!!\n");
-@@ -1301,7 +1250,7 @@ static void __clear_irq_vector(int irq, 
+@@ -1305,7 +1254,7 @@ static void __clear_irq_vector(int irq, 
  	BUG_ON(!cfg->vector);
  
  	vector = cfg->vector;
@@ -644,7 +653,7 @@ Acked-by: jbeulich@suse.com
  		per_cpu(vector_irq, cpu)[vector] = -1;
  
  	cfg->vector = 0;
-@@ -1309,7 +1258,7 @@ static void __clear_irq_vector(int irq, 
+@@ -1313,7 +1262,7 @@ static void __clear_irq_vector(int irq, 
  
  	if (likely(!cfg->move_in_progress))
  		return;
@@ -653,7 +662,7 @@ Acked-by: jbeulich@suse.com
  		for (vector = FIRST_EXTERNAL_VECTOR; vector < NR_VECTORS;
  								vector++) {
  			if (per_cpu(vector_irq, cpu)[vector] != irq)
-@@ -1415,69 +1364,6 @@ static void ioapic_register_intr(unsigne
+@@ -1419,69 +1368,6 @@ static void ioapic_register_intr(unsigne
  	irq_set_chip_and_handler_name(irq, chip, hdl,
  				      fasteoi ? "fasteoi" : "edge");
  }
@@ -723,7 +732,7 @@ Acked-by: jbeulich@suse.com
  #else /* !CONFIG_XEN */
  #define __clear_irq_vector(irq, cfg) ((void)0)
  #define ioapic_register_intr(irq, cfg, trigger) evtchn_register_pirq(irq)
-@@ -1487,12 +1373,9 @@ static int setup_ioapic_entry(int irq, s
+@@ -1491,12 +1377,9 @@ static int setup_ioapic_entry(int irq, s
  			       unsigned int destination, int vector,
  			       struct io_apic_irq_attr *attr)
  {
@@ -739,7 +748,7 @@ Acked-by: jbeulich@suse.com
  
  	memset(entry, 0, sizeof(*entry));
  
-@@ -1667,7 +1550,7 @@ static void __init setup_timer_IRQ0_pin(
+@@ -1671,7 +1554,7 @@ static void __init setup_timer_IRQ0_pin(
  {
  	struct IO_APIC_route_entry entry;
  
@@ -748,7 +757,7 @@ Acked-by: jbeulich@suse.com
  		return;
  
  	memset(&entry, 0, sizeof(entry));
-@@ -1753,7 +1636,7 @@ __apicdebuginit(void) print_IO_APIC(int 
+@@ -1757,7 +1640,7 @@ __apicdebuginit(void) print_IO_APIC(int 
  
  	printk(KERN_DEBUG ".... IRQ redirection table:\n");
  
@@ -757,7 +766,7 @@ Acked-by: jbeulich@suse.com
  		printk(KERN_DEBUG " NR Indx Fmt Mask Trig IRR"
  			" Pol Stat Indx2 Zero Vect:\n");
  	} else {
-@@ -1762,7 +1645,7 @@ __apicdebuginit(void) print_IO_APIC(int 
+@@ -1766,7 +1649,7 @@ __apicdebuginit(void) print_IO_APIC(int 
  	}
  
  	for (i = 0; i <= reg_01.bits.entries; i++) {
@@ -766,7 +775,7 @@ Acked-by: jbeulich@suse.com
  			struct IO_APIC_route_entry entry;
  			struct IR_IO_APIC_route_entry *ir_entry;
  
-@@ -2129,7 +2012,7 @@ void disable_IO_APIC(void)
+@@ -2133,7 +2016,7 @@ void disable_IO_APIC(void)
  	 * IOAPIC RTE as well as interrupt-remapping table entry).
  	 * As this gets called during crash dump, keep this simple for now.
  	 */
@@ -775,7 +784,7 @@ Acked-by: jbeulich@suse.com
  		struct IO_APIC_route_entry entry;
  
  		memset(&entry, 0, sizeof(entry));
-@@ -2153,7 +2036,7 @@ void disable_IO_APIC(void)
+@@ -2157,7 +2040,7 @@ void disable_IO_APIC(void)
  	 * Use virtual wire A mode when interrupt remapping is enabled.
  	 */
  	if (cpu_has_apic || apic_from_smp_config())
@@ -784,7 +793,7 @@ Acked-by: jbeulich@suse.com
  				ioapic_i8259.pin != -1);
  }
  
-@@ -2469,71 +2352,6 @@ ioapic_set_affinity(struct irq_data *dat
+@@ -2473,71 +2356,6 @@ ioapic_set_affinity(struct irq_data *dat
  	return ret;
  }
  
@@ -856,11 +865,10 @@ Acked-by: jbeulich@suse.com
  asmlinkage void smp_irq_move_cleanup_interrupt(void)
  {
  	unsigned vector, me;
-@@ -2631,6 +2449,31 @@ static void ack_apic_edge(struct irq_dat
+@@ -2635,6 +2453,29 @@ static void ack_apic_edge(struct irq_dat
  atomic_t irq_mis_count;
  
  #ifdef CONFIG_GENERIC_PENDING_IRQ
-+#ifndef CONFIG_XEN
 +static bool io_apic_level_ack_pending(struct irq_cfg *cfg)
 +{
 +	struct irq_pin_list *entry;
@@ -883,12 +891,11 @@ Acked-by: jbeulich@suse.com
 +
 +	return false;
 +}
-+#endif
 +
  static inline bool ioapic_irqd_mask(struct irq_data *data, struct irq_cfg *cfg)
  {
  	/* If we are moving the irq we need to mask it */
-@@ -2778,7 +2621,7 @@ static void irq_remap_modify_chip_defaul
+@@ -2782,7 +2623,7 @@ static void irq_remap_modify_chip_defaul
  	chip->irq_eoi = ir_ack_apic_level;
  
  #ifdef CONFIG_SMP
@@ -897,7 +904,7 @@ Acked-by: jbeulich@suse.com
  #endif
  }
  #endif /* CONFIG_IRQ_REMAP */
-@@ -2997,7 +2840,7 @@ static inline void __init check_timer(vo
+@@ -3001,7 +2842,7 @@ static inline void __init check_timer(vo
  	 * 8259A.
  	 */
  	if (pin1 == -1) {
@@ -906,7 +913,7 @@ Acked-by: jbeulich@suse.com
  			panic("BIOS bug: timer not connected to IO-APIC");
  		pin1 = pin2;
  		apic1 = apic2;
-@@ -3030,7 +2873,7 @@ static inline void __init check_timer(vo
+@@ -3034,7 +2875,7 @@ static inline void __init check_timer(vo
  				clear_IO_APIC_pin(0, pin1);
  			goto out;
  		}
@@ -915,7 +922,7 @@ Acked-by: jbeulich@suse.com
  			panic("timer doesn't work through Interrupt-remapped IO-APIC");
  		local_irq_disable();
  		clear_IO_APIC_pin(apic1, pin1);
-@@ -3268,7 +3111,7 @@ void destroy_irq(unsigned int irq)
+@@ -3272,7 +3113,7 @@ void destroy_irq(unsigned int irq)
  	irq_set_status_flags(irq, IRQ_NOREQUEST|IRQ_NOPROBE);
  
  	if (irq_remapped(cfg))
@@ -924,7 +931,7 @@ Acked-by: jbeulich@suse.com
  	raw_spin_lock_irqsave(&vector_lock, flags);
  	__clear_irq_vector(irq, cfg);
  	raw_spin_unlock_irqrestore(&vector_lock, flags);
-@@ -3298,54 +3141,34 @@ static int msi_compose_msg(struct pci_de
+@@ -3302,54 +3143,34 @@ static int msi_compose_msg(struct pci_de
  	dest = apic->cpu_mask_to_apicid_and(cfg->domain, apic->target_cpus());
  
  	if (irq_remapped(cfg)) {
@@ -1004,7 +1011,7 @@ Acked-by: jbeulich@suse.com
  	return err;
  }
  
-@@ -3388,33 +3211,6 @@ static struct irq_chip msi_chip = {
+@@ -3392,33 +3213,6 @@ static struct irq_chip msi_chip = {
  	.irq_retrigger		= ioapic_retrigger_irq,
  };
  
@@ -1038,7 +1045,7 @@ Acked-by: jbeulich@suse.com
  static int setup_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int irq)
  {
  	struct irq_chip *chip = &msi_chip;
-@@ -3445,7 +3241,6 @@ int native_setup_msi_irqs(struct pci_dev
+@@ -3449,7 +3243,6 @@ int native_setup_msi_irqs(struct pci_dev
  	int node, ret, sub_handle, index = 0;
  	unsigned int irq, irq_want;
  	struct msi_desc *msidesc;
@@ -1046,7 +1053,7 @@ Acked-by: jbeulich@suse.com
  
  	/* x86 doesn't support multiple MSI yet */
  	if (type == PCI_CAP_ID_MSI && nvec > 1)
-@@ -3459,7 +3254,7 @@ int native_setup_msi_irqs(struct pci_dev
+@@ -3463,7 +3256,7 @@ int native_setup_msi_irqs(struct pci_dev
  		if (irq == 0)
  			return -1;
  		irq_want = irq + 1;
@@ -1055,7 +1062,7 @@ Acked-by: jbeulich@suse.com
  			goto no_ir;
  
  		if (!sub_handle) {
-@@ -3467,23 +3262,16 @@ int native_setup_msi_irqs(struct pci_dev
+@@ -3471,23 +3264,16 @@ int native_setup_msi_irqs(struct pci_dev
  			 * allocate the consecutive block of IRTE's
  			 * for 'nvec'
  			 */
@@ -1083,7 +1090,7 @@ Acked-by: jbeulich@suse.com
  		}
  no_ir:
  		ret = setup_msi_irq(dev, msidesc, irq);
-@@ -3601,15 +3389,8 @@ int arch_setup_hpet_msi(unsigned int irq
+@@ -3605,15 +3391,8 @@ int arch_setup_hpet_msi(unsigned int irq
  	struct msi_msg msg;
  	int ret;
  
@@ -1101,7 +1108,7 @@ Acked-by: jbeulich@suse.com
  			return -1;
  	}
  
-@@ -4002,8 +3783,8 @@ void __init setup_ioapic_dest(void)
+@@ -4006,8 +3785,8 @@ void __init setup_ioapic_dest(void)
  		else
  			mask = apic->target_cpus();
  
@@ -1112,7 +1119,7 @@ Acked-by: jbeulich@suse.com
  		else
  			ioapic_set_affinity(idata, mask, false);
  	}
-@@ -4045,12 +3826,7 @@ static struct resource * __init ioapic_s
+@@ -4049,12 +3828,7 @@ static struct resource * __init ioapic_s
  	return res;
  }
  
@@ -1789,7 +1796,7 @@ Acked-by: jbeulich@suse.com
  #include <asm/e820.h>
  #include <asm/mpspec.h>
  #include <asm/setup.h>
-@@ -211,14 +210,8 @@ struct cpuinfo_x86 new_cpu_data __cpuini
+@@ -212,14 +211,8 @@ struct cpuinfo_x86 new_cpu_data __cpuini
  /* common cpu data for all cpus */
  struct cpuinfo_x86 boot_cpu_data __read_mostly = { .wp_works_ok = 1, .hard_math = 1 };
  EXPORT_SYMBOL(boot_cpu_data);
@@ -1805,7 +1812,7 @@ Acked-by: jbeulich@suse.com
  unsigned int def_to_bigsmp;
  
  /* for MCA, but anyone else can use it if they want */
-@@ -376,8 +369,8 @@ static void __init relocate_initrd(void)
+@@ -377,8 +370,8 @@ static void __init relocate_initrd(void)
  	memblock_reserve(ramdisk_here, area_size);
  	initrd_start = ramdisk_here + PAGE_OFFSET;
  	initrd_end   = initrd_start + ramdisk_size;
@@ -1816,7 +1823,7 @@ Acked-by: jbeulich@suse.com
  
  	q = (char *)initrd_start;
  
-@@ -408,8 +401,8 @@ static void __init relocate_initrd(void)
+@@ -409,8 +402,8 @@ static void __init relocate_initrd(void)
  	/* high pages is not converted by early_res_to_bootmem */
  	ramdisk_image = boot_params.hdr.ramdisk_image;
  	ramdisk_size  = boot_params.hdr.ramdisk_size;
@@ -1827,7 +1834,7 @@ Acked-by: jbeulich@suse.com
  		ramdisk_image, ramdisk_image + ramdisk_size - 1,
  		ramdisk_here, ramdisk_here + ramdisk_size - 1);
  #else
-@@ -446,14 +439,13 @@ static void __init reserve_initrd(void)
+@@ -447,14 +440,13 @@ static void __init reserve_initrd(void)
  	initrd_start = 0;
  
  	if (ramdisk_size >= (end_of_lowmem>>1)) {
@@ -1847,7 +1854,7 @@ Acked-by: jbeulich@suse.com
  
  
  	if (ramdisk_end <= end_of_lowmem) {
-@@ -808,7 +800,6 @@ void __init setup_arch(char **cmdline_p)
+@@ -809,7 +801,6 @@ void __init setup_arch(char **cmdline_p)
  	apm_info.bios = boot_params.apm_bios_info;
  	ist_info = boot_params.ist_info;
  	if (boot_params.sys_desc_table.length != 0) {
@@ -1855,7 +1862,7 @@ Acked-by: jbeulich@suse.com
  		machine_id = boot_params.sys_desc_table.table[0];
  		machine_submodel_id = boot_params.sys_desc_table.table[1];
  		BIOS_revision = boot_params.sys_desc_table.table[2];
-@@ -1041,11 +1032,11 @@ void __init setup_arch(char **cmdline_p)
+@@ -1042,11 +1033,11 @@ void __init setup_arch(char **cmdline_p)
  	setup_bios_corruption_check();
  #endif
  
@@ -1870,7 +1877,7 @@ Acked-by: jbeulich@suse.com
  #endif
  
  	init_gbpages();
-@@ -1063,6 +1054,7 @@ void __init setup_arch(char **cmdline_p)
+@@ -1064,6 +1055,7 @@ void __init setup_arch(char **cmdline_p)
  	}
  #endif
  	memblock.current_limit = get_max_mapped();
@@ -1878,7 +1885,7 @@ Acked-by: jbeulich@suse.com
  
  	/*
  	 * NOTE: On x86-32, only from this point on, fixmaps are ready for use.
-@@ -1111,6 +1103,8 @@ void __init setup_arch(char **cmdline_p)
+@@ -1112,6 +1104,8 @@ void __init setup_arch(char **cmdline_p)
  	if (boot_cpu_data.cpuid_level >= 0) {
  		/* A CPU has %cr4 if and only if it has CPUID */
  		mmu_cr4_features = read_cr4();
@@ -1887,7 +1894,7 @@ Acked-by: jbeulich@suse.com
  	}
  
  #if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
-@@ -1228,7 +1222,8 @@ void __init setup_arch(char **cmdline_p)
+@@ -1229,7 +1223,8 @@ void __init setup_arch(char **cmdline_p)
  
  #ifndef CONFIG_XEN
  	init_apic_mappings();

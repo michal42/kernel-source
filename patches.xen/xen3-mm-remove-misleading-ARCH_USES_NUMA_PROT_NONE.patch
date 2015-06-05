@@ -1,0 +1,64 @@
+From f6a846cbd65ec797a886695da742db1596c56255 Mon Sep 17 00:00:00 2001
+From: Mel Gorman <mgorman@suse.de>
+Date: Thu, 9 Oct 2014 15:26:33 -0700
+Subject: [PATCH] mm: remove misleading ARCH_USES_NUMA_PROT_NONE
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v3.18
+
+ARCH_USES_NUMA_PROT_NONE was defined for architectures that implemented
+_PAGE_NUMA using _PROT_NONE.  This saved using an additional PTE bit and
+relied on the fact that PROT_NONE vmas were skipped by the NUMA hinting
+fault scanner.  This was found to be conceptually confusing with a lot of
+implicit assumptions and it was asked that an alternative be found.
+
+Commit c46a7c81 "x86: define _PAGE_NUMA by reusing software bits on the
+PMD and PTE levels" redefined _PAGE_NUMA on x86 to be one of the swap PTE
+bits and shrunk the maximum possible swap size but it did not go far
+enough.  There are no architectures that reuse _PROT_NONE as _PROT_NUMA
+but the relics still exist.
+
+This patch removes ARCH_USES_NUMA_PROT_NONE and removes some unnecessary
+duplication in powerpc vs the generic implementation by defining the types
+the core NUMA helpers expected to exist from x86 with their ppc64
+equivalent.  This necessitated that a PTE bit mask be created that
+identified the bits that distinguish present from NUMA pte entries but it
+is expected this will only differ between arches based on _PAGE_PROTNONE.
+The naming for the generic helpers was taken from x86 originally but ppc64
+has types that are equivalent for the purposes of the helper so they are
+mapped instead of duplicating code.
+
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: "Kirill A. Shutemov" <kirill.shutemov@linux.intel.com>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Cyrill Gorcunov <gorcunov@gmail.com>
+Reviewed-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Automatically created from "patches.suse/mm-remove-misleading-ARCH_USES_NUMA_PROT_NONE.patch" by xen-port-patches.py
+
+--- a/arch/x86/include/mach-xen/asm/pgtable_types.h
++++ b/arch/x86/include/mach-xen/asm/pgtable_types.h
+@@ -387,6 +387,20 @@ static inline pteval_t pte_flags(pte_t p
+ 	return __pte_val(pte) & PTE_FLAGS_MASK;
+ }
+ 
++#ifdef CONFIG_NUMA_BALANCING
++/* Set of bits that distinguishes present, prot_none and numa ptes */
++#define _PAGE_NUMA_MASK (_PAGE_NUMA|_PAGE_PROTNONE|_PAGE_PRESENT)
++static inline pteval_t ptenuma_flags(pte_t pte)
++{
++	return pte_flags(pte) & _PAGE_NUMA_MASK;
++}
++
++static inline pmdval_t pmdnuma_flags(pmd_t pmd)
++{
++	return pmd_flags(pmd) & _PAGE_NUMA_MASK;
++}
++#endif /* CONFIG_NUMA_BALANCING */
++
+ #define pgprot_val(x)	((x).pgprot)
+ #define __pgprot(x)	((pgprot_t) { (x) } )
+ 

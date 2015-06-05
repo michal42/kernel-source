@@ -9,7 +9,7 @@ Acked-by: jbeulich@suse.com
 
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -123,7 +123,7 @@ config X86
+@@ -122,7 +122,7 @@ config X86
  	select OLD_SIGSUSPEND3 if X86_32 || IA32_EMULATION
  	select OLD_SIGACTION if X86_32
  	select COMPAT_OLD_SIGACTION if IA32_EMULATION
@@ -500,7 +500,7 @@ Acked-by: jbeulich@suse.com
  #include <asm/io_apic.h>
  #include <asm/ist.h>
  #include <asm/setup_arch.h>
-@@ -1118,8 +1117,18 @@ void __init setup_arch(char **cmdline_p)
+@@ -1119,8 +1118,18 @@ void __init setup_arch(char **cmdline_p)
  	if (efi_enabled(EFI_BOOT))
  		efi_init();
  
@@ -1183,7 +1183,7 @@ Acked-by: jbeulich@suse.com
  	unsigned long flags;
  
 - 	pci_read_config_dword(dev, msix_table_offset_reg(pos), &reg);
-+ 	pci_read_config_dword(dev, dev->msix_cap + PCI_MSIX_TABLE, &reg);
++	pci_read_config_dword(dev, dev->msix_cap + PCI_MSIX_TABLE, &reg);
  	bar = reg & PCI_MSIX_FLAGS_BIRMASK;
  
  	flags = pci_resource_flags(dev, bar);
@@ -1201,24 +1201,20 @@ Acked-by: jbeulich@suse.com
  	if (dev->msix_enabled)
  		msix_set_enable(dev, 0);
  
-@@ -533,13 +526,12 @@ out_unroll:
+@@ -533,10 +526,9 @@ out_unroll:
  static int msi_capability_init(struct pci_dev *dev, int nvec)
  {
  	struct msi_dev_list *dev_entry = get_msi_dev_pirq_list(dev);
 -	int pos, pirq;
 +	int pirq;
- 	u16 control;
  
 -	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
 -	msi_set_enable(dev, pos, 0);	/* Disable MSI during set up */
 +	msi_set_enable(dev, 0);	/* Disable MSI during set up */
  
--	pci_read_config_word(dev, msi_control_reg(pos), &control);
-+	pci_read_config_word(dev, dev->msi_cap + PCI_MSI_FLAGS, &control);
- 
  	pirq = msi_map_vector(dev, nvec, 0, dev_entry->owner);
  	if (pirq < 0)
-@@ -548,7 +540,7 @@ static int msi_capability_init(struct pc
+@@ -545,7 +537,7 @@ static int msi_capability_init(struct pc
  
  	/* Set MSI enabled bits	 */
  	pci_intx_for_msi(dev, 0);
@@ -1227,7 +1223,7 @@ Acked-by: jbeulich@suse.com
  	dev->msi_enabled = 1;
  
  	dev->irq = dev_entry->e.pirq = pirq;
-@@ -570,7 +562,7 @@ static int msix_capability_init(struct p
+@@ -567,7 +559,7 @@ static int msix_capability_init(struct p
  				struct msix_entry *entries, int nvec)
  {
  	u64 table_base;
@@ -1236,7 +1232,7 @@ Acked-by: jbeulich@suse.com
  	u16 control;
  	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
  	struct msi_pirq_entry *pirq_entry;
-@@ -578,14 +570,13 @@ static int msix_capability_init(struct p
+@@ -575,14 +567,13 @@ static int msix_capability_init(struct p
  	if (!msi_dev_entry)
  		return -ENOMEM;
  
@@ -1254,7 +1250,7 @@ Acked-by: jbeulich@suse.com
  	if (!table_base)
  		return -ENODEV;
  
-@@ -595,7 +586,7 @@ static int msix_capability_init(struct p
+@@ -592,7 +583,7 @@ static int msix_capability_init(struct p
  	 * interrupts coming in before they're fully set up.
  	 */
  	control |= PCI_MSIX_FLAGS_MASKALL | PCI_MSIX_FLAGS_ENABLE;
@@ -1263,7 +1259,7 @@ Acked-by: jbeulich@suse.com
  
  	for (i = 0; i < nvec; i++) {
  		mapped = 0;
-@@ -645,7 +636,7 @@ static int msix_capability_init(struct p
+@@ -642,7 +633,7 @@ static int msix_capability_init(struct p
  	populate_msi_sysfs(dev);
  
  	control &= ~PCI_MSIX_FLAGS_MASKALL;
@@ -1272,7 +1268,7 @@ Acked-by: jbeulich@suse.com
  
  	return 0;
  }
-@@ -692,9 +683,6 @@ static int pci_msi_check_device(struct p
+@@ -689,9 +680,6 @@ static int pci_msi_check_device(struct p
  	if (ret)
  		return ret;
  
@@ -1282,7 +1278,7 @@ Acked-by: jbeulich@suse.com
  	return 0;
  }
  
-@@ -713,14 +701,14 @@ static int pci_msi_check_device(struct p
+@@ -710,14 +698,14 @@ static int pci_msi_check_device(struct p
   */
  int pci_enable_msi_block(struct pci_dev *dev, unsigned int nvec)
  {
@@ -1301,7 +1297,7 @@ Acked-by: jbeulich@suse.com
  	if (msi_multi_vec_supported)
  		maxvec = 1 << ((msgctl & PCI_MSI_FLAGS_QMASK) >> 1);
  	else
-@@ -773,14 +761,13 @@ EXPORT_SYMBOL(pci_enable_msi_block);
+@@ -770,14 +758,13 @@ EXPORT_SYMBOL(pci_enable_msi_block);
  
  int pci_enable_msi_block_auto(struct pci_dev *dev, unsigned int *maxvec)
  {
@@ -1319,7 +1315,7 @@ Acked-by: jbeulich@suse.com
  	ret = 1 << ((msgctl & PCI_MSI_FLAGS_QMASK) >> 1);
  
  	if (maxvec)
-@@ -799,7 +786,7 @@ EXPORT_SYMBOL(pci_enable_msi_block_auto)
+@@ -796,7 +783,7 @@ EXPORT_SYMBOL(pci_enable_msi_block_auto)
  
  void pci_msi_shutdown(struct pci_dev *dev)
  {
@@ -1328,7 +1324,7 @@ Acked-by: jbeulich@suse.com
  	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
  
  	if (!pci_msi_enable || !dev || !dev->msi_enabled)
-@@ -824,8 +811,7 @@ void pci_msi_shutdown(struct pci_dev *de
+@@ -821,8 +808,7 @@ void pci_msi_shutdown(struct pci_dev *de
  	memset(&msi_dev_entry->e.kobj, 0, sizeof(msi_dev_entry->e.kobj));
  
  	/* Disable MSI mode */
@@ -1338,7 +1334,7 @@ Acked-by: jbeulich@suse.com
  	pci_intx_for_msi(dev, 1);
  	dev->msi_enabled = 0;
  }
-@@ -844,15 +830,13 @@ EXPORT_SYMBOL(pci_disable_msi);
+@@ -841,15 +827,13 @@ EXPORT_SYMBOL(pci_disable_msi);
   */
  int pci_msix_table_size(struct pci_dev *dev)
  {
@@ -1357,7 +1353,7 @@ Acked-by: jbeulich@suse.com
  }
  
  /**
-@@ -876,7 +860,7 @@ int pci_enable_msix(struct pci_dev *dev,
+@@ -873,7 +857,7 @@ int pci_enable_msix(struct pci_dev *dev,
  	int i, j, temp;
  	struct msi_dev_list *msi_dev_entry = get_msi_dev_pirq_list(dev);
  
@@ -1366,7 +1362,7 @@ Acked-by: jbeulich@suse.com
  		return -EINVAL;
  
  	if (!is_initial_xendomain()) {
-@@ -1046,7 +1030,6 @@ EXPORT_SYMBOL(pci_msi_enabled);
+@@ -1043,7 +1027,6 @@ EXPORT_SYMBOL(pci_msi_enabled);
  
  void pci_msi_init_pci_dev(struct pci_dev *dev)
  {
@@ -1374,7 +1370,7 @@ Acked-by: jbeulich@suse.com
  	INIT_LIST_HEAD(&dev->msi_list);
  
  	/* Disable the msi hardware to avoid screaming interrupts
-@@ -1057,12 +1040,15 @@ void pci_msi_init_pci_dev(struct pci_dev
+@@ -1054,12 +1037,15 @@ void pci_msi_init_pci_dev(struct pci_dev
  	 *   already enabled on purpose),
  	 * - unprivileged domains.
  	 */
@@ -1521,7 +1517,7 @@ Acked-by: jbeulich@suse.com
  
 --- a/drivers/xen/blkfront/blkfront.c
 +++ b/drivers/xen/blkfront/blkfront.c
-@@ -668,9 +668,13 @@ int blkif_open(struct block_device *bd, 
+@@ -667,9 +667,13 @@ int blkif_open(struct block_device *bd, 
  int blkif_release(struct inode *inode, struct file *filep)
  {
  	struct gendisk *disk = inode->i_bdev->bd_disk;
@@ -1536,7 +1532,7 @@ Acked-by: jbeulich@suse.com
  #endif
  	struct blkfront_info *info = disk->private_data;
  	struct xenbus_device *xbdev;
-@@ -678,7 +682,7 @@ int blkif_release(struct gendisk *disk, 
+@@ -677,7 +681,7 @@ int blkif_release(struct gendisk *disk, 
  
  	bdput(bd);
  	if (bd->bd_openers)
@@ -1545,7 +1541,7 @@ Acked-by: jbeulich@suse.com
  
  	/*
  	 * Check if we have been instructed to close. We will have
-@@ -703,7 +707,8 @@ int blkif_release(struct gendisk *disk, 
+@@ -702,7 +706,8 @@ int blkif_release(struct gendisk *disk, 
  		kfree(info);
  	}
  
@@ -1557,7 +1553,7 @@ Acked-by: jbeulich@suse.com
  
 --- a/drivers/xen/blkfront/block.h
 +++ b/drivers/xen/blkfront/block.h
-@@ -123,7 +123,11 @@ extern int blkif_ioctl(struct inode *ino
+@@ -125,7 +125,11 @@ extern int blkif_ioctl(struct inode *ino
  		       unsigned command, unsigned long argument);
  #else
  extern int blkif_open(struct block_device *bdev, fmode_t mode);
@@ -1567,7 +1563,7 @@ Acked-by: jbeulich@suse.com
 +extern void blkif_release(struct gendisk *disk, fmode_t mode);
 +#endif
  extern int blkif_ioctl(struct block_device *bdev, fmode_t mode,
-  		       unsigned command, unsigned long argument);
+ 		       unsigned command, unsigned long argument);
  #endif
 --- a/drivers/xen/blktap/blktap.c
 +++ b/drivers/xen/blktap/blktap.c
@@ -1753,7 +1749,7 @@ Acked-by: jbeulich@suse.com
  }
 --- a/drivers/xen/xenbus/xenbus_client.c
 +++ b/drivers/xen/xenbus/xenbus_client.c
-@@ -548,7 +548,7 @@ static int xenbus_map_ring_valloc_hvm(st
+@@ -516,7 +516,7 @@ static int xenbus_map_ring_valloc_hvm(st
  
  	err = xenbus_map_ring(dev, gnt_ref, &node->handle, addr);
  	if (err)
@@ -1762,7 +1758,7 @@ Acked-by: jbeulich@suse.com
  
  	spin_lock(&xenbus_valloc_lock);
  	list_add(&node->next, &xenbus_valloc_pages);
-@@ -557,8 +557,9 @@ static int xenbus_map_ring_valloc_hvm(st
+@@ -525,8 +525,9 @@ static int xenbus_map_ring_valloc_hvm(st
  	*vaddr = addr;
  	return 0;
  
@@ -2169,6 +2165,18 @@ Acked-by: jbeulich@suse.com
  };
  
  static inline struct xenbus_device *to_xenbus_device(struct device *dev)
+--- a/kernel/locking/mutex.c
++++ b/kernel/locking/mutex.c
+@@ -184,7 +184,8 @@ static inline int mutex_can_spin_on_owne
+ 	rcu_read_lock();
+ 	owner = ACCESS_ONCE(lock->owner);
+ 	if (owner)
+-		retval = owner->on_cpu;
++		retval = owner->on_cpu &&
++			 arch_cpu_is_running(task_thread_info(owner)->cpu);
+ 	rcu_read_unlock();
+ 	/*
+ 	 * if lock->owner is not set, the mutex owner may have just acquired
 --- a/kernel/time/timekeeping.c
 +++ b/kernel/time/timekeeping.c
 @@ -563,6 +563,10 @@ int timekeeping_inject_offset(struct tim

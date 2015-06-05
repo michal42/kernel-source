@@ -5,11 +5,12 @@ Patch-mainline: 2.6.25
 Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
 Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches.py
 
+2.6.27/arch/x86/vdso/vdso32.S (being done differently)
 2.6.32/arch/x86/kernel/rtc.c (hooks in {update,read}_persistent_clock() removed)
 
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -55,7 +55,7 @@ config X86
+@@ -54,7 +54,7 @@ config X86
  	select HAVE_FUNCTION_TRACE_MCOUNT_TEST
  	select HAVE_SYSCALL_TRACEPOINTS
  	select SYSCTL_EXCEPTION_TRACE
@@ -18,7 +19,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	select HAVE_ARCH_KGDB
  	select HAVE_ARCH_TRACEHOOK
  	select HAVE_GENERIC_DMA_COHERENT if X86_32
-@@ -250,14 +250,12 @@ config X86_HT
+@@ -249,14 +249,12 @@ config X86_HT
  	depends on SMP && !XEN
  
  config X86_NO_TSS
@@ -35,7 +36,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  config X86_32_LAZY_GS
  	def_bool y
-@@ -939,9 +937,8 @@ config X86_VISWS_APIC
+@@ -938,9 +936,8 @@ config X86_VISWS_APIC
  	depends on X86_32 && X86_VISWS
  
  config X86_XEN_GENAPIC
@@ -46,7 +47,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  config X86_REROUTE_FOR_BROKEN_BOOT_IRQS
  	bool "Reroute for broken boot IRQs"
-@@ -1416,7 +1413,7 @@ config ARCH_SPARSEMEM_ENABLE
+@@ -1415,7 +1412,7 @@ config ARCH_SPARSEMEM_ENABLE
  
  config ARCH_SPARSEMEM_DEFAULT
  	def_bool y
@@ -55,7 +56,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  config ARCH_SELECT_MEMORY_MODEL
  	def_bool y
-@@ -2215,10 +2212,10 @@ config PCI_CNB20LE_QUIRK
+@@ -2249,10 +2246,10 @@ config PCI_CNB20LE_QUIRK
  	  You should say N unless you know you need this.
  
  config XEN_PCIDEV_FRONTEND
@@ -68,7 +69,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	help
  	  The PCI device frontend driver allows the kernel to import arbitrary
  	  PCI devices from a PCI backend to support PCI driver domains.
-@@ -2226,7 +2223,6 @@ config XEN_PCIDEV_FRONTEND
+@@ -2260,7 +2257,6 @@ config XEN_PCIDEV_FRONTEND
  config XEN_PCIDEV_FE_DEBUG
  	bool "Xen PCI Frontend Debugging"
  	depends on XEN_PCIDEV_FRONTEND
@@ -133,7 +134,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  ia32_syscall_end:
 --- a/arch/x86/kernel/Makefile
 +++ b/arch/x86/kernel/Makefile
-@@ -121,11 +121,10 @@ ifeq ($(CONFIG_X86_64),y)
+@@ -122,11 +122,10 @@ ifeq ($(CONFIG_X86_64),y)
  	obj-$(CONFIG_PCI_MMCONFIG)	+= mmconf-fam10h_64.o
  	obj-y				+= vsmp_64.o
  
@@ -1710,14 +1711,14 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	cmpq %rbp,RIP(%rsp) 
  	je   error_swapgs
  	movl %ebp,%ebp	/* zero extend */
-@@ -933,19 +924,17 @@ END(do_hypervisor_callback)
+@@ -933,20 +924,18 @@ END(do_hypervisor_callback)
  restore_all_enable_events:  
  	CFI_DEFAULT_STACK adj=1
  	TRACE_IRQS_ON
 -	XEN_UNBLOCK_EVENTS(%rsi)        # %rsi is already set up...
 +	__ENABLE_INTERRUPTS
  
- scrit:	/**** START OF CRITICAL REGION ****/
+ .Lscrit: /**** START OF CRITICAL REGION ****/
 -	XEN_TEST_PENDING(%rsi)
 +	__TEST_PENDING
  	CFI_REMEMBER_STATE
@@ -1728,8 +1729,9 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
          
  	CFI_RESTORE_STATE
 -14:	XEN_LOCKED_BLOCK_EVENTS(%rsi)
--	XEN_PUT_VCPU_INFO(%rsi)
 +14:	__DISABLE_INTERRUPTS
+ .Lecrit: /**** END OF CRITICAL REGION ****/
+-	XEN_PUT_VCPU_INFO(%rsi)
  	SAVE_REST
          movq %rsp,%rdi                  # set the argument again
  	jmp  11b
@@ -1888,7 +1890,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  #include <asm/idle.h>
  #include <asm/io.h>
-@@ -1064,7 +1066,7 @@ void __apicdebuginit print_local_APIC(vo
+@@ -1068,7 +1070,7 @@ void __apicdebuginit print_local_APIC(vo
  	v = apic_read(APIC_LVR);
  	printk(KERN_INFO "... APIC VERSION: %08x\n", v);
  	ver = GET_APIC_VERSION(v);
@@ -1897,7 +1899,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  	v = apic_read(APIC_TASKPRI);
  	printk(KERN_DEBUG "... APIC TASKPRI: %08x (%02x)\n", v, v & APIC_TPRI_MASK);
-@@ -1165,7 +1167,7 @@ void __apicdebuginit print_PIC(void)
+@@ -1169,7 +1171,7 @@ void __apicdebuginit print_PIC(void)
  }
  #endif /* !CONFIG_XEN */
  
@@ -1906,7 +1908,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  {
  	union IO_APIC_reg_01 reg_01;
  #ifndef CONFIG_XEN
-@@ -1299,7 +1301,7 @@ static int __init timer_irq_works(void)
+@@ -1303,7 +1305,7 @@ static int __init timer_irq_works(void)
  	 */
  
  	/* jiffies wrap? */
@@ -1915,7 +1917,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  		return 1;
  	return 0;
  }
-@@ -1412,7 +1414,7 @@ static void irq_complete_move(unsigned i
+@@ -1416,7 +1418,7 @@ static void irq_complete_move(unsigned i
  	if (likely(!cfg->move_in_progress))
  		return;
  
@@ -1924,7 +1926,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	me = smp_processor_id();
  	if ((vector == cfg->vector) && cpu_isset(me, cfg->domain)) {
  		cpumask_t cleanup_mask;
-@@ -1439,7 +1441,7 @@ static void ack_apic_level(unsigned int 
+@@ -1443,7 +1445,7 @@ static void ack_apic_level(unsigned int 
  	int do_unmask_irq = 0;
  
  	irq_complete_move(irq);
@@ -1933,7 +1935,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	/* If we are moving the irq we need to mask it */
  	if (unlikely(irq_desc[irq].status & IRQ_MOVE_PENDING)) {
  		do_unmask_irq = 1;
-@@ -1570,7 +1572,7 @@ static struct hw_interrupt_type lapic_ir
+@@ -1574,7 +1576,7 @@ static struct hw_interrupt_type lapic_ir
  	.end = end_lapic_irq,
  };
  
@@ -1942,7 +1944,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  {
  	/*
   	 * Dirty trick to enable the NMI watchdog ...
-@@ -1583,7 +1585,7 @@ static void setup_nmi (void)
+@@ -1587,7 +1589,7 @@ static void setup_nmi (void)
  	 */ 
  	printk(KERN_INFO "activating NMI Watchdog ...");
  
@@ -1951,7 +1953,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  	printk(" done.\n");
  }
-@@ -1659,7 +1661,7 @@ static inline void unlock_ExtINT_logic(v
+@@ -1663,7 +1665,7 @@ static inline void unlock_ExtINT_logic(v
   *
   * FIXME: really need to revamp this for modern platforms only.
   */
@@ -1960,7 +1962,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  {
  	struct irq_cfg *cfg = irq_cfg + 0;
  	int apic1, pin1, apic2, pin2;
-@@ -1863,7 +1865,7 @@ static int ioapic_resume(struct sys_devi
+@@ -1867,7 +1869,7 @@ static int ioapic_resume(struct sys_devi
  }
  
  static struct sysdev_class ioapic_sysdev_class = {
@@ -1969,7 +1971,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	.suspend = ioapic_suspend,
  	.resume = ioapic_resume,
  };
-@@ -2303,5 +2305,93 @@ void __init setup_ioapic_dest(void)
+@@ -2307,5 +2309,93 @@ void __init setup_ioapic_dest(void)
  	}
  }
  #endif
@@ -2491,7 +2493,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
 --- a/arch/x86/kernel/machine_kexec_64.c
 +++ b/arch/x86/kernel/machine_kexec_64.c
-@@ -271,7 +271,9 @@ void machine_kexec(struct kimage *image)
+@@ -324,7 +324,9 @@ void machine_kexec(struct kimage *image)
  
  void arch_crash_save_vmcoreinfo(void)
  {
@@ -7887,12 +7889,12 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +
 +static inline unsigned long highmap_start_pfn(void)
 +{
-+	return __pa(_text) >> PAGE_SHIFT;
++	return PFN_DOWN(__pa(_text));
 +}
 +
 +static inline unsigned long highmap_end_pfn(void)
 +{
-+	return __pa(round_up((unsigned long)_end, PMD_SIZE)) >> PAGE_SHIFT;
++	return PFN_UP(__pa(_end));
 +}
 +
 +#endif
@@ -9139,26 +9141,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	movl	%ebp, %ecx
  	popl	%ebp
  .Lpop_ebp:
---- a/arch/x86/vdso/vdso32.S
-+++ b/arch/x86/vdso/vdso32.S
-@@ -19,4 +19,16 @@ vdso32_sysenter_start:
- 	.incbin "arch/x86/vdso/vdso32-sysenter.so"
- vdso32_sysenter_end:
- 
-+#if defined(CONFIG_X86_64_XEN) && CONFIG_XEN_COMPAT < 0x030200
-+	.globl vdso32_int80_start, vdso32_int80_end
-+vdso32_int80_start:
-+	.incbin "arch/x86/vdso/vdso32-int80.so"
-+vdso32_int80_end:
-+#elif defined(CONFIG_X86_XEN)
-+	.globl vdso32_syscall_start, vdso32_syscall_end
-+vdso32_syscall_start:
-+	.incbin "arch/x86/vdso/vdso32-syscall.so"
-+vdso32_syscall_end:
-+#endif
-+
- __FINIT
---- a/dev/null
+--- /dev/null
 +++ b/arch/x86/vdso/vdso32-setup-xen.c
 @@ -0,0 +1,506 @@
 +/*
@@ -9893,7 +9876,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  
  /**
   * msi_capability_init - configure device's MSI capability structure
-@@ -729,12 +736,3 @@ void pci_msi_init_pci_dev(struct pci_dev
+@@ -726,12 +733,3 @@ void pci_msi_init_pci_dev(struct pci_dev
  {
  	INIT_LIST_HEAD(&dev->msi_list);
  }
@@ -9923,7 +9906,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	int i;
 --- a/drivers/xen/Kconfig
 +++ b/drivers/xen/Kconfig
-@@ -390,6 +390,17 @@ config XEN_SMPBOOT
+@@ -394,6 +394,17 @@ config XEN_SMPBOOT
  	def_bool y
  	depends on SMP && !PPC_XEN
  
@@ -10404,7 +10387,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	ctxt.syscall_callback_eip  = (unsigned long)system_call;
  
  	ctxt.ctrlreg[3] = xen_pfn_to_cr3(virt_to_mfn(init_level4_pgt));
---- a/dev/null
+--- /dev/null
 +++ b/drivers/xen/core/spinlock.c
 @@ -0,0 +1,401 @@
 +/*
@@ -11460,7 +11443,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +
  #endif
 --- a/arch/x86/include/mach-xen/asm/desc_64.h
-+++ b/dev/null
++++ /dev/null
 @@ -1,228 +0,0 @@
 -/* Written 2000 by Andi Kleen */ 
 -#ifndef __ARCH_DESC_H
@@ -11899,7 +11882,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +
 +#define __DISABLE_INTERRUPTS	movb $1,evtchn_upcall_mask(__REG_si)
 +#define __ENABLE_INTERRUPTS	movb $0,evtchn_upcall_mask(__REG_si)
-+#define __TEST_PENDING		testb $0xFF,evtchn_upcall_pending(__REG_si)
++#define __TEST_PENDING		cmpb $0,evtchn_upcall_pending(__REG_si)
 +#define DISABLE_INTERRUPTS(clb)	GET_VCPU_INFO				; \
 +				__DISABLE_INTERRUPTS
 +#define ENABLE_INTERRUPTS(clb)	GET_VCPU_INFO				; \
@@ -11908,14 +11891,14 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +#ifndef CONFIG_X86_64
 +#define INTERRUPT_RETURN		iret
 +#define ENABLE_INTERRUPTS_SYSCALL_RET __ENABLE_INTERRUPTS		; \
-+sysexit_scrit:	/**** START OF SYSEXIT CRITICAL REGION ****/		; \
++.Lsysexit_scrit: /**** START OF SYSEXIT CRITICAL REGION ****/		; \
 +	__TEST_PENDING							; \
 +	jnz  14f	/* process more events if necessary... */	; \
 +	movl PT_ESI(%esp), %esi						; \
 +	sysexit								; \
 +14:	__DISABLE_INTERRUPTS						; \
++.Lsysexit_ecrit: /**** END OF SYSEXIT CRITICAL REGION ****/		; \
 +	TRACE_IRQS_OFF							; \
-+sysexit_ecrit:	/**** END OF SYSEXIT CRITICAL REGION ****/		; \
 +	mov  $__KERNEL_PERCPU, %ecx					; \
 +	push %esp							; \
 +	mov  %ecx, %fs							; \
@@ -12037,7 +12020,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +#endif /* __ASSEMBLY__ */
  #endif
 --- a/arch/x86/include/mach-xen/asm/irqflags_64.h
-+++ b/dev/null
++++ /dev/null
 @@ -1,178 +0,0 @@
 -/*
 - * include/asm-x86_64/irqflags.h
@@ -14576,7 +14559,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +
  #endif
 --- a/arch/x86/include/mach-xen/asm/processor_64.h
-+++ b/dev/null
++++ /dev/null
 @@ -1,467 +0,0 @@
 -/*
 - * include/asm-x86_64/processor.h
@@ -15229,7 +15212,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 -#endif /* !CONFIG_SMP */
  #endif
  
---- a/dev/null
+--- /dev/null
 +++ b/arch/x86/include/mach-xen/asm/spinlock.h
 @@ -0,0 +1,354 @@
 +#ifndef _X86_SPINLOCK_H_
@@ -15586,7 +15569,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +#define _raw_write_relax(lock)	cpu_relax()
 +
 +#endif
---- a/dev/null
+--- /dev/null
 +++ b/arch/x86/include/mach-xen/asm/spinlock_types.h
 @@ -0,0 +1,38 @@
 +#ifndef __ASM_SPINLOCK_TYPES_H
@@ -15768,7 +15751,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +
 +#endif /* _ASM_X86_TLBFLUSH_H */
 --- a/arch/x86/include/mach-xen/asm/tlbflush_64.h
-+++ b/dev/null
++++ /dev/null
 @@ -1,97 +0,0 @@
 -#ifndef _X8664_TLBFLUSH_H
 -#define _X8664_TLBFLUSH_H
@@ -15943,7 +15926,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	PG_savepinned = PG_dirty,
 --- a/include/linux/pci.h
 +++ b/include/linux/pci.h
-@@ -962,6 +962,9 @@ void pci_update_resource(struct pci_dev 
+@@ -960,6 +960,9 @@ void pci_update_resource(struct pci_dev 
  int __must_check pci_assign_resource(struct pci_dev *dev, int i);
  int __must_check pci_reassign_resource(struct pci_dev *dev, int i, resource_size_t add_size, resource_size_t align);
  int pci_select_bars(struct pci_dev *dev, unsigned long flags);
@@ -16076,7 +16059,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	}
 --- a/mm/memory.c
 +++ b/mm/memory.c
-@@ -2554,6 +2554,10 @@ int apply_to_page_range(struct mm_struct
+@@ -2550,6 +2550,10 @@ int apply_to_page_range(struct mm_struct
  	unsigned long end = addr + size;
  	int err;
  
