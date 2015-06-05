@@ -1,0 +1,212 @@
+From d715ae08f2ff87508a081c4df78061bf4f7211d6 Mon Sep 17 00:00:00 2001
+From: Michal Hocko <mhocko@suse.cz>
+Date: Mon, 7 Apr 2014 15:37:46 -0700
+Subject: [PATCH] memcg: rename high level charging functions
+Git-commit: d715ae08f2ff87508a081c4df78061bf4f7211d6
+Patch-mainline: v3.15-rc1
+References: bnc#931454
+
+mem_cgroup_newpage_charge is used only for charging anonymous memory so
+it is better to rename it to mem_cgroup_charge_anon.
+
+mem_cgroup_cache_charge is used for file backed memory so rename it to
+mem_cgroup_charge_file.
+
+Signed-off-by: Michal Hocko <mhocko@suse.cz>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ Documentation/cgroups/memcg_test.txt |    4 ++--
+ include/linux/memcontrol.h           |    8 ++++----
+ mm/filemap.c                         |    2 +-
+ mm/huge_memory.c                     |    8 ++++----
+ mm/memcontrol.c                      |    4 ++--
+ mm/memory.c                          |    6 +++---
+ mm/shmem.c                           |    6 +++---
+ 7 files changed, 19 insertions(+), 19 deletions(-)
+
+--- a/Documentation/cgroups/memcg_test.txt
++++ b/Documentation/cgroups/memcg_test.txt
+@@ -24,7 +24,7 @@ Please note that implementation details
+ 
+    a page/swp_entry may be charged (usage += PAGE_SIZE) at
+ 
+-	mem_cgroup_newpage_charge()
++	mem_cgroup_charge_anon()
+ 	  Called at new page fault and Copy-On-Write.
+ 
+ 	mem_cgroup_try_charge_swapin()
+@@ -32,7 +32,7 @@ Please note that implementation details
+ 	  Followed by charge-commit-cancel protocol. (With swap accounting)
+ 	  At commit, a charge recorded in swap_cgroup is removed.
+ 
+-	mem_cgroup_cache_charge()
++	mem_cgroup_charge_file()
+ 	  Called at add_to_page_cache()
+ 
+ 	mem_cgroup_cache_charge_swapin()
+--- a/include/linux/memcontrol.h
++++ b/include/linux/memcontrol.h
+@@ -65,7 +65,7 @@ struct mem_cgroup_reclaim_cookie {
+  * (Of course, if memcg does memory allocation in future, GFP_KERNEL is sane.)
+  */
+ 
+-extern int mem_cgroup_newpage_charge(struct page *page, struct mm_struct *mm,
++extern int mem_cgroup_charge_anon(struct page *page, struct mm_struct *mm,
+ 				gfp_t gfp_mask);
+ /* for swap handling */
+ extern int mem_cgroup_try_charge_swapin(struct mm_struct *mm,
+@@ -74,7 +74,7 @@ extern void mem_cgroup_commit_charge_swa
+ 					struct mem_cgroup *memcg);
+ extern void mem_cgroup_cancel_charge_swapin(struct mem_cgroup *memcg);
+ 
+-extern int mem_cgroup_cache_charge(struct page *page, struct mm_struct *mm,
++extern int mem_cgroup_charge_file(struct page *page, struct mm_struct *mm,
+ 					gfp_t gfp_mask);
+ 
+ struct lruvec *mem_cgroup_zone_lruvec(struct zone *, struct mem_cgroup *);
+@@ -233,13 +233,13 @@ void mem_cgroup_print_bad_page(struct pa
+ #else /* CONFIG_MEMCG */
+ struct mem_cgroup;
+ 
+-static inline int mem_cgroup_newpage_charge(struct page *page,
++static inline int mem_cgroup_charge_anon(struct page *page,
+ 					struct mm_struct *mm, gfp_t gfp_mask)
+ {
+ 	return 0;
+ }
+ 
+-static inline int mem_cgroup_cache_charge(struct page *page,
++static inline int mem_cgroup_charge_file(struct page *page,
+ 					struct mm_struct *mm, gfp_t gfp_mask)
+ {
+ 	return 0;
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -489,7 +489,7 @@ int add_to_page_cache_locked(struct page
+ 	VM_BUG_ON(!PageLocked(page));
+ 	VM_BUG_ON(PageSwapBacked(page));
+ 
+-	error = mem_cgroup_cache_charge(page, current->mm,
++	error = mem_cgroup_charge_file(page, current->mm,
+ 					gfp_mask & GFP_RECLAIM_MASK);
+ 	if (error)
+ 		return error;
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -820,7 +820,7 @@ int do_huge_pmd_anonymous_page(struct mm
+ 		count_vm_event(THP_FAULT_FALLBACK);
+ 		return VM_FAULT_FALLBACK;
+ 	}
+-	if (unlikely(mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))) {
++	if (unlikely(mem_cgroup_charge_anon(page, mm, GFP_KERNEL))) {
+ 		put_page(page);
+ 		count_vm_event(THP_FAULT_FALLBACK);
+ 		return VM_FAULT_FALLBACK;
+@@ -961,7 +961,7 @@ static int do_huge_pmd_wp_page_fallback(
+ 					       __GFP_OTHER_NODE,
+ 					       vma, address, page_to_nid(page));
+ 		if (unlikely(!pages[i] ||
+-			     mem_cgroup_newpage_charge(pages[i], mm,
++			     mem_cgroup_charge_anon(pages[i], mm,
+ 						       GFP_KERNEL))) {
+ 			if (pages[i])
+ 				put_page(pages[i]);
+@@ -1094,7 +1094,7 @@ alloc:
+ 		goto out;
+ 	}
+ 
+-	if (unlikely(mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL))) {
++	if (unlikely(mem_cgroup_charge_anon(new_page, mm, GFP_KERNEL))) {
+ 		put_page(new_page);
+ 		if (page) {
+ 			split_huge_page(page);
+@@ -2381,7 +2381,7 @@ static void collapse_huge_page(struct mm
+ 	if (!new_page)
+ 		return;
+ 
+-	if (unlikely(mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL)))
++	if (unlikely(mem_cgroup_charge_anon(new_page, mm, GFP_KERNEL)))
+ 		return;
+ 
+ 	/*
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -3844,7 +3844,7 @@ out:
+ 	return ret;
+ }
+ 
+-int mem_cgroup_newpage_charge(struct page *page,
++int mem_cgroup_charge_anon(struct page *page,
+ 			      struct mm_struct *mm, gfp_t gfp_mask)
+ {
+ 	unsigned int nr_pages = 1;
+@@ -3980,7 +3980,7 @@ void mem_cgroup_commit_charge_swapin(str
+ 					  MEM_CGROUP_CHARGE_TYPE_ANON);
+ }
+ 
+-int mem_cgroup_cache_charge(struct page *page, struct mm_struct *mm,
++int mem_cgroup_charge_file(struct page *page, struct mm_struct *mm,
+ 				gfp_t gfp_mask)
+ {
+ 	enum charge_type type = MEM_CGROUP_CHARGE_TYPE_CACHE;
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -2792,7 +2792,7 @@ gotten:
+ 	}
+ 	__SetPageUptodate(new_page);
+ 
+-	if (mem_cgroup_newpage_charge(new_page, mm, GFP_KERNEL))
++	if (mem_cgroup_charge_anon(new_page, mm, GFP_KERNEL))
+ 		goto oom_free_new;
+ 
+ 	mmun_start  = address & PAGE_MASK;
+@@ -3249,7 +3249,7 @@ static int do_anonymous_page(struct mm_s
+ 	 */
+ 	__SetPageUptodate(page);
+ 
+-	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
++	if (mem_cgroup_charge_anon(page, mm, GFP_KERNEL))
+ 		goto oom_free_page;
+ 
+ 	entry = mk_pte(page, vma->vm_page_prot);
+@@ -3321,7 +3321,7 @@ static int __do_fault(struct mm_struct *
+ 		if (!cow_page)
+ 			return VM_FAULT_OOM;
+ 
+-		if (mem_cgroup_newpage_charge(cow_page, mm, GFP_KERNEL)) {
++		if (mem_cgroup_charge_anon(cow_page, mm, GFP_KERNEL)) {
+ 			page_cache_release(cow_page);
+ 			return VM_FAULT_OOM;
+ 		}
+--- a/mm/shmem.c
++++ b/mm/shmem.c
+@@ -692,7 +692,7 @@ int shmem_unuse(swp_entry_t swap, struct
+ 	 * the shmem_swaplist_mutex which might hold up shmem_writepage().
+ 	 * Charged back to the user (not to caller) when swap account is used.
+ 	 */
+-	error = mem_cgroup_cache_charge(page, current->mm, GFP_KERNEL);
++	error = mem_cgroup_charge_file(page, current->mm, GFP_KERNEL);
+ 	if (error)
+ 		goto out;
+ 	/* No radix_tree_preload: swap entry keeps a place for page in tree */
+@@ -1108,7 +1108,7 @@ repeat:
+ 				goto failed;
+ 		}
+ 
+-		error = mem_cgroup_cache_charge(page, current->mm,
++		error = mem_cgroup_charge_file(page, current->mm,
+ 						gfp & GFP_RECLAIM_MASK);
+ 		if (!error) {
+ 			error = shmem_add_to_page_cache(page, mapping, index,
+@@ -1168,7 +1168,7 @@ repeat:
+ 		if (sgp == SGP_WRITE)
+ 			init_page_accessed(page);
+ 
+-		error = mem_cgroup_cache_charge(page, current->mm,
++		error = mem_cgroup_charge_file(page, current->mm,
+ 						gfp & GFP_RECLAIM_MASK);
+ 		if (error)
+ 			goto decused;
