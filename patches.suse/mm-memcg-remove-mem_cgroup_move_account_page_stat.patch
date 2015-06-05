@@ -1,0 +1,71 @@
+From 59d1d256e156bb232700836b79d1ead5027f7b1d Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Mon, 7 Apr 2014 15:37:40 -0700
+Subject: [PATCH] mm: memcg: remove mem_cgroup_move_account_page_stat()
+Git-commit: 59d1d256e156bb232700836b79d1ead5027f7b1d
+Patch-mainline:  v3.15-rc1
+References: bnc#931454
+
+It used to disable preemption and run sanity checks but now it's only
+taking a number out of one percpu counter and putting it into another.
+Do this directly in the callsite and save the indirection.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c | 28 ++++++++++++----------------
+ 1 file changed, 12 insertions(+), 16 deletions(-)
+
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 6e0f781412a2..b9928230a14c 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -3744,16 +3744,6 @@ void mem_cgroup_split_huge_fixup(struct page *head)
+ }
+ #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
+ 
+-static void mem_cgroup_move_account_page_stat(struct mem_cgroup *from,
+-					      struct mem_cgroup *to,
+-					      unsigned int nr_pages,
+-					      enum mem_cgroup_stat_index idx)
+-{
+-	/* Update stat data for mem_cgroup */
+-	__this_cpu_sub(from->stat->count[idx], nr_pages);
+-	__this_cpu_add(to->stat->count[idx], nr_pages);
+-}
+-
+ /**
+  * mem_cgroup_move_account - move account of the page
+  * @page: the page
+@@ -3799,13 +3789,19 @@ static int mem_cgroup_move_account(struct page *page,
+ 
+ 	move_lock_mem_cgroup(from, &flags);
+ 
+-	if (!anon && page_mapped(page))
+-		mem_cgroup_move_account_page_stat(from, to, nr_pages,
+-			MEM_CGROUP_STAT_FILE_MAPPED);
++	if (!anon && page_mapped(page)) {
++		__this_cpu_sub(from->stat->count[MEM_CGROUP_STAT_FILE_MAPPED],
++			       nr_pages);
++		__this_cpu_add(to->stat->count[MEM_CGROUP_STAT_FILE_MAPPED],
++			       nr_pages);
++	}
+ 
+-	if (PageWriteback(page))
+-		mem_cgroup_move_account_page_stat(from, to, nr_pages,
+-			MEM_CGROUP_STAT_WRITEBACK);
++	if (PageWriteback(page)) {
++		__this_cpu_sub(from->stat->count[MEM_CGROUP_STAT_WRITEBACK],
++			       nr_pages);
++		__this_cpu_add(to->stat->count[MEM_CGROUP_STAT_WRITEBACK],
++			       nr_pages);
++	}
+ 
+ 	mem_cgroup_charge_statistics(from, page, anon, -nr_pages);
+ 
+-- 
+1.8.5.6
+
