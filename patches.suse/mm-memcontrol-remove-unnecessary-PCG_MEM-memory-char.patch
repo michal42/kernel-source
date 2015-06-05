@@ -1,0 +1,57 @@
+From f4aaa8b43d90294ca7546317997c452600e9a8a7 Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Wed, 10 Dec 2014 15:44:00 -0800
+Subject: [PATCH] mm: memcontrol: remove unnecessary PCG_MEM memory charge flag
+Git-commit: f4aaa8b43d90294ca7546317997c452600e9a8a7
+Patch-mainline: v3.19-rc1
+References: bnc#931454
+
+PCG_MEM is a remnant from an earlier version of 0a31bc97c80c ("mm:
+Memcontrol: rewrite uncharge API"), used to tell whether migration cleared
+a charge while leaving pc->mem_cgroup valid and PCG_USED set.  But in the
+final version, mem_cgroup_migrate() directly uncharges the source page,
+rendering this distinction unnecessary.  Remove it.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Cc: Hugh Dickins <hughd@google.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Reviewed-by: Vladimir Davydov <vdavydov@parallels.com>
+Acked-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ include/linux/page_cgroup.h |    1 -
+ mm/memcontrol.c             |    4 +---
+ 2 files changed, 1 insertion(+), 4 deletions(-)
+
+--- a/include/linux/page_cgroup.h
++++ b/include/linux/page_cgroup.h
+@@ -4,7 +4,6 @@
+ enum {
+ 	/* flags for mem_cgroup */
+ 	PCG_USED = 0x01,	/* This page is charged to a memcg */
+-	PCG_MEM = 0x02,		/* This page holds a memory charge */
+ 	__NR_PCG_FLAGS,
+ };
+ 
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -2767,7 +2767,7 @@ static void commit_charge(struct page *p
+ 	 */
+ 
+ 	pc->mem_cgroup = memcg;
+-	pc->flags = PCG_USED | PCG_MEM;
++	pc->flags = PCG_USED;
+ 
+ 	if (lrucare)
+ 		unlock_page_lru(page, isolated);
+@@ -6573,8 +6573,6 @@ void mem_cgroup_migrate(struct page *old
+ 	if (!PageCgroupUsed(pc))
+ 		return;
+ 
+-	VM_BUG_ON(!(pc->flags & PCG_MEM));
+-
+ 	if (lrucare)
+ 		lock_page_lru(oldpage, &isolated);
+ 
