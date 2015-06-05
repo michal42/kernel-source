@@ -1,0 +1,147 @@
+From 3fbe724424fb104aaca9973389b4a9df428c3e2a Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Thu, 9 Oct 2014 15:28:54 -0700
+Subject: [PATCH] mm: memcontrol: simplify detecting when the memory+swap limit
+ is hit
+Git-commit: 3fbe724424fb104aaca9973389b4a9df428c3e2a
+Patch-mainline: v3.18-rc1
+References: bnc#931454
+
+When attempting to charge pages, we first charge the memory counter and
+then the memory+swap counter.  If one of the counters is at its limit, we
+enter reclaim, but if it's the memory+swap counter, reclaim shouldn't swap
+because that wouldn't change the situation.  However, if the counters have
+the same limits, we never get to the memory+swap limit.  To know whether
+reclaim should swap or not, there is a state flag that indicates whether
+the limits are equal and whether hitting the memory limit implies hitting
+the memory+swap limit.
+
+Just try the memory+swap counter first.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Reviewed-by: Vladimir Davydov <vdavydov@parallels.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Cc: Dave Hansen <dave@sr71.net>
+Cc: Greg Thelen <gthelen@google.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |   47 +++++++++++++----------------------------------
+ 1 file changed, 13 insertions(+), 34 deletions(-)
+
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -276,9 +276,6 @@ struct mem_cgroup {
+ 	/* OOM-Killer disable */
+ 	int		oom_kill_disable;
+ 
+-	/* set when res.limit == memsw.limit */
+-	bool		memsw_is_minimum;
+-
+ 	/* protect arrays of thresholds */
+ 	struct mutex thresholds_lock;
+ 
+@@ -1833,8 +1830,6 @@ static unsigned long mem_cgroup_reclaim(
+ 
+ 	if (flags & MEM_CGROUP_RECLAIM_NOSWAP)
+ 		noswap = true;
+-	if (!(flags & MEM_CGROUP_RECLAIM_SHRINK) && memcg->memsw_is_minimum)
+-		noswap = true;
+ 
+ 	for (loop = 0; loop < MEM_CGROUP_MAX_RECLAIM_LOOPS; loop++) {
+ 		if (loop)
+@@ -2571,16 +2566,17 @@ retry:
+ 		goto done;
+ 
+ 	size = batch * PAGE_SIZE;
+-	if (!res_counter_charge(&memcg->res, size, &fail_res)) {
+-		if (!do_swap_account)
++	if (!do_swap_account ||
++	    !res_counter_charge(&memcg->memsw, size, &fail_res)) {
++		if (!res_counter_charge(&memcg->res, size, &fail_res))
+ 			goto done_restock;
+-		if (!res_counter_charge(&memcg->memsw, size, &fail_res))
+-			goto done_restock;
+-		res_counter_uncharge(&memcg->res, size);
++		if (do_swap_account)
++			res_counter_uncharge(&memcg->memsw, size);
++		mem_over_limit = mem_cgroup_from_res_counter(fail_res, res);
++	} else {
+ 		mem_over_limit = mem_cgroup_from_res_counter(fail_res, memsw);
+ 		flags |= MEM_CGROUP_RECLAIM_NOSWAP;
+-	} else
+-		mem_over_limit = mem_cgroup_from_res_counter(fail_res, res);
++	}
+ 
+ 	if (batch > nr_pages) {
+ 		batch = nr_pages;
+@@ -3827,7 +3823,6 @@ static int mem_cgroup_resize_limit(struc
+ 				unsigned long long val)
+ {
+ 	int retry_count;
+-	u64 memswlimit, memlimit;
+ 	int ret = 0;
+ 	int children = mem_cgroup_count_children(memcg);
+ 	u64 curusage, oldusage;
+@@ -3854,24 +3849,16 @@ static int mem_cgroup_resize_limit(struc
+ 		 * We have to guarantee memcg->res.limit <= memcg->memsw.limit.
+ 		 */
+ 		mutex_lock(&set_limit_mutex);
+-		memswlimit = res_counter_read_u64(&memcg->memsw, RES_LIMIT);
+-		if (memswlimit < val) {
++		if (res_counter_read_u64(&memcg->memsw, RES_LIMIT) < val) {
+ 			ret = -EINVAL;
+ 			mutex_unlock(&set_limit_mutex);
+ 			break;
+ 		}
+ 
+-		memlimit = res_counter_read_u64(&memcg->res, RES_LIMIT);
+-		if (memlimit < val)
++		if (res_counter_read_u64(&memcg->res, RES_LIMIT) < val)
+ 			enlarge = 1;
+ 
+ 		ret = res_counter_set_limit(&memcg->res, val);
+-		if (!ret) {
+-			if (memswlimit == val)
+-				memcg->memsw_is_minimum = true;
+-			else
+-				memcg->memsw_is_minimum = false;
+-		}
+ 		mutex_unlock(&set_limit_mutex);
+ 
+ 		if (!ret)
+@@ -3896,7 +3883,7 @@ static int mem_cgroup_resize_memsw_limit
+ 					unsigned long long val)
+ {
+ 	int retry_count;
+-	u64 memlimit, memswlimit, oldusage, curusage;
++	u64 oldusage, curusage;
+ 	int children = mem_cgroup_count_children(memcg);
+ 	int ret = -EBUSY;
+ 	int enlarge = 0;
+@@ -3915,22 +3902,14 @@ static int mem_cgroup_resize_memsw_limit
+ 		 * We have to guarantee memcg->res.limit <= memcg->memsw.limit.
+ 		 */
+ 		mutex_lock(&set_limit_mutex);
+-		memlimit = res_counter_read_u64(&memcg->res, RES_LIMIT);
+-		if (memlimit > val) {
++		if (res_counter_read_u64(&memcg->res, RES_LIMIT) > val) {
+ 			ret = -EINVAL;
+ 			mutex_unlock(&set_limit_mutex);
+ 			break;
+ 		}
+-		memswlimit = res_counter_read_u64(&memcg->memsw, RES_LIMIT);
+-		if (memswlimit < val)
++		if (res_counter_read_u64(&memcg->memsw, RES_LIMIT) < val)
+ 			enlarge = 1;
+ 		ret = res_counter_set_limit(&memcg->memsw, val);
+-		if (!ret) {
+-			if (memlimit == val)
+-				memcg->memsw_is_minimum = true;
+-			else
+-				memcg->memsw_is_minimum = false;
+-		}
+ 		mutex_unlock(&set_limit_mutex);
+ 
+ 		if (!ret)
