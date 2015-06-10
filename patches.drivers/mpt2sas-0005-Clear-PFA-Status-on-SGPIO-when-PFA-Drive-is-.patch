@@ -1,8 +1,9 @@
-From: "Reddy, Sreekanth" <Sreekanth.Reddy@lsi.com>
-Date: Fri, 14 Mar 2014 21:09:58 +0530
+From: Sreekanth Reddy <sreekanth.reddy@avagotech.com>
+Date: Fri, 12 Sep 2014 15:35:19 +0530
 Subject: mpt2sas: Clear PFA Status on SGPIO when PFA Drive is Removed or Replaced
 References: FATE#315931,bnc#854824
-Patch-Mainline: submitted to scsi-misc
+Patch-Mainline: v3.18-rc1
+Git-commit: bd58ea3c25dbee16857733f3176dba23c34b64e5
 
 Added code to send a SEP message that turns off the Predictive
 Failure LED when a drive is removed (if Predictive Failure LED was turned on).
@@ -11,15 +12,15 @@ Added a new flag 'pfa_led_on' per device that tracks the status of Predictive
 Failure LED. When the drive is removed, this flag is checked and
 sends the SEP message to turn off the respective Predictive Failure LED.
 
-Signed-off-by: Sreekanth Reddy <Sreekanth.Reddy@lsi.com>
-Acked-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Johannes Thumshirn <jthumshirn@suse.de>
 ---
- drivers/scsi/mpt2sas/mpt2sas_base.h  |  2 ++
- drivers/scsi/mpt2sas/mpt2sas_scsih.c | 70 +++++++++++++++++++++++++++++++-----
+ drivers/scsi/mpt2sas/mpt2sas_base.h  |    2 +
+ drivers/scsi/mpt2sas/mpt2sas_scsih.c |   70 ++++++++++++++++++++++++++++++-----
  2 files changed, 63 insertions(+), 9 deletions(-)
 
-diff --git a/drivers/scsi/mpt2sas/mpt2sas_base.h b/drivers/scsi/mpt2sas/mpt2sas_base.h
-index 863a2485..80d26c1 100644
 --- a/drivers/scsi/mpt2sas/mpt2sas_base.h
 +++ b/drivers/scsi/mpt2sas/mpt2sas_base.h
 @@ -355,6 +355,7 @@ struct _internal_cmd {
@@ -38,8 +39,6 @@ index 863a2485..80d26c1 100644
  };
  
  /**
-diff --git a/drivers/scsi/mpt2sas/mpt2sas_scsih.c b/drivers/scsi/mpt2sas/mpt2sas_scsih.c
-index 5ee6bf0c8..6ae109b 100644
 --- a/drivers/scsi/mpt2sas/mpt2sas_scsih.c
 +++ b/drivers/scsi/mpt2sas/mpt2sas_scsih.c
 @@ -150,7 +150,7 @@ struct sense_info {
@@ -51,7 +50,7 @@ index 5ee6bf0c8..6ae109b 100644
  #define MPT2SAS_PORT_ENABLE_COMPLETE (0xFFFD)
  #define MPT2SAS_REMOVE_UNRESPONDING_DEVICES (0xFFFF)
  /**
-@@ -4325,7 +4325,7 @@ _scsih_scsi_ioc_info(struct MPT2SAS_ADAPTER *ioc, struct scsi_cmnd *scmd,
+@@ -4325,7 +4325,7 @@ _scsih_scsi_ioc_info(struct MPT2SAS_ADAP
  #endif
  
  /**
@@ -60,7 +59,7 @@ index 5ee6bf0c8..6ae109b 100644
   * @ioc: per adapter object
   * @handle: device handle
   * Context: process
-@@ -4333,10 +4333,15 @@ _scsih_scsi_ioc_info(struct MPT2SAS_ADAPTER *ioc, struct scsi_cmnd *scmd,
+@@ -4333,10 +4333,15 @@ _scsih_scsi_ioc_info(struct MPT2SAS_ADAP
   * Return nothing.
   */
  static void
@@ -77,7 +76,7 @@ index 5ee6bf0c8..6ae109b 100644
  
  	memset(&mpi_request, 0, sizeof(Mpi2SepRequest_t));
  	mpi_request.Function = MPI2_FUNCTION_SCSI_ENCLOSURE_PROCESSOR;
-@@ -4351,6 +4356,47 @@ _scsih_turn_on_fault_led(struct MPT2SAS_ADAPTER *ioc, u16 handle)
+@@ -4351,6 +4356,47 @@ _scsih_turn_on_fault_led(struct MPT2SAS_
  		__FILE__, __LINE__, __func__);
  		return;
  	}
@@ -125,7 +124,7 @@ index 5ee6bf0c8..6ae109b 100644
  
  	if (mpi_reply.IOCStatus || mpi_reply.IOCLogInfo) {
  		dewtprintk(ioc, printk(MPT2SAS_INFO_FMT "enclosure_processor: "
-@@ -4362,7 +4408,7 @@ _scsih_turn_on_fault_led(struct MPT2SAS_ADAPTER *ioc, u16 handle)
+@@ -4362,7 +4408,7 @@ _scsih_turn_on_fault_led(struct MPT2SAS_
  }
  
  /**
@@ -134,7 +133,7 @@ index 5ee6bf0c8..6ae109b 100644
   * @ioc: per adapter object
   * @handle: device handle
   * Context: interrupt.
-@@ -4370,14 +4416,14 @@ _scsih_turn_on_fault_led(struct MPT2SAS_ADAPTER *ioc, u16 handle)
+@@ -4370,14 +4416,14 @@ _scsih_turn_on_fault_led(struct MPT2SAS_
   * Return nothing.
   */
  static void
@@ -151,7 +150,7 @@ index 5ee6bf0c8..6ae109b 100644
  	fw_event->device_handle = handle;
  	fw_event->ioc = ioc;
  	_scsih_fw_event_add(ioc, fw_event);
-@@ -4421,7 +4467,7 @@ _scsih_smart_predicted_fault(struct MPT2SAS_ADAPTER *ioc, u16 handle)
+@@ -4421,7 +4467,7 @@ _scsih_smart_predicted_fault(struct MPT2
  	spin_unlock_irqrestore(&ioc->sas_device_lock, flags);
  
  	if (ioc->pdev->subsystem_vendor == PCI_VENDOR_ID_IBM)
@@ -160,7 +159,7 @@ index 5ee6bf0c8..6ae109b 100644
  
  	/* insert into event log */
  	sz = offsetof(Mpi2EventNotificationReply_t, EventData) +
-@@ -5344,6 +5390,12 @@ _scsih_remove_device(struct MPT2SAS_ADAPTER *ioc,
+@@ -5344,6 +5390,12 @@ _scsih_remove_device(struct MPT2SAS_ADAP
  {
  	struct MPT2SAS_TARGET *sas_target_priv_data;
  
@@ -173,7 +172,7 @@ index 5ee6bf0c8..6ae109b 100644
  	dewtprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: enter: "
  	    "handle(0x%04x), sas_addr(0x%016llx)\n", ioc->name, __func__,
  		sas_device->handle, (unsigned long long)
-@@ -7444,8 +7496,8 @@ _firmware_event_work(struct work_struct *work)
+@@ -7444,8 +7496,8 @@ _firmware_event_work(struct work_struct
  		dewtprintk(ioc, printk(MPT2SAS_INFO_FMT "port enable: complete "
  		    "from worker thread\n", ioc->name));
  		break;
@@ -184,6 +183,3 @@ index 5ee6bf0c8..6ae109b 100644
  		break;
  	case MPI2_EVENT_SAS_TOPOLOGY_CHANGE_LIST:
  		_scsih_sas_topology_change_event(ioc, fw_event);
--- 
-1.8.1.4
-
