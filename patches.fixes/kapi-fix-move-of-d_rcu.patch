@@ -131,7 +131,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  	else {
  		prev = dget_dlock(root);
  		next = prev->d_subdirs.next;
-@@ -105,13 +105,13 @@ static struct dentry *get_next_positive_
+@@ -105,13 +105,13 @@ cont:
  		return NULL;
  	}
  
@@ -147,7 +147,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  		goto cont;
  	}
  	dget_dlock(q);
-@@ -161,13 +161,13 @@ static struct dentry *get_next_positive_
+@@ -161,13 +161,13 @@ again:
  				goto relock;
  			}
  			spin_unlock(&p->d_lock);
@@ -163,7 +163,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  
  	spin_lock_nested(&ret->d_lock, DENTRY_D_LOCK_NESTED);
  	/* Negative dentry - try next */
-@@ -447,7 +447,7 @@ struct dentry *autofs4_expire_indirect(s
+@@ -447,7 +447,7 @@ found:
  	spin_lock(&sbi->lookup_lock);
  	spin_lock(&expired->d_parent->d_lock);
  	spin_lock_nested(&expired->d_lock, DENTRY_D_LOCK_NESTED);
@@ -208,7 +208,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  	di = ceph_dentry(dentry);
  	while (1) {
  		dout(" p %p/%p %s d_subdirs %p/%p\n", p->prev, p->next,
-@@ -164,7 +164,7 @@ static int __dcache_readdir(struct file
+@@ -164,7 +164,7 @@ more:
  		     !dentry->d_inode ? " null" : "");
  		spin_unlock(&dentry->d_lock);
  		p = p->prev;
@@ -231,7 +231,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  	spin_unlock(&dn->d_lock);
  	spin_unlock(&dir->d_lock);
  }
-@@ -1309,7 +1309,7 @@ int ceph_readdir_prepopulate(struct ceph
+@@ -1309,7 +1309,7 @@ retry_lookup:
  			/* reorder parent's d_subdirs */
  			spin_lock(&parent->d_lock);
  			spin_lock_nested(&dn->d_lock, DENTRY_D_LOCK_NESTED);
@@ -352,7 +352,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  		spin_lock(&dentry->d_lock);
  		if (!dentry->d_lockref.count) {
  			/*
-@@ -1110,7 +1110,7 @@ static void d_walk(struct dentry *parent
+@@ -1110,7 +1110,7 @@ repeat:
  resume:
  	while (next != &this_parent->d_subdirs) {
  		struct list_head *tmp = next;
@@ -361,20 +361,19 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  		next = tmp->next;
  
  		spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
-@@ -1154,11 +1154,11 @@ static void d_walk(struct dentry *parent
- 		/* might go back up the wrong parent if we have had a rename. */
- 		if (need_seqretry(&rename_lock, seq))
+@@ -1156,10 +1156,10 @@ ascend:
  			goto rename_retry;
--		next = child->d_child.next;
-+		next = child->d_u.d_child.next;
- 		while (unlikely(child->d_flags & DCACHE_DENTRY_KILLED)) {
+ 		/* go into the first sibling still alive */
+ 		do {
+-			next = child->d_child.next;
++			next = child->d_u.d_child.next;
  			if (next == &this_parent->d_subdirs)
  				goto ascend;
 -			child = list_entry(next, struct dentry, d_child);
 +			child = list_entry(next, struct dentry, d_u.d_child);
- 			next = next->next;
- 		}
+ 		} while (unlikely(child->d_flags & DCACHE_DENTRY_KILLED));
  		rcu_read_unlock();
+ 		goto resume;
 @@ -1498,8 +1498,8 @@ struct dentry *__d_alloc(struct super_bl
  	INIT_HLIST_BL_NODE(&dentry->d_hash);
  	INIT_LIST_HEAD(&dentry->d_lru);
@@ -658,9 +657,38 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  		spin_lock(&dentry->d_lock);
  		if (ocfs2_match_dentry(dentry, parent_blkno, skip_unhashed)) {
  			trace_ocfs2_find_local_alias(dentry->d_name.len,
+--- a/include/linux/dcache.h
++++ b/include/linux/dcache.h
+@@ -122,14 +122,12 @@ struct dentry {
+ 	void *d_fsdata;			/* fs-specific data */
+ 
+ 	struct list_head d_lru;		/* LRU list */
+-#ifdef __GENKSYMS__
+ 	union {
+-		struct list_head d_child;
++		struct list_head d_child;	/* child of parent list */
++#ifdef __GENKSYMS__
+ 	 	struct rcu_head d_rcu;
+-	} d_u;
+-#else
+-	struct list_head d_child;	/* child of parent list */
+ #endif
++	} d_u;
+ 	struct list_head d_subdirs;	/* our children */
+ #ifdef __GENKSYMS__
+ 	struct hlist_node d_alias;
+@@ -140,7 +138,7 @@ struct dentry {
+ 	union {
+ 		struct hlist_node d_alias;	/* inode alias list */
+ 	 	struct rcu_head d_rcu;
+-	} d_u;
++	};
+ #endif
+ };
+ 
 --- a/kernel/cgroup.c
 +++ b/kernel/cgroup.c
-@@ -1022,7 +1022,7 @@ static void cgroup_d_remove_dir(struct d
+@@ -1024,7 +1024,7 @@ static void cgroup_d_remove_dir(struct d
  	parent = dentry->d_parent;
  	spin_lock(&parent->d_lock);
  	spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
@@ -726,32 +754,3 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  
  			if (d->d_inode)
  				if (d->d_inode->i_mode & S_IFDIR)
---- a/include/linux/dcache.h
-+++ b/include/linux/dcache.h
-@@ -122,14 +122,12 @@ struct dentry {
- 	void *d_fsdata;			/* fs-specific data */
- 
- 	struct list_head d_lru;		/* LRU list */
--#ifdef __GENKSYMS__
- 	union {
--		struct list_head d_child;
-+		struct list_head d_child;	/* child of parent list */
-+#ifdef __GENKSYMS__
- 	 	struct rcu_head d_rcu;
--	} d_u;
--#else
--	struct list_head d_child;	/* child of parent list */
- #endif
-+	} d_u;
- 	struct list_head d_subdirs;	/* our children */
- #ifdef __GENKSYMS__
- 	struct hlist_node d_alias;
-@@ -140,7 +138,7 @@ struct dentry {
- 	union {
- 		struct hlist_node d_alias;	/* inode alias list */
- 	 	struct rcu_head d_rcu;
--	} d_u;
-+	};
- #endif
- };
- 
