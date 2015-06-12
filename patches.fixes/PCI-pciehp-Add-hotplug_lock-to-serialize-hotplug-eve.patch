@@ -1,0 +1,147 @@
+From: Rajat Jain <rajatxjain@gmail.com>
+Subject: PCI: pciehp: Add hotplug_lock to serialize hotplug events
+References: bnc#866911
+Patch-Mainline: v3.15-rc1
+Git-commit: 50b52fdee050745935d92e7026373edea2647e60
+
+Today it is there is no protection around pciehp_enable_slot() and
+pciehp_disable_slot() to ensure that they complete before another
+hot-plug operation can be done on that particular slot.
+
+This patch introduces the slot->hotplug_lock to ensure that any hotplug
+operations (add / remove) complete before another hotplug event can begin
+processing on that particular slot.
+
+Signed-off-by: Rajat Jain <rajatxjain@gmail.com>
+Signed-off-by: Rajat Jain <rajatjain@juniper.net>
+Signed-off-by: Guenter Roeck <groeck@juniper.net>
+Signed-off-by: Bjorn Helgaas <bhelgaas@google.com>
+[backported for SLE12-SP1]
+Signed-off-by: Luis R. Rodriguez <mcgrof@suse.com>
+---
+ drivers/pci/hotplug/pciehp.h      |  1 +
+ drivers/pci/hotplug/pciehp_core.c |  7 ++++++-
+ drivers/pci/hotplug/pciehp_ctrl.c | 17 +++++++++++++++--
+ drivers/pci/hotplug/pciehp_hpc.c  |  1 +
+ 4 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/pci/hotplug/pciehp.h b/drivers/pci/hotplug/pciehp.h
+index 353edda..33ef8e4 100644
+--- a/drivers/pci/hotplug/pciehp.h
++++ b/drivers/pci/hotplug/pciehp.h
+@@ -77,6 +77,7 @@ struct slot {
+ 	struct hotplug_slot *hotplug_slot;
+ 	struct delayed_work work;	/* work for button event */
+ 	struct mutex lock;
++	struct mutex hotplug_lock;
+ 	struct workqueue_struct *wq;
+ };
+ 
+diff --git a/drivers/pci/hotplug/pciehp_core.c b/drivers/pci/hotplug/pciehp_core.c
+index f4a18f5..3904483 100644
+--- a/drivers/pci/hotplug/pciehp_core.c
++++ b/drivers/pci/hotplug/pciehp_core.c
+@@ -278,8 +278,11 @@ static int pciehp_probe(struct pcie_device *dev)
+ 	slot = ctrl->slot;
+ 	pciehp_get_adapter_status(slot, &occupied);
+ 	pciehp_get_power_status(slot, &poweron);
+-	if (occupied && pciehp_force)
++	if (occupied && pciehp_force) {
++		mutex_lock(&slot->hotplug_lock);
+ 		pciehp_enable_slot(slot);
++		mutex_unlock(&slot->hotplug_lock);
++	}
+ 	/* If empty slot's power status is on, turn power off */
+ 	if (!occupied && poweron && POWER_CTRL(ctrl))
+ 		pciehp_power_off_slot(slot);
+@@ -323,10 +326,12 @@ static int pciehp_resume (struct pcie_device *dev)
+ 
+ 	/* Check if slot is occupied */
+ 	pciehp_get_adapter_status(slot, &status);
++	mutex_lock(&slot->hotplug_lock);
+ 	if (status)
+ 		pciehp_enable_slot(slot);
+ 	else
+ 		pciehp_disable_slot(slot);
++	mutex_unlock(&slot->hotplug_lock);
+ 	return 0;
+ }
+ #endif /* PM */
+diff --git a/drivers/pci/hotplug/pciehp_ctrl.c b/drivers/pci/hotplug/pciehp_ctrl.c
+index 7ae7b02..6c48ad8 100644
+--- a/drivers/pci/hotplug/pciehp_ctrl.c
++++ b/drivers/pci/hotplug/pciehp_ctrl.c
+@@ -311,6 +311,7 @@ static void pciehp_power_thread(struct work_struct *work)
+ 	struct power_work_info *info =
+ 		container_of(work, struct power_work_info, work);
+ 	struct slot *p_slot = info->p_slot;
++	int ret;
+ 
+ 	mutex_lock(&p_slot->lock);
+ 	switch (p_slot->state) {
+@@ -320,13 +321,18 @@ static void pciehp_power_thread(struct work_struct *work)
+ 			 "Disabling domain:bus:device=%04x:%02x:00\n",
+ 			 pci_domain_nr(p_slot->ctrl->pcie->port->subordinate),
+ 			 p_slot->ctrl->pcie->port->subordinate->number);
++		mutex_lock(&p_slot->hotplug_lock);
+ 		pciehp_disable_slot(p_slot);
++		mutex_unlock(&p_slot->hotplug_lock);
+ 		mutex_lock(&p_slot->lock);
+ 		p_slot->state = STATIC_STATE;
+ 		break;
+ 	case POWERON_STATE:
+ 		mutex_unlock(&p_slot->lock);
+-		if (pciehp_enable_slot(p_slot) && PWR_LED(p_slot->ctrl))
++		mutex_lock(&p_slot->hotplug_lock);
++		ret = pciehp_enable_slot(p_slot);
++		mutex_unlock(&p_slot->hotplug_lock);
++		if (ret && PWR_LED(p_slot->ctrl))
+ 			pciehp_green_led_off(p_slot);
+ 		mutex_lock(&p_slot->lock);
+ 		p_slot->state = STATIC_STATE;
+@@ -564,6 +570,9 @@ static void interrupt_event_handler(struct work_struct *work)
+ 	kfree(info);
+ }
+ 
++/*
++ * Note: This function must be called with slot->hotplug_lock held
++ */
+ int pciehp_enable_slot(struct slot *p_slot)
+ {
+ 	u8 getstatus = 0;
+@@ -602,7 +611,9 @@ int pciehp_enable_slot(struct slot *p_slot)
+ 	return rc;
+ }
+ 
+-
++/*
++ * Note: This function must be called with slot->hotplug_lock held
++ */
+ int pciehp_disable_slot(struct slot *p_slot)
+ {
+ 	u8 getstatus = 0;
+@@ -654,7 +665,9 @@ int pciehp_sysfs_enable_slot(struct slot *p_slot)
+ 	case STATIC_STATE:
+ 		p_slot->state = POWERON_STATE;
+ 		mutex_unlock(&p_slot->lock);
++		mutex_lock(&p_slot->hotplug_lock);
+ 		retval = pciehp_enable_slot(p_slot);
++		mutex_unlock(&p_slot->hotplug_lock);
+ 		mutex_lock(&p_slot->lock);
+ 		p_slot->state = STATIC_STATE;
+ 		break;
+diff --git a/drivers/pci/hotplug/pciehp_hpc.c b/drivers/pci/hotplug/pciehp_hpc.c
+index 4b48522..21897b2 100644
+--- a/drivers/pci/hotplug/pciehp_hpc.c
++++ b/drivers/pci/hotplug/pciehp_hpc.c
+@@ -829,6 +829,7 @@ static int pcie_init_slot(struct controller *ctrl)
+ 
+ 	slot->ctrl = ctrl;
+ 	mutex_init(&slot->lock);
++	mutex_init(&slot->hotplug_lock);
+ 	INIT_DELAYED_WORK(&slot->work, pciehp_queue_pushbutton_work);
+ 	ctrl->slot = slot;
+ 	return 0;
+-- 
+2.3.2.209.gd67f9d5.dirty
+
