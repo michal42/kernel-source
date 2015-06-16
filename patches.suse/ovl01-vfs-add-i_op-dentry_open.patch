@@ -1,8 +1,8 @@
-From b0c34c08a36aafbbb2240d384935343feefb68f3 Mon Sep 17 00:00:00 2001
 From: Miklos Szeredi <mszeredi@suse.cz>
-Date: Thu, 30 Aug 2012 16:13:49 +0200
-Subject: [PATCH 01/13] vfs: add i_op->dentry_open()
-Patch-mainline: not yet
+Date: Fri, 24 Oct 2014 00:14:35 +0200
+Subject: vfs: add i_op->dentry_open()
+Git-commit: 4aa7c6346be395bdf776f82bbb2e3e2bc60bdd2b
+Patch-mainline: v3.18-rc2
 
 Add a new inode operation i_op->dentry_open().  This is for stacked filesystems
 that want to return a struct file from a different filesystem.
@@ -13,12 +13,12 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  Documentation/filesystems/vfs.txt |    7 +++++++
  fs/namei.c                        |    9 ++++++---
  fs/open.c                         |   23 +++++++++++++++++++++--
- include/linux/fs.h                |    2 ++
- 5 files changed, 38 insertions(+), 5 deletions(-)
+ include/linux/fs.h                |    4 ++++
+ 5 files changed, 40 insertions(+), 5 deletions(-)
 
 --- a/Documentation/filesystems/Locking
 +++ b/Documentation/filesystems/Locking
-@@ -65,6 +65,7 @@ prototypes:
+@@ -65,6 +65,7 @@ d_manage:	no		no		yes (ref-walk)	maybe
  				struct file *, unsigned open_flag,
  				umode_t create_mode, int *opened);
  	int (*tmpfile) (struct inode *, struct dentry *, umode_t);
@@ -48,18 +48,18 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
    	but instead uses bmap to find out where the blocks in the file
    	are and uses those addresses directly.
  
-+  dentry_open: this is an alternative to f_op->open(), the difference is that
-+	this method may open a file not necessarily originating from the same
-+	filesystem as the one i_op->open() was called on.  It may be
-+	useful for stacking filesystems which want to allow native I/O directly
-+	on underlying files.
++  dentry_open: *WARNING: probably going away soon, do not use!* This is an
++	alternative to f_op->open(), the difference is that this method may open
++	a file not necessarily originating from the same filesystem as the one
++	i_op->open() was called on.  It may be useful for stacking filesystems
++	which want to allow native I/O directly on underlying files.
 +
  
    invalidatepage: If a page has PagePrivate set, then invalidatepage
          will be called when part or all of the page is to be removed
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -3066,9 +3066,12 @@ finish_open_created:
+@@ -3070,9 +3070,12 @@ static int do_last(struct nameidata *nd,
  	error = may_open(&nd->path, acc_mode, open_flag);
  	if (error)
  		goto out;
@@ -116,15 +116,17 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
  	int lookup_flags = 0;
 --- a/include/linux/fs.h
 +++ b/include/linux/fs.h
-@@ -1580,6 +1580,7 @@ struct inode_operations {
+@@ -1589,6 +1589,9 @@ struct inode_operations {
  			   struct file *, unsigned open_flag,
  			   umode_t create_mode, int *opened);
  	int (*tmpfile) (struct inode *, struct dentry *, umode_t);
++
++	/* WARNING: probably going away soon, do not use! */
 +	int (*dentry_open)(struct dentry *, struct file *, const struct cred *);
  } ____cacheline_aligned;
  
  ssize_t rw_copy_check_uvector(int type, const struct iovec __user * uvector,
-@@ -2063,6 +2064,7 @@ extern struct file *file_open_name(struc
+@@ -2077,6 +2080,7 @@ extern struct file *file_open_name(struc
  extern struct file *filp_open(const char *, int, umode_t);
  extern struct file *file_open_root(struct dentry *, struct vfsmount *,
  				   const char *, int);
