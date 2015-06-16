@@ -1,0 +1,165 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: ftrace: allow architectures to specify ftrace compile options
+Patch-mainline: v4.0-rc1
+Git-commit: c0a80c0c27e5e65b180a25e6c4c2f7ef9e386cd3
+References: bnc#924526, LTC#123020
+
+Description:  kernel: use hotpatch feature to reduce function tracer overhead
+Symptom:      The kernel uses more cpu cycles for each function being
+              executed.
+Problem:      The kGraft feature requires to instrument the kernel. In
+              order to do that the kernel gets compiled with the function
+              tracer enabled which causes the compiler to emit code that
+              adds an "mcount" call to the prologue of each function.
+              This code will be modified by the kernel for function tracing.
+              The current implementation uses the "-pg" compiler option to
+              generate a 24 byte function prologue which will be used by
+              the function tracer.
+              This 24 byte prologue however is larger than the 6 bytes that
+              are needed and do cause a performance regression compared to
+              kernels without function tracing enabled.
+Solution:     Use gcc's hotpatch feature so that only a single 6 byte
+              instruction will be added to the prologue of each function.
+              With this change the impact of enabling the function tracer
+              feature is close to zero compared to a kernel which has this
+              feature disabled.
+Reproduction: Compile the kernel with and without function tracer enabled
+              and compare cpu time spent in the kernel for identical
+              workloads.
+
+Upstream-Description:
+
+              ftrace: allow architectures to specify ftrace compile options
+
+              If the kernel is compiled with function tracer support the -pg compile option
+              is passed to gcc to generate extra code into the prologue of each function.
+
+              This patch replaces the "open-coded" -pg compile flag with a CC_FLAGS_FTRACE
+              makefile variable which architectures can override if a different option
+              should be used for code generation.
+
+              Acked-by: Steven Rostedt <rostedt@goodmis.org>
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ Makefile                |    6 +++++-
+ kernel/Makefile         |    4 ++--
+ kernel/events/Makefile  |    2 +-
+ kernel/locking/Makefile |    8 ++++----
+ kernel/sched/Makefile   |    2 +-
+ kernel/trace/Makefile   |    4 ++--
+ lib/Makefile            |    2 +-
+ scripts/Makefile.build  |    5 +++--
+ 8 files changed, 19 insertions(+), 14 deletions(-)
+
+--- a/Makefile
++++ b/Makefile
+@@ -676,10 +676,14 @@ KBUILD_CFLAGS 	+= $(call cc-option, -fem
+ endif
+ 
+ ifdef CONFIG_FUNCTION_TRACER
++ifndef CC_FLAGS_FTRACE
++CC_FLAGS_FTRACE := -pg
++endif
++export CC_FLAGS_FTRACE
+ ifdef CONFIG_HAVE_FENTRY
+ CC_USING_FENTRY	:= $(call cc-option, -mfentry -DCC_USING_FENTRY)
+ endif
+-KBUILD_CFLAGS	+= -pg $(CC_USING_FENTRY)
++KBUILD_CFLAGS	+= $(CC_FLAGS_FTRACE) $(CC_USING_FENTRY)
+ KBUILD_AFLAGS	+= $(CC_USING_FENTRY)
+ ifdef CONFIG_DYNAMIC_FTRACE
+ 	ifdef CONFIG_HAVE_C_RECORDMCOUNT
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -14,8 +14,8 @@ obj-y     = fork.o exec_domain.o panic.o
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ # Do not trace debug files and internal ftrace files
+-CFLAGS_REMOVE_cgroup-debug.o = -pg
+-CFLAGS_REMOVE_irq_work.o = -pg
++CFLAGS_REMOVE_cgroup-debug.o = $(CC_FLAGS_FTRACE)
++CFLAGS_REMOVE_irq_work.o = $(CC_FLAGS_FTRACE)
+ endif
+ 
+ obj-y += sched/
+--- a/kernel/events/Makefile
++++ b/kernel/events/Makefile
+@@ -1,5 +1,5 @@
+ ifdef CONFIG_FUNCTION_TRACER
+-CFLAGS_REMOVE_core.o = -pg
++CFLAGS_REMOVE_core.o = $(CC_FLAGS_FTRACE)
+ endif
+ 
+ obj-y := core.o ring_buffer.o callchain.o
+--- a/kernel/locking/Makefile
++++ b/kernel/locking/Makefile
+@@ -2,10 +2,10 @@
+ obj-y += mutex.o semaphore.o rwsem.o lglock.o mcs_spinlock.o
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+-CFLAGS_REMOVE_lockdep.o = -pg
+-CFLAGS_REMOVE_lockdep_proc.o = -pg
+-CFLAGS_REMOVE_mutex-debug.o = -pg
+-CFLAGS_REMOVE_rtmutex-debug.o = -pg
++CFLAGS_REMOVE_lockdep.o = $(CC_FLAGS_FTRACE)
++CFLAGS_REMOVE_lockdep_proc.o = $(CC_FLAGS_FTRACE)
++CFLAGS_REMOVE_mutex-debug.o = $(CC_FLAGS_FTRACE)
++CFLAGS_REMOVE_rtmutex-debug.o = $(CC_FLAGS_FTRACE)
+ endif
+ 
+ obj-$(CONFIG_DEBUG_MUTEXES) += mutex-debug.o
+--- a/kernel/sched/Makefile
++++ b/kernel/sched/Makefile
+@@ -1,5 +1,5 @@
+ ifdef CONFIG_FUNCTION_TRACER
+-CFLAGS_REMOVE_clock.o = -pg
++CFLAGS_REMOVE_clock.o = $(CC_FLAGS_FTRACE)
+ endif
+ 
+ ifneq ($(CONFIG_SCHED_OMIT_FRAME_POINTER),y)
+--- a/kernel/trace/Makefile
++++ b/kernel/trace/Makefile
+@@ -3,11 +3,11 @@
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ ORIG_CFLAGS := $(KBUILD_CFLAGS)
+-KBUILD_CFLAGS = $(subst -pg,,$(ORIG_CFLAGS))
++KBUILD_CFLAGS = $(subst $(CC_FLAGS_FTRACE),,$(ORIG_CFLAGS))
+ 
+ ifdef CONFIG_FTRACE_SELFTEST
+ # selftest needs instrumentation
+-CFLAGS_trace_selftest_dynamic.o = -pg
++CFLAGS_trace_selftest_dynamic.o = $(CC_FLAGS_FTRACE)
+ obj-y += trace_selftest_dynamic.o
+ endif
+ endif
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -4,7 +4,7 @@
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ ORIG_CFLAGS := $(KBUILD_CFLAGS)
+-KBUILD_CFLAGS = $(subst -pg,,$(ORIG_CFLAGS))
++KBUILD_CFLAGS = $(subst $(CC_FLAGS_FTRACE),,$(ORIG_CFLAGS))
+ endif
+ 
+ lib-y := ctype.o string.o vsprintf.o cmdline.o \
+--- a/scripts/Makefile.build
++++ b/scripts/Makefile.build
+@@ -301,8 +301,9 @@ sub_cmd_record_mcount = set -e ; perl $(
+ 	"$(if $(part-of-module),1,0)" "$(@)";
+ recordmcount_source := $(srctree)/scripts/recordmcount.pl
+ endif
+-cmd_record_mcount = 						\
+-	if [ "$(findstring -pg,$(_c_flags))" = "-pg" ]; then	\
++cmd_record_mcount =						\
++	if [ "$(findstring $(CC_FLAGS_FTRACE),$(_c_flags))" =	\
++	     "$(CC_FLAGS_FTRACE)" ]; then			\
+ 		$(sub_cmd_record_mcount)			\
+ 	fi;
+ endif
