@@ -1,0 +1,43 @@
+From 28c34c291e746aab1c2bfd6d6609b2e47fa0978b Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Wed, 6 Aug 2014 16:05:47 -0700
+Subject: [PATCH] mm: memcontrol: reclaim at least once for __GFP_NORETRY
+Git-commit: 28c34c291e746aab1c2bfd6d6609b2e47fa0978b
+Patch-mainline: v3.17-rc1
+References: bnc#931454
+
+Currently, __GFP_NORETRY tries charging once and gives up before even
+trying to reclaim.  Bring the behavior on par with the page allocator
+and reclaim at least once before giving up.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: Tejun Heo <tj@kernel.org>
+Cc: Vladimir Davydov <vdavydov@parallels.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -2644,13 +2644,13 @@ retry:
+ 	if (!(gfp_mask & __GFP_WAIT))
+ 		goto nomem;
+ 
+-	if (gfp_mask & __GFP_NORETRY)
+-		goto nomem;
+-
+ 	nr_reclaimed = mem_cgroup_reclaim(mem_over_limit, gfp_mask, flags);
+ 
+ 	if (mem_cgroup_margin(mem_over_limit) >= batch)
+ 		goto retry;
++
++	if (gfp_mask & __GFP_NORETRY)
++		goto nomem;
+ 	/*
+ 	 * Even though the limit is exceeded at this point, reclaim
+ 	 * may have been able to free some pages.  Retry the charge

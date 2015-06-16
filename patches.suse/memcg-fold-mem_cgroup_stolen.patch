@@ -1,0 +1,74 @@
+From bdcbb659fe630fc64f6604e99a180bb2ccc630c2 Mon Sep 17 00:00:00 2001
+From: Qiang Huang <h.huangqiang@huawei.com>
+Date: Wed, 4 Jun 2014 16:08:21 -0700
+Subject: [PATCH] memcg: fold mem_cgroup_stolen
+Git-commit: bdcbb659fe630fc64f6604e99a180bb2ccc630c2
+Patch-mainline: v3.16-rc1
+References: bnc#931454
+
+It is only used in __mem_cgroup_begin_update_page_stat(), the name is
+confusing and 2 routines for one thing also confuse people, so fold this
+function seems more clear.
+
+[akpm@linux-foundation.org: fix typo, per Michal]
+Signed-off-by: Qiang Huang <h.huangqiang@huawei.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |   25 +++++++------------------
+ 1 file changed, 7 insertions(+), 18 deletions(-)
+
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -1536,23 +1536,12 @@ static void mem_cgroup_end_move(struct m
+ }
+ 
+ /*
+- * 2 routines for checking "mem" is under move_account() or not.
++ * A routine for checking "mem" is under move_account() or not.
+  *
+- * mem_cgroup_stolen() -  checking whether a cgroup is mc.from or not. This
+- *			  is used for avoiding races in accounting.  If true,
+- *			  pc->mem_cgroup may be overwritten.
+- *
+- * mem_cgroup_under_move() - checking a cgroup is mc.from or mc.to or
+- *			  under hierarchy of moving cgroups. This is for
+- *			  waiting at hith-memory prressure caused by "move".
++ * Checking a cgroup is mc.from or mc.to or under hierarchy of
++ * moving cgroups. This is for waiting at high-memory pressure
++ * caused by "move".
+  */
+-
+-static bool mem_cgroup_stolen(struct mem_cgroup *memcg)
+-{
+-	VM_BUG_ON(!rcu_read_lock_held());
+-	return atomic_read(&memcg->moving_account) > 0;
+-}
+-
+ static bool mem_cgroup_under_move(struct mem_cgroup *memcg)
+ {
+ 	struct mem_cgroup *from;
+@@ -1595,7 +1584,6 @@ static bool mem_cgroup_wait_acct_move(st
+  * Take this lock when
+  * - a code tries to modify page's memcg while it's USED.
+  * - a code tries to modify page state accounting in a memcg.
+- * see mem_cgroup_stolen(), too.
+  */
+ static void move_lock_mem_cgroup(struct mem_cgroup *memcg,
+ 				  unsigned long *flags)
+@@ -2292,9 +2280,10 @@ again:
+ 	 * If this memory cgroup is not under account moving, we don't
+ 	 * need to take move_lock_mem_cgroup(). Because we already hold
+ 	 * rcu_read_lock(), any calls to move_account will be delayed until
+-	 * rcu_read_unlock() if mem_cgroup_stolen() == true.
++	 * rcu_read_unlock().
+ 	 */
+-	if (!mem_cgroup_stolen(memcg))
++	VM_BUG_ON(!rcu_read_lock_held());
++	if (atomic_read(&memcg->moving_account) <= 0)
+ 		return;
+ 
+ 	move_lock_mem_cgroup(memcg, flags);

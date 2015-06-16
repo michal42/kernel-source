@@ -1,0 +1,101 @@
+From df381975463996178d685f6ef7d3555c5f887201 Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Mon, 7 Apr 2014 15:37:43 -0700
+Subject: [PATCH] memcg: get_mem_cgroup_from_mm()
+Git-commit: df381975463996178d685f6ef7d3555c5f887201
+Patch-mainline: v3.15-rc1
+References: bnc#931454
+
+Instead of returning NULL from try_get_mem_cgroup_from_mm() when the mm
+owner is exiting, just return root_mem_cgroup.  This makes sense for all
+callsites and gets rid of some of them having to fallback manually.
+
+[fengguang.wu@intel.com: fix warnings]
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Signed-off-by: Fengguang Wu <fengguang.wu@intel.com>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ include/linux/memcontrol.h |    6 ------
+ mm/memcontrol.c            |   18 ++++--------------
+ 2 files changed, 4 insertions(+), 20 deletions(-)
+
+--- a/include/linux/memcontrol.h
++++ b/include/linux/memcontrol.h
+@@ -94,7 +94,6 @@ bool task_in_mem_cgroup(struct task_stru
+ 
+ extern struct mem_cgroup *try_get_mem_cgroup_from_page(struct page *page);
+ extern struct mem_cgroup *mem_cgroup_from_task(struct task_struct *p);
+-extern struct mem_cgroup *try_get_mem_cgroup_from_mm(struct mm_struct *mm);
+ 
+ extern struct mem_cgroup *parent_mem_cgroup(struct mem_cgroup *memcg);
+ extern struct mem_cgroup *mem_cgroup_from_css(struct cgroup_subsys_state *css);
+@@ -293,11 +292,6 @@ static inline struct mem_cgroup *try_get
+ {
+ 	return NULL;
+ }
+-
+-static inline struct mem_cgroup *try_get_mem_cgroup_from_mm(struct mm_struct *mm)
+-{
+-	return NULL;
+-}
+ 
+ static inline bool mm_match_cgroup(struct mm_struct *mm,
+ 		struct mem_cgroup *memcg)
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -1033,7 +1033,7 @@ struct mem_cgroup *mem_cgroup_from_task(
+ 	return mem_cgroup_from_css(task_css(p, mem_cgroup_subsys_id));
+ }
+ 
+-struct mem_cgroup *try_get_mem_cgroup_from_mm(struct mm_struct *mm)
++static struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
+ {
+ 	struct mem_cgroup *memcg = NULL;
+ 
+@@ -1041,7 +1041,7 @@ struct mem_cgroup *try_get_mem_cgroup_fr
+ 	do {
+ 		memcg = mem_cgroup_from_task(rcu_dereference(mm->owner));
+ 		if (unlikely(!memcg))
+-			break;
++			memcg = root_mem_cgroup;
+ 	} while (!css_tryget(&memcg->css));
+ 	rcu_read_unlock();
+ 	return memcg;
+@@ -1451,7 +1451,7 @@ bool task_in_mem_cgroup(struct task_stru
+ 
+ 	p = find_lock_task_mm(task);
+ 	if (p) {
+-		curr = try_get_mem_cgroup_from_mm(p->mm);
++		curr = get_mem_cgroup_from_mm(p->mm);
+ 		task_unlock(p);
+ 	} else {
+ 		/*
+@@ -1465,8 +1465,6 @@ bool task_in_mem_cgroup(struct task_stru
+ 			css_get(&curr->css);
+ 		rcu_read_unlock();
+ 	}
+-	if (!curr)
+-		return false;
+ 	/*
+ 	 * We should check use_hierarchy of "memcg" not "curr". Because checking
+ 	 * use_hierarchy of "curr" here make this function true if hierarchy is
+@@ -3643,15 +3641,7 @@ __memcg_kmem_newpage_charge(gfp_t gfp, s
+ 	if (!current->mm || current->memcg_kmem_skip_account)
+ 		return true;
+ 
+-	memcg = try_get_mem_cgroup_from_mm(current->mm);
+-
+-	/*
+-	 * very rare case described in mem_cgroup_from_task. Unfortunately there
+-	 * isn't much we can do without complicating this too much, and it would
+-	 * be gfp-dependent anyway. Just let it go
+-	 */
+-	if (unlikely(!memcg))
+-		return true;
++	memcg = get_mem_cgroup_from_mm(current->mm);
+ 
+ 	if (!memcg_can_account_kmem(memcg)) {
+ 		css_put(&memcg->css);
