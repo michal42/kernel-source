@@ -1,0 +1,55 @@
+From 8c437c8479b8321b4f02bf763990c7753e7a1d6b Mon Sep 17 00:00:00 2001
+From: Tadeusz Struk <tadeusz.struk@intel.com>
+Date: Fri, 25 Jul 2014 15:55:57 -0700
+Subject: [PATCH 24/61] crypto: qat - Use hweight for bit counting
+References: FATE#318531
+Git-Commit: d9a44abf3aede89c3dbb6dfa8a95c856b9ae8da3
+Patch-Mainline: v3.17
+
+Use predefined hweight32 function instead of writing a new one.
+
+Signed-off-by: Pingchao Yang <pingchao.yang@intel.com>
+Signed-off-by: Tadeusz Struk <tadeusz.struk@intel.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/crypto/qat/qat_common/qat_hal.c | 15 ++-------------
+ 1 file changed, 2 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/crypto/qat/qat_common/qat_hal.c b/drivers/crypto/qat/qat_common/qat_hal.c
+index 8d686a2..9b8a315 100644
+--- a/drivers/crypto/qat/qat_common/qat_hal.c
++++ b/drivers/crypto/qat/qat_common/qat_hal.c
+@@ -795,17 +795,6 @@ static void qat_hal_get_uwords(struct icp_qat_fw_loader_handle *handle,
+ 	qat_hal_wr_ae_csr(handle, ae, USTORE_ADDRESS, ustore_addr);
+ }
+ 
+-static int qat_hal_count_bits(unsigned int word)
+-{
+-	int n = 0;
+-
+-	while (word) {
+-		n++;
+-		word &= word - 1;
+-	}
+-	return n;
+-}
+-
+ void qat_hal_wr_umem(struct icp_qat_fw_loader_handle *handle,
+ 		     unsigned char ae, unsigned int uaddr,
+ 		     unsigned int words_num, unsigned int *data)
+@@ -822,9 +811,9 @@ void qat_hal_wr_umem(struct icp_qat_fw_loader_handle *handle,
+ 			  ((data[i] & 0xff00) << 2) |
+ 			  (0x3 << 8) | (data[i] & 0xff);
+ 		uwrd_hi = (0xf << 4) | ((data[i] & 0xf0000000) >> 28);
+-		uwrd_hi |= (qat_hal_count_bits(data[i] & 0xffff) & 0x1) << 8;
++		uwrd_hi |= (hweight32(data[i] & 0xffff) & 0x1) << 8;
+ 		tmp = ((data[i] >> 0x10) & 0xffff);
+-		uwrd_hi |= (qat_hal_count_bits(tmp) & 0x1) << 9;
++		uwrd_hi |= (hweight32(tmp) & 0x1) << 9;
+ 		qat_hal_wr_ae_csr(handle, ae, USTORE_DATA_LOWER, uwrd_lo);
+ 		qat_hal_wr_ae_csr(handle, ae, USTORE_DATA_UPPER, uwrd_hi);
+ 	}
+-- 
+2.1.4
+
