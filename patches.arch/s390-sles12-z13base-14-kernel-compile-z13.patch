@@ -1,0 +1,119 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390: add z13 code generation support
+Patch-mainline: v4.0-rc1
+Git-commit: f8b2dcbd9e6d1479b9b5a9e9e78bbaf783bde819
+References: bnc#929879, LTC#KRN1514
+
+Summary:     s390: z13 base performance
+Description: Provide the backport of a minimum set of upstream patches
+             to optimize the base performance of the IBM z13 machine.
+
+Upstream-Description:
+
+             s390: add z13 code generation support
+
+             Allow to generate code that only runs on z13 machines.
+
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/Kconfig        |   18 ++++++++++++++++++
+ arch/s390/Makefile       |    2 ++
+ arch/s390/kernel/head.S  |    4 +++-
+ arch/s390/kernel/setup.c |    3 +++
+ 4 files changed, 26 insertions(+), 1 deletion(-)
+
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -180,6 +180,10 @@ config HAVE_MARCH_ZEC12_FEATURES
+ 	def_bool n
+ 	select HAVE_MARCH_Z196_FEATURES
+ 
++config HAVE_MARCH_Z13_FEATURES
++	def_bool n
++	select HAVE_MARCH_ZEC12_FEATURES
++
+ choice
+ 	prompt "Processor type"
+ 	default MARCH_G5
+@@ -239,6 +243,14 @@ config MARCH_ZEC12
+ 	  2827 series). The kernel will be slightly faster but will not work on
+ 	  older machines.
+ 
++config MARCH_Z13
++	bool "IBM z13"
++	select HAVE_MARCH_Z13_FEATURES if 64BIT
++	help
++	  Select this to enable optimizations for IBM z13 (2964 series).
++	  The kernel will be slightly faster but will not work on older
++	  machines.
++
+ endchoice
+ 
+ config MARCH_G5_TUNE
+@@ -262,6 +274,9 @@ config MARCH_Z196_TUNE
+ config MARCH_ZEC12_TUNE
+ 	def_bool TUNE_ZEC12 || MARCH_ZEC12 && TUNE_DEFAULT
+ 
++config MARCH_Z13_TUNE
++	def_bool TUNE_Z13 || MARCH_Z13 && TUNE_DEFAULT
++
+ choice
+ 	prompt "Tune code generation"
+ 	default TUNE_DEFAULT
+@@ -300,6 +315,9 @@ config TUNE_Z196
+ config TUNE_ZEC12
+ 	bool "IBM zBC12 and zEC12"
+ 
++config TUNE_Z13
++	bool "IBM z13"
++
+ endchoice
+ 
+ config 64BIT
+--- a/arch/s390/Makefile
++++ b/arch/s390/Makefile
+@@ -42,6 +42,7 @@ mflags-$(CONFIG_MARCH_Z9_109) := -march=
+ mflags-$(CONFIG_MARCH_Z10)    := -march=z10
+ mflags-$(CONFIG_MARCH_Z196)   := -march=z196
+ mflags-$(CONFIG_MARCH_ZEC12)  := -march=zEC12
++mflags-$(CONFIG_MARCH_Z13)   := -march=z13
+ 
+ aflags-y += $(mflags-y)
+ cflags-y += $(mflags-y)
+@@ -53,6 +54,7 @@ cflags-$(CONFIG_MARCH_Z9_109_TUNE)	+= -m
+ cflags-$(CONFIG_MARCH_Z10_TUNE)		+= -mtune=z10
+ cflags-$(CONFIG_MARCH_Z196_TUNE)	+= -mtune=z196
+ cflags-$(CONFIG_MARCH_ZEC12_TUNE)	+= -mtune=zEC12
++cflags-$(CONFIG_MARCH_Z13_TUNE)	+= -mtune=z13
+ 
+ #KBUILD_IMAGE is necessary for make rpm
+ KBUILD_IMAGE	:=arch/s390/boot/image
+--- a/arch/s390/kernel/head.S
++++ b/arch/s390/kernel/head.S
+@@ -436,7 +436,9 @@ ENTRY(startup_kdump)
+ # followed by the facility words.
+ 
+ #if defined(CONFIG_64BIT)
+-#if defined(CONFIG_MARCH_ZEC12)
++#if defined(CONFIG_MARCH_Z13)
++	.long 3, 0xc100eff2, 0xf46ce800, 0x00400000
++#elif defined(CONFIG_MARCH_ZEC12)
+ 	.long 3, 0xc100efe3, 0xf46ce000, 0x00400000
+ #elif defined(CONFIG_MARCH_Z196)
+ 	.long 2, 0xc100efe3, 0xf46c0000
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -951,6 +951,9 @@ static void __init setup_hwcaps(void)
+ 	case 0x2828:
+ 		strcpy(elf_platform, "zEC12");
+ 		break;
++	case 0x2964:
++		strcpy(elf_platform, "z13");
++		break;
+ 	}
+ }
+ 
