@@ -1,0 +1,66 @@
+From db5cffc0f222aff90f7e581a758f9f1f72cdf23f Mon Sep 17 00:00:00 2001
+From: Bruce Allan <bruce.w.allan@intel.com>
+Date: Wed, 15 Oct 2014 11:33:15 -0700
+Subject: [PATCH 32/61] crypto: qat - fix bad unlock balance
+References: FATE#318531
+Git-Commit: 8c4cef464b90b1638ff01a922d6a34095cc09c0c
+Patch-Mainline: v3.18
+
+The mutex table_lock is unlocked in two functions without first being locked.
+Fix the functions to properly protect the accel_table with the table_lock.
+
+Also, fix a spelling error in one of the function's header comment.
+
+Signed-off-by: Bruce Allan <bruce.w.allan@intel.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/crypto/qat/qat_common/adf_dev_mgr.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/crypto/qat/qat_common/adf_dev_mgr.c b/drivers/crypto/qat/qat_common/adf_dev_mgr.c
+index ae71555..4a0a829d 100644
+--- a/drivers/crypto/qat/qat_common/adf_dev_mgr.c
++++ b/drivers/crypto/qat/qat_common/adf_dev_mgr.c
+@@ -129,12 +129,13 @@ struct adf_accel_dev *adf_devmgr_get_first(void)
+  * Function returns acceleration device associated with the given pci device.
+  * To be used by QAT device specific drivers.
+  *
+- * Return: pinter to accel_dev or NULL if not found.
++ * Return: pointer to accel_dev or NULL if not found.
+  */
+ struct adf_accel_dev *adf_devmgr_pci_to_accel_dev(struct pci_dev *pci_dev)
+ {
+ 	struct list_head *itr;
+ 
++	mutex_lock(&table_lock);
+ 	list_for_each(itr, &accel_table) {
+ 		struct adf_accel_dev *ptr =
+ 				list_entry(itr, struct adf_accel_dev, list);
+@@ -144,6 +145,7 @@ struct adf_accel_dev *adf_devmgr_pci_to_accel_dev(struct pci_dev *pci_dev)
+ 			return ptr;
+ 		}
+ 	}
++	mutex_unlock(&table_lock);
+ 	return NULL;
+ }
+ EXPORT_SYMBOL_GPL(adf_devmgr_pci_to_accel_dev);
+@@ -152,6 +154,7 @@ struct adf_accel_dev *adf_devmgr_get_dev_by_id(uint32_t id)
+ {
+ 	struct list_head *itr;
+ 
++	mutex_lock(&table_lock);
+ 	list_for_each(itr, &accel_table) {
+ 		struct adf_accel_dev *ptr =
+ 				list_entry(itr, struct adf_accel_dev, list);
+@@ -161,6 +164,7 @@ struct adf_accel_dev *adf_devmgr_get_dev_by_id(uint32_t id)
+ 			return ptr;
+ 		}
+ 	}
++	mutex_unlock(&table_lock);
+ 	return NULL;
+ }
+ 
+-- 
+2.1.4
+
