@@ -1,0 +1,161 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/spinlock: optimize spinlock code sequence
+Patch-mainline: v3.16-rc1
+Git-commit: 6c8cd5bbda7e6be166cf2e2dd4be5890193e17ac
+References: bnc#929879, LTC#KRN1514
+
+Summary:     s390: z13 base performance
+Description: Provide the backport of a minimum set of upstream patches
+             to optimize the base performance of the IBM z13 machine.
+
+Upstream-Description:
+
+             s390/spinlock: optimize spinlock code sequence
+
+             Use lowcore constant to improve the code generated for spinlocks.
+
+             [ Martin Schwidefsky: patch breakdown and code beautification ]
+
+             Signed-off-by: Philipp Hachtmann <phacht@linux.vnet.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/lowcore.h  |   10 ++++++++++
+ arch/s390/include/asm/spinlock.h |   15 +++++++++------
+ arch/s390/kernel/setup.c         |    4 ++++
+ arch/s390/kernel/smp.c           |    3 +++
+ arch/s390/lib/spinlock.c         |    4 ++--
+ 5 files changed, 28 insertions(+), 8 deletions(-)
+
+--- a/arch/s390/include/asm/lowcore.h
++++ b/arch/s390/include/asm/lowcore.h
+@@ -138,7 +138,12 @@ struct _lowcore {
+ 	__u32	softirq_pending;		/* 0x02ec */
+ 	__u32	percpu_offset;			/* 0x02f0 */
+ 	__u32	machine_flags;			/* 0x02f4 */
++#ifndef __GENKSYMS__
++	__u32	spinlock_lockval;		/* 0x02f8 */
++	__u8	pad_0x02fc[0x0300-0x02fc];	/* 0x02fc */
++#else
+ 	__u8	pad_0x02f8[0x0300-0x02f8];	/* 0x02fc */
++#endif
+ 
+ 	/* Interrupt response block */
+ 	__u8	irb[96];			/* 0x0300 */
+@@ -284,7 +289,12 @@ struct _lowcore {
+ 	__u64	machine_flags;			/* 0x0388 */
+ 	__u8	pad_0x0390[0x0398-0x0390];	/* 0x0390 */
+ 	__u64	gmap;				/* 0x0398 */
++#ifndef __GENKSYMS__
++	__u32	spinlock_lockval;		/* 0x03a0 */
++	__u8	pad_0x03a4[0x0400-0x03a4];	/* 0x03a4 */
++#else
+ 	__u8	pad_0x03a0[0x0400-0x03a0];	/* 0x03a0 */
++#endif
+ 
+ 	/* Interrupt response block. */
+ 	__u8	irb[96];			/* 0x0400 */
+--- a/arch/s390/include/asm/spinlock.h
++++ b/arch/s390/include/asm/spinlock.h
+@@ -11,6 +11,8 @@
+ 
+ #include <linux/smp.h>
+ 
++#define SPINLOCK_LOCKVAL (S390_lowcore.spinlock_lockval)
++
+ extern int spin_retry;
+ 
+ static inline int
+@@ -40,6 +42,11 @@ int arch_spin_trylock_retry(arch_spinloc
+ void arch_spin_relax(arch_spinlock_t *);
+ void arch_spin_lock_wait_flags(arch_spinlock_t *, unsigned long flags);
+ 
++static inline u32 arch_spin_lockval(int cpu)
++{
++	return ~cpu;
++}
++
+ static inline int arch_spin_value_unlocked(arch_spinlock_t lock)
+ {
+ 	return lock.lock == 0;
+@@ -52,16 +59,12 @@ static inline int arch_spin_is_locked(ar
+ 
+ static inline int arch_spin_trylock_once(arch_spinlock_t *lp)
+ {
+-	unsigned int new = ~smp_processor_id();
+-
+-	return _raw_compare_and_swap(&lp->lock, 0, new);
++	return _raw_compare_and_swap(&lp->lock, 0, SPINLOCK_LOCKVAL);
+ }
+ 
+ static inline int arch_spin_tryrelease_once(arch_spinlock_t *lp)
+ {
+-	unsigned int old = ~smp_processor_id();
+-
+-	return _raw_compare_and_swap(&lp->lock, old, 0);
++	return _raw_compare_and_swap(&lp->lock, SPINLOCK_LOCKVAL, 0);
+ }
+ 
+ static inline void arch_spin_lock(arch_spinlock_t *lp)
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -372,6 +372,10 @@ static void __init setup_lowcore(void)
+ 	mem_assign_absolute(S390_lowcore.restart_source, lc->restart_source);
+ 	mem_assign_absolute(S390_lowcore.restart_psw, lc->restart_psw);
+ 
++#ifdef CONFIG_SMP
++	lc->spinlock_lockval = arch_spin_lockval(0);
++#endif
++
+ 	set_prefix((u32)(unsigned long) lc);
+ 	lowcore_ptr[0] = lc;
+ }
+--- a/arch/s390/kernel/smp.c
++++ b/arch/s390/kernel/smp.c
+@@ -185,6 +185,7 @@ static int pcpu_alloc_lowcore(struct pcp
+ 	lc->panic_stack = pcpu->panic_stack + PAGE_SIZE
+ 		- STACK_FRAME_OVERHEAD - sizeof(struct pt_regs);
+ 	lc->cpu_nr = cpu;
++	lc->spinlock_lockval = arch_spin_lockval(cpu);
+ #ifndef CONFIG_64BIT
+ 	if (MACHINE_HAS_IEEE) {
+ 		lc->extended_save_area_addr = get_zeroed_page(GFP_KERNEL);
+@@ -238,6 +239,7 @@ static void pcpu_prepare_secondary(struc
+ 
+ 	atomic_inc(&init_mm.context.attach_count);
+ 	lc->cpu_nr = cpu;
++	lc->spinlock_lockval = arch_spin_lockval(cpu);
+ 	lc->percpu_offset = __per_cpu_offset[cpu];
+ 	lc->kernel_asce = S390_lowcore.kernel_asce;
+ 	lc->machine_flags = S390_lowcore.machine_flags;
+@@ -817,6 +819,7 @@ void __init smp_cpus_done(unsigned int m
+ void __init smp_setup_processor_id(void)
+ {
+ 	S390_lowcore.cpu_nr = 0;
++	S390_lowcore.spinlock_lockval = arch_spin_lockval(0);
+ }
+ 
+ /*
+--- a/arch/s390/lib/spinlock.c
++++ b/arch/s390/lib/spinlock.c
+@@ -26,7 +26,7 @@ __setup("spin_retry=", spin_retry_setup)
+ 
+ void arch_spin_lock_wait(arch_spinlock_t *lp)
+ {
+-	unsigned int cpu = ~smp_processor_id();
++	unsigned int cpu = SPINLOCK_LOCKVAL;
+ 	unsigned int owner;
+ 	int count;
+ 
+@@ -54,7 +54,7 @@ EXPORT_SYMBOL(arch_spin_lock_wait);
+ 
+ void arch_spin_lock_wait_flags(arch_spinlock_t *lp, unsigned long flags)
+ {
+-	unsigned int cpu = ~smp_processor_id();
++	unsigned int cpu = SPINLOCK_LOCKVAL;
+ 	unsigned int owner;
+ 	int count;
+ 

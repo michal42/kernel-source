@@ -1,0 +1,226 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390: Remove zfcpdump NR_CPUS dependency
+Patch-mainline: v3.13-rc1
+Git-commit: 5895294274bee046bcfdbb72f8998e2b14e26426
+References: bnc#929879, LTC#KRN1514
+
+Summary:     s390: z13 base performance
+Description: Provide the backport of a minimum set of upstream patches
+             to optimize the base performance of the IBM z13 machine.
+
+Upstream-Description:
+
+             s390: Remove zfcpdump NR_CPUS dependency
+
+             Currently zfpcdump can only collect registers for up to CONFIG_NR_CPUS
+             CPUss. This dependency is not necessary. So remove it by dynamically
+             allocating the save area array.
+
+             Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+             Reviewed-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/ipl.h   |    9 +++++++++
+ arch/s390/include/asm/smp.h   |    1 -
+ arch/s390/kernel/crash_dump.c |   34 ++++++++++++++++++++++++++++++----
+ arch/s390/kernel/smp.c        |   11 +----------
+ drivers/s390/char/zcore.c     |   20 +++++++++-----------
+ 5 files changed, 49 insertions(+), 26 deletions(-)
+
+--- a/arch/s390/include/asm/ipl.h
++++ b/arch/s390/include/asm/ipl.h
+@@ -7,6 +7,7 @@
+ #ifndef _ASM_S390_IPL_H
+ #define _ASM_S390_IPL_H
+ 
++#include <asm/lowcore.h>
+ #include <asm/types.h>
+ #include <asm/cio.h>
+ #include <asm/setup.h>
+@@ -88,6 +89,14 @@ extern u32 ipl_flags;
+ extern u32 dump_prefix_page;
+ extern unsigned int zfcpdump_prefix_array[];
+ 
++struct dump_save_areas {
++	struct save_area **areas;
++	int count;
++};
++
++extern struct dump_save_areas dump_save_areas;
++struct save_area *dump_save_area_create(int cpu);
++
+ extern void do_reipl(void);
+ extern void do_halt(void);
+ extern void do_poff(void);
+--- a/arch/s390/include/asm/smp.h
++++ b/arch/s390/include/asm/smp.h
+@@ -14,7 +14,6 @@
+ #define raw_smp_processor_id()	(S390_lowcore.cpu_nr)
+ 
+ extern struct mutex smp_cpu_state_mutex;
+-extern struct save_area *zfcpdump_save_areas[NR_CPUS + 1];
+ 
+ extern int __cpu_up(unsigned int cpu, struct task_struct *tidle);
+ 
+--- a/arch/s390/kernel/crash_dump.c
++++ b/arch/s390/kernel/crash_dump.c
+@@ -22,6 +22,32 @@
+ #define PTR_SUB(x, y) (((char *) (x)) - ((unsigned long) (y)))
+ #define PTR_DIFF(x, y) ((unsigned long)(((char *) (x)) - ((unsigned long) (y))))
+ 
++struct dump_save_areas dump_save_areas;
++
++/*
++ * Allocate and add a save area for a CPU
++ */
++struct save_area *dump_save_area_create(int cpu)
++{
++	struct save_area **save_areas, *save_area;
++
++	save_area = kmalloc(sizeof(*save_area), GFP_KERNEL);
++	if (!save_area)
++		return NULL;
++	if (cpu + 1 > dump_save_areas.count) {
++		dump_save_areas.count = cpu + 1;
++		save_areas = krealloc(dump_save_areas.areas,
++				      dump_save_areas.count * sizeof(void *),
++				      GFP_KERNEL | __GFP_ZERO);
++		if (!save_areas) {
++			kfree(save_area);
++			return NULL;
++		}
++		dump_save_areas.areas = save_areas;
++	}
++	dump_save_areas.areas[cpu] = save_area;
++	return save_area;
++}
+ 
+ /*
+  * Return physical address for virtual address
+@@ -452,8 +478,8 @@ static int get_cpu_cnt(void)
+ {
+ 	int i, cpus = 0;
+ 
+-	for (i = 0; zfcpdump_save_areas[i]; i++) {
+-		if (zfcpdump_save_areas[i]->pref_reg == 0)
++	for (i = 0; i < dump_save_areas.count; i++) {
++		if (dump_save_areas.areas[i]->pref_reg == 0)
+ 			continue;
+ 		cpus++;
+ 	}
+@@ -524,8 +550,8 @@ static void *notes_init(Elf64_Phdr *phdr
+ 
+ 	ptr = nt_prpsinfo(ptr);
+ 
+-	for (i = 0; zfcpdump_save_areas[i]; i++) {
+-		sa = zfcpdump_save_areas[i];
++	for (i = 0; i < dump_save_areas.count; i++) {
++		sa = dump_save_areas.areas[i];
+ 		if (sa->pref_reg == 0)
+ 			continue;
+ 		ptr = fill_cpu_elf_notes(ptr, sa);
+--- a/arch/s390/kernel/smp.c
++++ b/arch/s390/kernel/smp.c
+@@ -532,9 +532,6 @@ EXPORT_SYMBOL(smp_ctl_clear_bit);
+ 
+ #if defined(CONFIG_ZFCPDUMP) || defined(CONFIG_CRASH_DUMP)
+ 
+-struct save_area *zfcpdump_save_areas[NR_CPUS + 1];
+-EXPORT_SYMBOL_GPL(zfcpdump_save_areas);
+-
+ static void __init smp_get_save_area(int cpu, u16 address)
+ {
+ 	void *lc = pcpu_devices[0].lowcore;
+@@ -545,15 +542,9 @@ static void __init smp_get_save_area(int
+ 	if (!OLDMEM_BASE && (address == boot_cpu_address ||
+ 			     ipl_info.type != IPL_TYPE_FCP_DUMP))
+ 		return;
+-	if (cpu >= NR_CPUS) {
+-		pr_warning("CPU %i exceeds the maximum %i and is excluded "
+-			   "from the dump\n", cpu, NR_CPUS - 1);
+-		return;
+-	}
+-	save_area = kmalloc(sizeof(struct save_area), GFP_KERNEL);
++	save_area = dump_save_area_create(cpu);
+ 	if (!save_area)
+ 		panic("could not allocate memory for save area\n");
+-	zfcpdump_save_areas[cpu] = save_area;
+ #ifdef CONFIG_CRASH_DUMP
+ 	if (address == boot_cpu_address) {
+ 		/* Copy the registers of the boot cpu. */
+--- a/drivers/s390/char/zcore.c
++++ b/drivers/s390/char/zcore.c
+@@ -151,7 +151,7 @@ static int __init init_cpu_info(enum arc
+ 
+ 	/* get info for boot cpu from lowcore, stored in the HSA */
+ 
+-	sa = kmalloc(sizeof(*sa), GFP_KERNEL);
++	sa = dump_save_area_create(0);
+ 	if (!sa)
+ 		return -ENOMEM;
+ 	if (memcpy_hsa_kernel(sa, sys_info.sa_base, sys_info.sa_size) < 0) {
+@@ -159,7 +159,6 @@ static int __init init_cpu_info(enum arc
+ 		kfree(sa);
+ 		return -EIO;
+ 	}
+-	zfcpdump_save_areas[0] = sa;
+ 	return 0;
+ }
+ 
+@@ -246,24 +245,25 @@ static int copy_lc(void __user *buf, voi
+ static int zcore_add_lc(char __user *buf, unsigned long start, size_t count)
+ {
+ 	unsigned long end;
+-	int i = 0;
++	int i;
+ 
+ 	if (count == 0)
+ 		return 0;
+ 
+ 	end = start + count;
+-	while (zfcpdump_save_areas[i]) {
++	for (i = 0; i < dump_save_areas.count; i++) {
+ 		unsigned long cp_start, cp_end; /* copy range */
+ 		unsigned long sa_start, sa_end; /* save area range */
+ 		unsigned long prefix;
+ 		unsigned long sa_off, len, buf_off;
++		struct save_area *save_area = dump_save_areas.areas[i];
+ 
+-		prefix = zfcpdump_save_areas[i]->pref_reg;
++		prefix = save_area->pref_reg;
+ 		sa_start = prefix + sys_info.sa_base;
+ 		sa_end = prefix + sys_info.sa_base + sys_info.sa_size;
+ 
+ 		if ((end < sa_start) || (start > sa_end))
+-			goto next;
++			continue;
+ 		cp_start = max(start, sa_start);
+ 		cp_end = min(end, sa_end);
+ 
+@@ -272,10 +272,8 @@ static int zcore_add_lc(char __user *buf
+ 		len = cp_end - cp_start;
+ 
+ 		TRACE("copy_lc for: %lx\n", start);
+-		if (copy_lc(buf + buf_off, zfcpdump_save_areas[i], sa_off, len))
++		if (copy_lc(buf + buf_off, save_area, sa_off, len))
+ 			return -EFAULT;
+-next:
+-		i++;
+ 	}
+ 	return 0;
+ }
+@@ -629,8 +627,8 @@ static void __init zcore_header_init(int
+ 	hdr->num_pages = mem_size / PAGE_SIZE;
+ 	hdr->tod = get_tod_clock();
+ 	get_cpu_id(&hdr->cpu_id);
+-	for (i = 0; zfcpdump_save_areas[i]; i++) {
+-		prefix = zfcpdump_save_areas[i]->pref_reg;
++	for (i = 0; i < dump_save_areas.count; i++) {
++		prefix = dump_save_areas.areas[i]->pref_reg;
+ 		hdr->real_cpu_cnt++;
+ 		if (!prefix)
+ 			continue;

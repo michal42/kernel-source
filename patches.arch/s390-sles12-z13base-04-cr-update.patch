@@ -1,0 +1,67 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390: optimize control register update
+Patch-mainline: v3.14-rc1
+Git-commit: c63badebfebacdba827ab1cc1d420fc81bd8d818
+References: bnc#929879, LTC#KRN1514
+
+Summary:     s390: z13 base performance
+Description: Provide the backport of a minimum set of upstream patches
+             to optimize the base performance of the IBM z13 machine.
+
+Upstream-Description:
+
+             s390: optimize control register update
+
+             It is less expensive to update control registers 0 and 2 with two
+             individual stctg/lctlg instructions as with a single one that spans
+             control register 0, 1 and 2.
+
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/ptrace.c |   23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
+
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -56,25 +56,26 @@ void update_cr_regs(struct task_struct *
+ #ifdef CONFIG_64BIT
+ 	/* Take care of the enable/disable of transactional execution. */
+ 	if (MACHINE_HAS_TE) {
+-		unsigned long cr[3], cr_new[3];
++		unsigned long cr, cr_new;
+ 
+-		__ctl_store(cr, 0, 2);
+-		cr_new[1] = cr[1];
++		__ctl_store(cr, 0, 0);
+ 		/* Set or clear transaction execution TXC bit 8. */
++		cr_new = cr | (1UL << 55);
+ 		if (task->thread.per_flags & PER_FLAG_NO_TE)
+-			cr_new[0] = cr[0] & ~(1UL << 55);
+-		else
+-			cr_new[0] = cr[0] | (1UL << 55);
++			cr_new &= ~(1UL << 55);
++		if (cr_new != cr)
++			__ctl_load(cr, 0, 0);
+ 		/* Set or clear transaction execution TDC bits 62 and 63. */
+-		cr_new[2] = cr[2] & ~3UL;
++		__ctl_store(cr, 2, 2);
++		cr_new = cr & ~3UL;
+ 		if (task->thread.per_flags & PER_FLAG_TE_ABORT_RAND) {
+ 			if (task->thread.per_flags & PER_FLAG_TE_ABORT_RAND_TEND)
+-				cr_new[2] |= 1UL;
++				cr_new |= 1UL;
+ 			else
+-				cr_new[2] |= 2UL;
++				cr_new |= 2UL;
+ 		}
+-		if (memcmp(&cr_new, &cr, sizeof(cr)))
+-			__ctl_load(cr_new, 0, 2);
++		if (cr_new != cr)
++			__ctl_load(cr_new, 2, 2);
+ 	}
+ #endif
+ 	/* Copy user specified PER registers */

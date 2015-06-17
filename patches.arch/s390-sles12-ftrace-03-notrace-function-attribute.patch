@@ -1,0 +1,66 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: ftrace: let notrace function attribute disable hotpatching if necessary
+Patch-mainline: v4.0-rc1
+Git-commit: 61f552141c9c0e88b3fdc7046265781ffd8fa68a
+References: bnc#924526, LTC#123020
+
+Description:  kernel: use hotpatch feature to reduce function tracer overhead
+Symptom:      The kernel uses more cpu cycles for each function being
+              executed.
+Problem:      The kGraft feature requires to instrument the kernel. In
+              order to do that the kernel gets compiled with the function
+              tracer enabled which causes the compiler to emit code that
+              adds an "mcount" call to the prologue of each function.
+              This code will be modified by the kernel for function tracing.
+              The current implementation uses the "-pg" compiler option to
+              generate a 24 byte function prologue which will be used by
+              the function tracer.
+              This 24 byte prologue however is larger than the 6 bytes that
+              are needed and do cause a performance regression compared to
+              kernels without function tracing enabled.
+Solution:     Use gcc's hotpatch feature so that only a single 6 byte
+              instruction will be added to the prologue of each function.
+              With this change the impact of enabling the function tracer
+              feature is close to zero compared to a kernel which has this
+              feature disabled.
+Reproduction: Compile the kernel with and without function tracer enabled
+              and compare cpu time spent in the kernel for identical
+              workloads.
+
+Upstream-Description:
+
+              ftrace: let notrace function attribute disable hotpatching if necessary
+
+              gcc supports an s390 specific function attribute called "hotpatch".
+              It can be used to specify the number of halfwords that shall be added before
+              and after a function and which shall be filled with nops for runtime patching.
+
+              s390 will use the hotpatch attribute for function tracing, therefore make
+              sure that the notrace function attribute either disables the mcount call
+              or in case of hotpatch nop generation.
+
+              Acked-by: Steven Rostedt <rostedt@goodmis.org>
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ include/linux/compiler.h |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/include/linux/compiler.h
++++ b/include/linux/compiler.h
+@@ -54,7 +54,11 @@ extern void __chk_io_ptr(const volatile
+ #include <linux/compiler-gcc.h>
+ #endif
+ 
++#ifdef CC_USING_HOTPATCH
++#define notrace __attribute__((hotpatch(0,0)))
++#else
+ #define notrace __attribute__((no_instrument_function))
++#endif
+ 
+ /* Intel compiler defines __GNUC__. So we will overwrite implementations
+  * coming from above header files here

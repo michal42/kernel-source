@@ -1,0 +1,43 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/smp: only send external call ipi if needed
+Patch-mainline: v3.14-rc1
+Git-commit: dea24190fbfb340dea5224e32161955514bef31b
+References: bnc#929879, LTC#KRN1514
+
+Summary:     s390: z13 base performance
+Description: Provide the backport of a minimum set of upstream patches
+             to optimize the base performance of the IBM z13 machine.
+
+Upstream-Description:
+
+             s390/smp: only send external call ipi if needed
+
+             If the per cpu ec_mask bit of the receiving cpu is already set there is
+             no need to send an ipi, since a different cpu has already sent an ipi
+             and the receiving cpu has not yet executed the external call ipi handler.
+
+             Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/smp.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/arch/s390/kernel/smp.c
++++ b/arch/s390/kernel/smp.c
+@@ -159,9 +159,9 @@ static void pcpu_ec_call(struct pcpu *pc
+ {
+ 	int order;
+ 
+-	set_bit(ec_bit, &pcpu->ec_mask);
+-	order = pcpu_running(pcpu) ?
+-		SIGP_EXTERNAL_CALL : SIGP_EMERGENCY_SIGNAL;
++	if (test_and_set_bit(ec_bit, &pcpu->ec_mask))
++		return;
++	order = pcpu_running(pcpu) ? SIGP_EXTERNAL_CALL : SIGP_EMERGENCY_SIGNAL;
+ 	pcpu_sigp_retry(pcpu, order, 0);
+ }
+ 
