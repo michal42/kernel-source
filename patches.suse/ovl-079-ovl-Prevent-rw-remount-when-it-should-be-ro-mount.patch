@@ -1,0 +1,42 @@
+From: Seunghun Lee <waydi1@gmail.com>
+Date: Sat, 3 Jan 2015 02:26:49 +0900
+Subject: ovl: Prevent rw remount when it should be ro mount
+Git-commit: 3cdf6fe91041b3afd6761f76254f7b6cbe8020fc
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+Overlayfs should be mounted read-only when upper-fs is read-only or nonexistent.
+But now it can be remounted read-write and this can cause kernel panic.
+So we should prevent read-write remount when the above situation happens.
+
+Signed-off-by: Seunghun Lee <waydi1@gmail.com>
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/super.c |   12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -525,10 +525,22 @@ static int ovl_show_options(struct seq_f
+ 	return 0;
+ }
+ 
++static int ovl_remount(struct super_block *sb, int *flags, char *data)
++{
++	struct ovl_fs *ufs = sb->s_fs_info;
++
++	if (!(*flags & MS_RDONLY) &&
++	    (!ufs->upper_mnt || (ufs->upper_mnt->mnt_sb->s_flags & MS_RDONLY)))
++		return -EROFS;
++
++	return 0;
++}
++
+ static const struct super_operations ovl_super_operations = {
+ 	.put_super	= ovl_put_super,
+ 	.statfs		= ovl_statfs,
+ 	.show_options	= ovl_show_options,
++	.remount_fs	= ovl_remount,
+ };
+ 
+ enum {
