@@ -1,0 +1,56 @@
+From: Miklos Szeredi <mszeredi@suse.cz>
+Date: Sat, 13 Dec 2014 00:59:43 +0100
+Subject: ovl: helper to iterate layers
+Git-commit: 5ef88da56a77bfb3b9631f5e5775f3bff86b6219
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+Add helper to iterate through all the layers, starting from the upper layer
+(if exists) and continuing down through the lower layers.
+
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/overlayfs.h |    1 +
+ fs/overlayfs/super.c     |   21 +++++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+--- a/fs/overlayfs/overlayfs.h
++++ b/fs/overlayfs/overlayfs.h
+@@ -135,6 +135,7 @@ void ovl_dentry_version_inc(struct dentr
+ void ovl_path_upper(struct dentry *dentry, struct path *path);
+ void ovl_path_lower(struct dentry *dentry, struct path *path);
+ enum ovl_path_type ovl_path_real(struct dentry *dentry, struct path *path);
++int ovl_path_next(int idx, struct dentry *dentry, struct path *path);
+ struct dentry *ovl_dentry_upper(struct dentry *dentry);
+ struct dentry *ovl_dentry_lower(struct dentry *dentry);
+ struct dentry *ovl_dentry_real(struct dentry *dentry);
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -305,6 +305,27 @@ static inline struct dentry *ovl_lookup_
+ 	return dentry;
+ }
+ 
++/*
++ * Returns next layer in stack starting from top.
++ * Returns -1 if this is the last layer.
++ */
++int ovl_path_next(int idx, struct dentry *dentry, struct path *path)
++{
++	struct ovl_entry *oe = dentry->d_fsdata;
++
++	BUG_ON(idx < 0);
++	if (idx == 0) {
++		ovl_path_upper(dentry, path);
++		if (path->dentry)
++			return oe->numlower ? 1 : -1;
++		idx++;
++	}
++	BUG_ON(idx > oe->numlower);
++	*path = oe->lowerstack[idx - 1];
++
++	return (idx < oe->numlower) ? idx + 1 : -1;
++}
++
+ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
+ 			  unsigned int flags)
+ {
