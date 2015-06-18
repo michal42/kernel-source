@@ -1,0 +1,89 @@
+From: hujianyang <hujianyang@huawei.com>
+Date: Mon, 24 Nov 2014 18:25:21 +0800
+Subject: ovl: Use macros to present ovl_xattr
+Git-commit: cead89bb08c0f64e23886f1c18df9bb98e97c55c
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+This patch adds two macros:
+
+OVL_XATTR_PRE_NAME and OVL_XATTR_PRE_LEN
+
+to present ovl_xattr name prefix and its length. Also, a
+new macro OVL_XATTR_OPAQUE is introduced to replace old
+*ovl_opaque_xattr*.
+
+Fix the length of "trusted.overlay." to *16*.
+
+Signed-off-by: hujianyang <hujianyang@huawei.com>
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/dir.c       |    4 ++--
+ fs/overlayfs/inode.c     |    2 +-
+ fs/overlayfs/overlayfs.h |    4 +++-
+ fs/overlayfs/super.c     |    4 +---
+ 4 files changed, 7 insertions(+), 7 deletions(-)
+
+--- a/fs/overlayfs/dir.c
++++ b/fs/overlayfs/dir.c
+@@ -118,14 +118,14 @@ int ovl_create_real(struct inode *dir, s
+ 
+ static int ovl_set_opaque(struct dentry *upperdentry)
+ {
+-	return ovl_do_setxattr(upperdentry, ovl_opaque_xattr, "y", 1, 0);
++	return ovl_do_setxattr(upperdentry, OVL_XATTR_OPAQUE, "y", 1, 0);
+ }
+ 
+ static void ovl_remove_opaque(struct dentry *upperdentry)
+ {
+ 	int err;
+ 
+-	err = ovl_do_removexattr(upperdentry, ovl_opaque_xattr);
++	err = ovl_do_removexattr(upperdentry, OVL_XATTR_OPAQUE);
+ 	if (err) {
+ 		pr_warn("overlayfs: failed to remove opaque from '%s' (%i)\n",
+ 			upperdentry->d_name.name, err);
+--- a/fs/overlayfs/inode.c
++++ b/fs/overlayfs/inode.c
+@@ -205,7 +205,7 @@ static int ovl_readlink(struct dentry *d
+ 
+ static bool ovl_is_private_xattr(const char *name)
+ {
+-	return strncmp(name, "trusted.overlay.", 14) == 0;
++	return strncmp(name, OVL_XATTR_PRE_NAME, OVL_XATTR_PRE_LEN) == 0;
+ }
+ 
+ int ovl_setxattr(struct dentry *dentry, const char *name,
+--- a/fs/overlayfs/overlayfs.h
++++ b/fs/overlayfs/overlayfs.h
+@@ -23,7 +23,9 @@ enum ovl_path_type {
+ #define OVL_TYPE_MERGE_OR_LOWER(type) \
+ 	(OVL_TYPE_MERGE(type) || !OVL_TYPE_UPPER(type))
+ 
+-extern const char *ovl_opaque_xattr;
++#define OVL_XATTR_PRE_NAME "trusted.overlay."
++#define OVL_XATTR_PRE_LEN  16
++#define OVL_XATTR_OPAQUE   OVL_XATTR_PRE_NAME"opaque"
+ 
+ static inline int ovl_do_rmdir(struct inode *dir, struct dentry *dentry)
+ {
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -62,8 +62,6 @@ struct ovl_entry {
+ 
+ #define OVL_MAX_STACK 500
+ 
+-const char *ovl_opaque_xattr = "trusted.overlay.opaque";
+-
+ static struct dentry *__ovl_dentry_lower(struct ovl_entry *oe)
+ {
+ 	return oe->numlower ? oe->lowerstack[0].dentry : NULL;
+@@ -254,7 +252,7 @@ static bool ovl_is_opaquedir(struct dent
+ 	if (!S_ISDIR(inode->i_mode) || !inode->i_op->getxattr)
+ 		return false;
+ 
+-	res = inode->i_op->getxattr(dentry, ovl_opaque_xattr, &val, 1);
++	res = inode->i_op->getxattr(dentry, OVL_XATTR_OPAQUE, &val, 1);
+ 	if (res == 1 && val == 'y')
+ 		return true;
+ 
