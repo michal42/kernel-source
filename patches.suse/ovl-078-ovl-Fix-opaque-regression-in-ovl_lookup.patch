@@ -1,0 +1,76 @@
+From: hujianyang <hujianyang@huawei.com>
+Date: Tue, 6 Jan 2015 16:10:01 +0800
+Subject: ovl: Fix opaque regression in ovl_lookup
+Git-commit: a425c037f3dd8a56469158ab5f37beb46402d958
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+Current multi-layer support overlayfs has a regression in
+.lookup(). If there is a directory in upperdir and a regular
+file has same name in lowerdir in a merged directory, lower
+file is hidden and upper directory is set to opaque in former
+case. But it is changed in present code.
+
+In lowerdir lookup path, if a found inode is not directory,
+the type checking of previous inode is missing. This inode
+will be copied to the lowerstack of ovl_entry directly.
+
+That will lead to several wrong conditions, for example,
+the reading of the directory in upperdir may return an error
+like:
+
+   ls: reading directory .: Not a directory
+
+This patch makes the lowerdir lookup path check the opaque
+for non-directory file too.
+
+Signed-off-by: hujianyang <hujianyang@huawei.com>
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/super.c |   23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -372,7 +372,6 @@ struct dentry *ovl_lookup(struct inode *
+ 		bool opaque = false;
+ 		struct path lowerpath = poe->lowerstack[i];
+ 
+-		opaque = false;
+ 		this = ovl_lookup_real(lowerpath.dentry, &dentry->d_name);
+ 		err = PTR_ERR(this);
+ 		if (IS_ERR(this)) {
+@@ -395,20 +394,24 @@ struct dentry *ovl_lookup(struct inode *
+ 		 */
+ 		if (i < poe->numlower - 1 && ovl_is_opaquedir(this))
+ 			opaque = true;
+-		/*
+-		 * If this is a non-directory then stop here.
+-		 *
+-		 * FIXME: check for opaqueness maybe better done in remove code.
+-		 */
+-		if (!S_ISDIR(this->d_inode->i_mode)) {
+-			opaque = true;
+-		} else if (prev && (!S_ISDIR(prev->d_inode->i_mode) ||
+-				    !S_ISDIR(this->d_inode->i_mode))) {
++
++		if (prev && (!S_ISDIR(prev->d_inode->i_mode) ||
++			     !S_ISDIR(this->d_inode->i_mode))) {
++			/*
++			 * FIXME: check for upper-opaqueness maybe better done
++			 * in remove code.
++			 */
+ 			if (prev == upperdentry)
+ 				upperopaque = true;
+ 			dput(this);
+ 			break;
+ 		}
++		/*
++		 * If this is a non-directory then stop here.
++		 */
++		if (!S_ISDIR(this->d_inode->i_mode))
++			opaque = true;
++
+ 		stack[ctr].dentry = this;
+ 		stack[ctr].mnt = lowerpath.mnt;
+ 		ctr++;
