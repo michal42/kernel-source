@@ -1,0 +1,51 @@
+From: hujianyang <hujianyang@huawei.com>
+Date: Tue, 6 Jan 2015 12:52:13 +0800
+Subject: ovl: Fix kernel panic while mounting overlayfs
+Git-commit: 2f83fd8c2849a388082f30d755a75c1e67c4643b
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+The function ovl_fill_super() in recently multi-layer support
+version will incorrectly return 0 at error handling path and
+then cause kernel panic.
+
+This failure can be reproduced by mounting a overlayfs with
+upperdir and workdir in different mounts.
+
+And also, If the memory allocation of *lower_mnt* fail, this
+function may return an zero either.
+
+This patch fix this problem by setting *err* to proper error
+number before jumping to error handling path.
+
+Signed-off-by: hujianyang <hujianyang@huawei.com>
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/super.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -836,6 +836,7 @@ static int ovl_fill_super(struct super_b
+ 		if (err)
+ 			goto out_put_upperpath;
+ 
++		err = -EINVAL;
+ 		if (upperpath.mnt != workpath.mnt) {
+ 			pr_err("overlayfs: workdir and upperdir must reside under the same mount\n");
+ 			goto out_put_workpath;
+@@ -894,12 +895,14 @@ static int ovl_fill_super(struct super_b
+ 		}
+ 	}
+ 
++	err = -ENOMEM;
+ 	ufs->lower_mnt = kcalloc(numlower, sizeof(struct vfsmount *), GFP_KERNEL);
+ 	if (ufs->lower_mnt == NULL)
+ 		goto out_put_workdir;
+ 	for (i = 0; i < numlower; i++) {
+ 		struct vfsmount *mnt = clone_private_mount(&stack[i]);
+ 
++		err = PTR_ERR(mnt);
+ 		if (IS_ERR(mnt)) {
+ 			pr_err("overlayfs: failed to clone lowerpath\n");
+ 			goto out_put_lower_mnt;
