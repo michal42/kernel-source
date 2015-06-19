@@ -1,0 +1,39 @@
+From: Miklos Szeredi <mszeredi@suse.cz>
+Date: Sat, 13 Dec 2014 00:59:45 +0100
+Subject: ovl: lookup ENAMETOOLONG on lower means ENOENT
+Git-commit: 09e10322b71716adf567d453889ef0871cf226b9
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+"Suppose you have in one of the lower layers a filesystem with
+->lookup()-enforced upper limit on name length.  Pretty much every local fs
+has one, but... they are not all equal.  255 characters is the common upper
+limit, but e.g. jffs2 stops at 254, minixfs upper limit is somewhere from
+14 to 60, depending upon version, etc.  You are doing a lookup for
+something that is present in upper layer, but happens to be too long for
+one of the lower layers.  Too bad - ENAMETOOLONG for you..."
+
+Reported-by: Al Viro <viro@ZenIV.linux.org.uk>
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/super.c |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -376,8 +376,14 @@ struct dentry *ovl_lookup(struct inode *
+ 		opaque = false;
+ 		this = ovl_lookup_real(lowerpath.dentry, &dentry->d_name);
+ 		err = PTR_ERR(this);
+-		if (IS_ERR(this))
++		if (IS_ERR(this)) {
++			/*
++			 * If it's positive, then treat ENAMETOOLONG as ENOENT.
++			 */
++			if (err == -ENAMETOOLONG && (upperdentry || ctr))
++				continue;
+ 			goto out_put;
++		}
+ 		if (!this)
+ 			continue;
+ 		if (ovl_is_whiteout(this)) {

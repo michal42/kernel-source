@@ -1,0 +1,86 @@
+From: Miklos Szeredi <mszeredi@suse.cz>
+Date: Sat, 13 Dec 2014 00:59:44 +0100
+Subject: ovl: multi-layer readdir
+Git-commit: 9d7459d834c28f55c82f1737f638a6c90e0c0e0f
+Patch-mainline: v4.0-rc1
+References: FATE#318783
+
+If multiple lower layers exist, merge them as well in readdir according to
+the same rules as merging upper with lower.  I.e. take whiteouts and opaque
+directories into account on all but the lowers layer.
+
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+---
+ fs/overlayfs/readdir.c |   39 +++++++++++++++++++--------------------
+ fs/overlayfs/super.c   |    3 +++
+ 2 files changed, 22 insertions(+), 20 deletions(-)
+
+--- a/fs/overlayfs/readdir.c
++++ b/fs/overlayfs/readdir.c
+@@ -263,35 +263,34 @@ static void ovl_dir_reset(struct file *f
+ static int ovl_dir_read_merged(struct dentry *dentry, struct list_head *list)
+ {
+ 	int err;
+-	struct path lowerpath;
+-	struct path upperpath;
++	struct path realpath;
+ 	struct ovl_readdir_data rdd = {
+ 		.ctx.actor = ovl_fill_merge,
+ 		.list = list,
+ 		.root = RB_ROOT,
+ 		.is_merge = false,
+ 	};
++	int idx, next;
+ 
+-	ovl_path_lower(dentry, &lowerpath);
+-	ovl_path_upper(dentry, &upperpath);
++	for (idx = 0; idx != -1; idx = next) {
++		next = ovl_path_next(idx, dentry, &realpath);
+ 
+-	if (upperpath.dentry) {
+-		rdd.dir = upperpath.dentry;
+-		err = ovl_dir_read(&upperpath, &rdd);
+-		if (err)
+-			goto out;
++		if (next != -1) {
++			rdd.dir = realpath.dentry;
++			err = ovl_dir_read(&realpath, &rdd);
++			if (err)
++				break;
++		} else {
++			/*
++			 * Insert lowest layer entries before upper ones, this
++			 * allows offsets to be reasonably constant
++			 */
++			list_add(&rdd.middle, rdd.list);
++			rdd.is_merge = true;
++			err = ovl_dir_read(&realpath, &rdd);
++			list_del(&rdd.middle);
++		}
+ 	}
+-	if (lowerpath.dentry) {
+-		/*
+-		 * Insert lowerpath entries before upperpath ones, this allows
+-		 * offsets to be reasonably constant
+-		 */
+-		list_add(&rdd.middle, rdd.list);
+-		rdd.is_merge = true;
+-		err = ovl_dir_read(&lowerpath, &rdd);
+-		list_del(&rdd.middle);
+-	}
+-out:
+ 	return err;
+ }
+ 
+--- a/fs/overlayfs/super.c
++++ b/fs/overlayfs/super.c
+@@ -81,6 +81,9 @@ enum ovl_path_type ovl_path_type(struct
+ 		} else if (!oe->opaque) {
+ 			type |= __OVL_PATH_PURE;
+ 		}
++	} else {
++		if (oe->numlower > 1)
++			type |= __OVL_PATH_MERGE;
+ 	}
+ 	return type;
+ }

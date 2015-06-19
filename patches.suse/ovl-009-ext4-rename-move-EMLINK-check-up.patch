@@ -1,0 +1,41 @@
+From: Miklos Szeredi <mszeredi@suse.cz>
+Date: Tue, 1 Apr 2014 17:08:44 +0200
+Subject: ext4: rename: move EMLINK check up
+Git-commit: 0d7d5d678bf9e07dffe22b018cf035d511d9e86e
+Patch-mainline: v3.15-rc1
+References: FATE#318783
+
+Move checking i_nlink from after ext4_get_first_dir_block() to before.  The
+check doesn't rely on the result of that function and the function only
+fails on fs corruption, so the order shouldn't matter.
+
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+Reviewed-by: Jan Kara <jack@suse.cz>
+---
+ fs/ext4/namei.c |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+--- a/fs/ext4/namei.c
++++ b/fs/ext4/namei.c
+@@ -3094,6 +3094,10 @@ static int ext4_rename(struct inode *old
+ 			retval = -ENOTEMPTY;
+ 			if (!empty_dir(new.inode))
+ 				goto end_rename;
++		} else {
++			retval = -EMLINK;
++			if (new.dir != old.dir && EXT4_DIR_LINK_MAX(new.dir))
++				goto end_rename;
+ 		}
+ 		retval = -EIO;
+ 		old.dir_bh = ext4_get_first_dir_block(handle, old.inode,
+@@ -3103,10 +3107,6 @@ static int ext4_rename(struct inode *old
+ 			goto end_rename;
+ 		if (le32_to_cpu(old.parent_de->inode) != old.dir->i_ino)
+ 			goto end_rename;
+-		retval = -EMLINK;
+-		if (!new.inode && new.dir != old.dir &&
+-		    EXT4_DIR_LINK_MAX(new.dir))
+-			goto end_rename;
+ 		BUFFER_TRACE(old.dir_bh, "get_write_access");
+ 		retval = ext4_journal_get_write_access(handle, old.dir_bh);
+ 		if (retval)

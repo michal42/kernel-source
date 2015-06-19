@@ -1,8 +1,7 @@
-From 7dd7dc8ba5f16e494206477d3880b7ed09aff118 Mon Sep 17 00:00:00 2001
 From: Miklos Szeredi <mszeredi@suse.cz>
 Date: Thu, 30 Aug 2012 16:13:49 +0200
-Subject: [PATCH 04/13] overlay filesystem
-Patch-mainline: not yet
+Subject: overlay filesystem
+Patch-mainline: Never, different version was merged
 
 Overlayfs allows one, usually read-write, directory tree to be
 overlaid onto another, read-only directory tree.  All modifications
@@ -83,40 +82,40 @@ Also thanks to the following people for testing and reporting bugs:
 
 Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 ---
- fs/Kconfig               |    1 
- fs/Makefile              |    1 
- fs/overlayfs/Kconfig     |   10 
- fs/overlayfs/Makefile    |    7 
- fs/overlayfs/copy_up.c   |  388 +++++++++++++++++++++++++++++
- fs/overlayfs/dir.c       |  605 ++++++++++++++++++++++++++++++++++++++++++++++
- fs/overlayfs/inode.c     |  372 ++++++++++++++++++++++++++++
- fs/overlayfs/overlayfs.h |   70 +++++
- fs/overlayfs/readdir.c   |  567 +++++++++++++++++++++++++++++++++++++++++++
- fs/overlayfs/super.c     |  612 +++++++++++++++++++++++++++++++++++++++++++++++
- 10 files changed, 2633 insertions(+)
+ fs/Kconfig                   |    1 
+ fs/Makefile                  |    1 
+ fs/overlayfs-old/Kconfig     |   10 
+ fs/overlayfs-old/Makefile    |    7 
+ fs/overlayfs-old/copy_up.c   |  388 +++++++++++++++++++++++++++
+ fs/overlayfs-old/dir.c       |  605 ++++++++++++++++++++++++++++++++++++++++++
+ fs/overlayfs-old/inode.c     |  372 ++++++++++++++++++++++++++
+ fs/overlayfs-old/overlayfs.h |   70 ++++
+ fs/overlayfs-old/readdir.c   |  569 +++++++++++++++++++++++++++++++++++++++
+ fs/overlayfs-old/super.c     |  612 +++++++++++++++++++++++++++++++++++++++++++
+ 10 files changed, 2635 insertions(+)
 
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -67,6 +67,7 @@ source "fs/quota/Kconfig"
- 
+@@ -69,6 +69,7 @@ source "fs/quota/Kconfig"
  source "fs/autofs4/Kconfig"
  source "fs/fuse/Kconfig"
-+source "fs/overlayfs/Kconfig"
+ source "fs/overlayfs/Kconfig"
++source "fs/overlayfs-old/Kconfig"
  
  config GENERIC_ACL
  	bool
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -105,6 +105,7 @@ obj-$(CONFIG_QNX6FS_FS)		+= qnx6/
- obj-$(CONFIG_AUTOFS4_FS)	+= autofs4/
+@@ -107,6 +107,7 @@ obj-$(CONFIG_AUTOFS4_FS)	+= autofs4/
  obj-$(CONFIG_ADFS_FS)		+= adfs/
  obj-$(CONFIG_FUSE_FS)		+= fuse/
-+obj-$(CONFIG_OVERLAYFS_FS)	+= overlayfs/
+ obj-$(CONFIG_OVERLAY_FS)	+= overlayfs/
++obj-$(CONFIG_OVERLAYFS_FS)	+= overlayfs-old/
  obj-$(CONFIG_UDF_FS)		+= udf/
  obj-$(CONFIG_SUN_OPENPROMFS)	+= openpromfs/
  obj-$(CONFIG_OMFS_FS)		+= omfs/
 --- /dev/null
-+++ b/fs/overlayfs/Kconfig
++++ b/fs/overlayfs-old/Kconfig
 @@ -0,0 +1,10 @@
 +config OVERLAYFS_FS
 +	tristate "Overlay filesystem support"
@@ -129,7 +128,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +
 +	  For more information see Documentation/filesystems/overlayfs.txt
 --- /dev/null
-+++ b/fs/overlayfs/Makefile
++++ b/fs/overlayfs-old/Makefile
 @@ -0,0 +1,7 @@
 +#
 +# Makefile for the overlay filesystem.
@@ -139,7 +138,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +
 +overlayfs-objs := super.o inode.o dir.o readdir.o copy_up.o
 --- /dev/null
-+++ b/fs/overlayfs/copy_up.c
++++ b/fs/overlayfs-old/copy_up.c
 @@ -0,0 +1,388 @@
 +/*
 + *
@@ -307,7 +306,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +		.ia_mtime = stat->mtime,
 +	};
 +
-+	return notify_change(upperdentry, &attr);
++	return notify_change(upperdentry, &attr, NULL);
 +}
 +
 +static int ovl_set_mode(struct dentry *upperdentry, umode_t mode)
@@ -317,7 +316,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +		.ia_mode = mode,
 +	};
 +
-+	return notify_change(upperdentry, &attr);
++	return notify_change(upperdentry, &attr, NULL);
 +}
 +
 +static int ovl_copy_up_locked(struct dentry *upperdir, struct dentry *dentry,
@@ -372,7 +371,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +	if (S_ISDIR(stat->mode))
 +		vfs_rmdir(upperdir->d_inode, newpath.dentry);
 +	else
-+		vfs_unlink(upperdir->d_inode, newpath.dentry);
++		vfs_unlink(upperdir->d_inode, newpath.dentry, NULL);
 +
 +	dput(newpath.dentry);
 +
@@ -530,7 +529,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +	return err;
 +}
 --- /dev/null
-+++ b/fs/overlayfs/dir.c
++++ b/fs/overlayfs-old/dir.c
 @@ -0,0 +1,605 @@
 +/*
 + *
@@ -593,7 +592,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +
 +	err = vfs_setxattr(newdentry, ovl_whiteout_xattr, "y", 1, 0);
 +	if (err)
-+		vfs_unlink(upperdir->d_inode, newdentry);
++		vfs_unlink(upperdir->d_inode, newdentry, NULL);
 +
 +out_dput:
 +	dput(newdentry);
@@ -651,7 +650,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +
 +		err = -EEXIST;
 +		if (ovl_is_whiteout(newdentry))
-+			err = vfs_unlink(upperdir->d_inode, newdentry);
++			err = vfs_unlink(upperdir->d_inode, newdentry, NULL);
 +
 +		revert_creds(old_cred);
 +		put_cred(override_cred);
@@ -901,7 +900,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +		if (is_dir)
 +			err = vfs_rmdir(upperdir->d_inode, realpath.dentry);
 +		else
-+			err = vfs_unlink(upperdir->d_inode, realpath.dentry);
++			err = vfs_unlink(upperdir->d_inode, realpath.dentry, NULL);
 +		if (err)
 +			goto out_d_drop;
 +
@@ -970,7 +969,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +		goto out_unlock;
 +
 +	olddentry = ovl_dentry_upper(old);
-+	err = vfs_link(olddentry, upperdir->d_inode, newdentry);
++	err = vfs_link(olddentry, upperdir->d_inode, newdentry, NULL);
 +	if (!err) {
 +		if (WARN_ON(!newdentry->d_inode)) {
 +			dput(newdentry);
@@ -1091,7 +1090,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +	}
 +
 +	err = vfs_rename(old_upperdir->d_inode, olddentry,
-+			 new_upperdir->d_inode, newdentry);
++			 new_upperdir->d_inode, newdentry, NULL, 0);
 +
 +	if (err) {
 +		if (new_create && ovl_dentry_is_opaque(new))
@@ -1138,7 +1137,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +	.removexattr	= ovl_removexattr,
 +};
 --- /dev/null
-+++ b/fs/overlayfs/inode.c
++++ b/fs/overlayfs-old/inode.c
 @@ -0,0 +1,372 @@
 +/*
 + *
@@ -1172,7 +1171,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +		attr->ia_valid &= ~ATTR_MODE;
 +
 +	mutex_lock(&upperdentry->d_inode->i_mutex);
-+	err = notify_change(upperdentry, attr);
++	err = notify_change(upperdentry, attr, NULL);
 +	if (!err)
 +		ovl_copyattr(upperdentry->d_inode, dentry->d_inode);
 +	mutex_unlock(&upperdentry->d_inode->i_mutex);
@@ -1513,7 +1512,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +
 +}
 --- /dev/null
-+++ b/fs/overlayfs/overlayfs.h
++++ b/fs/overlayfs-old/overlayfs.h
 @@ -0,0 +1,70 @@
 +/*
 + *
@@ -1586,8 +1585,8 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +int ovl_copy_up(struct dentry *dentry);
 +int ovl_copy_up_truncate(struct dentry *dentry, loff_t size);
 --- /dev/null
-+++ b/fs/overlayfs/readdir.c
-@@ -0,0 +1,567 @@
++++ b/fs/overlayfs-old/readdir.c
+@@ -0,0 +1,569 @@
 +/*
 + *
 + * Copyright (C) 2011 Novell Inc.
@@ -1748,10 +1747,12 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +	INIT_LIST_HEAD(list);
 +}
 +
-+static int ovl_fill_merge(void *buf, const char *name, int namelen,
-+			  loff_t offset, u64 ino, unsigned int d_type)
++static int ovl_fill_merge(struct dir_context *ctx, const char *name,
++			  int namelen, loff_t offset, u64 ino,
++			  unsigned int d_type)
 +{
-+	struct ovl_readdir_data *rdd = buf;
++	struct ovl_readdir_data *rdd =
++		container_of(ctx, struct ovl_readdir_data, ctx);
 +
 +	rdd->count++;
 +	if (!rdd->is_merge)
@@ -2126,7 +2127,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +			    p->len, p->name, PTR_ERR(dentry));
 +			continue;
 +		}
-+		ret = vfs_unlink(upperdir->d_inode, dentry);
++		ret = vfs_unlink(upperdir->d_inode, dentry, NULL);
 +		dput(dentry);
 +		if (ret)
 +			pr_warn(
@@ -2156,7 +2157,7 @@ Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
 +	return err;
 +}
 --- /dev/null
-+++ b/fs/overlayfs/super.c
++++ b/fs/overlayfs-old/super.c
 @@ -0,0 +1,612 @@
 +/*
 + *

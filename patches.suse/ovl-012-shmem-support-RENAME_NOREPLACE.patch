@@ -1,0 +1,44 @@
+From: Miklos Szeredi <mszeredi@suse.cz>
+Date: Wed, 23 Jul 2014 15:15:33 +0200
+Subject: shmem: support RENAME_NOREPLACE
+Git-commit: 3b69ff51d087d265aa4af3a532fc4f20bf33e718
+Patch-mainline: v3.17-rc1
+References: FATE#318783
+
+Implement ->rename2 instead of ->rename.
+
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+Acked-by: Hugh Dickins <hughd@google.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+---
+ mm/shmem.c |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+--- a/mm/shmem.c
++++ b/mm/shmem.c
+@@ -2115,11 +2115,14 @@ static int shmem_rmdir(struct inode *dir
+  * it exists so that the VFS layer correctly free's it when it
+  * gets overwritten.
+  */
+-static int shmem_rename(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry)
++static int shmem_rename2(struct inode *old_dir, struct dentry *old_dentry, struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
+ {
+ 	struct inode *inode = old_dentry->d_inode;
+ 	int they_are_dirs = S_ISDIR(inode->i_mode);
+ 
++	if (flags & ~(RENAME_NOREPLACE))
++		return -EINVAL;
++
+ 	if (!simple_empty(new_dentry))
+ 		return -ENOTEMPTY;
+ 
+@@ -2803,7 +2806,7 @@ static const struct inode_operations shm
+ 	.mkdir		= shmem_mkdir,
+ 	.rmdir		= shmem_rmdir,
+ 	.mknod		= shmem_mknod,
+-	.rename		= shmem_rename,
++	.rename2	= shmem_rename2,
+ 	.tmpfile	= shmem_tmpfile,
+ #endif
+ #ifdef CONFIG_TMPFS_XATTR
