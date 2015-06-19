@@ -1,0 +1,66 @@
+From a195c86c742d78d14e97e30c7c87d145b15e87ad Mon Sep 17 00:00:00 2001
+From: Tadeusz Struk <tadeusz.struk@intel.com>
+Date: Tue, 2 Dec 2014 21:08:48 -0800
+Subject: [PATCH 39/61] crypto: qat - fix problem with coalescing enable logic
+References: FATE#318531
+Git-Commit: bc84b94a715f3505f5f5981af0ec0362aa3fe38b
+Patch-Mainline: v3.19
+
+Fixed issue reported by Dan Carpenter
+
+410          if (adf_get_cfg_int(accel_dev, "Accelerator0",
+411				 ADF_ETRMGR_COALESCING_ENABLED_FORMAT,
+412                              bank_num, &coalesc_enabled) && coalesc_enabled)
+This condition is reversed, so it only enables coalescing on error.
+
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+Signed-off-by: Tadeusz Struk <tadeusz.struk@intel.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/crypto/qat/qat_common/adf_transport.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/crypto/qat/qat_common/adf_transport.c b/drivers/crypto/qat/qat_common/adf_transport.c
+index 9dd2cb7..7dd54aa 100644
+--- a/drivers/crypto/qat/qat_common/adf_transport.c
++++ b/drivers/crypto/qat/qat_common/adf_transport.c
+@@ -376,8 +376,9 @@ static inline int adf_get_cfg_int(struct adf_accel_dev *accel_dev,
+ 	return 0;
+ }
+ 
+-static void adf_enable_coalesc(struct adf_etr_bank_data *bank,
+-			       const char *section, uint32_t bank_num_in_accel)
++static void adf_get_coalesc_timer(struct adf_etr_bank_data *bank,
++				  const char *section,
++				  uint32_t bank_num_in_accel)
+ {
+ 	if (adf_get_cfg_int(bank->accel_dev, section,
+ 			    ADF_ETRMGR_COALESCE_TIMER_FORMAT,
+@@ -396,7 +397,7 @@ static int adf_init_bank(struct adf_accel_dev *accel_dev,
+ 	struct adf_hw_device_data *hw_data = accel_dev->hw_device;
+ 	struct adf_etr_ring_data *ring;
+ 	struct adf_etr_ring_data *tx_ring;
+-	uint32_t i, coalesc_enabled;
++	uint32_t i, coalesc_enabled = 0;
+ 
+ 	memset(bank, 0, sizeof(*bank));
+ 	bank->bank_number = bank_num;
+@@ -407,10 +408,10 @@ static int adf_init_bank(struct adf_accel_dev *accel_dev,
+ 	/* Enable IRQ coalescing always. This will allow to use
+ 	 * the optimised flag and coalesc register.
+ 	 * If it is disabled in the config file just use min time value */
+-	if (adf_get_cfg_int(accel_dev, "Accelerator0",
+-			    ADF_ETRMGR_COALESCING_ENABLED_FORMAT,
+-			    bank_num, &coalesc_enabled) && coalesc_enabled)
+-		adf_enable_coalesc(bank, "Accelerator0", bank_num);
++	if ((adf_get_cfg_int(accel_dev, "Accelerator0",
++			     ADF_ETRMGR_COALESCING_ENABLED_FORMAT, bank_num,
++			     &coalesc_enabled) == 0) && coalesc_enabled)
++		adf_get_coalesc_timer(bank, "Accelerator0", bank_num);
+ 	else
+ 		bank->irq_coalesc_timer = ADF_COALESCING_MIN_TIME;
+ 
+-- 
+2.1.4
+

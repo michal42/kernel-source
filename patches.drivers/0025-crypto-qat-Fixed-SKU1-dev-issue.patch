@@ -1,0 +1,61 @@
+From 1774cb4c249f3ce579e1ca908ccd58a6a44ff1f0 Mon Sep 17 00:00:00 2001
+From: Tadeusz Struk <tadeusz.struk@intel.com>
+Date: Fri, 25 Jul 2014 15:56:03 -0700
+Subject: [PATCH 25/61] crypto: qat - Fixed SKU1 dev issue
+References: FATE#318531
+Git-Commit: 4f74c3989b14338544b65360ca4f8587c63d7fd9
+Patch-Mainline: v3.17
+
+Fix for issue with SKU1 device.
+SKU1 device has 8 micro engines as opposed to 12 in other SKUs
+so it was not possible to start the non-existing micro engines.
+
+Signed-off-by: Bo Cui <bo.cui@intel.com>
+Signed-off-by: Tadeusz Struk <tadeusz.struk@intel.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/crypto/qat/qat_common/qat_uclo.c               | 6 +-----
+ drivers/crypto/qat/qat_dh895xcc/adf_dh895xcc_hw_data.h | 2 +-
+ 2 files changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/crypto/qat/qat_common/qat_uclo.c b/drivers/crypto/qat/qat_common/qat_uclo.c
+index 2580091..1e27f9f 100644
+--- a/drivers/crypto/qat/qat_common/qat_uclo.c
++++ b/drivers/crypto/qat/qat_common/qat_uclo.c
+@@ -256,10 +256,6 @@ static int qat_uclo_fetch_initmem_ae(struct icp_qat_fw_loader_handle *handle,
+ 		pr_err("QAT: Parse num for AE number failed\n");
+ 		return -EINVAL;
+ 	}
+-	if (!test_bit(*ae, (unsigned long *)&handle->hal_handle->ae_mask)) {
+-		pr_err("QAT: ae %d to be init is fused off\n", *ae);
+-		return -EINVAL;
+-	}
+ 	if (*ae >= ICP_QAT_UCLO_MAX_AE) {
+ 		pr_err("QAT: ae %d out of range\n", *ae);
+ 		return -EINVAL;
+@@ -456,7 +452,7 @@ static int qat_uclo_init_memory(struct icp_qat_fw_loader_handle *handle)
+ 			(sizeof(struct icp_qat_uof_memvar_attr) *
+ 			initmem->val_attr_num));
+ 	}
+-	for (ae = 0; ae < ICP_QAT_UCLO_MAX_AE; ae++) {
++	for (ae = 0; ae < handle->hal_handle->ae_max_num; ae++) {
+ 		if (qat_hal_batch_wr_lm(handle, ae,
+ 					obj_handle->lm_init_tab[ae])) {
+ 			pr_err("QAT: fail to batch init lmem for AE %d\n", ae);
+diff --git a/drivers/crypto/qat/qat_dh895xcc/adf_dh895xcc_hw_data.h b/drivers/crypto/qat/qat_dh895xcc/adf_dh895xcc_hw_data.h
+index c5ce236..b707f29 100644
+--- a/drivers/crypto/qat/qat_dh895xcc/adf_dh895xcc_hw_data.h
++++ b/drivers/crypto/qat/qat_dh895xcc/adf_dh895xcc_hw_data.h
+@@ -59,7 +59,7 @@
+ #define ADF_DH895XCC_FUSECTL_SKU_4 0x3
+ #define ADF_DH895XCC_MAX_ACCELERATORS 6
+ #define ADF_DH895XCC_MAX_ACCELENGINES 12
+-#define ADF_DH895XCC_ACCELERATORS_REG_OFFSET 18
++#define ADF_DH895XCC_ACCELERATORS_REG_OFFSET 13
+ #define ADF_DH895XCC_ACCELERATORS_MASK 0x3F
+ #define ADF_DH895XCC_ACCELENGINES_MASK 0xFFF
+ #define ADF_DH895XCC_LEGFUSE_OFFSET 0x4C
+-- 
+2.1.4
+
