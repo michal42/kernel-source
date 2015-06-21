@@ -1,0 +1,58 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Tue, 7 Apr 2015 16:55:27 -0700
+Subject: e1000, e1000e: Use dma_rmb instead of rmb for descriptor read
+ ordering
+Patch-mainline: v4.1-rc1
+Git-commit: 837a1dba0078d0bad755f6cb13a48c1623d11ff5 (partial)
+References: bug#922851 FATE#318528
+
+This change replaces calls to rmb with dma_rmb in the case where we want to
+order all follow-on descriptor reads after the check for the descriptor
+status bit.
+
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Acked-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/intel/e1000e/netdev.c |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/ethernet/intel/e1000e/netdev.c
++++ b/drivers/net/ethernet/intel/e1000e/netdev.c
+@@ -947,7 +947,7 @@ static bool e1000_clean_rx_irq(struct e1
+ 		if (*work_done >= work_to_do)
+ 			break;
+ 		(*work_done)++;
+-		rmb();	/* read descriptor and rx_buffer_info after status DD */
++		dma_rmb();	/* read descriptor and rx_buffer_info after status DD */
+ 
+ 		skb = buffer_info->skb;
+ 		buffer_info->skb = NULL;
+@@ -1232,7 +1232,7 @@ static bool e1000_clean_tx_irq(struct e1
+ 	       (count < tx_ring->count)) {
+ 		bool cleaned = false;
+ 
+-		rmb();		/* read buffer_info after eop_desc */
++		dma_rmb();		/* read buffer_info after eop_desc */
+ 		for (; !cleaned; count++) {
+ 			tx_desc = E1000_TX_DESC(*tx_ring, i);
+ 			buffer_info = &tx_ring->buffer_info[i];
+@@ -1332,7 +1332,7 @@ static bool e1000_clean_rx_irq_ps(struct
+ 			break;
+ 		(*work_done)++;
+ 		skb = buffer_info->skb;
+-		rmb();	/* read descriptor and rx_buffer_info after status DD */
++		dma_rmb();	/* read descriptor and rx_buffer_info after status DD */
+ 
+ 		/* in the packet split case this is header only */
+ 		prefetch(skb->data - NET_IP_ALIGN);
+@@ -1536,7 +1536,7 @@ static bool e1000_clean_jumbo_rx_irq(str
+ 		if (*work_done >= work_to_do)
+ 			break;
+ 		(*work_done)++;
+-		rmb();	/* read descriptor and rx_buffer_info after status DD */
++		dma_rmb();	/* read descriptor and rx_buffer_info after status DD */
+ 
+ 		skb = buffer_info->skb;
+ 		buffer_info->skb = NULL;
