@@ -1,0 +1,34 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Tue, 9 Dec 2014 19:40:56 -0800
+Subject: ethernet/intel: Use napi_alloc_skb
+Patch-mainline: v3.19-rc1
+Git-commit: 67fd893ee07db94bcef6c7537f8569b49ff124d4 (partial)
+References: bug#922851 FATE#318528
+
+This change replaces calls to netdev_alloc_skb_ip_align with
+napi_alloc_skb.  The advantage of napi_alloc_skb is currently the fact that
+the page allocation doesn't make use of any irq disable calls.
+
+There are few spots where I couldn't replace the calls as the buffer
+allocation routine is called as a part of init which is outside of the
+softirq context.
+
+Cc: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/intel/e1000e/netdev.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/intel/e1000e/netdev.c
++++ b/drivers/net/ethernet/intel/e1000e/netdev.c
+@@ -1016,7 +1016,7 @@ static bool e1000_clean_rx_irq(struct e1
+ 		 */
+ 		if (length < copybreak) {
+ 			struct sk_buff *new_skb =
+-			    netdev_alloc_skb_ip_align(netdev, length);
++				napi_alloc_skb(&adapter->napi, length);
+ 			if (new_skb) {
+ 				skb_copy_to_linear_data_offset(new_skb,
+ 							       -NET_IP_ALIGN,
