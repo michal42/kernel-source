@@ -1,0 +1,74 @@
+From: Thomas Graf <tgraf@suug.ch>
+Date: Fri, 10 Apr 2015 15:52:37 +0200
+Subject: e1000e: Move pm_qos_req to e1000e adapter
+Patch-mainline: v4.1-rc1
+Git-commit: e2c6544829f8df396a0a233c86d5ee78f405ffef
+References: bug#922851 FATE#318528
+
+e1000e is the only driver requiring pm_qos_req, instead of causing
+every device to waste up to 240 bytes. Allocate it for the specific
+driver.
+
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+Acked-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/intel/e1000e/e1000.h  |    1 +
+ drivers/net/ethernet/intel/e1000e/netdev.c |    8 ++++----
+ include/linux/netdevice.h                  |    2 --
+ 3 files changed, 5 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/intel/e1000e/e1000.h
++++ b/drivers/net/ethernet/intel/e1000e/e1000.h
+@@ -343,6 +343,7 @@ struct e1000_adapter {
+ 	struct timecounter tc;
+ 	struct ptp_clock *ptp_clock;
+ 	struct ptp_clock_info ptp_clock_info;
++	struct pm_qos_request pm_qos_req;
+ 
+ 	u16 eee_advert;
+ };
+--- a/drivers/net/ethernet/intel/e1000e/netdev.c
++++ b/drivers/net/ethernet/intel/e1000e/netdev.c
+@@ -3297,9 +3297,9 @@ static void e1000_configure_rx(struct e1
+ 			ew32(RXDCTL(0), rxdctl | 0x3);
+ 		}
+ 
+-		pm_qos_update_request(&adapter->netdev->pm_qos_req, lat);
++		pm_qos_update_request(&adapter->pm_qos_req, lat);
+ 	} else {
+-		pm_qos_update_request(&adapter->netdev->pm_qos_req,
++		pm_qos_update_request(&adapter->pm_qos_req,
+ 				      PM_QOS_DEFAULT_VALUE);
+ 	}
+ 
+@@ -4403,7 +4403,7 @@ static int e1000_open(struct net_device
+ 		e1000_update_mng_vlan(adapter);
+ 
+ 	/* DMA latency requirement to workaround jumbo issue */
+-	pm_qos_add_request(&adapter->netdev->pm_qos_req, PM_QOS_CPU_DMA_LATENCY,
++	pm_qos_add_request(&adapter->pm_qos_req, PM_QOS_CPU_DMA_LATENCY,
+ 			   PM_QOS_DEFAULT_VALUE);
+ 
+ 	/* before we allocate an interrupt, we must be ready to handle it.
+@@ -4514,7 +4514,7 @@ static int e1000_close(struct net_device
+ 	    !test_bit(__E1000_TESTING, &adapter->state))
+ 		e1000e_release_hw_control(adapter);
+ 
+-	pm_qos_remove_request(&adapter->netdev->pm_qos_req);
++	pm_qos_remove_request(&adapter->pm_qos_req);
+ 
+ 	pm_runtime_put_sync(&pdev->dev);
+ 
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1456,8 +1456,6 @@ struct net_device {
+ 
+ 	/* group the device belongs to */
+ 	int group;
+-
+-	struct pm_qos_request	pm_qos_req;
+ };
+ #define to_net_dev(d) container_of(d, struct net_device, dev)
+ 
