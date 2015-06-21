@@ -1,0 +1,53 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Sat, 2 May 2015 01:09:59 -0700
+Subject: e1000e: Do not allow CRC stripping to be disabled on 82579 w/ jumbo
+ frames
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-next.git
+Git-commit: 55e7fe5b9cd94e6accb128e6a1e5902e9018deef
+References: bug#922851 FATE#318528
+
+ The driver wasn't allowing jumbo frames to be
+ enabled when CRC stripping was disabled, however it was allowing CRC
+ stripping to be disabled while jumbo frames were enabled.  This fixes that by
+ making it so that the NETIF_F_RXFCS flag cannot be set when jumbo frames are
+ enabled on 82579 and newer parts.
+
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/intel/e1000e/netdev.c |   14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+--- a/drivers/net/ethernet/intel/e1000e/netdev.c
++++ b/drivers/net/ethernet/intel/e1000e/netdev.c
+@@ -6670,6 +6670,19 @@ static void e1000_eeprom_checks(struct e
+ 	}
+ }
+ 
++static netdev_features_t e1000_fix_features(struct net_device *netdev,
++					    netdev_features_t features)
++{
++	struct e1000_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++
++	/* Jumbo frame workaround on 82579 and newer requires CRC be stripped */
++	if ((hw->mac.type >= e1000_pch2lan) && (netdev->mtu > ETH_DATA_LEN))
++		features &= ~NETIF_F_RXFCS;
++
++	return features;
++}
++
+ static int e1000_set_features(struct net_device *netdev,
+ 			      netdev_features_t features)
+ {
+@@ -6726,6 +6739,7 @@ static const struct net_device_ops e1000
+ 	.ndo_poll_controller	= e1000_netpoll,
+ #endif
+ 	.ndo_set_features = e1000_set_features,
++	.ndo_fix_features = e1000_fix_features,
+ };
+ 
+ /**
