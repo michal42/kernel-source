@@ -1,0 +1,59 @@
+From: David Hildenbrand <dahi@linux.vnet.ibm.com>
+Subject: virtio: virtio_break_device() to mark all virtqueues broken.
+Patch-mainline: v3.16-rc1
+Git-commit: e2dcdfe95c0bd67e37db6057edd9c4ee1f1c7b17
+References: bnc#931860, LTC#VS1256
+
+Summary:     s390/virtio: Performance enhanced paravirtualized I/O drivers
+Description: This feature enhances performance of the paravirtualized I/O
+             drivers on s390 with focus on virtio and virtio-ccw.
+
+Upstream-Description:
+
+             virtio: virtio_break_device() to mark all virtqueues broken.
+
+             Good for post-apocalyptic scenarios, like S/390 hotplug.
+
+             Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+
+
+Signed-off-by: David Hildenbrand <dahi@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/virtio/virtio_ring.c |   15 +++++++++++++++
+ include/linux/virtio.h       |    2 ++
+ 2 files changed, 17 insertions(+)
+
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -864,4 +864,19 @@ bool virtqueue_is_broken(struct virtqueu
+ }
+ EXPORT_SYMBOL_GPL(virtqueue_is_broken);
+ 
++/*
++ * This should prevent the device from being used, allowing drivers to
++ * recover.  You may need to grab appropriate locks to flush.
++ */
++void virtio_break_device(struct virtio_device *dev)
++{
++	struct virtqueue *_vq;
++
++	list_for_each_entry(_vq, &dev->vqs, list) {
++		struct vring_virtqueue *vq = to_vvq(_vq);
++		vq->broken = true;
++	}
++}
++EXPORT_SYMBOL_GPL(virtio_break_device);
++
+ MODULE_LICENSE("GPL");
+--- a/include/linux/virtio.h
++++ b/include/linux/virtio.h
+@@ -106,6 +106,8 @@ static inline struct virtio_device *dev_
+ int register_virtio_device(struct virtio_device *dev);
+ void unregister_virtio_device(struct virtio_device *dev);
+ 
++void virtio_break_device(struct virtio_device *dev);
++
+ /**
+  * virtio_driver - operations for a virtio I/O driver
+  * @driver: underlying device driver (populate name and owner).

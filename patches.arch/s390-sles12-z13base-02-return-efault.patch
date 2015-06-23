@@ -1,0 +1,59 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/compat,signal: change return values to -EFAULT
+Patch-mainline: v3.13-rc1
+Git-commit: f8544ec4f49ffb9cb93419e41f0d8c0fb39eb78f
+References: bnc#929879, LTC#KRN1514
+
+Summary:     s390: z13 base performance
+Description: Provide the backport of a minimum set of upstream patches
+             to optimize the base performance of the IBM z13 machine.
+
+Upstream-Description:
+
+             s390/compat,signal: change return values to -EFAULT
+
+             Instead of returnin the number of bytes not copied and/or -EFAULT let the
+             signal handler helper functions always return -EFAULT if a user space
+             access failed.
+             This doesn't fix a bug in the current code, but makes is harder to get it
+             wrong in the future.
+             Also "smatch" won't complain anymore about the fact that the number of
+             remaining bytes gets returned instead of -EFAULT.
+
+             Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/compat_signal.c |   12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+--- a/arch/s390/kernel/compat_signal.c
++++ b/arch/s390/kernel/compat_signal.c
+@@ -219,18 +219,18 @@ static int save_sigregs_gprs_high(struct
+ 
+ 	for (i = 0; i < NUM_GPRS; i++)
+ 		gprs_high[i] = regs->gprs[i] >> 32;
+-
+-	return __copy_to_user(uregs, &gprs_high, sizeof(gprs_high));
++	if (__copy_to_user(uregs, &gprs_high, sizeof(gprs_high)))
++		return -EFAULT;
++	return 0;
+ }
+ 
+ static int restore_sigregs_gprs_high(struct pt_regs *regs, __u32 __user *uregs)
+ {
+ 	__u32 gprs_high[NUM_GPRS];
+-	int err, i;
++	int i;
+ 
+-	err = __copy_from_user(&gprs_high, uregs, sizeof(gprs_high));
+-	if (err)
+-		return err;
++	if (__copy_from_user(&gprs_high, uregs, sizeof(gprs_high)))
++		return -EFAULT;
+ 	for (i = 0; i < NUM_GPRS; i++)
+ 		*(__u32 *)&regs->gprs[i] = gprs_high[i];
+ 	return 0;
