@@ -1,0 +1,78 @@
+From: Mahesh Rajashekhara <Mahesh.Rajashekhara@pmcs.com>
+Date: Thu, 26 Mar 2015 10:41:31 -0400
+Subject: aacraid: AIF raw device remove support
+References: bsc#924073, FATE#318599
+Git-Commit: dab04b0151975103ed6c56a0c03e66dd85f6c158
+Patch-Mainline: v4.1-rc1
+
+Signed-off-by: Mahesh Rajashekhara <Mahesh.Rajashekhara@pmcs.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Reviewed-by: Murthy Bhat <Murthy.Bhat@pmcs.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Signed-off-by: Johannes Thumshirn <jthumshirn@suse.de>
+---
+ drivers/scsi/aacraid/aacraid.h |  3 +++
+ drivers/scsi/aacraid/commsup.c | 33 +++++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/drivers/scsi/aacraid/aacraid.h b/drivers/scsi/aacraid/aacraid.h
+index 42749e6..9009b50 100644
+--- a/drivers/scsi/aacraid/aacraid.h
++++ b/drivers/scsi/aacraid/aacraid.h
+@@ -2065,6 +2065,9 @@ extern struct aac_common aac_config;
+ /* PMC NEW COMM: Request the event data */
+ #define		AifReqEvent		200
+ 
++/* RAW device deleted */
++#define		AifRawDeviceRemove	203
++
+ /*
+  *	Adapter Initiated FIB command structures. Start with the adapter
+  *	initiated FIBs that really come from the adapter, and get responded
+diff --git a/drivers/scsi/aacraid/commsup.c b/drivers/scsi/aacraid/commsup.c
+index 7b9c0e5..7faa07b 100644
+--- a/drivers/scsi/aacraid/commsup.c
++++ b/drivers/scsi/aacraid/commsup.c
+@@ -883,6 +883,39 @@ static void aac_handle_aif(struct aac_dev * dev, struct fib * fibptr)
+ 	switch (le32_to_cpu(aifcmd->command)) {
+ 	case AifCmdDriverNotify:
+ 		switch (le32_to_cpu(((__le32 *)aifcmd->data)[0])) {
++		case AifRawDeviceRemove:
++			container = le32_to_cpu(((__le32 *)aifcmd->data)[1]);
++			if ((container >> 28)) {
++				container = (u32)-1;
++				break;
++			}
++			channel = (container >> 24) & 0xF;
++			if (channel >= dev->maximum_num_channels) {
++				container = (u32)-1;
++				break;
++			}
++			id = container & 0xFFFF;
++			if (id >= dev->maximum_num_physicals) {
++				container = (u32)-1;
++				break;
++			}
++			lun = (container >> 16) & 0xFF;
++			container = (u32)-1;
++			channel = aac_phys_to_logical(channel);
++			device_config_needed =
++			  (((__le32 *)aifcmd->data)[0] ==
++			    cpu_to_le32(AifRawDeviceRemove)) ? DELETE : ADD;
++
++			if (device_config_needed == ADD) {
++				device = scsi_device_lookup(
++					dev->scsi_host_ptr,
++					channel, id, lun);
++				if (device) {
++					scsi_remove_device(device);
++					scsi_device_put(device);
++				}
++			}
++			break;
+ 		/*
+ 		 *	Morph or Expand complete
+ 		 */
+-- 
+2.4.3
+
