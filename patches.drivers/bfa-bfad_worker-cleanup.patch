@@ -1,0 +1,61 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Thu, 16 Apr 2015 12:48:29 -0700
+Subject: bfa: bfad_worker cleanup
+References: bnc#922051,FATE#318601
+Patch-Mainline: v4.1-rc1
+Git-commit: 8f7d3f0f1ed5dce6ea7b833ec19cabe61a6e7ff8
+
+This kthread is not loop at all due to break at the end of the loop.  Make
+that function linear, with no while loop.
+
+And remove an unnecessary cast.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Cc: Anil Gurumurthy <anil.gurumurthy@qlogic.com>
+Cc: James Bottomley <James.Bottomley@HansenPartnership.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/bfa/bfad.c | 22 +++++++++-------------
+ 1 file changed, 9 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/scsi/bfa/bfad.c b/drivers/scsi/bfa/bfad.c
+index bb93180..639f8ca 100644
+--- a/drivers/scsi/bfa/bfad.c
++++ b/drivers/scsi/bfa/bfad.c
+@@ -1079,22 +1079,18 @@ bfad_start_ops(struct bfad_s *bfad) {
+ int
+ bfad_worker(void *ptr)
+ {
+-	struct bfad_s *bfad;
+-	unsigned long   flags;
+-
+-	bfad = (struct bfad_s *)ptr;
++	struct bfad_s *bfad = ptr;
++	unsigned long flags;
+ 
+-	while (!kthread_should_stop()) {
++	if (kthread_should_stop())
++		return 0;
+ 
+-		/* Send event BFAD_E_INIT_SUCCESS */
+-		bfa_sm_send_event(bfad, BFAD_E_INIT_SUCCESS);
++	/* Send event BFAD_E_INIT_SUCCESS */
++	bfa_sm_send_event(bfad, BFAD_E_INIT_SUCCESS);
+ 
+-		spin_lock_irqsave(&bfad->bfad_lock, flags);
+-		bfad->bfad_tsk = NULL;
+-		spin_unlock_irqrestore(&bfad->bfad_lock, flags);
+-
+-		break;
+-	}
++	spin_lock_irqsave(&bfad->bfad_lock, flags);
++	bfad->bfad_tsk = NULL;
++	spin_unlock_irqrestore(&bfad->bfad_lock, flags);
+ 
+ 	return 0;
+ }
+-- 
+1.8.5.2
+
