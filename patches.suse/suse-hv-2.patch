@@ -1,0 +1,37 @@
+From: "K. Y. Srinivasan" <kys@microsoft.com>
+Date: Tue, 23 Jun 2015 11:13:18 -0700
+Patch-mainline: never
+Subject: Drivers: hv: vmbus: Permit sending of packets without payload
+
+The guest may have to send a completion packet back to the host.
+To support this usage, permit sending a packet without a payload -
+we would be only sending the descriptor in this case.
+
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/channel.c |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/hv/channel.c b/drivers/hv/channel.c
+index 603ce97..c4dcab0 100644
+--- a/drivers/hv/channel.c
++++ b/drivers/hv/channel.c
+@@ -601,6 +601,7 @@ int vmbus_sendpacket_ctl(struct vmbus_channel *channel, void *buffer,
+ 	u64 aligned_data = 0;
+ 	int ret;
+ 	bool signal = false;
++	int num_vecs = ((bufferlen != 0) ? 3 : 1);
+ 
+ 
+ 	/* Setup the descriptor */
+@@ -618,7 +619,8 @@ int vmbus_sendpacket_ctl(struct vmbus_channel *channel, void *buffer,
+ 	bufferlist[2].iov_base = &aligned_data;
+ 	bufferlist[2].iov_len = (packetlen_aligned - packetlen);
+ 
+-	ret = hv_ringbuffer_write(&channel->outbound, bufferlist, 3, &signal);
++	ret = hv_ringbuffer_write(&channel->outbound, bufferlist, num_vecs,
++				  &signal);
+ 
+ 	/*
+ 	 * Signalling the host is conditional on many factors:
