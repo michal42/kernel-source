@@ -1,0 +1,84 @@
+From: Mahesh Rajashekhara <Mahesh.Rajashekhara@pmcs.com>
+Date: Thu, 26 Mar 2015 10:41:29 -0400
+Subject: aacraid: IOCTL fix
+References: bsc#924073, FATE#318599
+Git-Commit: f9c4259678cbde854a4e94398d66ef379178fd7c
+Patch-Mainline: v4.1-rc1
+
+After getting the platform shutdown command "VM_CloseAll" response from the
+firmware, driver was getting configuration IOCTL request from the upper layers
+and it sends down to firmware. This causes firmware assert issue.
+
+This patch fixes the firmware assert issue. During the shutdown, if driver
+gets commands from the upper layer, driver sends error code to the upper
+layers.
+
+Signed-off-by: Mahesh Rajashekhara <Mahesh.Rajashekhara@pmcs.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Reviewed-by: Murthy Bhat <Murthy.Bhat@pmcs.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Signed-off-by: Johannes Thumshirn <jthumshirn@suse.de>
+---
+ drivers/scsi/aacraid/aacraid.h  | 1 +
+ drivers/scsi/aacraid/comminit.c | 3 +++
+ drivers/scsi/aacraid/linit.c    | 4 +++-
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/scsi/aacraid/aacraid.h b/drivers/scsi/aacraid/aacraid.h
+index d5522ae..6baefcc 100644
+--- a/drivers/scsi/aacraid/aacraid.h
++++ b/drivers/scsi/aacraid/aacraid.h
+@@ -1222,6 +1222,7 @@ struct aac_dev
+ 	int			msi_enabled;	/* MSI/MSI-X enabled */
+ 	struct msix_entry	msixentry[AAC_MAX_MSIX];
+ 	struct aac_msix_ctx	aac_msix[AAC_MAX_MSIX]; /* context */
++	u8			adapter_shutdown;
+ };
+ 
+ #define aac_adapter_interrupt(dev) \
+diff --git a/drivers/scsi/aacraid/comminit.c b/drivers/scsi/aacraid/comminit.c
+index 284b1c5..27432b9 100644
+--- a/drivers/scsi/aacraid/comminit.c
++++ b/drivers/scsi/aacraid/comminit.c
+@@ -231,6 +231,7 @@ int aac_send_shutdown(struct aac_dev * dev)
+ 	/* FIB should be freed only after getting the response from the F/W */
+ 	if (status != -ERESTARTSYS)
+ 		aac_fib_free(fibctx);
++	dev->adapter_shutdown = 1;
+ 	if ((dev->pdev->device == PMC_DEVICE_S7 ||
+ 	     dev->pdev->device == PMC_DEVICE_S8 ||
+ 	     dev->pdev->device == PMC_DEVICE_S9) &&
+@@ -400,6 +401,7 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
+ 	}
+ 	dev->max_msix = 0;
+ 	dev->msi_enabled = 0;
++	dev->adapter_shutdown = 0;
+ 	if ((!aac_adapter_sync_cmd(dev, GET_COMM_PREFERRED_SETTINGS,
+ 	  0, 0, 0, 0, 0, 0,
+ 	  status+0, status+1, status+2, status+3, status+4))
+@@ -511,6 +513,7 @@ static void aac_define_int_mode(struct aac_dev *dev)
+ 
+ 	int i, msi_count;
+ 
++	msi_count = i = 0;
+ 	/* max. vectors from GET_COMM_PREFERRED_SETTINGS */
+ 	if (dev->max_msix == 0 ||
+ 	    dev->pdev->device == PMC_DEVICE_S6 ||
+diff --git a/drivers/scsi/aacraid/linit.c b/drivers/scsi/aacraid/linit.c
+index 358b750..b446446 100644
+--- a/drivers/scsi/aacraid/linit.c
++++ b/drivers/scsi/aacraid/linit.c
+@@ -717,7 +717,9 @@ static long aac_cfg_ioctl(struct file *file,
+ 		unsigned int cmd, unsigned long arg)
+ {
+ 	int ret;
+-	if (!capable(CAP_SYS_RAWIO))
++	struct aac_dev *aac;
++	aac = (struct aac_dev *)file->private_data;
++	if (!capable(CAP_SYS_RAWIO) || aac->adapter_shutdown)
+ 		return -EPERM;
+ 	mutex_lock(&aac_mutex);
+ 	ret = aac_do_ioctl(file->private_data, cmd, (void __user *)arg);
+-- 
+2.4.3
+
