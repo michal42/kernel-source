@@ -1,0 +1,72 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 12 Jun 2015 10:14:02 +0200
+Subject: iommu/vt-d: Detect pre enabled translation
+Git-commit: 4158c2eca3c77ed3cccdcaeab153aad4e433369c
+Patch-mainline: v4.2-rc1
+References: bsc#856382
+
+Add code to detect whether translation is already enabled in
+the IOMMU. Save this state in a flags field added to
+struct intel_iommu.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 19 +++++++++++++++++++
+ include/linux/intel-iommu.h |  4 ++++
+ 2 files changed, 23 insertions(+)
+
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -455,6 +455,20 @@
+ 
+ static struct iommu_ops intel_iommu_ops;
+ 
++static bool translation_pre_enabled(struct intel_iommu *iommu)
++{
++	return (iommu->flags & VTD_FLAG_TRANS_PRE_ENABLED);
++}
++
++static void init_translation_status(struct intel_iommu *iommu)
++{
++	u32 gsts;
++
++	gsts = readl(iommu->reg + DMAR_GSTS_REG);
++	if (gsts & DMA_GSTS_TES)
++		iommu->flags |= VTD_FLAG_TRANS_PRE_ENABLED;
++}
++
+ static int __init intel_iommu_setup(char *str)
+ {
+ 	if (!str)
+@@ -2757,6 +2771,11 @@
+ 		if (ret)
+ 			goto free_iommu;
+ 
++		init_translation_status(iommu);
++
++		if (translation_pre_enabled(iommu))
++			pr_info("Translation already enabled - trying to copy translation structures\n");
++
+ 		/*
+ 		 * TBD:
+ 		 * we could share the same root & context tables
+--- a/include/linux/intel-iommu.h
++++ b/include/linux/intel-iommu.h
+@@ -307,6 +307,9 @@
+ 	MAX_SR_DMAR_REGS
+ };
+ 
++#define VTD_FLAG_TRANS_PRE_ENABLED	(1 << 0)
++#define VTD_FLAG_IRQ_REMAP_PRE_ENABLED	(1 << 1)
++
+ struct intel_iommu {
+ 	void __iomem	*reg; /* Pointer to hardware regs, virtual addr */
+ 	u64 		reg_phys; /* physical address of hw register set */
+@@ -337,6 +340,7 @@
+ 	struct ir_table *ir_table;	/* Interrupt remapping info */
+ #endif
+ 	int		node;
++	u32		flags;      /* Software defined flags */
+ };
+ 
+ static inline void __iommu_flush_cache(
