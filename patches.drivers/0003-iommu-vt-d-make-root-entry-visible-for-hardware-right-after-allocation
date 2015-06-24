@@ -1,0 +1,43 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 12 Jun 2015 09:18:53 +0200
+Subject: iommu/vt-d: Make root entry visible for hardware right after
+ allocation
+Git-commit: 5f0a7f7614a9d99325ac8d618f1cdf7a3014287c
+Patch-mainline: v4.2-rc1
+References: bsc#856382
+
+In case there was an old root entry, make our new one
+visible immediately after it was allocated.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2765,6 +2765,12 @@
+ 		ret = iommu_alloc_root_entry(iommu);
+ 		if (ret)
+ 			goto free_iommu;
++
++		iommu_flush_write_buffer(iommu);
++		iommu_set_root_entry(iommu);
++		iommu->flush.flush_context(iommu, 0, 0, 0, DMA_CCMD_GLOBAL_INVL);
++		iommu->flush.flush_iotlb(iommu, 0, 0, 0, DMA_TLB_GLOBAL_FLUSH);
++
+ 		if (!ecap_pass_through(iommu->ecap))
+ 			hw_pass_through = 0;
+ 	}
+@@ -2841,11 +2847,6 @@
+ 		if (ret)
+ 			goto free_iommu;
+ 
+-		iommu_set_root_entry(iommu);
+-
+-		iommu->flush.flush_context(iommu, 0, 0, 0, DMA_CCMD_GLOBAL_INVL);
+-		iommu->flush.flush_iotlb(iommu, 0, 0, 0, DMA_TLB_GLOBAL_FLUSH);
+-
+ 		ret = iommu_enable_translation(iommu);
+ 		if (ret)
+ 			goto free_iommu;
