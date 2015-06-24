@@ -1,0 +1,73 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 12 Jun 2015 14:35:54 +0200
+Subject: iommu/vt-d: Set IRTA in intel_setup_irq_remapping
+Git-commit: d4d1c0f3d6a9558fe3857853afdf2f93e1679c03
+Patch-mainline: v4.2-rc1
+References: bsc#856382
+
+This way we can give the hardware the new IR table right
+after it has been allocated and initialized.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel_irq_remapping.c | 19 ++++++++++++++-----
+ 1 file changed, 14 insertions(+), 5 deletions(-)
+
+--- a/drivers/iommu/intel_irq_remapping.c
++++ b/drivers/iommu/intel_irq_remapping.c
+@@ -400,9 +400,9 @@
+ 
+ static void iommu_set_irq_remapping(struct intel_iommu *iommu, int mode)
+ {
++	unsigned long flags;
+ 	u64 addr;
+ 	u32 sts;
+-	unsigned long flags;
+ 
+ 	addr = virt_to_phys((void *)iommu->ir_table->base);
+ 
+@@ -420,10 +420,16 @@
+ 	raw_spin_unlock_irqrestore(&iommu->register_lock, flags);
+ 
+ 	/*
+-	 * global invalidation of interrupt entry cache before enabling
+-	 * interrupt-remapping.
++	 * Global invalidation of interrupt entry cache to make sure the
++	 * hardware uses the new irq remapping table.
+ 	 */
+ 	qi_global_iec(iommu);
++}
++
++static void iommu_enable_irq_remapping(struct intel_iommu *iommu)
++{
++	unsigned long flags;
++	u32 sts;
+ 
+ 	raw_spin_lock_irqsave(&iommu->register_lock, flags);
+ 
+@@ -498,6 +504,8 @@
+ 		}
+ 	}
+ 
++	iommu_set_irq_remapping(iommu, eim_mode);
++
+ 	return 0;
+ 
+ out_free_bitmap:
+@@ -672,7 +680,7 @@
+ 	 * Setup Interrupt-remapping for all the DRHD's now.
+ 	 */
+ 	for_each_iommu(iommu, drhd) {
+-		iommu_set_irq_remapping(iommu, eim_mode);
++		iommu_enable_irq_remapping(iommu);
+ 		setup = 1;
+ 	}
+ 
+@@ -904,6 +912,7 @@
+ 
+ 		/* Set up interrupt remapping for iommu.*/
+ 		iommu_set_irq_remapping(iommu, eim);
++		iommu_enable_irq_remapping(iommu);
+ 		setup = 1;
+ 	}
+ 
