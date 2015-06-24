@@ -1,0 +1,127 @@
+From: James Smart <james.smart@emulex.com>
+Date: Tue, 7 Apr 2015 15:07:17 -0400
+Subject: lpfc: Parse the new 20G, 25G and 40G link speeds in the lpfc driver
+References: bnc#921782,FATE#318560
+Patch-Mainline: v4.1-rc1
+Git-commit: 26d830ec7fb660130a00f5d27601f37da70a4c1e
+
+Signed-off-by: Dick Kennedy <dick.kennedy@emulex.com>
+Signed-off-by: James Smart <james.smart@emulex.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/lpfc/lpfc_hw4.h  |  5 ++++-
+ drivers/scsi/lpfc/lpfc_init.c | 38 ++++++++++++++++++++++++++------------
+ 2 files changed, 30 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/scsi/lpfc/lpfc_hw4.h b/drivers/scsi/lpfc/lpfc_hw4.h
+index 3121ec4..0b4c5afd6 100644
+--- a/drivers/scsi/lpfc/lpfc_hw4.h
++++ b/drivers/scsi/lpfc/lpfc_hw4.h
+@@ -3085,6 +3085,9 @@ struct lpfc_acqe_link {
+ #define LPFC_ASYNC_LINK_SPEED_100MBPS		0x2
+ #define LPFC_ASYNC_LINK_SPEED_1GBPS		0x3
+ #define LPFC_ASYNC_LINK_SPEED_10GBPS		0x4
++#define LPFC_ASYNC_LINK_SPEED_20GBPS		0x5
++#define LPFC_ASYNC_LINK_SPEED_25GBPS		0x6
++#define LPFC_ASYNC_LINK_SPEED_40GBPS		0x7
+ #define lpfc_acqe_link_duplex_SHIFT		16
+ #define lpfc_acqe_link_duplex_MASK		0x000000FF
+ #define lpfc_acqe_link_duplex_WORD		word0
+@@ -3166,7 +3169,7 @@ struct lpfc_acqe_fc_la {
+ #define lpfc_acqe_fc_la_speed_SHIFT		24
+ #define lpfc_acqe_fc_la_speed_MASK		0x000000FF
+ #define lpfc_acqe_fc_la_speed_WORD		word0
+-#define LPFC_FC_LA_SPEED_UNKOWN		0x0
++#define LPFC_FC_LA_SPEED_UNKNOWN		0x0
+ #define LPFC_FC_LA_SPEED_1G		0x1
+ #define LPFC_FC_LA_SPEED_2G		0x2
+ #define LPFC_FC_LA_SPEED_4G		0x4
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 9e9a50e..c66d027 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -3691,6 +3691,11 @@ lpfc_sli4_parse_latt_link_speed(struct lpfc_hba *phba,
+ 	case LPFC_ASYNC_LINK_SPEED_10GBPS:
+ 		link_speed = LPFC_LINK_SPEED_10GHZ;
+ 		break;
++	case LPFC_ASYNC_LINK_SPEED_20GBPS:
++	case LPFC_ASYNC_LINK_SPEED_25GBPS:
++	case LPFC_ASYNC_LINK_SPEED_40GBPS:
++		link_speed = LPFC_LINK_SPEED_UNKNOWN;
++		break;
+ 	default:
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+ 				"0483 Invalid link-attention link speed: x%x\n",
+@@ -3762,46 +3767,55 @@ lpfc_sli4_port_speed_parse(struct lpfc_hba *phba, uint32_t evt_code,
+ 	switch (evt_code) {
+ 	case LPFC_TRAILER_CODE_LINK:
+ 		switch (speed_code) {
+-		case LPFC_EVT_CODE_LINK_NO_LINK:
++		case LPFC_ASYNC_LINK_SPEED_ZERO:
+ 			port_speed = 0;
+ 			break;
+-		case LPFC_EVT_CODE_LINK_10_MBIT:
++		case LPFC_ASYNC_LINK_SPEED_10MBPS:
+ 			port_speed = 10;
+ 			break;
+-		case LPFC_EVT_CODE_LINK_100_MBIT:
++		case LPFC_ASYNC_LINK_SPEED_100MBPS:
+ 			port_speed = 100;
+ 			break;
+-		case LPFC_EVT_CODE_LINK_1_GBIT:
++		case LPFC_ASYNC_LINK_SPEED_1GBPS:
+ 			port_speed = 1000;
+ 			break;
+-		case LPFC_EVT_CODE_LINK_10_GBIT:
++		case LPFC_ASYNC_LINK_SPEED_10GBPS:
+ 			port_speed = 10000;
+ 			break;
++		case LPFC_ASYNC_LINK_SPEED_20GBPS:
++			port_speed = 20000;
++			break;
++		case LPFC_ASYNC_LINK_SPEED_25GBPS:
++			port_speed = 25000;
++			break;
++		case LPFC_ASYNC_LINK_SPEED_40GBPS:
++			port_speed = 40000;
++			break;
+ 		default:
+ 			port_speed = 0;
+ 		}
+ 		break;
+ 	case LPFC_TRAILER_CODE_FC:
+ 		switch (speed_code) {
+-		case LPFC_EVT_CODE_FC_NO_LINK:
++		case LPFC_FC_LA_SPEED_UNKNOWN:
+ 			port_speed = 0;
+ 			break;
+-		case LPFC_EVT_CODE_FC_1_GBAUD:
++		case LPFC_FC_LA_SPEED_1G:
+ 			port_speed = 1000;
+ 			break;
+-		case LPFC_EVT_CODE_FC_2_GBAUD:
++		case LPFC_FC_LA_SPEED_2G:
+ 			port_speed = 2000;
+ 			break;
+-		case LPFC_EVT_CODE_FC_4_GBAUD:
++		case LPFC_FC_LA_SPEED_4G:
+ 			port_speed = 4000;
+ 			break;
+-		case LPFC_EVT_CODE_FC_8_GBAUD:
++		case LPFC_FC_LA_SPEED_8G:
+ 			port_speed = 8000;
+ 			break;
+-		case LPFC_EVT_CODE_FC_10_GBAUD:
++		case LPFC_FC_LA_SPEED_10G:
+ 			port_speed = 10000;
+ 			break;
+-		case LPFC_EVT_CODE_FC_16_GBAUD:
++		case LPFC_FC_LA_SPEED_16G:
+ 			port_speed = 16000;
+ 			break;
+ 		default:
+-- 
+1.8.5.2
+
