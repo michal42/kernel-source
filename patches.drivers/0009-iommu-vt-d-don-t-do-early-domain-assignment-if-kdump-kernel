@@ -1,0 +1,61 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 12 Jun 2015 12:32:54 +0200
+Subject: iommu/vt-d: Don't do early domain assignment if kdump kernel
+Git-commit: a87f491890e994dca4bee64690d7e5183a19264e
+Patch-mainline: v4.2-rc1
+References: bsc#856382
+
+When we copied over context tables from an old kernel, we
+need to defer assignment of devices to domains until the
+device driver takes over. So skip this part of
+initialization when we copied over translation tables from
+the old kernel.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2950,6 +2950,7 @@
+ {
+ 	struct dmar_drhd_unit *drhd;
+ 	struct dmar_rmrr_unit *rmrr;
++	bool copied_tables = false;
+ 	struct device *dev;
+ 	struct intel_iommu *iommu;
+ 	int i, ret;
+@@ -3041,6 +3042,7 @@
+ 			} else {
+ 				pr_info("Copied translation tables from previous kernel for %s\n",
+ 					iommu->name);
++				copied_tables = true;
+ 			}
+ 		}
+ 
+@@ -3069,6 +3071,15 @@
+ 	check_tylersburg_isoch();
+ 
+ 	/*
++	 * If we copied translations from a previous kernel in the kdump
++	 * case, we can not assign the devices to domains now, as that
++	 * would eliminate the old mappings. So skip this part and defer
++	 * the assignment to device driver initialization time.
++	 */
++	if (copied_tables)
++		goto domains_done;
++
++	/*
+ 	 * If pass through is not set or not enabled, setup context entries for
+ 	 * identity mappings for rmrr, gfx, and isa and may fall back to static
+ 	 * identity mapping if iommu_identity_mapping is set.
+@@ -3107,6 +3118,8 @@
+ 
+ 	iommu_prepare_isa();
+ 
++domains_done:
++
+ 	/*
+ 	 * for each drhd
+ 	 *   enable fault log
