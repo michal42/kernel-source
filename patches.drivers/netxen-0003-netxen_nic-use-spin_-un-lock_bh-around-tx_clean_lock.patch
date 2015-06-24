@@ -1,0 +1,51 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Wed, 6 May 2015 09:09:18 -0400
+Subject: [PATCH 3/3] netxen_nic: use spin_[un]lock_bh around tx_clean_lock (2)
+Patch-mainline: v4.1-rc4
+Git-commit: 240b23c4269777abba4eba43acd1f53ec530bb7d
+References: bsc#922060 fate#318607
+
+This patch should have been part of the previous patch having the
+same summary. See  http://marc.info/?l=linux-kernel&m=143039470103795&w=2
+Unfortunately, I didn't check to see where else this lock was used before
+submitting that patch. This should take care of it for netxen_nic, as I
+did a thorough search this time.
+
+To recap from the original patch; although testing this driver with
+DEBUG_LOCKDEP and DEBUG_SPINLOCK enabled did not produce any traces,
+it would be more prudent in the case of tx_clean_lock to use _bh
+versions of spin_[un]lock, since this lock is manipulated in both
+the process and softirq contexts.
+
+This patch was tested for functionality and regressions with netperf
+and DEBUG_LOCKDEP and DEBUG_SPINLOCK enabled.
+
+Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+Acked-By: Neil Horman <nhorman@tuxdriver.com>
+Acked-By: Manish Chopra <manish.chopra@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Gary Ching-Pang Lin <glin@suse.com>
+---
+ drivers/net/ethernet/qlogic/netxen/netxen_nic_init.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/qlogic/netxen/netxen_nic_init.c
++++ b/drivers/net/ethernet/qlogic/netxen/netxen_nic_init.c
+@@ -1766,7 +1766,7 @@ int netxen_process_cmd_ring(struct netxe
+ 	int done = 0;
+ 	struct nx_host_tx_ring *tx_ring = adapter->tx_ring;
+ 
+-	if (!spin_trylock(&adapter->tx_clean_lock))
++	if (!spin_trylock_bh(&adapter->tx_clean_lock))
+ 		return 1;
+ 
+ 	sw_consumer = tx_ring->sw_consumer;
+@@ -1821,7 +1821,7 @@ int netxen_process_cmd_ring(struct netxe
+ 	 */
+ 	hw_consumer = le32_to_cpu(*(tx_ring->hw_consumer));
+ 	done = (sw_consumer == hw_consumer);
+-	spin_unlock(&adapter->tx_clean_lock);
++	spin_unlock_bh(&adapter->tx_clean_lock);
+ 
+ 	return done;
+ }
