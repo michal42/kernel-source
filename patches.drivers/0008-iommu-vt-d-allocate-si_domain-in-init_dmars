@@ -1,0 +1,53 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 12 Jun 2015 12:27:16 +0200
+Subject: iommu/vt-d: Allocate si_domain in init_dmars()
+Git-commit: 86080ccc223aabf8d0b85a504f4f06aa88e82fb3
+Patch-mainline: v4.2-rc1
+References: bsc#856382
+
+This seperates the allocation of the si_domain from its
+assignment to devices. It makes sure that the iommu=pt case
+still works in the kdump kernel, when we have to defer the
+assignment of devices to domains to device driver
+initialization time.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2712,10 +2712,6 @@
+ 	int i;
+ 	int ret = 0;
+ 
+-	ret = si_domain_init(hw);
+-	if (ret)
+-		return -EFAULT;
+-
+ 	for_each_pci_dev(pdev) {
+ 		ret = dev_prepare_static_identity_mapping(&pdev->dev, hw);
+ 		if (ret)
+@@ -2729,7 +2725,7 @@
+ 
+ 			if (dev->bus != &acpi_bus_type)
+ 				continue;
+-				
++
+ 			adev= to_acpi_device(dev);
+ 			mutex_lock(&adev->physical_node_lock);
+ 			list_for_each_entry(pn, &adev->physical_node_list, node) {
+@@ -3064,6 +3060,12 @@
+ 	iommu_identity_mapping |= IDENTMAP_GFX;
+ #endif
+ 
++	if (iommu_identity_mapping) {
++		ret = si_domain_init(hw_pass_through);
++		if (ret)
++			goto free_iommu;
++	}
++
+ 	check_tylersburg_isoch();
+ 
+ 	/*
