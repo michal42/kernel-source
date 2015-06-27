@@ -33,7 +33,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
 
 --- a/fs/btrfs/extent-tree.c
 +++ b/fs/btrfs/extent-tree.c
-@@ -8076,7 +8076,7 @@ int btrfs_drop_snapshot(struct btrfs_roo
+@@ -8172,7 +8172,7 @@ int btrfs_drop_snapshot(struct btrfs_roo
  	}
  
  	if (test_bit(BTRFS_ROOT_IN_RADIX, &root->state)) {
@@ -63,17 +63,18 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  	up_write(&fs_info->commit_root_sem);
  }
  
-@@ -250,7 +262,9 @@ loop:
- 	INIT_LIST_HEAD(&cur_trans->pending_snapshots);
- 	INIT_LIST_HEAD(&cur_trans->ordered_operations);
+@@ -252,8 +264,10 @@ loop:
  	INIT_LIST_HEAD(&cur_trans->pending_chunks);
-+	INIT_LIST_HEAD(&cur_trans->dropped_roots);
  	INIT_LIST_HEAD(&cur_trans->switch_commits);
-+	spin_lock_init(&cur_trans->dropped_roots_lock);
  	INIT_LIST_HEAD(&cur_trans->pending_ordered);
++	INIT_LIST_HEAD(&cur_trans->dropped_roots);
+ 	INIT_LIST_HEAD(&cur_trans->deleted_bgs);
+ 	spin_lock_init(&cur_trans->deleted_bgs_lock);
++	spin_lock_init(&cur_trans->dropped_roots_lock);
  	list_add_tail(&cur_trans->list, &fs_info->trans_list);
  	extent_io_tree_init(&cur_trans->dirty_pages,
-@@ -328,6 +342,24 @@ static int record_root_in_trans(struct b
+ 			     fs_info->btree_inode->i_mapping);
+@@ -330,6 +344,24 @@ static int record_root_in_trans(struct b
  }
  
  
@@ -100,16 +101,16 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  {
 --- a/fs/btrfs/transaction.h
 +++ b/fs/btrfs/transaction.h
-@@ -64,6 +64,8 @@ struct btrfs_transaction {
- 	struct list_head pending_chunks;
- 	struct list_head pending_ordered;
+@@ -66,6 +66,8 @@ struct btrfs_transaction {
  	struct list_head switch_commits;
+ 	struct list_head deleted_bgs;
+ 	spinlock_t deleted_bgs_lock;
 +	struct list_head dropped_roots;
 +	spinlock_t dropped_roots_lock;
  	struct btrfs_delayed_ref_root delayed_refs;
  	int aborted;
  };
-@@ -199,4 +201,6 @@ int btrfs_wait_marked_extents(struct btr
+@@ -201,4 +203,6 @@ int btrfs_wait_marked_extents(struct btr
  int btrfs_transaction_blocked(struct btrfs_fs_info *info);
  int btrfs_transaction_in_commit(struct btrfs_fs_info *info);
  void btrfs_put_transaction(struct btrfs_transaction *transaction);
