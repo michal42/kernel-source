@@ -1,0 +1,70 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Tue, 4 Nov 2014 21:56:03 -0500
+Subject: perf/x86/intel: Allocate space for storing LBR stack
+Git-commit: e18bf526422769611e7248135e36a4cea0e4e38d
+Patch-mainline: v4.1-rc3
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+    perf/x86/intel: Allocate space for storing LBR stack
+    
+    When the LBR call stack is enabled, it is necessary to save/restore
+    the LBR stack on context switch. We can use pmu specific data to
+    store LBR stack when task is scheduled out. This patch adds code
+    that allocates the pmu specific data.
+    
+    Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+    Signed-off-by: Kan Liang <kan.liang@intel.com>
+    Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+    Reviewed-by: Stephane Eranian <eranian@google.com>
+    Cc: Andy Lutomirski <luto@amacapital.net>
+    Cc: Arnaldo Carvalho de Melo <acme@kernel.org>
+    Cc: Linus Torvalds <torvalds@linux-foundation.org>
+    Cc: Paul Mackerras <paulus@samba.org>
+    Cc: Vince Weaver <vincent.weaver@maine.edu>
+    Cc: jolsa@redhat.com
+    Link: http://lkml.kernel.org/r/1415156173-10035-8-git-send-email-kan.liang@intel.com
+    Signed-off-by: Ingo Molnar <mingo@kernel.org>
+
+    [suse: adjust context, no event passed to arch_perf_update_userpage (c1317ec2)]
+
+diff --git a/arch/x86/kernel/cpu/perf_event.c b/arch/x86/kernel/cpu/perf_event.c
+index 6b1fd26..8ffd71e 100644
+--- a/arch/x86/kernel/cpu/perf_event.c
++++ b/arch/x86/kernel/cpu/perf_event.c
+@@ -432,6 +432,9 @@ int x86_pmu_hw_config(struct perf_event *event)
+ 		}
+ 	}
+ 
++	if (event->attr.branch_sample_type & PERF_SAMPLE_BRANCH_CALL_STACK)
++		event->attach_state |= PERF_ATTACH_TASK_DATA;
++
+ 	/*
+ 	 * Generate PMC IRQs:
+ 	 * (keep 'enabled' bit clear for now)
+@@ -1950,6 +1953,7 @@ static struct pmu pmu = {
+ 
+ 	.event_idx		= x86_pmu_event_idx,
+ 	.sched_task		= x86_pmu_sched_task,
++	.task_ctx_size          = sizeof(struct x86_perf_task_context),
+ };
+ 
+ void arch_perf_update_userpage(struct perf_event_mmap_page *userpg, u64 now)
+diff --git a/arch/x86/kernel/cpu/perf_event.h b/arch/x86/kernel/cpu/perf_event.h
+index c9a62c5..69c26b3 100644
+--- a/arch/x86/kernel/cpu/perf_event.h
++++ b/arch/x86/kernel/cpu/perf_event.h
+@@ -516,6 +516,13 @@ struct x86_pmu {
+ 	struct perf_guest_switch_msr *(*guest_get_msrs)(int *nr);
+ };
+ 
++struct x86_perf_task_context {
++	u64 lbr_from[MAX_LBR_ENTRIES];
++	u64 lbr_to[MAX_LBR_ENTRIES];
++	int lbr_callstack_users;
++	int lbr_stack_state;
++};
++
+ enum {
+ 	PERF_SAMPLE_BRANCH_CALL_STACK_SHIFT = PERF_SAMPLE_BRANCH_MAX_SHIFT,
+ 	PERF_SAMPLE_BRANCH_SELECT_MAP_SIZE,
