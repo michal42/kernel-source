@@ -1,0 +1,69 @@
+From: Mark Rutland <mark.rutland@arm.com>
+Date: Wed, 5 Nov 2014 16:11:44 +0000
+Subject: perf: Fix corruption of sibling list with hotplug
+Git-commit: 226424eee809251ec23bd4b09d8efba09c10fc3c
+Patch-mainline: v3.18-rc6
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+When a CPU hotplugged out, we call perf_remove_from_context() (via
+perf_event_exit_cpu()) to rip each CPU-bound event out of its PMU's cpu
+context, but leave siblings grouped together. Freeing of these events is
+left to the mercy of the usual refcounting.
+
+When a CPU-bound event's refcount drops to zero we cross-call to
+__perf_remove_from_context() to clean it up, detaching grouped siblings.
+
+This works when the relevant CPU is online, but will fail if the CPU is
+currently offline, and we won't detach the event from its siblings
+before freeing the event, leaving the sibling list corrupt. If the
+sibling list is later walked (e.g. because the CPU cam online again
+before a remaining sibling's refcount drops to zero), we will walk the
+now corrupted siblings list, potentially dereferencing garbage values.
+
+Given that the events should never be scheduled again (as we removed
+them from their context), we can simply detatch siblings when the CPU
+goes down in the first place. If the CPU comes back online, the
+redundant call to __perf_remove_from_context() is safe.
+
+Reported-by: Drew Richardson <drew.richardson@arm.com>
+Signed-off-by: Mark Rutland <mark.rutland@arm.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: vincent.weaver@maine.edu
+Cc: Vince Weaver <vincent.weaver@maine.edu>
+Cc: Will Deacon <will.deacon@arm.com>
+Cc: Arnaldo Carvalho de Melo <acme@kernel.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/1415203904-25308-2-git-send-email-mark.rutland@arm.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ kernel/events/core.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 2b02c9f..1cd5eef 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -1562,8 +1562,10 @@ static void perf_remove_from_context(struct perf_event *event, bool detach_group
+ 
+ 	if (!task) {
+ 		/*
+-		 * Per cpu events are removed via an smp call and
+-		 * the removal is always successful.
++		 * Per cpu events are removed via an smp call. The removal can
++		 * fail if the CPU is currently offline, but in that case we
++		 * already called __perf_remove_from_context from
++		 * perf_event_exit_cpu.
+ 		 */
+ 		cpu_function_call(event->cpu, __perf_remove_from_context, &re);
+ 		return;
+@@ -8117,7 +8119,7 @@ static void perf_pmu_rotate_stop(struct pmu *pmu)
+ 
+ static void __perf_event_exit_context(void *__info)
+ {
+-	struct remove_event re = { .detach_group = false };
++	struct remove_event re = { .detach_group = true };
+ 	struct perf_event_context *ctx = __info;
+ 
+ 	perf_pmu_rotate_stop(ctx->pmu);
+
