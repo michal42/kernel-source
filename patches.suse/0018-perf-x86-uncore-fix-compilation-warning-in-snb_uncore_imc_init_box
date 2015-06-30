@@ -1,0 +1,49 @@
+From: Stephane Eranian <eranian@google.com>
+Date: Wed, 12 Mar 2014 00:53:30 +0100
+Subject: perf/x86/uncore: Fix compilation warning in snb_uncore_imc_init_box()
+Git-commit: 4191c29f0593e82d19c3cd05de67e55467aca6b5
+Patch-mainline: v3.15-rc1
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+This patch fixes a compilation problem (unused variable) with the
+new SNB/IVB/HSW uncore IMC code.
+
+[ In -v2 we simplify the fix as suggested by Peter Zjilstra. ]
+
+Reported-by: Stephen Rothwell <sfr@canb.auug.org.au>
+Signed-off-by: Stephane Eranian <eranian@google.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/20140311235329.GA28624@quad
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ arch/x86/kernel/cpu/perf_event_intel_uncore.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event_intel_uncore.c b/arch/x86/kernel/cpu/perf_event_intel_uncore.c
+index 5c2537a..dfd50ea 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel_uncore.c
++++ b/arch/x86/kernel/cpu/perf_event_intel_uncore.c
+@@ -1722,15 +1722,16 @@ static struct attribute_group snb_uncore_imc_format_group = {
+ static void snb_uncore_imc_init_box(struct intel_uncore_box *box)
+ {
+ 	struct pci_dev *pdev = box->pci_dev;
+-	u32 addr_lo, addr_hi;
++	int where = SNB_UNCORE_PCI_IMC_BAR_OFFSET;
+ 	resource_size_t addr;
++	u32 pci_dword;
+ 
+-	pci_read_config_dword(pdev, SNB_UNCORE_PCI_IMC_BAR_OFFSET, &addr_lo);
+-	addr = addr_lo;
++	pci_read_config_dword(pdev, where, &pci_dword);
++	addr = pci_dword;
+ 
+ #ifdef CONFIG_PHYS_ADDR_T_64BIT
+-	pci_read_config_dword(pdev, SNB_UNCORE_PCI_IMC_BAR_OFFSET+4, &addr_hi);
+-	addr = ((resource_size_t)addr_hi << 32) | addr_lo;
++	pci_read_config_dword(pdev, where + 4, &pci_dword);
++	addr |= ((resource_size_t)pci_dword << 32);
+ #endif
+ 
+ 	addr &= ~(PAGE_SIZE - 1);
+
