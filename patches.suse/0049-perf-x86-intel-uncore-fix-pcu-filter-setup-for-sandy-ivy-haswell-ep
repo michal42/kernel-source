@@ -1,0 +1,38 @@
+From: Andi Kleen <ak@linux.intel.com>
+Date: Thu, 4 Sep 2014 16:08:29 -0700
+Subject: perf/x86/intel/uncore: Fix PCU filter setup for Sandy/Ivy/Haswell EP
+Git-commit: b10fc1c3e30c44033d1cb1d2900cc2ab06dff342
+Patch-mainline: v3.18-rc1
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+The PCU frequency band filters use 8 bit each in a register.
+When setting up the value the shift value was not correctly
+scaled, which resulted in all filters except for band 0 to
+be zero. Fix the scaling.
+
+This allows to correctly monitor multiple uncore frequency bands.
+
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: eranian@google.com
+Link: http://lkml.kernel.org/r/1409872109-31645-5-git-send-email-andi@firstfloor.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ arch/x86/kernel/cpu/perf_event_intel_uncore_snbep.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event_intel_uncore_snbep.c b/arch/x86/kernel/cpu/perf_event_intel_uncore_snbep.c
+index b237abc..adf138e 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel_uncore_snbep.c
++++ b/arch/x86/kernel/cpu/perf_event_intel_uncore_snbep.c
+@@ -841,7 +841,7 @@ static int snbep_pcu_hw_config(struct intel_uncore_box *box, struct perf_event *
+ 	if (ev_sel >= 0xb && ev_sel <= 0xe) {
+ 		reg1->reg = SNBEP_PCU_MSR_PMON_BOX_FILTER;
+ 		reg1->idx = ev_sel - 0xb;
+-		reg1->config = event->attr.config1 & (0xff << reg1->idx);
++		reg1->config = event->attr.config1 & (0xff << (reg1->idx * 8));
+ 	}
+ 	return 0;
+ }
+
