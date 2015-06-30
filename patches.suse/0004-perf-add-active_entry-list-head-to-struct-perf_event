@@ -1,0 +1,62 @@
+From: Stephane Eranian <eranian@google.com>
+Date: Tue, 12 Nov 2013 17:58:48 +0100
+Subject: perf: Add active_entry list head to struct perf_event
+Git-commit: 71ad88efebbcde374bddf904b96f3a7fc82d45d4
+Patch-mainline: v3.14-rc1
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+This patch adds a new field to the struct perf_event.
+It is intended to be used to chain events which are
+active (enabled). It helps in the hardware layer
+for PMUs which do not have actual counter restrictions, i.e.,
+free running read-only counters. Active events are chained
+as opposed to being tracked via the counter they use.
+
+To save space we use a union with hlist_entry as both
+are mutually exclusive (suggested by Jiri Olsa).
+
+Signed-off-by: Stephane Eranian <eranian@google.com>
+Reviewed-by: Andi Kleen <ak@linux.intel.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: acme@redhat.com
+Cc: jolsa@redhat.com
+Cc: zheng.z.yan@intel.com
+Cc: bp@alien8.de
+Cc: maria.n.dimakopoulou@gmail.com
+Link: http://lkml.kernel.org/r/1384275531-10892-2-git-send-email-eranian@google.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ include/linux/perf_event.h | 5 ++++-
+ kernel/events/core.c       | 1 +
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
+index 2e069d1..8f4a70f 100644
+--- a/include/linux/perf_event.h
++++ b/include/linux/perf_event.h
+@@ -319,7 +319,10 @@ struct perf_event {
+ 	 */
+ 	struct list_head		migrate_entry;
+ 
+-	struct hlist_node		hlist_entry;
++	union {
++		struct hlist_node	hlist_entry;
++		struct list_head	active_entry;
++	};
+ 	int				nr_siblings;
+ 	int				group_flags;
+ 	struct perf_event		*group_leader;
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 72348dc..403b781 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -6655,6 +6655,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
+ 	INIT_LIST_HEAD(&event->event_entry);
+ 	INIT_LIST_HEAD(&event->sibling_list);
+ 	INIT_LIST_HEAD(&event->rb_entry);
++	INIT_LIST_HEAD(&event->active_entry);
+ 
+ 	init_waitqueue_head(&event->waitq);
+ 	init_irq_work(&event->pending, perf_pending_event);
+
