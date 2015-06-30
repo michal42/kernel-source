@@ -1,0 +1,77 @@
+From: Stephane Eranian <eranian@google.com>
+Date: Tue, 11 Feb 2014 16:20:08 +0100
+Subject: perf/x86/uncore: add ability to customize pmu callbacks
+Git-commit: d64b25b6a08d95e973160689320504faed62be4a
+Patch-mainline: v3.15-rc1
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+This patch enables custom struct pmu callbacks per uncore
+PMU types. This feature may be used to simplify counter
+setup for certain uncore PMUs which have free running
+counters for instance. It becomes possible to bypass
+the event scheduling phase of the configuration.
+
+Cc: mingo@elte.hu
+Cc: acme@redhat.com
+Cc: ak@linux.intel.com
+Cc: zheng.z.yan@intel.com
+Cc: peterz@infradead.org
+Signed-off-by: Stephane Eranian <eranian@google.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1392132015-14521-3-git-send-email-eranian@google.com
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+---
+ arch/x86/kernel/cpu/perf_event_intel_uncore.c | 25 +++++++++++++++----------
+ arch/x86/kernel/cpu/perf_event_intel_uncore.h |  1 +
+ 2 files changed, 16 insertions(+), 10 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event_intel_uncore.c b/arch/x86/kernel/cpu/perf_event_intel_uncore.c
+index fe4255b..e6f32b3 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel_uncore.c
++++ b/arch/x86/kernel/cpu/perf_event_intel_uncore.c
+@@ -3271,16 +3271,21 @@ static int __init uncore_pmu_register(struct intel_uncore_pmu *pmu)
+ {
+ 	int ret;
+ 
+-	pmu->pmu = (struct pmu) {
+-		.attr_groups	= pmu->type->attr_groups,
+-		.task_ctx_nr	= perf_invalid_context,
+-		.event_init	= uncore_pmu_event_init,
+-		.add		= uncore_pmu_event_add,
+-		.del		= uncore_pmu_event_del,
+-		.start		= uncore_pmu_event_start,
+-		.stop		= uncore_pmu_event_stop,
+-		.read		= uncore_pmu_event_read,
+-	};
++	if (!pmu->type->pmu) {
++		pmu->pmu = (struct pmu) {
++			.attr_groups	= pmu->type->attr_groups,
++			.task_ctx_nr	= perf_invalid_context,
++			.event_init	= uncore_pmu_event_init,
++			.add		= uncore_pmu_event_add,
++			.del		= uncore_pmu_event_del,
++			.start		= uncore_pmu_event_start,
++			.stop		= uncore_pmu_event_stop,
++			.read		= uncore_pmu_event_read,
++		};
++	} else {
++		pmu->pmu = *pmu->type->pmu;
++		pmu->pmu.attr_groups = pmu->type->attr_groups;
++	}
+ 
+ 	if (pmu->type->num_boxes == 1) {
+ 		if (strlen(pmu->type->name) > 0)
+diff --git a/arch/x86/kernel/cpu/perf_event_intel_uncore.h b/arch/x86/kernel/cpu/perf_event_intel_uncore.h
+index a80ab71..77dc9a5 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel_uncore.h
++++ b/arch/x86/kernel/cpu/perf_event_intel_uncore.h
+@@ -440,6 +440,7 @@ struct intel_uncore_type {
+ 	struct intel_uncore_ops *ops;
+ 	struct uncore_event_desc *event_descs;
+ 	const struct attribute_group *attr_groups[4];
++	struct pmu *pmu; /* for custom pmu ops */
+ };
+ 
+ #define pmu_group attr_groups[0]
+
