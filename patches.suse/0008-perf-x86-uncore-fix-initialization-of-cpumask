@@ -1,0 +1,127 @@
+From: Stephane Eranian <eranian@google.com>
+Date: Tue, 11 Feb 2014 16:20:07 +0100
+Subject: perf/x86/uncore: fix initialization of cpumask
+Git-commit: 411cf180fa00521f9bfb1d022e3ebf059a2d299f
+Patch-mainline: v3.15-rc1
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+On certain processors, the uncore PMU boxes may only be
+msr-bsed or PCI-based. But in both cases, the cpumask,
+suggesting on which CPUs to monitor to get full coverage
+of the particular PMU, must be created.
+
+However with the current code base, the cpumask was only
+created on processor which had at least one MSR-based
+uncore PMU. This patch removes that restriction and
+ensures the cpumask is created even when there is no
+msr-based PMU. For instance, on SNB client where only
+a PCI-based memory controller PMU is supported.
+
+Cc: mingo@elte.hu
+Cc: acme@redhat.com
+Cc: ak@linux.intel.com
+Cc: zheng.z.yan@intel.com
+Cc: peterz@infradead.org
+Signed-off-by: Stephane Eranian <eranian@google.com>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Link: http://lkml.kernel.org/r/1392132015-14521-2-git-send-email-eranian@google.com
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+---
+ arch/x86/kernel/cpu/perf_event_intel_uncore.c | 61 ++++++++++++++++-----------
+ 1 file changed, 37 insertions(+), 24 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event_intel_uncore.c b/arch/x86/kernel/cpu/perf_event_intel_uncore.c
+index 29c2487..fe4255b 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel_uncore.c
++++ b/arch/x86/kernel/cpu/perf_event_intel_uncore.c
+@@ -3764,7 +3764,7 @@ static void __init uncore_cpu_setup(void *dummy)
+ 
+ static int __init uncore_cpu_init(void)
+ {
+-	int ret, cpu, max_cores;
++	int ret, max_cores;
+ 
+ 	max_cores = boot_cpu_data.x86_max_cores;
+ 	switch (boot_cpu_data.x86_model) {
+@@ -3808,29 +3808,6 @@ static int __init uncore_cpu_init(void)
+ 	if (ret)
+ 		return ret;
+ 
+-	get_online_cpus();
+-
+-	for_each_online_cpu(cpu) {
+-		int i, phys_id = topology_physical_package_id(cpu);
+-
+-		for_each_cpu(i, &uncore_cpu_mask) {
+-			if (phys_id == topology_physical_package_id(i)) {
+-				phys_id = -1;
+-				break;
+-			}
+-		}
+-		if (phys_id < 0)
+-			continue;
+-
+-		uncore_cpu_prepare(cpu, phys_id);
+-		uncore_event_init_cpu(cpu);
+-	}
+-	on_each_cpu(uncore_cpu_setup, NULL, 1);
+-
+-	register_cpu_notifier(&uncore_cpu_nb);
+-
+-	put_online_cpus();
+-
+ 	return 0;
+ }
+ 
+@@ -3859,6 +3836,41 @@ static int __init uncore_pmus_register(void)
+ 	return 0;
+ }
+ 
++static void uncore_cpumask_init(void)
++{
++	int cpu;
++
++	/*
++	 * ony invoke once from msr or pci init code
++	 */
++	if (!cpumask_empty(&uncore_cpu_mask))
++		return;
++
++	get_online_cpus();
++
++	for_each_online_cpu(cpu) {
++		int i, phys_id = topology_physical_package_id(cpu);
++
++		for_each_cpu(i, &uncore_cpu_mask) {
++			if (phys_id == topology_physical_package_id(i)) {
++				phys_id = -1;
++				break;
++			}
++		}
++		if (phys_id < 0)
++			continue;
++
++		uncore_cpu_prepare(cpu, phys_id);
++		uncore_event_init_cpu(cpu);
++	}
++	on_each_cpu(uncore_cpu_setup, NULL, 1);
++
++	register_cpu_notifier(&uncore_cpu_nb);
++
++	put_online_cpus();
++}
++
++
+ static int __init intel_uncore_init(void)
+ {
+ 	int ret;
+@@ -3877,6 +3889,7 @@ static int __init intel_uncore_init(void)
+ 		uncore_pci_exit();
+ 		goto fail;
+ 	}
++	uncore_cpumask_init();
+ 
+ 	uncore_pmus_register();
+ 	return 0;
+
