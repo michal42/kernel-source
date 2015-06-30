@@ -1,0 +1,140 @@
+From: Christoph Lameter <cl@linux.com>
+Date: Sun, 17 Aug 2014 12:30:27 -0500
+Subject: scheduler: Replace __get_cpu_var with this_cpu_ptr
+Git-commit: 4a32fea9d78f2d2315c0072757b197d5a304dc8b
+Patch-mainline: v3.18-rc1
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+    scheduler: Replace __get_cpu_var with this_cpu_ptr
+    
+    Convert all uses of __get_cpu_var for address calculation to use
+    this_cpu_ptr instead.
+    
+    [Uses of __get_cpu_var with cpumask_var_t are no longer
+    handled by this patch]
+    
+    Cc: Peter Zijlstra <peterz@infradead.org>
+    Acked-by: Ingo Molnar <mingo@kernel.org>
+    Signed-off-by: Christoph Lameter <cl@linux.com>
+    Signed-off-by: Tejun Heo <tj@kernel.org>
+
+    [SUSE:  limit to perf,  drop perf_duration_warn hunk (6a02ad66)]
+
+---
+ kernel/events/callchain.c |    4 ++--
+ kernel/events/core.c      |   22 +++++++++++-----------
+ 2 files changed, 13 insertions(+), 13 deletions(-)
+
+--- a/kernel/events/callchain.c
++++ b/kernel/events/callchain.c
+@@ -137,7 +137,7 @@ static struct perf_callchain_entry *get_
+ 	int cpu;
+ 	struct callchain_cpus_entries *entries;
+ 
+-	*rctx = get_recursion_context(__get_cpu_var(callchain_recursion));
++	*rctx = get_recursion_context(this_cpu_ptr(callchain_recursion));
+ 	if (*rctx == -1)
+ 		return NULL;
+ 
+@@ -153,7 +153,7 @@ static struct perf_callchain_entry *get_
+ static void
+ put_callchain_entry(int rctx)
+ {
+-	put_recursion_context(__get_cpu_var(callchain_recursion), rctx);
++	put_recursion_context(this_cpu_ptr(callchain_recursion), rctx);
+ }
+ 
+ struct perf_callchain_entry *
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -240,10 +240,10 @@ void perf_sample_event_took(u64 sample_l
+ 		return;
+ 
+ 	/* decay the counter by 1 average sample */
+-	local_samples_len = __get_cpu_var(running_sample_length);
++	local_samples_len = __this_cpu_read(running_sample_length);
+ 	local_samples_len -= local_samples_len/NR_ACCUMULATED_SAMPLES;
+ 	local_samples_len += sample_len_ns;
+-	__get_cpu_var(running_sample_length) = local_samples_len;
++	__this_cpu_write(running_sample_length, local_samples_len);
+ 
+ 	/*
+ 	 * note: this will be biased artifically low until we have
+@@ -876,7 +876,7 @@ static DEFINE_PER_CPU(struct list_head,
+ static void perf_pmu_rotate_start(struct pmu *pmu)
+ {
+ 	struct perf_cpu_context *cpuctx = this_cpu_ptr(pmu->pmu_cpu_context);
+-	struct list_head *head = &__get_cpu_var(rotation_list);
++	struct list_head *head = this_cpu_ptr(&rotation_list);
+ 
+ 	WARN_ON(!irqs_disabled());
+ 
+@@ -2366,7 +2366,7 @@ void __perf_event_task_sched_out(struct
+ 	 * to check if we have to switch out PMU state.
+ 	 * cgroup event are system-wide mode only
+ 	 */
+-	if (atomic_read(&__get_cpu_var(perf_cgroup_events)))
++	if (atomic_read(this_cpu_ptr(&perf_cgroup_events)))
+ 		perf_cgroup_sched_out(task, next);
+ }
+ 
+@@ -2611,11 +2611,11 @@ void __perf_event_task_sched_in(struct t
+ 	 * to check if we have to switch in PMU state.
+ 	 * cgroup event are system-wide mode only
+ 	 */
+-	if (atomic_read(&__get_cpu_var(perf_cgroup_events)))
++	if (atomic_read(this_cpu_ptr(&perf_cgroup_events)))
+ 		perf_cgroup_sched_in(prev, task);
+ 
+ 	/* check for system-wide branch_stack events */
+-	if (atomic_read(&__get_cpu_var(perf_branch_stack_events)))
++	if (atomic_read(this_cpu_ptr(&perf_branch_stack_events)))
+ 		perf_branch_stack_sched_in(prev, task);
+ }
+ 
+@@ -2870,7 +2870,7 @@ bool perf_event_can_stop_tick(void)
+ 
+ void perf_event_task_tick(void)
+ {
+-	struct list_head *head = &__get_cpu_var(rotation_list);
++	struct list_head *head = this_cpu_ptr(&rotation_list);
+ 	struct perf_cpu_context *cpuctx, *tmp;
+ 	struct perf_event_context *ctx;
+ 	int throttled;
+@@ -5596,7 +5596,7 @@ static void do_perf_sw_event(enum perf_t
+ 				    struct perf_sample_data *data,
+ 				    struct pt_regs *regs)
+ {
+-	struct swevent_htable *swhash = &__get_cpu_var(swevent_htable);
++	struct swevent_htable *swhash = this_cpu_ptr(&swevent_htable);
+ 	struct perf_event *event;
+ 	struct hlist_head *head;
+ 
+@@ -5615,7 +5615,7 @@ end:
+ 
+ int perf_swevent_get_recursion_context(void)
+ {
+-	struct swevent_htable *swhash = &__get_cpu_var(swevent_htable);
++	struct swevent_htable *swhash = this_cpu_ptr(&swevent_htable);
+ 
+ 	return get_recursion_context(swhash->recursion);
+ }
+@@ -5623,7 +5623,7 @@ EXPORT_SYMBOL_GPL(perf_swevent_get_recur
+ 
+ inline void perf_swevent_put_recursion_context(int rctx)
+ {
+-	struct swevent_htable *swhash = &__get_cpu_var(swevent_htable);
++	struct swevent_htable *swhash = this_cpu_ptr(&swevent_htable);
+ 
+ 	put_recursion_context(swhash->recursion, rctx);
+ }
+@@ -5652,7 +5652,7 @@ static void perf_swevent_read(struct per
+ 
+ static int perf_swevent_add(struct perf_event *event, int flags)
+ {
+-	struct swevent_htable *swhash = &__get_cpu_var(swevent_htable);
++	struct swevent_htable *swhash = this_cpu_ptr(&swevent_htable);
+ 	struct hw_perf_event *hwc = &event->hw;
+ 	struct hlist_head *head;
+ 
