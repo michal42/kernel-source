@@ -1,0 +1,118 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Tue, 4 Nov 2014 21:56:06 -0500
+Subject: perf: Simplify the branch stack check
+Git-commit: a46a23000198d929391aa9dac8de68734efa2703
+Patch-mainline: v4.1-rc3
+References: FATE#318981, FATE#318982, FATE#318983, FATE#318984
+Signed-off-by: Tony Jones <tonyj@suse.de>
+
+Use event->attr.branch_sample_type to replace
+intel_pmu_needs_lbr_smpl() for avoiding duplicated code that
+implicitly enables the LBR.
+
+Currently, branch stack can be enabled by user explicitly requesting
+branch sampling or implicit branch sampling to correct PEBS skid.
+
+For user explicitly requested branch sampling, the branch_sample_type
+is explicitly set by user. For PEBS case, the branch_sample_type is also
+implicitly set to PERF_SAMPLE_BRANCH_ANY in x86_pmu_hw_config.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Signed-off-by: Kan Liang <kan.liang@intel.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Arnaldo Carvalho de Melo <acme@kernel.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Paul Mackerras <paulus@samba.org>
+Cc: eranian@google.com
+Cc: jolsa@redhat.com
+Link: http://lkml.kernel.org/r/1415156173-10035-11-git-send-email-kan.liang@intel.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+---
+ arch/x86/kernel/cpu/perf_event_intel.c | 20 +++-----------------
+ include/linux/perf_event.h             |  5 +++++
+ kernel/events/core.c                   |  3 +++
+ 3 files changed, 11 insertions(+), 17 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/perf_event_intel.c b/arch/x86/kernel/cpu/perf_event_intel.c
+index a485ba1..9f1dd18 100644
+--- a/arch/x86/kernel/cpu/perf_event_intel.c
++++ b/arch/x86/kernel/cpu/perf_event_intel.c
+@@ -1029,20 +1029,6 @@ static __initconst const u64 slm_hw_cache_event_ids
+  },
+ };
+ 
+-static inline bool intel_pmu_needs_lbr_smpl(struct perf_event *event)
+-{
+-	/* user explicitly requested branch sampling */
+-	if (has_branch_stack(event))
+-		return true;
+-
+-	/* implicit branch sampling to correct PEBS skid */
+-	if (x86_pmu.intel_cap.pebs_trap && event->attr.precise_ip > 1 &&
+-	    x86_pmu.intel_cap.pebs_format < 2)
+-		return true;
+-
+-	return false;
+-}
+-
+ static void intel_pmu_disable_all(void)
+ {
+ 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
+@@ -1207,7 +1193,7 @@ static void intel_pmu_disable_event(struct perf_event *event)
+ 	 * must disable before any actual event
+ 	 * because any event may be combined with LBR
+ 	 */
+-	if (intel_pmu_needs_lbr_smpl(event))
++	if (needs_branch_stack(event))
+ 		intel_pmu_lbr_disable(event);
+ 
+ 	if (unlikely(hwc->config_base == MSR_ARCH_PERFMON_FIXED_CTR_CTRL)) {
+@@ -1268,7 +1254,7 @@ static void intel_pmu_enable_event(struct perf_event *event)
+ 	 * must enabled before any actual event
+ 	 * because any event may be combined with LBR
+ 	 */
+-	if (intel_pmu_needs_lbr_smpl(event))
++	if (needs_branch_stack(event))
+ 		intel_pmu_lbr_enable(event);
+ 
+ 	if (event->attr.exclude_host)
+@@ -1747,7 +1733,7 @@ static int intel_pmu_hw_config(struct perf_event *event)
+ 	if (event->attr.precise_ip && x86_pmu.pebs_aliases)
+ 		x86_pmu.pebs_aliases(event);
+ 
+-	if (intel_pmu_needs_lbr_smpl(event)) {
++	if (needs_branch_stack(event)) {
+ 		ret = intel_pmu_setup_lbr_filter(event);
+ 		if (ret)
+ 			return ret;
+diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
+index 270cd01..43cc158 100644
+--- a/include/linux/perf_event.h
++++ b/include/linux/perf_event.h
+@@ -814,6 +814,11 @@ static inline bool has_branch_stack(struct perf_event *event)
+ 	return event->attr.sample_type & PERF_SAMPLE_BRANCH_STACK;
+ }
+ 
++static inline bool needs_branch_stack(struct perf_event *event)
++{
++	return event->attr.branch_sample_type != 0;
++}
++
+ extern int perf_output_begin(struct perf_output_handle *handle,
+ 			     struct perf_event *event, unsigned int size);
+ extern void perf_output_end(struct perf_output_handle *handle);
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 84451c0..257eccf 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -7232,6 +7232,9 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
+ 	if (attr->inherit && (attr->read_format & PERF_FORMAT_GROUP))
+ 		goto err_ns;
+ 
++	if (!has_branch_stack(event))
++		event->attr.branch_sample_type = 0;
++
+ 	pmu = perf_init_event(event);
+ 	if (!pmu)
+ 		goto err_ns;
+
