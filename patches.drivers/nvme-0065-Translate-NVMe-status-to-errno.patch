@@ -1,0 +1,55 @@
+From: Keith Busch <keith.busch@intel.com>
+Date: Fri, 29 Aug 2014 09:06:12 -0600
+Subject: NVMe: Translate NVMe status to errno
+References: bnc#936076,FATE#318544
+Patch-Mainline: v3.20
+Git-commit: b4ff9c8ddb6f0cec99a53ab26a5aa2ed0162c472
+
+This returns a more appropriate error for the "capacity exceeded"
+status. In case other NVMe statuses have a better errno, this patch adds
+a convience function to translate an NVMe status code to an errno for
+IO commands, defaulting to the current -EIO.
+
+Signed-off-by: Keith Busch <keith.busch@intel.com>
+Signed-off-by: Matthew Wilcox <matthew.r.wilcox@intel.com>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/block/nvme-core.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/block/nvme-core.c b/drivers/block/nvme-core.c
+index 0400aef..7e2cd19 100644
+--- a/drivers/block/nvme-core.c
++++ b/drivers/block/nvme-core.c
+@@ -450,6 +450,18 @@ static void nvme_end_io_acct(struct bio *bio, unsigned long start_time)
+ 	}
+ }
+ 
++static int nvme_error_status(u16 status)
++{
++	switch (status & 0x7ff) {
++	case NVME_SC_SUCCESS:
++		return 0;
++	case NVME_SC_CAP_EXCEEDED:
++		return -ENOSPC;
++	default:
++		return -EIO;
++	}
++}
++
+ static void bio_completion(struct nvme_queue *nvmeq, void *ctx,
+ 						struct nvme_completion *cqe)
+ {
+@@ -469,7 +481,7 @@ static void bio_completion(struct nvme_queue *nvmeq, void *ctx,
+ 			wake_up(&nvmeq->sq_full);
+ 			return;
+ 		}
+-		error = -EIO;
++		error = nvme_error_status(status);
+ 	}
+ 	if (iod->nents) {
+ 		dma_unmap_sg(nvmeq->q_dmadev, iod->sg, iod->nents,
+-- 
+1.8.5.2
+
