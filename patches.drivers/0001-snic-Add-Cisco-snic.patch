@@ -1,9 +1,9 @@
 From: Narsimhulu Musini <nmusini@cisco.com>
-Date: Tue, 30 Jun 2015 11:18:27 +0530
+Date: Thu, 2 Jul 2015 16:08:46 +0530
 Subject: snic: driver for Cisco SCSI HBA
-Git-commit: c8806b6c9e824f47726f2a9b7fbbe7ebf19306fa
-Patch-Mainline: v4.1-rc1
 References: bsc#931016, FATE#318699
+Git-Commit: c8806b6c9e824f47726f2a9b7fbbe7ebf19306fa
+Patch-Mainline: v4.1-rc1
 
 Cisco has developed a new PCI HBA interface called sNIC, which stands for
 SCSI NIC. This is a new storage feature supported on specialized network
@@ -16,6 +16,9 @@ Reviewed-by: Hannes Reinecke <hare@suse.de>
 Signed-off-by: James Bottomley <JBottomley@Odin.com>
 Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
 ---
+ MAINTAINERS                       |    7 +
+ drivers/scsi/Kconfig              |   17 +
+ drivers/scsi/Makefile             |    1 +
  drivers/scsi/snic/Makefile        |   17 +
  drivers/scsi/snic/cq_desc.h       |   77 ++
  drivers/scsi/snic/cq_enet_desc.h  |   38 +
@@ -50,8 +53,100 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  drivers/scsi/snic/vnic_wq.c       |  237 ++++
  drivers/scsi/snic/vnic_wq.h       |  170 +++
  drivers/scsi/snic/wq_enet_desc.h  |   96 ++
- 34 files changed, 10271 insertions(+)
+ 37 files changed, 10296 insertions(+)
+ create mode 100644 drivers/scsi/snic/Makefile
+ create mode 100644 drivers/scsi/snic/cq_desc.h
+ create mode 100644 drivers/scsi/snic/cq_enet_desc.h
+ create mode 100644 drivers/scsi/snic/snic.h
+ create mode 100644 drivers/scsi/snic/snic_attrs.c
+ create mode 100644 drivers/scsi/snic/snic_ctl.c
+ create mode 100644 drivers/scsi/snic/snic_debugfs.c
+ create mode 100644 drivers/scsi/snic/snic_disc.c
+ create mode 100644 drivers/scsi/snic/snic_disc.h
+ create mode 100644 drivers/scsi/snic/snic_fwint.h
+ create mode 100644 drivers/scsi/snic/snic_io.c
+ create mode 100644 drivers/scsi/snic/snic_io.h
+ create mode 100644 drivers/scsi/snic/snic_isr.c
+ create mode 100644 drivers/scsi/snic/snic_main.c
+ create mode 100644 drivers/scsi/snic/snic_res.c
+ create mode 100644 drivers/scsi/snic/snic_res.h
+ create mode 100644 drivers/scsi/snic/snic_scsi.c
+ create mode 100644 drivers/scsi/snic/snic_stats.h
+ create mode 100644 drivers/scsi/snic/snic_trc.c
+ create mode 100644 drivers/scsi/snic/snic_trc.h
+ create mode 100644 drivers/scsi/snic/vnic_cq.c
+ create mode 100644 drivers/scsi/snic/vnic_cq.h
+ create mode 100644 drivers/scsi/snic/vnic_cq_fw.h
+ create mode 100644 drivers/scsi/snic/vnic_dev.c
+ create mode 100644 drivers/scsi/snic/vnic_dev.h
+ create mode 100644 drivers/scsi/snic/vnic_devcmd.h
+ create mode 100644 drivers/scsi/snic/vnic_intr.c
+ create mode 100644 drivers/scsi/snic/vnic_intr.h
+ create mode 100644 drivers/scsi/snic/vnic_resource.h
+ create mode 100644 drivers/scsi/snic/vnic_snic.h
+ create mode 100644 drivers/scsi/snic/vnic_stats.h
+ create mode 100644 drivers/scsi/snic/vnic_wq.c
+ create mode 100644 drivers/scsi/snic/vnic_wq.h
+ create mode 100644 drivers/scsi/snic/wq_enet_desc.h
 
+diff --git a/MAINTAINERS b/MAINTAINERS
+index a24a784..9e0ec75 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2188,6 +2188,13 @@ L:	linux-scsi@vger.kernel.org
+ S:	Supported
+ F:	drivers/scsi/fnic/
+ 
++CISCO SCSI HBA DRIVER
++M:	Narsimhulu Musini <nmusini@cisco.com>
++M:	Sesidhar Baddela <sebaddel@cisco.com>
++L:	linux-scsi@vger.kernel.org
++S:	Supported
++F:	drivers/scsi/snic/
++
+ CMPC ACPI DRIVER
+ M:	Thadeu Lima de Souza Cascardo <cascardo@holoscopio.com>
+ M:	Daniel Oliveira Nascimento <don@syst.com.br>
+diff --git a/drivers/scsi/Kconfig b/drivers/scsi/Kconfig
+index 5205ea8..dc6ea7f 100644
+--- a/drivers/scsi/Kconfig
++++ b/drivers/scsi/Kconfig
+@@ -687,6 +687,23 @@ config FCOE_FNIC
+ 	  <file:Documentation/scsi/scsi.txt>.
+ 	  The module will be called fnic.
+ 
++config SCSI_SNIC
++	tristate "Cisco SNIC Driver"
++	depends on PCI && SCSI && X86
++	help
++	  This is support for the Cisco PCI-Express SCSI HBA.
++
++	  To compile this driver as a module, choose M here and read
++	  <file:Documentation/scsi/scsi.txt>.
++	  The module will be called snic.
++
++config SCSI_SNIC_DEBUG_FS
++	bool "Cisco SNIC Driver Debugfs Support"
++	depends on SCSI_SNIC && DEBUG_FS
++	help
++	  This enables to list debugging information from SNIC Driver
++	  available via debugfs file system
++
+ config SCSI_DMX3191D
+ 	tristate "DMX3191D SCSI support"
+ 	depends on PCI && SCSI
+diff --git a/drivers/scsi/Makefile b/drivers/scsi/Makefile
+index 149bb6b..dd38732 100644
+--- a/drivers/scsi/Makefile
++++ b/drivers/scsi/Makefile
+@@ -40,6 +40,7 @@ obj-$(CONFIG_LIBFC)		+= libfc/
+ obj-$(CONFIG_LIBFCOE)		+= fcoe/
+ obj-$(CONFIG_FCOE)		+= fcoe/
+ obj-$(CONFIG_FCOE_FNIC)		+= fnic/
++obj-$(CONFIG_SCSI_SNIC)		+= snic/
+ obj-$(CONFIG_SCSI_BNX2X_FCOE)	+= libfc/ fcoe/ bnx2fc/
+ obj-$(CONFIG_ISCSI_TCP) 	+= libiscsi.o	libiscsi_tcp.o iscsi_tcp.o
+ obj-$(CONFIG_INFINIBAND_ISER) 	+= libiscsi.o
 diff --git a/drivers/scsi/snic/Makefile b/drivers/scsi/snic/Makefile
 new file mode 100644
 index 0000000..ef7c0dd
@@ -10527,5 +10622,6 @@ index 0000000..68f62b6
 +}
 +
 +#endif /* _WQ_ENET_DESC_H_ */
-
+-- 
+1.8.5.2
 
