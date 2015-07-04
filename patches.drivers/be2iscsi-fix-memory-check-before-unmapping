@@ -1,0 +1,54 @@
+From: John Soni Jose <sony.john-n@emulex.com>
+Date: Sat, 25 Apr 2015 08:17:45 +0530
+Subject: be2iscsi : Fix memory check before unmapping.
+Git-Commit: eb1c46924dfb48489272e8dc561bed9693e143d4
+Patch-mainline: v4.2-rc1
+References: FATE#318562 bsc#921786
+
+ Check DMA memory before it is unmapped.
+
+Signed-off-by: John Soni Jose <sony.john-n@emulex.com>
+Signed-off-by: Jayamohan Kallickal <jayamohan.kallickal@emulex.com>
+Reviewed-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ drivers/scsi/be2iscsi/be_main.c |   10 +++++++---
+ 1 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/scsi/be2iscsi/be_main.c b/drivers/scsi/be2iscsi/be_main.c
+index fbc672a..c261d46 100644
+--- a/drivers/scsi/be2iscsi/be_main.c
++++ b/drivers/scsi/be2iscsi/be_main.c
+@@ -1369,8 +1369,10 @@ be_complete_io(struct beiscsi_conn *beiscsi_conn,
+ 	if (io_task->cmd_bhs->iscsi_hdr.flags & ISCSI_FLAG_CMD_READ)
+ 		conn->rxdata_octets += resid;
+ unmap:
+-	scsi_dma_unmap(io_task->scsi_cmnd);
+-	io_task->scsi_cmnd = NULL;
++	if (io_task->scsi_cmnd) {
++		scsi_dma_unmap(io_task->scsi_cmnd);
++		io_task->scsi_cmnd = NULL;
++	}
+ 	iscsi_complete_scsi_task(task, exp_cmdsn, max_cmdsn);
+ }
+ 
+@@ -4612,11 +4614,13 @@ beiscsi_free_mgmt_task_handles(struct beiscsi_conn *beiscsi_conn,
+ 		spin_unlock_bh(&phba->mgmt_sgl_lock);
+ 	}
+ 
+-	if (io_task->mtask_addr)
++	if (io_task->mtask_addr) {
+ 		pci_unmap_single(phba->pcidev,
+ 				 io_task->mtask_addr,
+ 				 io_task->mtask_data_count,
+ 				 PCI_DMA_TODEVICE);
++		io_task->mtask_addr = 0;
++	}
+ }
+ 
+ /**
+-- 
+1.7.1
+
+
