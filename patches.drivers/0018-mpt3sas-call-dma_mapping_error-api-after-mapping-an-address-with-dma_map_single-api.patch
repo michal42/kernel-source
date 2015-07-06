@@ -1,0 +1,42 @@
+From: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Date: Thu, 25 Jun 2015 14:24:35 +0530
+Subject: [SCSI] mpt3sas: Call dma_mapping_error() API after  mapping an address with dma_map_single() API
+Git-commit: 4c24ff38261ff50ea34dd7980c92142422d95c6a
+References: bsc#922628, FATE#318595
+Patch-mainline: on linux-scsi list
+
+Added dma_mapping_error() API after mapping an address with dma_map_single() API.
+Otherwise when CONFIG_DMA_API_DEBUG is enabled in the kernel, then it complains
+about mpt3sas driver not calling dma_mapping_error after mapping an address with
+dma_map_single
+
+Changes in v2:
+	Patch version change only.
+
+Signed-off-by: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Reviewed-by: Johannes Thumshirn <jthumshirn@suse.de>
+---
+ drivers/scsi/mpt3sas/mpt3sas_transport.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/scsi/mpt3sas/mpt3sas_transport.c
++++ b/drivers/scsi/mpt3sas/mpt3sas_transport.c
+@@ -1963,7 +1963,7 @@ _transport_smp_handler(struct Scsi_Host
+ 	} else {
+ 		dma_addr_out = pci_map_single(ioc->pdev, bio_data(req->bio),
+ 		    blk_rq_bytes(req), PCI_DMA_BIDIRECTIONAL);
+-		if (!dma_addr_out) {
++		if (pci_dma_mapping_error(ioc->pdev, dma_addr_out)) {
+ 			pr_info(MPT3SAS_FMT "%s(): DMA Addr out = NULL\n",
+ 			    ioc->name, __func__);
+ 			rc = -ENOMEM;
+@@ -1985,7 +1985,7 @@ _transport_smp_handler(struct Scsi_Host
+ 	} else {
+ 		dma_addr_in =  pci_map_single(ioc->pdev, bio_data(rsp->bio),
+ 		    blk_rq_bytes(rsp), PCI_DMA_BIDIRECTIONAL);
+-		if (!dma_addr_in) {
++		if (pci_dma_mapping_error(ioc->pdev, dma_addr_in)) {
+ 			pr_info(MPT3SAS_FMT "%s(): DMA Addr in = NULL\n",
+ 			    ioc->name, __func__);
+ 			rc = -ENOMEM;
