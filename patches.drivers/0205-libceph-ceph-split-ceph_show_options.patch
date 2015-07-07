@@ -1,0 +1,85 @@
+From 8a396a7545d91fd35ad366432eaac57a346be0c0 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Wed, 25 Mar 2015 21:02:16 +0300
+Subject: [PATCH 205/213] libceph, ceph: split ceph_show_options()
+References: fate#318918
+Git-commit: ff40f9ae95917b72b6acb6057471c99054b6ee24
+Patch-mainline: v4.1-rc1
+
+Split ceph_show_options() into two pieces and move the piece
+responsible for printing client (libceph) options into net/ceph.  This
+way people adding a libceph option wouldn't have to remember to update
+code in fs/ceph.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+[ddiss@suse.de: libceph changes only. Ignore CephFS]
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ include/linux/ceph/libceph.h |  1 +
+ net/ceph/ceph_common.c       | 37 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/include/linux/ceph/libceph.h b/include/linux/ceph/libceph.h
+index 16fff96..303be6e 100644
+--- a/include/linux/ceph/libceph.h
++++ b/include/linux/ceph/libceph.h
+@@ -191,6 +191,7 @@ extern struct ceph_options *ceph_parse_options(char *options,
+ 			      const char *dev_name, const char *dev_name_end,
+ 			      int (*parse_extra_token)(char *c, void *private),
+ 			      void *private);
++int ceph_print_client_options(struct seq_file *m, struct ceph_client *client);
+ extern void ceph_destroy_options(struct ceph_options *opt);
+ extern int ceph_compare_options(struct ceph_options *new_opt,
+ 				struct ceph_client *client);
+diff --git a/net/ceph/ceph_common.c b/net/ceph/ceph_common.c
+index ec56550..79e8f71 100644
+--- a/net/ceph/ceph_common.c
++++ b/net/ceph/ceph_common.c
+@@ -490,6 +490,43 @@ out:
+ }
+ EXPORT_SYMBOL(ceph_parse_options);
+ 
++int ceph_print_client_options(struct seq_file *m, struct ceph_client *client)
++{
++	struct ceph_options *opt = client->options;
++	size_t pos = m->count;
++
++	if (opt->name)
++		seq_printf(m, "name=%s,", opt->name);
++	if (opt->key)
++		seq_puts(m, "secret=<hidden>,");
++
++	if (opt->flags & CEPH_OPT_FSID)
++		seq_printf(m, "fsid=%pU,", &opt->fsid);
++	if (opt->flags & CEPH_OPT_NOSHARE)
++		seq_puts(m, "noshare,");
++	if (opt->flags & CEPH_OPT_NOCRC)
++		seq_puts(m, "nocrc,");
++	if (opt->flags & CEPH_OPT_NOMSGAUTH)
++		seq_puts(m, "nocephx_require_signatures,");
++	if ((opt->flags & CEPH_OPT_TCP_NODELAY) == 0)
++		seq_puts(m, "notcp_nodelay,");
++
++	if (opt->mount_timeout != CEPH_MOUNT_TIMEOUT_DEFAULT)
++		seq_printf(m, "mount_timeout=%d,", opt->mount_timeout);
++	if (opt->osd_idle_ttl != CEPH_OSD_IDLE_TTL_DEFAULT)
++		seq_printf(m, "osd_idle_ttl=%d,", opt->osd_idle_ttl);
++	if (opt->osd_keepalive_timeout != CEPH_OSD_KEEPALIVE_DEFAULT)
++		seq_printf(m, "osdkeepalivetimeout=%d,",
++			   opt->osd_keepalive_timeout);
++
++	/* drop redundant comma */
++	if (m->count != pos)
++		m->count--;
++
++	return 0;
++}
++EXPORT_SYMBOL(ceph_print_client_options);
++
+ u64 ceph_client_id(struct ceph_client *client)
+ {
+ 	return client->monc.auth->global_id;
+-- 
+2.1.4
+
