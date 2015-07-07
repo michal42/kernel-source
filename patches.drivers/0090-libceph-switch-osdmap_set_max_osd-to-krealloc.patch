@@ -1,0 +1,83 @@
+From 685ff4279c92da97d323e541bb9f106833ae3946 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Fri, 21 Mar 2014 19:05:28 +0200
+Subject: [PATCH 090/213] libceph: switch osdmap_set_max_osd() to krealloc()
+References: fate#318918
+Git-commit: 4d60351f9089ef0f39d73c0b6a103e61fc0ed187
+Patch-mainline: v3.15-rc5
+
+Use krealloc() instead of rolling our own.  (krealloc() with a NULL
+first argument acts as a kmalloc()).  Properly initalize the new array
+elements.  This is needed to make future additions to osdmap easier.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osdmap.c | 32 +++++++++++++++++---------------
+ 1 file changed, 17 insertions(+), 15 deletions(-)
+
+diff --git a/net/ceph/osdmap.c b/net/ceph/osdmap.c
+index 0ba3062..a350286 100644
+--- a/net/ceph/osdmap.c
++++ b/net/ceph/osdmap.c
+@@ -646,38 +646,40 @@ void ceph_osdmap_destroy(struct ceph_osdmap *map)
+ }
+ 
+ /*
+- * adjust max osd value.  reallocate arrays.
++ * Adjust max_osd value, (re)allocate arrays.
++ *
++ * The new elements are properly initialized.
+  */
+ static int osdmap_set_max_osd(struct ceph_osdmap *map, int max)
+ {
+ 	u8 *state;
+-	struct ceph_entity_addr *addr;
+ 	u32 *weight;
++	struct ceph_entity_addr *addr;
++	int i;
+ 
+-	state = kcalloc(max, sizeof(*state), GFP_NOFS);
+-	addr = kcalloc(max, sizeof(*addr), GFP_NOFS);
+-	weight = kcalloc(max, sizeof(*weight), GFP_NOFS);
+-	if (state == NULL || addr == NULL || weight == NULL) {
++	state = krealloc(map->osd_state, max*sizeof(*state), GFP_NOFS);
++	weight = krealloc(map->osd_weight, max*sizeof(*weight), GFP_NOFS);
++	addr = krealloc(map->osd_addr, max*sizeof(*addr), GFP_NOFS);
++	if (!state || !weight || !addr) {
+ 		kfree(state);
+-		kfree(addr);
+ 		kfree(weight);
++		kfree(addr);
++
+ 		return -ENOMEM;
+ 	}
+ 
+-	/* copy old? */
+-	if (map->osd_state) {
+-		memcpy(state, map->osd_state, map->max_osd*sizeof(*state));
+-		memcpy(addr, map->osd_addr, map->max_osd*sizeof(*addr));
+-		memcpy(weight, map->osd_weight, map->max_osd*sizeof(*weight));
+-		kfree(map->osd_state);
+-		kfree(map->osd_addr);
+-		kfree(map->osd_weight);
++	for (i = map->max_osd; i < max; i++) {
++		state[i] = 0;
++		weight[i] = CEPH_OSD_OUT;
++		memset(addr + i, 0, sizeof(*addr));
+ 	}
+ 
+ 	map->osd_state = state;
+ 	map->osd_weight = weight;
+ 	map->osd_addr = addr;
++
+ 	map->max_osd = max;
++
+ 	return 0;
+ }
+ 
+-- 
+2.1.4
+
