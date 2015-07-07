@@ -1,0 +1,63 @@
+From dccbdbd17007f7f05303f1160d8a7f37e0a99465 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <idryomov@redhat.com>
+Date: Thu, 8 Jan 2015 20:18:22 +0300
+Subject: [PATCH 196/213] rbd: fix error paths in rbd_dev_refresh()
+References: fate#318918
+Git-commit: 73e39e4dba828fe1affefe6290456623319707bd
+Patch-mainline: v4.0-rc1
+
+header_rwsem should be released on errors.  Also remove useless
+rbd_dev->mapping.size != rbd_dev->header.image_size test.
+
+Signed-off-by: Ilya Dryomov <idryomov@redhat.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 13 ++++++-------
+ 1 file changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index a96ccd9..9f30cc1 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -3742,7 +3742,7 @@ static int rbd_dev_refresh(struct rbd_device *rbd_dev)
+ 
+ 	ret = rbd_dev_header_info(rbd_dev);
+ 	if (ret)
+-		return ret;
++		goto out;
+ 
+ 	/*
+ 	 * If there is a parent, see if it has disappeared due to the
+@@ -3751,23 +3751,22 @@ static int rbd_dev_refresh(struct rbd_device *rbd_dev)
+ 	if (rbd_dev->parent) {
+ 		ret = rbd_dev_v2_parent_info(rbd_dev);
+ 		if (ret)
+-			return ret;
++			goto out;
+ 	}
+ 
+ 	if (rbd_dev->spec->snap_id == CEPH_NOSNAP) {
+-		if (rbd_dev->mapping.size != rbd_dev->header.image_size)
+-			rbd_dev->mapping.size = rbd_dev->header.image_size;
++		rbd_dev->mapping.size = rbd_dev->header.image_size;
+ 	} else {
+ 		/* validate mapped snapshot's EXISTS flag */
+ 		rbd_exists_validate(rbd_dev);
+ 	}
+ 
++out:
+ 	up_write(&rbd_dev->header_rwsem);
+-
+-	if (mapping_size != rbd_dev->mapping.size)
++	if (!ret && mapping_size != rbd_dev->mapping.size)
+ 		rbd_dev_update_size(rbd_dev);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int rbd_init_disk(struct rbd_device *rbd_dev)
+-- 
+2.1.4
+
