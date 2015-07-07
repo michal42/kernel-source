@@ -1,0 +1,48 @@
+From 6fb3306d7b8478858b1da5cf1745c9aec1d46685 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Thu, 13 Mar 2014 16:36:15 +0200
+Subject: [PATCH 084/213] libceph: fix crush_decode() call site in
+ osdmap_decode()
+References: fate#318918
+Git-commit: 9902e682c7f3df9ed5f60bc6f9c7efa6fd6b2d1d
+Patch-mainline: v3.15-rc5
+
+The size of the memory area feeded to crush_decode() should be limited
+not only by osdmap end, but also by the crush map length.  Also, drop
+unnecessary dout() (dout() in crush_decode() conveys the same info) and
+step past crush map only if it is decoded successfully.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osdmap.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/net/ceph/osdmap.c b/net/ceph/osdmap.c
+index c39ac62..d4a6b0d 100644
+--- a/net/ceph/osdmap.c
++++ b/net/ceph/osdmap.c
+@@ -802,16 +802,13 @@ static int osdmap_decode(void **p, void *end, struct ceph_osdmap *map)
+ 
+ 	/* crush */
+ 	ceph_decode_32_safe(p, end, len, e_inval);
+-	dout("osdmap_decode crush len %d from off 0x%x\n", len,
+-	     (int)(*p - start));
+-	ceph_decode_need(p, end, len, e_inval);
+-	map->crush = crush_decode(*p, end);
+-	*p += len;
++	map->crush = crush_decode(*p, min(*p + len, end));
+ 	if (IS_ERR(map->crush)) {
+ 		err = PTR_ERR(map->crush);
+ 		map->crush = NULL;
+ 		goto bad;
+ 	}
++	*p += len;
+ 
+ 	/* ignore the rest */
+ 	*p = end;
+-- 
+2.1.4
+
