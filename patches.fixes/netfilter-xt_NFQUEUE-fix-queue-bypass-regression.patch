@@ -1,0 +1,52 @@
+From d954777324ffcba0b2f8119c102237426c654eeb Mon Sep 17 00:00:00 2001
+From: Holger Eitzenberger <holger@eitzenberger.org>
+Date: Mon, 28 Oct 2013 14:42:33 +0100
+Subject: [PATCH] netfilter: xt_NFQUEUE: fix --queue-bypass regression
+Git-commit: d954777324ffcba0b2f8119c102237426c654eeb
+Patch-mainline: v3.13-rc1 
+References: bsc#935083
+
+V3 of the NFQUEUE target ignores the --queue-bypass flag,
+causing packets to be dropped when the userspace listener
+isn't running.
+
+Regression is in since 8746ddcf12bb26 ("netfilter: xt_NFQUEUE:
+introduce CPU fanout").
+
+Reported-by: Florian Westphal <fw@strlen.de>
+Signed-off-by: Holger Eitzenberger <holger@eitzenberger.org>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Acked-by: Yadan Fan <ydfan@suse.com>
+
+---
+ net/netfilter/xt_NFQUEUE.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/net/netfilter/xt_NFQUEUE.c b/net/netfilter/xt_NFQUEUE.c
+index 1e2fae3..ed00fef 100644
+--- a/net/netfilter/xt_NFQUEUE.c
++++ b/net/netfilter/xt_NFQUEUE.c
+@@ -147,6 +147,7 @@ nfqueue_tg_v3(struct sk_buff *skb, const struct xt_action_param *par)
+ {
+ 	const struct xt_NFQ_info_v3 *info = par->targinfo;
+ 	u32 queue = info->queuenum;
++	int ret;
+ 
+ 	if (info->queues_total > 1) {
+ 		if (info->flags & NFQ_FLAG_CPU_FANOUT) {
+@@ -157,7 +158,11 @@ nfqueue_tg_v3(struct sk_buff *skb, const struct xt_action_param *par)
+ 			queue = nfqueue_hash(skb, par);
+ 	}
+ 
+-	return NF_QUEUE_NR(queue);
++	ret = NF_QUEUE_NR(queue);
++	if (info->flags & NFQ_FLAG_BYPASS)
++		ret |= NF_VERDICT_FLAG_QUEUE_BYPASS;
++
++	return ret;
+ }
+ 
+ static struct xt_target nfqueue_tg_reg[] __read_mostly = {
+-- 
+1.8.4.5
+
