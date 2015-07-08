@@ -1,0 +1,44 @@
+From: Feng Wu <feng.wu@intel.com>
+Date: Tue, 1 Apr 2014 17:46:35 +0800
+Subject: KVM: Disable SMAP for guests in EPT realmode and EPT unpaging mode
+Git-commit: e1e746b3c55d1d1e0841a2e600a154d8f6747232
+Patch-mainline: v3.15
+References: FATE#315674
+
+SMAP is disabled if CPU is in non-paging mode in hardware.
+However KVM always uses paging mode to emulate guest non-paging
+mode with TDP. To emulate this behavior, SMAP needs to be
+manually disabled when guest switches to non-paging mode.
+
+Signed-off-by: Feng Wu <feng.wu@intel.com>
+Signed-off-by: Marcelo Tosatti <mtosatti@redhat.com>
+Signed-off-by: Bruce Rogers <brogers@suse.com>
+---
+ arch/x86/kvm/vmx.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 8e733d0..bd1944e 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -3465,13 +3465,14 @@ static int vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
+ 			hw_cr4 &= ~X86_CR4_PAE;
+ 			hw_cr4 |= X86_CR4_PSE;
+ 			/*
+-			 * SMEP is disabled if CPU is in non-paging mode in
+-			 * hardware. However KVM always uses paging mode to
++			 * SMEP/SMAP is disabled if CPU is in non-paging mode
++			 * in hardware. However KVM always uses paging mode to
+ 			 * emulate guest non-paging mode with TDP.
+-			 * To emulate this behavior, SMEP needs to be manually
+-			 * disabled when guest switches to non-paging mode.
++			 * To emulate this behavior, SMEP/SMAP needs to be
++			 * manually disabled when guest switches to non-paging
++			 * mode.
+ 			 */
+-			hw_cr4 &= ~X86_CR4_SMEP;
++			hw_cr4 &= ~(X86_CR4_SMEP | X86_CR4_SMAP);
+ 		} else if (!(cr4 & X86_CR4_PAE)) {
+ 			hw_cr4 &= ~X86_CR4_PAE;
+ 		}
+
