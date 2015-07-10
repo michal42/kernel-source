@@ -57,27 +57,25 @@ Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
 Signed-off-by: Christoph Hellwig <hch@lst.de>
 Signed-off-by: Johannes Thumshirn <jthumshirn@suse.de>
 ---
- drivers/scsi/mpt3sas/mpt3sas_base.c | 232 +++++++++++++++++++++++++++---------
- drivers/scsi/mpt3sas/mpt3sas_base.h |  20 +++-
+ drivers/scsi/mpt3sas/mpt3sas_base.c |  232 +++++++++++++++++++++++++++---------
+ drivers/scsi/mpt3sas/mpt3sas_base.h |   20 ++-
  2 files changed, 191 insertions(+), 61 deletions(-)
 
-diff --git a/drivers/scsi/mpt3sas/mpt3sas_base.c b/drivers/scsi/mpt3sas/mpt3sas_base.c
-index e94993e..1560115 100644
 --- a/drivers/scsi/mpt3sas/mpt3sas_base.c
 +++ b/drivers/scsi/mpt3sas/mpt3sas_base.c
 @@ -91,6 +91,8 @@ static int mpt3sas_fwfault_debug;
  MODULE_PARM_DESC(mpt3sas_fwfault_debug,
-	" enable detection of firmware fault and halt firmware - (default=0)");
+ 	" enable detection of firmware fault and halt firmware - (default=0)");
  
 +static int
 +_base_get_ioc_facts(struct MPT3SAS_ADAPTER *ioc, int sleep_flag);
  
  /**
   * _scsih_set_fwfault_debug - global setting of ioc->fwfault_debug.
-@@ -1482,17 +1484,22 @@ static int
+@@ -1485,17 +1487,22 @@ static int
  _base_config_dma_addressing(struct MPT3SAS_ADAPTER *ioc, struct pci_dev *pdev)
  {
-	struct sysinfo s;
+ 	struct sysinfo s;
 -	char *desc = NULL;
 +	u64 consistent_dma_mask;
 +
@@ -85,33 +83,33 @@ index e94993e..1560115 100644
 +		consistent_dma_mask = DMA_BIT_MASK(64);
 +	else
 +		consistent_dma_mask = DMA_BIT_MASK(32);
-
-	if (sizeof(dma_addr_t) > 4) {
-		const uint64_t required_mask =
-		    dma_get_required_mask(&pdev->dev);
-		if ((required_mask > DMA_BIT_MASK(32)) &&
-		    !pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) &&
+ 
+ 	if (sizeof(dma_addr_t) > 4) {
+ 		const uint64_t required_mask =
+ 		    dma_get_required_mask(&pdev->dev);
+ 		if ((required_mask > DMA_BIT_MASK(32)) &&
+ 		    !pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) &&
 -		    !pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64))) {
 +		    !pci_set_consistent_dma_mask(pdev, consistent_dma_mask)) {
-			ioc->base_add_sg_single = &_base_add_sg_single_64;
-			ioc->sge_size = sizeof(Mpi2SGESimple64_t);
+ 			ioc->base_add_sg_single = &_base_add_sg_single_64;
+ 			ioc->sge_size = sizeof(Mpi2SGESimple64_t);
 -			desc = "64";
 +			ioc->dma_mask = 64;
-			goto out;
-		}
-	}
-@@ -1501,16 +1508,27 @@ _base_config_dma_addressing(struct MPT3SAS_ADAPTER *ioc, struct pci_dev *pdev)
-	    && !pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32))) {
-		ioc->base_add_sg_single = &_base_add_sg_single_32;
-		ioc->sge_size = sizeof(Mpi2SGESimple32_t);
+ 			goto out;
+ 		}
+ 	}
+@@ -1504,16 +1511,27 @@ _base_config_dma_addressing(struct MPT3S
+ 	    && !pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32))) {
+ 		ioc->base_add_sg_single = &_base_add_sg_single_32;
+ 		ioc->sge_size = sizeof(Mpi2SGESimple32_t);
 -		desc = "32";
 +		ioc->dma_mask = 32;
-	} else
-		return -ENODEV;
-
+ 	} else
+ 		return -ENODEV;
+ 
   out:
-	si_meminfo(&s);
-	pr_info(MPT3SAS_FMT
+ 	si_meminfo(&s);
+ 	pr_info(MPT3SAS_FMT
 -		"%s BIT PCI BUS DMA ADDRESSING SUPPORTED, total mem (%ld kB)\n",
 -		ioc->name, desc, convert_to_kb(s.totalram));
 +		"%d BIT PCI BUS DMA ADDRESSING SUPPORTED, total mem (%ld kB)\n",
@@ -119,7 +117,7 @@ index e94993e..1560115 100644
 +
 +	return 0;
 +}
-
+ 
 +static int
 +_base_change_consistent_dma_mask(struct MPT3SAS_ADAPTER *ioc,
 +				      struct pci_dev *pdev)
@@ -128,35 +126,35 @@ index e94993e..1560115 100644
 +		if (pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32)))
 +			return -ENODEV;
 +	}
-	return 0;
+ 	return 0;
  }
-
-@@ -1698,11 +1716,15 @@ _base_enable_msix(struct MPT3SAS_ADAPTER *ioc)
-	  ": %d, max_msix_vectors: %d\n", ioc->name, ioc->msix_vector_count,
-	  ioc->cpu_count, max_msix_vectors);
-
+ 
+@@ -1732,11 +1750,15 @@ _base_enable_msix(struct MPT3SAS_ADAPTER
+ 	  ": %d, max_msix_vectors: %d\n", ioc->name, ioc->msix_vector_count,
+ 	  ioc->cpu_count, max_msix_vectors);
+ 
 +	if (!ioc->rdpq_array_enable && max_msix_vectors == -1)
 +		max_msix_vectors = 8;
 +
-	if (max_msix_vectors > 0) {
-		ioc->reply_queue_count = min_t(int, max_msix_vectors,
-			ioc->reply_queue_count);
-		ioc->msix_vector_count = ioc->reply_queue_count;
+ 	if (max_msix_vectors > 0) {
+ 		ioc->reply_queue_count = min_t(int, max_msix_vectors,
+ 			ioc->reply_queue_count);
+ 		ioc->msix_vector_count = ioc->reply_queue_count;
 -	}
 +	} else if (max_msix_vectors == 0)
 +		goto try_ioapic;
-
-	entries = kcalloc(ioc->reply_queue_count, sizeof(struct msix_entry),
-	    GFP_KERNEL);
-@@ -1742,6 +1764,7 @@ _base_enable_msix(struct MPT3SAS_ADAPTER *ioc)
+ 
+ 	entries = kcalloc(ioc->reply_queue_count, sizeof(struct msix_entry),
+ 	    GFP_KERNEL);
+@@ -1776,6 +1798,7 @@ _base_enable_msix(struct MPT3SAS_ADAPTER
  /* failback to io_apic interrupt routing */
   try_ioapic:
-
+ 
 +	ioc->reply_queue_count = 1;
-	r = _base_request_irq(ioc, 0, ioc->pdev->irq);
-
-	return r;
-@@ -1821,6 +1844,16 @@ mpt3sas_base_map_resources(struct MPT3SAS_ADAPTER *ioc)
+ 	r = _base_request_irq(ioc, 0, ioc->pdev->irq);
+ 
+ 	return r;
+@@ -1855,6 +1878,16 @@ mpt3sas_base_map_resources(struct MPT3SA
  	}
  
  	_base_mask_interrupts(ioc);
@@ -173,17 +171,17 @@ index e94993e..1560115 100644
  	r = _base_enable_msix(ioc);
  	if (r)
  		goto out_fail;
-@@ -2496,7 +2529,8 @@ _base_static_config_pages(struct MPT3SAS_ADAPTER *ioc)
+@@ -2531,7 +2564,8 @@ _base_static_config_pages(struct MPT3SAS
  static void
  _base_release_memory_pools(struct MPT3SAS_ADAPTER *ioc)
  {
 -	int i;
 +	int i = 0;
 +	struct reply_post_struct *rps;
-
-	dexitprintk(ioc, pr_info(MPT3SAS_FMT "%s\n", ioc->name,
-	    __func__));
-@@ -2541,15 +2575,25 @@ _base_release_memory_pools(struct MPT3SAS_ADAPTER *ioc)
+ 
+ 	dexitprintk(ioc, pr_info(MPT3SAS_FMT "%s\n", ioc->name,
+ 	    __func__));
+@@ -2576,15 +2610,25 @@ _base_release_memory_pools(struct MPT3SA
  		ioc->reply_free = NULL;
  	}
  
@@ -216,10 +214,10 @@ index e94993e..1560115 100644
  	}
  
  	if (ioc->config_page) {
-@@ -2696,6 +2740,65 @@ _base_allocate_memory_pools(struct MPT3SAS_ADAPTER *ioc,  int sleep_flag)
-	    ioc->max_sges_in_chain_message, ioc->shost->sg_tablesize,
-	    ioc->chains_needed_per_io));
-
+@@ -2731,6 +2775,65 @@ _base_allocate_memory_pools(struct MPT3S
+ 	    ioc->max_sges_in_chain_message, ioc->shost->sg_tablesize,
+ 	    ioc->chains_needed_per_io));
+ 
 +	/* reply post queue, 16 byte align */
 +	reply_post_free_sz = ioc->reply_post_queue_depth *
 +	    sizeof(Mpi2DefaultReplyDescriptor_t);
@@ -279,10 +277,10 @@ index e94993e..1560115 100644
 +		}
 +	}
 +
-	ioc->scsiio_depth = ioc->hba_queue_depth -
-	    ioc->hi_priority_depth - ioc->internal_depth;
-
-@@ -2910,40 +3013,6 @@ _base_allocate_memory_pools(struct MPT3SAS_ADAPTER *ioc,  int sleep_flag)
+ 	ioc->scsiio_depth = ioc->hba_queue_depth -
+ 	    ioc->hi_priority_depth - ioc->internal_depth;
+ 
+@@ -2945,40 +3048,6 @@ _base_allocate_memory_pools(struct MPT3S
  		ioc->name, (unsigned long long)ioc->reply_free_dma));
  	total_sz += sz;
  
@@ -322,18 +320,18 @@ index e94993e..1560115 100644
 -
  	ioc->config_page_sz = 512;
  	ioc->config_page = pci_alloc_consistent(ioc->pdev,
-	    ioc->config_page_sz, &ioc->config_page_dma);
-@@ -3626,6 +3695,9 @@ _base_get_ioc_facts(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
-	facts->IOCCapabilities = le32_to_cpu(mpi_reply.IOCCapabilities);
-	if ((facts->IOCCapabilities & MPI2_IOCFACTS_CAPABILITY_INTEGRATED_RAID))
-		ioc->ir_firmware = 1;
+ 	    ioc->config_page_sz, &ioc->config_page_dma);
+@@ -3661,6 +3730,9 @@ _base_get_ioc_facts(struct MPT3SAS_ADAPT
+ 	facts->IOCCapabilities = le32_to_cpu(mpi_reply.IOCCapabilities);
+ 	if ((facts->IOCCapabilities & MPI2_IOCFACTS_CAPABILITY_INTEGRATED_RAID))
+ 		ioc->ir_firmware = 1;
 +	if ((facts->IOCCapabilities &
 +	      MPI2_IOCFACTS_CAPABILITY_RDPQ_ARRAY_CAPABLE))
 +		ioc->rdpq_array_capable = 1;
-	facts->FWVersion.Word = le32_to_cpu(mpi_reply.FWVersion.Word);
-	facts->IOCRequestFrameSize =
-	    le16_to_cpu(mpi_reply.IOCRequestFrameSize);
-@@ -3662,9 +3734,12 @@ _base_send_ioc_init(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
+ 	facts->FWVersion.Word = le32_to_cpu(mpi_reply.FWVersion.Word);
+ 	facts->IOCRequestFrameSize =
+ 	    le16_to_cpu(mpi_reply.IOCRequestFrameSize);
+@@ -3697,9 +3769,12 @@ _base_send_ioc_init(struct MPT3SAS_ADAPT
  {
  	Mpi2IOCInitRequest_t mpi_request;
  	Mpi2IOCInitReply_t mpi_reply;
@@ -347,7 +345,7 @@ index e94993e..1560115 100644
  
  	dinitprintk(ioc, pr_info(MPT3SAS_FMT "%s\n", ioc->name,
  	    __func__));
-@@ -3693,9 +3768,31 @@ _base_send_ioc_init(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
+@@ -3728,9 +3803,31 @@ _base_send_ioc_init(struct MPT3SAS_ADAPT
  	    cpu_to_le64((u64)ioc->request_dma);
  	mpi_request.ReplyFreeQueueAddress =
  	    cpu_to_le64((u64)ioc->reply_free_dma);
@@ -381,7 +379,7 @@ index e94993e..1560115 100644
  
  	/* This time stamp specifies number of milliseconds
  	 * since epoch ~ midnight January 1, 1970.
-@@ -3723,7 +3820,7 @@ _base_send_ioc_init(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
+@@ -3758,7 +3855,7 @@ _base_send_ioc_init(struct MPT3SAS_ADAPT
  	if (r != 0) {
  		pr_err(MPT3SAS_FMT "%s: handshake failed (r=%d)\n",
  		    ioc->name, __func__, r);
@@ -390,10 +388,10 @@ index e94993e..1560115 100644
  	}
  
  	ioc_status = le16_to_cpu(mpi_reply.IOCStatus) & MPI2_IOCSTATUS_MASK;
-@@ -3733,7 +3830,12 @@ _base_send_ioc_init(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
+@@ -3768,7 +3865,12 @@ _base_send_ioc_init(struct MPT3SAS_ADAPT
  		r = -EIO;
  	}
-
+ 
 -	return 0;
 +out:
 +	if (reply_post_free_array)
@@ -404,30 +402,30 @@ index e94993e..1560115 100644
  }
  
  /**
-@@ -4283,7 +4385,7 @@ _base_make_ioc_operational(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
-	struct _tr_list *delayed_tr, *delayed_tr_next;
-	struct adapter_reply_queue *reply_q;
-	long reply_post_free;
+@@ -4318,7 +4420,7 @@ _base_make_ioc_operational(struct MPT3SA
+ 	struct _tr_list *delayed_tr, *delayed_tr_next;
+ 	struct adapter_reply_queue *reply_q;
+ 	long reply_post_free;
 -	u32 reply_post_free_sz;
 +	u32 reply_post_free_sz, index = 0;
-
-	dinitprintk(ioc, pr_info(MPT3SAS_FMT "%s\n", ioc->name,
-	    __func__));
-@@ -4354,9 +4456,9 @@ _base_make_ioc_operational(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
+ 
+ 	dinitprintk(ioc, pr_info(MPT3SAS_FMT "%s\n", ioc->name,
+ 	    __func__));
+@@ -4389,9 +4491,9 @@ _base_make_ioc_operational(struct MPT3SA
  		_base_assign_reply_queues(ioc);
  
  	/* initialize Reply Post Free Queue */
 -	reply_post_free = (long)ioc->reply_post_free;
-	reply_post_free_sz = ioc->reply_post_queue_depth *
-	    sizeof(Mpi2DefaultReplyDescriptor_t);
+ 	reply_post_free_sz = ioc->reply_post_queue_depth *
+ 	    sizeof(Mpi2DefaultReplyDescriptor_t);
 +	reply_post_free = (long)ioc->reply_post[index].reply_post_free;
-	list_for_each_entry(reply_q, &ioc->reply_queue_list, list) {
-		reply_q->reply_post_host_index = 0;
-		reply_q->reply_post_free = (Mpi2ReplyDescriptorsUnion_t *)
-@@ -4366,7 +4468,15 @@ _base_make_ioc_operational(struct MPT3SAS_ADAPTER *ioc, int sleep_flag)
-			    cpu_to_le64(ULLONG_MAX);
-		if (!_base_is_controller_msix_enabled(ioc))
-			goto skip_init_reply_post_free_queue;
+ 	list_for_each_entry(reply_q, &ioc->reply_queue_list, list) {
+ 		reply_q->reply_post_host_index = 0;
+ 		reply_q->reply_post_free = (Mpi2ReplyDescriptorsUnion_t *)
+@@ -4401,7 +4503,15 @@ _base_make_ioc_operational(struct MPT3SA
+ 			    cpu_to_le64(ULLONG_MAX);
+ 		if (!_base_is_controller_msix_enabled(ioc))
+ 			goto skip_init_reply_post_free_queue;
 -		reply_post_free += reply_post_free_sz;
 +		/*
 +		 * If RDPQ is enabled, switch to the next allocation.
@@ -441,7 +439,7 @@ index e94993e..1560115 100644
  	}
   skip_init_reply_post_free_queue:
  
-@@ -4477,6 +4587,8 @@ mpt3sas_base_attach(struct MPT3SAS_ADAPTER *ioc)
+@@ -4512,6 +4622,8 @@ mpt3sas_base_attach(struct MPT3SAS_ADAPT
  		goto out_free_resources;
  	}
  
@@ -450,7 +448,7 @@ index e94993e..1560115 100644
  	r = mpt3sas_base_map_resources(ioc);
  	if (r)
  		goto out_free_resources;
-@@ -4853,6 +4965,12 @@ mpt3sas_base_hard_reset_handler(struct MPT3SAS_ADAPTER *ioc, int sleep_flag,
+@@ -4888,6 +5000,12 @@ mpt3sas_base_hard_reset_handler(struct M
  	r = _base_get_ioc_facts(ioc, CAN_SLEEP);
  	if (r)
  		goto out;
@@ -463,8 +461,6 @@ index e94993e..1560115 100644
  	r = _base_make_ioc_operational(ioc, sleep_flag);
  	if (!r)
  		_base_reset_handler(ioc, MPT3_IOC_DONE_RESET);
-diff --git a/drivers/scsi/mpt3sas/mpt3sas_base.h b/drivers/scsi/mpt3sas/mpt3sas_base.h
-index e920728..ca4a7cc 100644
 --- a/drivers/scsi/mpt3sas/mpt3sas_base.h
 +++ b/drivers/scsi/mpt3sas/mpt3sas_base.h
 @@ -569,6 +569,11 @@ struct mpt3sas_port_facts {
@@ -479,7 +475,7 @@ index e920728..ca4a7cc 100644
  /**
   * enum mutex_type - task management mutex type
   * @TM_MUTEX_OFF: mutex is not required becuase calling function is acquiring it
-@@ -597,6 +602,7 @@ typedef void (*MPT3SAS_FLUSH_RUNNING_CMDS)(struct MPT3SAS_ADAPTER *ioc);
+@@ -597,6 +602,7 @@ typedef void (*MPT3SAS_FLUSH_RUNNING_CMD
   * @ir_firmware: IR firmware present
   * @bars: bitmask of BAR's that must be configured
   * @mask_interrupts: ignore interrupt
@@ -487,7 +483,7 @@ index e920728..ca4a7cc 100644
   * @fault_reset_work_q_name: fw fault work queue
   * @fault_reset_work_q: ""
   * @fault_reset_work: ""
-@@ -712,8 +718,11 @@ typedef void (*MPT3SAS_FLUSH_RUNNING_CMDS)(struct MPT3SAS_ADAPTER *ioc);
+@@ -712,8 +718,11 @@ typedef void (*MPT3SAS_FLUSH_RUNNING_CMD
   * @reply_free_dma_pool:
   * @reply_free_host_index: tail index in pool to insert free replys
   * @reply_post_queue_depth: reply post queue depth
@@ -502,14 +498,14 @@ index e920728..ca4a7cc 100644
   * @reply_queue_list: link list contaning the reply queue info
   * @reply_post_host_index: head index in the pool where FW completes IO
 @@ -735,6 +744,7 @@ struct MPT3SAS_ADAPTER {
-	u8		ir_firmware;
-	int		bars;
-	u8		mask_interrupts;
+ 	u8		ir_firmware;
+ 	int		bars;
+ 	u8		mask_interrupts;
 +	int		dma_mask;
-
-	/* fw fault handler */
-	char		fault_reset_work_q_name[20];
-@@ -914,8 +924,10 @@ struct MPT3SAS_ADAPTER {
+ 
+ 	/* fw fault handler */
+ 	char		fault_reset_work_q_name[20];
+@@ -915,8 +925,10 @@ struct MPT3SAS_ADAPTER {
  
  	/* reply post queue */
  	u16		reply_post_queue_depth;
@@ -522,6 +518,3 @@ index e920728..ca4a7cc 100644
  	struct dma_pool *reply_post_free_dma_pool;
  	u8		reply_queue_count;
  	struct list_head reply_queue_list;
--- 
-2.4.2
-
