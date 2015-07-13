@@ -1,0 +1,61 @@
+From: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Date: Thu, 25 Jun 2015 14:24:35 +0530
+Subject: [SCSI] mpt3sas: Complete the SCSI command with DID_RESET  status for log_info value 0x0x32010081
+Git-commit: ae0ac74878b65fe122d54fedf00d1702b4221e2d
+References: bsc#922628, FATE#318595
+Patch-mainline: on linux-scsi list
+
+For any SCSI command, if the driver receives
+IOC status = SCSI_IOC_TERMINATED and log info = 0x32010081 then
+that command will be completed with DID_RESET host status.
+
+The definition of this log info value is
+"Virtual IO has failed and has to be retried".
+
+Firmware will provide this log info value with IOC Status
+"SCSI_IOC_TERMINATED", whenever a drive (with is a part of a volume)
+is pulled and pushed back within some minimal delay.
+With this log info value, firmware informs the driver to retry the
+failed IO command infinite times, so to provide some time for the
+firmware to discover the reinserted drive successfully instated of
+just retrying failed command for five times(doesn't giving enough
+time for firmware to complete the drive discovery) and failing the
+IO permanently even though drive came back successfully.
+
+Changes in v1:
+   Defined macro VIRTUAL_IO_FAILED_RETRY for magic a value 0x32010081
+
+Changes in v2:
+	Patch version change only.
+
+Signed-off-by: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Reviewed-by: Johannes Thumshirn <jthumshirn@suse.de>
+---
+ drivers/scsi/mpt3sas/mpt3sas_base.h  |    2 ++
+ drivers/scsi/mpt3sas/mpt3sas_scsih.c |    3 +++
+ 2 files changed, 5 insertions(+)
+
+--- a/drivers/scsi/mpt3sas/mpt3sas_base.h
++++ b/drivers/scsi/mpt3sas/mpt3sas_base.h
+@@ -202,6 +202,8 @@
+ #define MFG10_GF0_SSD_DATA_SCRUB_DISABLE       (0x00000008)
+ #define MFG10_GF0_SINGLE_DRIVE_R0              (0x00000010)
+ 
++#define VIRTUAL_IO_FAILED_RETRY			(0x32010081)
++
+ /* OEM Specific Flags will come from OEM specific header files */
+ struct Mpi2ManufacturingPage10_t {
+ 	MPI2_CONFIG_PAGE_HEADER	Header;		/* 00h */
+--- a/drivers/scsi/mpt3sas/mpt3sas_scsih.c
++++ b/drivers/scsi/mpt3sas/mpt3sas_scsih.c
+@@ -4304,6 +4304,9 @@ _scsih_io_done(struct MPT3SAS_ADAPTER *i
+ 				scmd->device->expecting_cc_ua = 1;
+ 			}
+ 			break;
++		} else if (log_info == VIRTUAL_IO_FAILED_RETRY) {
++			scmd->result = DID_RESET << 16;
++			break;
+ 		}
+ 		scmd->result = DID_SOFT_ERROR << 16;
+ 		break;
