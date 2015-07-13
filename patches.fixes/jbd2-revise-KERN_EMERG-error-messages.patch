@@ -1,0 +1,108 @@
+From 75685071cd5b26d64fd2577330387aeab019ac97 Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Sun, 8 Dec 2013 21:13:59 -0500
+Subject: [PATCH 2/3] jbd2: revise KERN_EMERG error messages
+References: bsc#935174
+Git-commit: 75685071cd5b26d64fd2577330387aeab019ac97
+Patch-mainline: v3.13-rc6
+
+Some of KERN_EMERG printk messages do not really deserve this log
+level and the one in log_wait_commit() is even rather useless (the
+journal has been previously aborted and *that* is where we should have
+been complaining). So make some messages just KERN_ERR and remove the
+useless message.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+
+---
+ fs/jbd2/journal.c     |  8 +++-----
+ fs/jbd2/transaction.c | 10 +++++-----
+ 2 files changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/fs/jbd2/journal.c b/fs/jbd2/journal.c
+index 8e79148..6ea5d23 100644
+--- a/fs/jbd2/journal.c
++++ b/fs/jbd2/journal.c
+@@ -704,7 +704,7 @@ int jbd2_log_wait_commit(journal_t *journal, tid_t tid)
+ 	read_lock(&journal->j_state_lock);
+ #ifdef CONFIG_JBD2_DEBUG
+ 	if (!tid_geq(journal->j_commit_request, tid)) {
+-		printk(KERN_EMERG
++		printk(KERN_ERR
+ 		       "%s: error: j_commit_request=%d, tid=%d\n",
+ 		       __func__, journal->j_commit_request, tid);
+ 	}
+@@ -720,10 +720,8 @@ int jbd2_log_wait_commit(journal_t *journal, tid_t tid)
+ 	}
+ 	read_unlock(&journal->j_state_lock);
+ 
+-	if (unlikely(is_journal_aborted(journal))) {
+-		printk(KERN_EMERG "journal commit I/O error\n");
++	if (unlikely(is_journal_aborted(journal)))
+ 		err = -EIO;
+-	}
+ 	return err;
+ }
+ 
+@@ -2665,7 +2663,7 @@ static void __exit journal_exit(void)
+ #ifdef CONFIG_JBD2_DEBUG
+ 	int n = atomic_read(&nr_journal_heads);
+ 	if (n)
+-		printk(KERN_EMERG "JBD2: leaked %d journal_heads!\n", n);
++		printk(KERN_ERR "JBD2: leaked %d journal_heads!\n", n);
+ #endif
+ 	jbd2_remove_jbd_stats_proc_entry();
+ 	jbd2_journal_destroy_caches();
+diff --git a/fs/jbd2/transaction.c b/fs/jbd2/transaction.c
+index ab3815c..8ca1041 100644
+--- a/fs/jbd2/transaction.c
++++ b/fs/jbd2/transaction.c
+@@ -934,7 +934,7 @@ repeat:
+ 					jbd2_alloc(jh2bh(jh)->b_size,
+ 							 GFP_NOFS);
+ 				if (!frozen_buffer) {
+-					printk(KERN_EMERG
++					printk(KERN_ERR
+ 					       "%s: OOM for frozen_buffer\n",
+ 					       __func__);
+ 					JBUFFER_TRACE(jh, "oom!");
+@@ -1168,7 +1168,7 @@ repeat:
+ 	if (!jh->b_committed_data) {
+ 		committed_data = jbd2_alloc(jh2bh(jh)->b_size, GFP_NOFS);
+ 		if (!committed_data) {
+-			printk(KERN_EMERG "%s: No memory for committed data\n",
++			printk(KERN_ERR "%s: No memory for committed data\n",
+ 				__func__);
+ 			err = -ENOMEM;
+ 			goto out;
+@@ -1310,7 +1310,7 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
+ 		JBUFFER_TRACE(jh, "fastpath");
+ 		if (unlikely(jh->b_transaction !=
+ 			     journal->j_running_transaction)) {
+-			printk(KERN_EMERG "JBD: %s: "
++			printk(KERN_ERR "JBD: %s: "
+ 			       "jh->b_transaction (%llu, %p, %u) != "
+ 			       "journal->j_running_transaction (%p, %u)",
+ 			       journal->j_devname,
+@@ -1337,7 +1337,7 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
+ 		JBUFFER_TRACE(jh, "already on other transaction");
+ 		if (unlikely(jh->b_transaction !=
+ 			     journal->j_committing_transaction)) {
+-			printk(KERN_EMERG "JBD: %s: "
++			printk(KERN_ERR "JBD: %s: "
+ 			       "jh->b_transaction (%llu, %p, %u) != "
+ 			       "journal->j_committing_transaction (%p, %u)",
+ 			       journal->j_devname,
+@@ -1350,7 +1350,7 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
+ 			ret = -EINVAL;
+ 		}
+ 		if (unlikely(jh->b_next_transaction != transaction)) {
+-			printk(KERN_EMERG "JBD: %s: "
++			printk(KERN_ERR "JBD: %s: "
+ 			       "jh->b_next_transaction (%llu, %p, %u) != "
+ 			       "transaction (%p, %u)",
+ 			       journal->j_devname,
+-- 
+2.4.1.168.g1ea28e1
+
