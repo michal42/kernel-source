@@ -1,0 +1,42 @@
+From c515db8cd311ef77b2dc7cbd6b695022655bb0f3 Mon Sep 17 00:00:00 2001
+From: Vincent Guittot <vincent.guittot@linaro.org>
+Date: Tue, 13 May 2014 11:11:01 +0200
+Subject: sched/numa: Fix initialization of sched_domain_topology for NUMA
+Git-commit: c515db8cd311ef77b2dc7cbd6b695022655bb0f3
+Patch-mainline: v3.16-rc1
+References: fate#318547
+
+Jet Chen has reported a kernel panics when booting qemu-system-x86_64 with
+kvm64 cpu. A panic occured while building the sched_domain.
+
+In sched_init_numa, we create a new topology table in which both default
+levels and numa levels are copied. The last row of the table must have a null
+pointer in the mask field.
+
+The current implementation doesn't add this last row in the computation of the
+table size. So we add 1 row in the allocation size that will be used as the
+last row of the table. The kzalloc will ensure that the mask field is NULL.
+
+Reported-by: Jet Chen <jet.chen@intel.com>
+Tested-by: Jet Chen <jet.chen@intel.com>
+Signed-off-by: Vincent Guittot <vincent.guittot@linaro.org>
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Cc: fengguang.wu@intel.com
+Link: http://lkml.kernel.org/r/1399972261-25693-1-git-send-email-vincent.guittot@linaro.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
+---
+ kernel/sched/core.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -6015,7 +6015,7 @@ static void sched_init_numa(void)
+ 	/* Compute default topology size */
+ 	for (i = 0; sched_domain_topology[i].mask; i++);
+ 
+-	tl = kzalloc((i + level) *
++	tl = kzalloc((i + level + 1) *
+ 			sizeof(struct sched_domain_topology_level), GFP_KERNEL);
+ 	if (!tl)
+ 		return;
