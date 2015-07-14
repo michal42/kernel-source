@@ -1,0 +1,106 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Wed, 6 May 2015 17:47:42 -0700
+Patch-mainline: v4.2-rc1
+Subject: Drivers: hv: vmbus: unify calls to percpu_channel_enq()
+Git-commit: 8dfd332674758135039d0d2d2a7479934ff0b9c5
+
+Remove some code duplication, no functional change intended.
+
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/channel_mgmt.c | 51 +++++++++++++++++------------------------------
+ 1 file changed, 18 insertions(+), 33 deletions(-)
+
+diff --git a/drivers/hv/channel_mgmt.c b/drivers/hv/channel_mgmt.c
+index 4b9d89a..b28cbdf 100644
+--- a/drivers/hv/channel_mgmt.c
++++ b/drivers/hv/channel_mgmt.c
+@@ -233,7 +233,6 @@ static void vmbus_process_offer(struct vmbus_channel *newchannel)
+ {
+ 	struct vmbus_channel *channel;
+ 	bool fnew = true;
+-	bool enq = false;
+ 	unsigned long flags;
+ 
+ 	/* Make sure this is a new offer */
+@@ -249,25 +248,12 @@ static void vmbus_process_offer(struct vmbus_channel *newchannel)
+ 		}
+ 	}
+ 
+-	if (fnew) {
++	if (fnew)
+ 		list_add_tail(&newchannel->listentry,
+ 			      &vmbus_connection.chn_list);
+-		enq = true;
+-	}
+ 
+ 	spin_unlock_irqrestore(&vmbus_connection.channel_lock, flags);
+ 
+-	if (enq) {
+-		if (newchannel->target_cpu != get_cpu()) {
+-			put_cpu();
+-			smp_call_function_single(newchannel->target_cpu,
+-						 percpu_channel_enq,
+-						 newchannel, true);
+-		} else {
+-			percpu_channel_enq(newchannel);
+-			put_cpu();
+-		}
+-	}
+ 	if (!fnew) {
+ 		/*
+ 		 * Check to see if this is a sub-channel.
+@@ -280,26 +266,19 @@ static void vmbus_process_offer(struct vmbus_channel *newchannel)
+ 			spin_lock_irqsave(&channel->lock, flags);
+ 			list_add_tail(&newchannel->sc_list, &channel->sc_list);
+ 			spin_unlock_irqrestore(&channel->lock, flags);
+-
+-			if (newchannel->target_cpu != get_cpu()) {
+-				put_cpu();
+-				smp_call_function_single(newchannel->target_cpu,
+-							 percpu_channel_enq,
+-							 newchannel, true);
+-			} else {
+-				percpu_channel_enq(newchannel);
+-				put_cpu();
+-			}
+-
+-			newchannel->state = CHANNEL_OPEN_STATE;
+ 			channel->num_sc++;
+-			if (channel->sc_creation_callback != NULL)
+-				channel->sc_creation_callback(newchannel);
+-
+-			return;
+-		}
++		} else
++			goto err_free_chan;
++	}
+ 
+-		goto err_free_chan;
++	if (newchannel->target_cpu != get_cpu()) {
++		put_cpu();
++		smp_call_function_single(newchannel->target_cpu,
++					 percpu_channel_enq,
++					 newchannel, true);
++	} else {
++		percpu_channel_enq(newchannel);
++		put_cpu();
+ 	}
+ 
+ 	/*
+@@ -309,6 +288,12 @@ static void vmbus_process_offer(struct vmbus_channel *newchannel)
+ 	 */
+ 	newchannel->state = CHANNEL_OPEN_STATE;
+ 
++	if (!fnew) {
++		if (channel->sc_creation_callback != NULL)
++			channel->sc_creation_callback(newchannel);
++		return;
++	}
++
+ 	/*
+ 	 * Start the process of binding this offer to the driver
+ 	 * We need to set the DeviceObject field before calling
