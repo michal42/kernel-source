@@ -1,0 +1,50 @@
+From: Christoph Hellwig <hch@lst.de>
+Date: Thu, 23 Apr 2015 16:33:24 +0530
+Subject: megaraid_sas : move endianness conversion into caller of
+ megasas_get_seq_num
+Git-commit: 48100b0ed0e5a34873828c0cdae8708804d57ee5
+Patch-mainline: v4.2-rc1
+References: bsc#922632, FATE#318592
+
+Converting structure fields in place is always a bad idea, and in this case
+by moving it into the only caller we also only have to do a single byte
+swap as most fields of this structure are never used.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Sumit Saxena <sumit.saxena@avagotech.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/megaraid/megaraid_sas_base.c |   12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+--- a/drivers/scsi/megaraid/megaraid_sas_base.c
++++ b/drivers/scsi/megaraid/megaraid_sas_base.c
+@@ -4922,11 +4922,11 @@ megasas_get_seq_num(struct megasas_insta
+ 		/*
+ 		 * Copy the data back into callers buffer
+ 		 */
+-		eli->newest_seq_num = le32_to_cpu(el_info->newest_seq_num);
+-		eli->oldest_seq_num = le32_to_cpu(el_info->oldest_seq_num);
+-		eli->clear_seq_num = le32_to_cpu(el_info->clear_seq_num);
+-		eli->shutdown_seq_num = le32_to_cpu(el_info->shutdown_seq_num);
+-		eli->boot_seq_num = le32_to_cpu(el_info->boot_seq_num);
++		eli->newest_seq_num = el_info->newest_seq_num;
++		eli->oldest_seq_num = el_info->oldest_seq_num;
++		eli->clear_seq_num = el_info->clear_seq_num;
++		eli->shutdown_seq_num = el_info->shutdown_seq_num;
++		eli->boot_seq_num = el_info->boot_seq_num;
+ 	}
+ 
+ 	pci_free_consistent(instance->pdev, sizeof(struct megasas_evt_log_info),
+@@ -5086,7 +5086,7 @@ static int megasas_start_aen(struct mega
+ 	class_locale.members.class = MR_EVT_CLASS_DEBUG;
+ 
+ 	return megasas_register_aen(instance,
+-			eli.newest_seq_num + 1,
++			le32_to_cpu(eli.newest_seq_num) + 1,
+ 			class_locale.word);
+ }
+ 
