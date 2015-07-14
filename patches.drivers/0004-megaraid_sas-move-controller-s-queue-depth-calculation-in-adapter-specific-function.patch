@@ -1,0 +1,103 @@
+From: "Sumit.Saxena@avagotech.com" <Sumit.Saxena@avagotech.com>
+Date: Thu, 23 Apr 2015 16:30:54 +0530
+Subject: megaraid_sas : Move controller's queue depth calculation in adapter
+ specific function
+Git-commit: f26ac3a1a5108df2bd1e30ee1c8bb6f7664929b5
+Patch-mainline: v4.2-rc1
+References: bsc#922632, FATE#318592
+
+Signed-off-by: Kashyap Desai <kashyap.desai@avagotech.com>
+Signed-off-by: Sumit Saxena <sumit.saxena@avagotech.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/megaraid/megaraid_sas.h        |    1 
+ drivers/scsi/megaraid/megaraid_sas_base.c   |   39 ++++++++++------------------
+ drivers/scsi/megaraid/megaraid_sas_fusion.c |    9 ++++++
+ 3 files changed, 25 insertions(+), 24 deletions(-)
+
+--- a/drivers/scsi/megaraid/megaraid_sas.h
++++ b/drivers/scsi/megaraid/megaraid_sas.h
+@@ -1084,6 +1084,7 @@ enum MR_SCSI_CMD_TYPE {
+ #define MEGASAS_SKINNY_INT_CMDS			5
+ #define MEGASAS_FUSION_INTERNAL_CMDS		5
+ #define MEGASAS_FUSION_IOCTL_CMDS		3
++#define MEGASAS_MFI_IOCTL_CMDS			27
+ 
+ #define MEGASAS_MAX_MSIX_QUEUES			128
+ /*
+--- a/drivers/scsi/megaraid/megaraid_sas_base.c
++++ b/drivers/scsi/megaraid/megaraid_sas_base.c
+@@ -4382,6 +4382,21 @@ megasas_init_adapter_mfi(struct megasas_
+ 	instance->max_num_sge = (instance->instancet->read_fw_status_reg(reg_set) & 0xFF0000) >>
+ 					0x10;
+ 	/*
++	 * For MFI skinny adapters, MEGASAS_SKINNY_INT_CMDS commands
++	 * are reserved for IOCTL + driver's internal DCMDs.
++	 */
++	if ((instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0073SKINNY) ||
++		(instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0071SKINNY)) {
++		instance->max_scsi_cmds = (instance->max_fw_cmds -
++			MEGASAS_SKINNY_INT_CMDS);
++		sema_init(&instance->ioctl_sem, MEGASAS_SKINNY_INT_CMDS);
++	} else {
++		instance->max_scsi_cmds = (instance->max_fw_cmds -
++			MEGASAS_INT_CMDS);
++		sema_init(&instance->ioctl_sem, (MEGASAS_MFI_IOCTL_CMDS));
++	}
++
++	/*
+ 	 * Create a pool of commands
+ 	 */
+ 	if (megasas_alloc_cmds(instance))
+@@ -4828,30 +4843,6 @@ static int megasas_init_fw(struct megasa
+ 	if (tmp_sectors && (instance->max_sectors_per_req > tmp_sectors))
+ 		instance->max_sectors_per_req = tmp_sectors;
+ 
+-	/*
+-	 * 1. For fusion adapters, 3 commands for IOCTL and 5 commands
+-	 *    for driver's internal DCMDs.
+-	 * 2. For MFI skinny adapters, 5 commands for IOCTL + driver's
+-	 *    internal DCMDs.
+-	 * 3. For rest of MFI adapters, 27 commands reserved for IOCTLs
+-	 *    and 5 commands for drivers's internal DCMD.
+-	 */
+-	if (instance->ctrl_context) {
+-		instance->max_scsi_cmds = instance->max_fw_cmds -
+-					(MEGASAS_FUSION_INTERNAL_CMDS +
+-					MEGASAS_FUSION_IOCTL_CMDS);
+-		sema_init(&instance->ioctl_sem, MEGASAS_FUSION_IOCTL_CMDS);
+-	} else if ((instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0073SKINNY) ||
+-		(instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0071SKINNY)) {
+-		instance->max_scsi_cmds = instance->max_fw_cmds -
+-						MEGASAS_SKINNY_INT_CMDS;
+-		sema_init(&instance->ioctl_sem, MEGASAS_SKINNY_INT_CMDS);
+-	} else {
+-		instance->max_scsi_cmds = instance->max_fw_cmds -
+-						MEGASAS_INT_CMDS;
+-		sema_init(&instance->ioctl_sem, (MEGASAS_INT_CMDS - 5));
+-	}
+-
+ 	/* Check for valid throttlequeuedepth module parameter */
+ 	if (throttlequeuedepth &&
+ 			throttlequeuedepth <= instance->max_scsi_cmds)
+--- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
++++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+@@ -1062,6 +1062,15 @@ megasas_init_adapter_fusion(struct megas
+ 		fusion->last_reply_idx[i] = 0;
+ 
+ 	/*
++	 * For fusion adapters, 3 commands for IOCTL and 5 commands
++	 * for driver's internal DCMDs.
++	 */
++	instance->max_scsi_cmds = instance->max_fw_cmds -
++				(MEGASAS_FUSION_INTERNAL_CMDS +
++				MEGASAS_FUSION_IOCTL_CMDS);
++	sema_init(&instance->ioctl_sem, MEGASAS_FUSION_IOCTL_CMDS);
++
++	/*
+ 	 * Allocate memory for descriptors
+ 	 * Create a pool of commands
+ 	 */
