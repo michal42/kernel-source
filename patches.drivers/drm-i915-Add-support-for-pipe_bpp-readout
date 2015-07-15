@@ -1,0 +1,84 @@
+From 42571aefafb1d330ef84eb29418832f72e7dfb4c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ville=20Syrj=C3=A4l=C3=A4?= <ville.syrjala@linux.intel.com>
+Date: Fri, 6 Sep 2013 23:29:00 +0300
+Subject: [PATCH] drm/i915: Add support for pipe_bpp readout
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: 42571aefafb1d330ef84eb29418832f72e7dfb4c
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+On CTG+ read out the pipe bpp setting from hardware and fill it into
+pipe config. Also check it appropriately.
+
+V2: Don't do the pipe_bpp extraction inside the PCH only code block on    ILK+.    Avoid the PIPECONF read as we already have read it for the    PIPECONF_EANBLE check.
+
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_display.c |   36 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+--- a/drivers/gpu/drm/i915/intel_display.c
++++ b/drivers/gpu/drm/i915/intel_display.c
+@@ -5106,6 +5106,22 @@ static bool i9xx_get_pipe_config(struct
+ 		}
+ 	}
+ 
++	if (IS_G4X(dev) || IS_VALLEYVIEW(dev)) {
++		switch (tmp & PIPECONF_BPC_MASK) {
++		case PIPECONF_6BPC:
++			pipe_config->pipe_bpp = 18;
++			break;
++		case PIPECONF_8BPC:
++			pipe_config->pipe_bpp = 24;
++			break;
++		case PIPECONF_10BPC:
++			pipe_config->pipe_bpp = 30;
++			break;
++		default:
++			break;
++		}
++	}
++
+ 	intel_get_pipe_timings(crtc, pipe_config);
+ 
+ 	i9xx_get_pfit_config(crtc, pipe_config);
+@@ -5981,6 +5997,23 @@ static bool ironlake_get_pipe_config(str
+ 		break;
+ 	}
+ 
++	switch (tmp & PIPECONF_BPC_MASK) {
++	case PIPECONF_6BPC:
++		pipe_config->pipe_bpp = 18;
++		break;
++	case PIPECONF_8BPC:
++		pipe_config->pipe_bpp = 24;
++		break;
++	case PIPECONF_10BPC:
++		pipe_config->pipe_bpp = 30;
++		break;
++	case PIPECONF_12BPC:
++		pipe_config->pipe_bpp = 36;
++		break;
++	default:
++		break;
++	}
++
+ 	if (I915_READ(PCH_TRANSCONF(crtc->pipe)) & TRANS_ENABLE) {
+ 		struct intel_shared_dpll *pll;
+ 
+@@ -8762,6 +8795,9 @@ intel_pipe_config_compare(struct drm_dev
+ 
+ 	if (IS_G4X(dev) || INTEL_INFO(dev)->gen >= 5)
+ 		PIPE_CONF_CHECK_I(pipe_bpp);
++
++	if (IS_G4X(dev) || INTEL_INFO(dev)->gen >= 5)
++		PIPE_CONF_CHECK_I(pipe_bpp);
+ 
+ #undef PIPE_CONF_CHECK_X
+ #undef PIPE_CONF_CHECK_I
