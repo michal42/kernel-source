@@ -1,0 +1,52 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Wed, 6 May 2015 17:47:45 -0700
+Patch-mainline: v4.2-rc1
+Subject: Drivers: hv: vmbus: move init_vp_index() call to vmbus_process_offer()
+Git-commit: f38e7dd72337d83cced910cfbf6016475ef85bf7
+
+We need to call init_vp_index() after we added the channel to the appropriate
+list (global or subchannel) to be able to use this information when assigning
+the channel to the particular vcpu. To do so we need to move a couple of
+functions around. The only real change is the init_vp_index() call. This is a
+small refactoring without a functional change.
+
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/channel_mgmt.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hv/channel_mgmt.c b/drivers/hv/channel_mgmt.c
+index c53a171..655c0a0 100644
+--- a/drivers/hv/channel_mgmt.c
++++ b/drivers/hv/channel_mgmt.c
+@@ -32,6 +32,9 @@
+ 
+ #include "hyperv_vmbus.h"
+ 
++static void init_vp_index(struct vmbus_channel *channel,
++			  const uuid_le *type_guid);
++
+ /**
+  * vmbus_prep_negotiate_resp() - Create default response for Hyper-V Negotiate message
+  * @icmsghdrp: Pointer to msg header structure
+@@ -272,6 +275,8 @@ static void vmbus_process_offer(struct vmbus_channel *newchannel)
+ 			goto err_free_chan;
+ 	}
+ 
++	init_vp_index(newchannel, &newchannel->offermsg.offer.if_type);
++
+ 	if (newchannel->target_cpu != get_cpu()) {
+ 		put_cpu();
+ 		smp_call_function_single(newchannel->target_cpu,
+@@ -476,8 +481,6 @@ static void vmbus_onoffer(struct vmbus_channel_message_header *hdr)
+ 				offer->connection_id;
+ 	}
+ 
+-	init_vp_index(newchannel, &offer->offer.if_type);
+-
+ 	memcpy(&newchannel->offermsg, offer,
+ 	       sizeof(struct vmbus_channel_offer_channel));
+ 	newchannel->monitor_grp = (u8)offer->monitorid / 32;
