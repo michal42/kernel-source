@@ -1,0 +1,242 @@
+From 07bf139b906013ecef0c5e0441564d1ae10e974a Mon Sep 17 00:00:00 2001
+From: Jesse Barnes <jbarnes@virtuousgeek.org>
+Date: Thu, 31 Oct 2013 18:55:50 +0200
+Subject: [PATCH] drm/i915/vlv: use per-pipe backlight controls v2
+Git-commit: 07bf139b906013ecef0c5e0441564d1ae10e974a
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+With the connector and pipe passed around, we can now set the backlight
+on the right pipe on VLV/BYT.
+
+V2: drop combination mode check for VLV (Jani)    add save/restore code for VLV backlight regs (Jani)    check for existing modulation freq when initializing backlight regs (Jani)
+
+Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Bugzilla: https://bugs.freedesktop.org/show_bug.cgi?id=67245
+Tested-by: Joe Konno <joe.konno@intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/i915_drv.h     |    3 +
+ drivers/gpu/drm/i915/i915_reg.h     |   15 ++++++++
+ drivers/gpu/drm/i915/i915_suspend.c |   29 +++++++++++++++
+ drivers/gpu/drm/i915/intel_panel.c  |   67 +++++++++++++++++++++++++++++-------
+ 4 files changed, 102 insertions(+), 12 deletions(-)
+
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -706,6 +706,9 @@ struct i915_suspend_saved_registers {
+ 	u32 saveBLC_HIST_CTL;
+ 	u32 saveBLC_PWM_CTL;
+ 	u32 saveBLC_PWM_CTL2;
++	u32 saveBLC_HIST_CTL_B;
++	u32 saveBLC_PWM_CTL_B;
++	u32 saveBLC_PWM_CTL2_B;
+ 	u32 saveBLC_CPU_PWM_CTL;
+ 	u32 saveBLC_CPU_PWM_CTL2;
+ 	u32 saveFPB0;
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -2300,6 +2300,21 @@
+ 
+ #define PFIT_AUTO_RATIOS (dev_priv->info->display_mmio_offset + 0x61238)
+ 
++#define _VLV_BLC_PWM_CTL2_A (dev_priv->info->display_mmio_offset + 0x61250)
++#define _VLV_BLC_PWM_CTL2_B (dev_priv->info->display_mmio_offset + 0x61350)
++#define VLV_BLC_PWM_CTL2(pipe) _PIPE(pipe, _VLV_BLC_PWM_CTL2_A, \
++				     _VLV_BLC_PWM_CTL2_B)
++
++#define _VLV_BLC_PWM_CTL_A (dev_priv->info->display_mmio_offset + 0x61254)
++#define _VLV_BLC_PWM_CTL_B (dev_priv->info->display_mmio_offset + 0x61354)
++#define VLV_BLC_PWM_CTL(pipe) _PIPE(pipe, _VLV_BLC_PWM_CTL_A, \
++				    _VLV_BLC_PWM_CTL_B)
++
++#define _VLV_BLC_HIST_CTL_A (dev_priv->info->display_mmio_offset + 0x61260)
++#define _VLV_BLC_HIST_CTL_B (dev_priv->info->display_mmio_offset + 0x61360)
++#define VLV_BLC_HIST_CTL(pipe) _PIPE(pipe, _VLV_BLC_HIST_CTL_A, \
++				     _VLV_BLC_HIST_CTL_B)
++
+ /* Backlight control */
+ #define BLC_PWM_CTL2	(dev_priv->info->display_mmio_offset + 0x61250) /* 965+ only */
+ #define   BLM_PWM_ENABLE		(1 << 31)
+--- a/drivers/gpu/drm/i915/i915_suspend.c
++++ b/drivers/gpu/drm/i915/i915_suspend.c
+@@ -214,6 +214,22 @@ static void i915_save_display(struct drm
+ 		dev_priv->regfile.saveBLC_CPU_PWM_CTL2 = I915_READ(BLC_PWM_CPU_CTL2);
+ 		if (HAS_PCH_IBX(dev) || HAS_PCH_CPT(dev))
+ 			dev_priv->regfile.saveLVDS = I915_READ(PCH_LVDS);
++	} else if (IS_VALLEYVIEW(dev)) {
++		dev_priv->regfile.savePP_CONTROL = I915_READ(PP_CONTROL);
++		dev_priv->regfile.savePFIT_PGM_RATIOS = I915_READ(PFIT_PGM_RATIOS);
++
++		dev_priv->regfile.saveBLC_PWM_CTL =
++			I915_READ(VLV_BLC_PWM_CTL(PIPE_A));
++		dev_priv->regfile.saveBLC_HIST_CTL =
++			I915_READ(VLV_BLC_HIST_CTL(PIPE_A));
++		dev_priv->regfile.saveBLC_PWM_CTL2 =
++			I915_READ(VLV_BLC_PWM_CTL2(PIPE_A));
++		dev_priv->regfile.saveBLC_PWM_CTL_B =
++			I915_READ(VLV_BLC_PWM_CTL(PIPE_B));
++		dev_priv->regfile.saveBLC_HIST_CTL_B =
++			I915_READ(VLV_BLC_HIST_CTL(PIPE_B));
++		dev_priv->regfile.saveBLC_PWM_CTL2_B =
++			I915_READ(VLV_BLC_PWM_CTL2(PIPE_B));
+ 	} else {
+ 		dev_priv->regfile.savePP_CONTROL = I915_READ(PP_CONTROL);
+ 		dev_priv->regfile.savePFIT_PGM_RATIOS = I915_READ(PFIT_PGM_RATIOS);
+@@ -302,6 +318,19 @@ static void i915_restore_display(struct
+ 		I915_WRITE(PCH_PP_CONTROL, dev_priv->regfile.savePP_CONTROL);
+ 		I915_WRITE(RSTDBYCTL,
+ 			   dev_priv->regfile.saveMCHBAR_RENDER_STANDBY);
++	} else if (IS_VALLEYVIEW(dev)) {
++		I915_WRITE(VLV_BLC_PWM_CTL(PIPE_A),
++			   dev_priv->regfile.saveBLC_PWM_CTL);
++		I915_WRITE(VLV_BLC_HIST_CTL(PIPE_A),
++			   dev_priv->regfile.saveBLC_HIST_CTL);
++		I915_WRITE(VLV_BLC_PWM_CTL2(PIPE_A),
++			   dev_priv->regfile.saveBLC_PWM_CTL2);
++		I915_WRITE(VLV_BLC_PWM_CTL(PIPE_B),
++			   dev_priv->regfile.saveBLC_PWM_CTL);
++		I915_WRITE(VLV_BLC_HIST_CTL(PIPE_B),
++			   dev_priv->regfile.saveBLC_HIST_CTL);
++		I915_WRITE(VLV_BLC_PWM_CTL2(PIPE_B),
++			   dev_priv->regfile.saveBLC_PWM_CTL2);
+ 	} else {
+ 		I915_WRITE(PFIT_PGM_RATIOS, dev_priv->regfile.savePFIT_PGM_RATIOS);
+ 		I915_WRITE(BLC_PWM_CTL, dev_priv->regfile.saveBLC_PWM_CTL);
+--- a/drivers/gpu/drm/i915/intel_panel.c
++++ b/drivers/gpu/drm/i915/intel_panel.c
+@@ -337,6 +337,21 @@ static u32 i915_read_blc_pwm_ctl(struct
+ 			val = dev_priv->regfile.saveBLC_PWM_CTL2;
+ 			I915_WRITE(BLC_PWM_PCH_CTL2, val);
+ 		}
++	} else if (IS_VALLEYVIEW(dev)) {
++		val = I915_READ(VLV_BLC_PWM_CTL(pipe));
++		if (dev_priv->regfile.saveBLC_PWM_CTL == 0) {
++			dev_priv->regfile.saveBLC_PWM_CTL = val;
++			dev_priv->regfile.saveBLC_PWM_CTL2 =
++				I915_READ(VLV_BLC_PWM_CTL2(pipe));
++		} else if (val == 0) {
++			val = dev_priv->regfile.saveBLC_PWM_CTL;
++			I915_WRITE(VLV_BLC_PWM_CTL(pipe), val);
++			I915_WRITE(VLV_BLC_PWM_CTL2(pipe),
++				   dev_priv->regfile.saveBLC_PWM_CTL2);
++		}
++
++		if (!val)
++			val = 0x0f42ffff;
+ 	} else {
+ 		val = I915_READ(BLC_PWM_CTL);
+ 		if (dev_priv->regfile.saveBLC_PWM_CTL == 0) {
+@@ -351,9 +366,6 @@ static u32 i915_read_blc_pwm_ctl(struct
+ 				I915_WRITE(BLC_PWM_CTL2,
+ 					   dev_priv->regfile.saveBLC_PWM_CTL2);
+ 		}
+-
+-		if (IS_VALLEYVIEW(dev) && !val)
+-			val = 0x0f42ffff;
+ 	}
+ 
+ 	return val;
+@@ -414,13 +426,19 @@ static u32 intel_panel_get_backlight(str
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 	u32 val;
+ 	unsigned long flags;
++	int reg;
+ 
+ 	spin_lock_irqsave(&dev_priv->backlight.lock, flags);
+ 
+ 	if (HAS_PCH_SPLIT(dev)) {
+ 		val = I915_READ(BLC_PWM_CPU_CTL) & BACKLIGHT_DUTY_CYCLE_MASK;
+ 	} else {
+-		val = I915_READ(BLC_PWM_CTL) & BACKLIGHT_DUTY_CYCLE_MASK;
++		if (IS_VALLEYVIEW(dev))
++			reg = VLV_BLC_PWM_CTL(pipe);
++		else
++			reg = BLC_PWM_CTL;
++
++		val = I915_READ(reg) & BACKLIGHT_DUTY_CYCLE_MASK;
+ 		if (INTEL_INFO(dev)->gen < 4)
+ 			val >>= 1;
+ 
+@@ -452,6 +470,7 @@ static void intel_panel_actually_set_bac
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 	u32 tmp;
++	int reg;
+ 
+ 	DRM_DEBUG_DRIVER("set backlight PWM = %d\n", level);
+ 	level = intel_panel_compute_brightness(dev, pipe, level);
+@@ -472,11 +491,16 @@ static void intel_panel_actually_set_bac
+ 		pci_write_config_byte(dev->pdev, PCI_LBPC, lbpc);
+ 	}
+ 
+-	tmp = I915_READ(BLC_PWM_CTL);
++	if (IS_VALLEYVIEW(dev))
++		reg = VLV_BLC_PWM_CTL(pipe);
++	else
++		reg = BLC_PWM_CTL;
++
++	tmp = I915_READ(reg);
+ 	if (INTEL_INFO(dev)->gen < 4)
+ 		level <<= 1;
+ 	tmp &= ~BACKLIGHT_DUTY_CYCLE_MASK;
+-	I915_WRITE(BLC_PWM_CTL, tmp | level);
++	I915_WRITE(reg, tmp | level);
+ }
+ 
+ /* set backlight brightness to level in range [0..max] */
+@@ -545,7 +569,12 @@ void intel_panel_disable_backlight(struc
+ 	if (INTEL_INFO(dev)->gen >= 4) {
+ 		uint32_t reg, tmp;
+ 
+-		reg = HAS_PCH_SPLIT(dev) ? BLC_PWM_CPU_CTL2 : BLC_PWM_CTL2;
++		if (HAS_PCH_SPLIT(dev))
++			reg = BLC_PWM_CPU_CTL2;
++		else if (IS_VALLEYVIEW(dev))
++			reg = VLV_BLC_PWM_CTL2(pipe);
++		else
++			reg = BLC_PWM_CTL2;
+ 
+ 		I915_WRITE(reg, I915_READ(reg) & ~BLM_PWM_ENABLE);
+ 
+@@ -584,8 +613,12 @@ void intel_panel_enable_backlight(struct
+ 	if (INTEL_INFO(dev)->gen >= 4) {
+ 		uint32_t reg, tmp;
+ 
+-		reg = HAS_PCH_SPLIT(dev) ? BLC_PWM_CPU_CTL2 : BLC_PWM_CTL2;
+-
++		if (HAS_PCH_SPLIT(dev))
++			reg = BLC_PWM_CPU_CTL2;
++		else if (IS_VALLEYVIEW(dev))
++			reg = VLV_BLC_PWM_CTL2(pipe);
++		else
++			reg = BLC_PWM_CTL2;
+ 
+ 		tmp = I915_READ(reg);
+ 
+@@ -637,9 +670,19 @@ static void intel_panel_init_backlight_r
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 
+ 	if (IS_VALLEYVIEW(dev)) {
+-		u32 cur_val = I915_READ(BLC_PWM_CTL) &
+-			BACKLIGHT_DUTY_CYCLE_MASK;
+-		I915_WRITE(BLC_PWM_CTL, (0xf42 << 16) | cur_val);
++		enum pipe pipe;
++
++		for_each_pipe(pipe) {
++			u32 cur_val = I915_READ(VLV_BLC_PWM_CTL(pipe));
++
++			/* Skip if the modulation freq is already set */
++			if (cur_val & ~BACKLIGHT_DUTY_CYCLE_MASK)
++				continue;
++
++			cur_val &= BACKLIGHT_DUTY_CYCLE_MASK;
++			I915_WRITE(VLV_BLC_PWM_CTL(pipe), (0xf42 << 16) |
++				   cur_val);
++		}
+ 	}
+ }
+ 
