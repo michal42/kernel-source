@@ -1,0 +1,71 @@
+From f02586dfedf1dfae4f5ff7eb1990a2c4c56e1425 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ville=20Syrj=C3=A4l=C3=A4?= <ville.syrjala@linux.intel.com>
+Date: Fri, 1 Nov 2013 20:32:08 +0200
+Subject: [PATCH] drm/i915: Make intel_dp_is_edp() less specific
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: f02586dfedf1dfae4f5ff7eb1990a2c4c56e1425
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+All the bits in the VBT child device type have some speciifc meaning,
+so looking for an exact match isn't always the right thing. On some
+VLVs for example the device type for eDP panels is 0x1806.
+
+If we mask out the bits that could concievably change between different
+eDP panels, we are left with the set of bits that should still
+tell us if the port is eDP or not.
+
+V2: Use the named bits for VBT child device type
+
+Bugzilla: https://bugs.freedesktop.org/show_bug.cgi?id=71051
+Tested-by: Robert Hooker <robert.hooker@canonical.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_bios.h |   18 ++++++++++++++++++
+ drivers/gpu/drm/i915/intel_dp.c   |    3 ++-
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+--- a/drivers/gpu/drm/i915/intel_bios.h
++++ b/drivers/gpu/drm/i915/intel_bios.h
+@@ -653,6 +653,24 @@ int intel_parse_bios(struct drm_device *
+ #define  DEVICE_TYPE_DIGITAL_OUTPUT	(1 << 1)
+ #define  DEVICE_TYPE_ANALOG_OUTPUT	(1 << 0)
+ 
++/*
++ * Bits we care about when checking for DEVICE_TYPE_eDP
++ * Depending on the system, the other bits may or may not
++ * be set for eDP outputs.
++ */
++#define DEVICE_TYPE_eDP_BITS \
++	(DEVICE_TYPE_INTERNAL_CONNECTOR | \
++	 DEVICE_TYPE_NOT_HDMI_OUTPUT | \
++	 DEVICE_TYPE_MIPI_OUTPUT | \
++	 DEVICE_TYPE_COMPOSITE_OUTPUT | \
++	 DEVICE_TYPE_DUAL_CHANNEL | \
++	 DEVICE_TYPE_LVDS_SINGALING | \
++	 DEVICE_TYPE_TMDS_DVI_SIGNALING | \
++	 DEVICE_TYPE_VIDEO_SIGNALING | \
++	 DEVICE_TYPE_DISPLAYPORT_OUTPUT | \
++	 DEVICE_TYPE_DIGITAL_OUTPUT | \
++	 DEVICE_TYPE_ANALOG_OUTPUT)
++
+ /* define the DVO port for HDMI output type */
+ #define		DVO_B		1
+ #define		DVO_C		2
+--- a/drivers/gpu/drm/i915/intel_dp.c
++++ b/drivers/gpu/drm/i915/intel_dp.c
+@@ -3244,7 +3244,8 @@ bool intel_dpd_is_edp(struct drm_device
+ 		p_child = dev_priv->vbt.child_dev + i;
+ 
+ 		if (p_child->common.dvo_port == PORT_IDPD &&
+-		    p_child->common.device_type == DEVICE_TYPE_eDP)
++		    (p_child->common.device_type & DEVICE_TYPE_eDP_BITS) ==
++		    (DEVICE_TYPE_eDP & DEVICE_TYPE_eDP_BITS))
+ 			return true;
+ 	}
+ 	return false;
