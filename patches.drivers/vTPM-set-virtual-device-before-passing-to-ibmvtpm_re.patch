@@ -1,0 +1,47 @@
+Git-commit: 9d75f08946e8485109458ccf16f714697c207f41
+Reference: bsc#937087
+Patch-mainline: v4.2-rc1
+From: "Hon Ching \\(Vicky\\) Lo" <honclo@linux.vnet.ibm.com>
+Date: Fri, 22 May 2015 13:23:02 -0400
+Subject: [PATCH] vTPM: set virtual device before passing to ibmvtpm_reset_crq
+
+tpm_ibmvtpm_probe() calls ibmvtpm_reset_crq(ibmvtpm) without having yet
+set the virtual device in the ibmvtpm structure. So in ibmvtpm_reset_crq,
+the phype call contains empty unit addresses, ibmvtpm->vdev->unit_address.
+
+Signed-off-by: Hon Ching(Vicky) Lo <honclo@linux.vnet.ibm.com>
+Signed-off-by: Joy Latten <jmlatten@linux.vnet.ibm.com>
+Reviewed-by: Ashley Lai <ashley@ahsleylai.com>
+Cc: <stable@vger.kernel.org>
+Fixes: 132f76294744 ("drivers/char/tpm: Add new device driver to support IBM vTPM")
+Signed-off-by: Peter Huewe <peterhuewe@gmx.de>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/char/tpm/tpm_ibmvtpm.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/char/tpm/tpm_ibmvtpm.c b/drivers/char/tpm/tpm_ibmvtpm.c
+index 42ffa5e..27ebf95 100644
+--- a/drivers/char/tpm/tpm_ibmvtpm.c
++++ b/drivers/char/tpm/tpm_ibmvtpm.c
+@@ -618,6 +618,9 @@ static int tpm_ibmvtpm_probe(struct vio_
+ 		goto cleanup;
+ 	}
+ 
++	ibmvtpm->dev = dev;
++	ibmvtpm->vdev = vio_dev;
++
+ 	crq_q = &ibmvtpm->crq_queue;
+ 	crq_q->crq_addr = (struct ibmvtpm_crq *)get_zeroed_page(GFP_KERNEL);
+ 	if (!crq_q->crq_addr) {
+@@ -662,8 +665,6 @@ static int tpm_ibmvtpm_probe(struct vio_
+ 
+ 	crq_q->index = 0;
+ 
+-	ibmvtpm->dev = dev;
+-	ibmvtpm->vdev = vio_dev;
+ 	TPM_VPRIV(chip) = (void *)ibmvtpm;
+ 
+ 	spin_lock_init(&ibmvtpm->rtce_lock);
+-- 
+2.1.4
