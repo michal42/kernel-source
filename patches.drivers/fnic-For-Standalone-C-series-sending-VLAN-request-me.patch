@@ -1,0 +1,66 @@
+From: Hiral Shah <hishah@cisco.com>
+Date: Mon, 10 Nov 2014 12:54:35 -0800
+Subject: Fnic: For Standalone C series, "sending VLAN request" message seen
+References: bnc#936882,FATE#318716
+Patch-Mainline: v3.20
+Git-commit: 0ee7b8714dca511a68826a300cc4966f2e83a6c3
+ even if the link is down
+
+When physical link between standalone C series and switch is down,
+the fip timer is not turned off and timer expiration will keep sending
+vlan request.
+
+It can be fixed by stopping the fip_timer and
+it will be restarted automatically when Link is up.
+
+- Increment fnic version from 1.6.0.14 to 1.6.0.15
+
+Signed-off-by: Hiral Shah <hishah@cisco.com>
+Signed-off-by: Sesidhar Baddela <sebaddel@cisco.com>
+Signed-off-by: Anil Chintalapati <achintal@cisco.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/scsi/fnic/fnic.h     |  2 +-
+ drivers/scsi/fnic/fnic_fcs.c | 12 +++++++++---
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/scsi/fnic/fnic.h b/drivers/scsi/fnic/fnic.h
+index 5336e8d..977960b 100644
+--- a/drivers/scsi/fnic/fnic.h
++++ b/drivers/scsi/fnic/fnic.h
+@@ -39,7 +39,7 @@
+ 
+ #define DRV_NAME		"fnic"
+ #define DRV_DESCRIPTION		"Cisco FCoE HBA Driver"
+-#define DRV_VERSION		"1.6.0.14"
++#define DRV_VERSION		"1.6.0.15"
+ #define PFX			DRV_NAME ": "
+ #define DFX                     DRV_NAME "%d: "
+ 
+diff --git a/drivers/scsi/fnic/fnic_fcs.c b/drivers/scsi/fnic/fnic_fcs.c
+index 6462b67..57b2227 100644
+--- a/drivers/scsi/fnic/fnic_fcs.c
++++ b/drivers/scsi/fnic/fnic_fcs.c
+@@ -132,9 +132,15 @@ void fnic_handle_link(struct work_struct *work)
+ 		fnic->lport->host_stats.link_failure_count++;
+ 		spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+ 		FNIC_FCS_DBG(KERN_DEBUG, fnic->lport->host, "link down\n");
+-		fnic_fc_trace_set_data(fnic->lport->host->host_no, FNIC_FC_LE,
+-					"Link Status: UP_DOWN",
+-					strlen("Link Status: UP_DOWN"));
++		fnic_fc_trace_set_data(
++			fnic->lport->host->host_no, FNIC_FC_LE,
++			"Link Status: UP_DOWN",
++			strlen("Link Status: UP_DOWN"));
++		if (fnic->config.flags & VFCF_FIP_CAPABLE) {
++			FNIC_FCS_DBG(KERN_DEBUG, fnic->lport->host,
++				"deleting fip-timer during link-down\n");
++			del_timer_sync(&fnic->fip_timer);
++		}
+ 		fcoe_ctlr_link_down(&fnic->ctlr);
+ 	}
+ 
+-- 
+1.8.5.2
+
