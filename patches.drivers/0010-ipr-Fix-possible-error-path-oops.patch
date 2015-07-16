@@ -1,0 +1,44 @@
+Git-commit: a65e8f128eca1efafeb16039650ae36b25cfd0dc
+Patch-mainline: v4.1-rc1
+Reference: fate#317990
+From: Brian King <brking@linux.vnet.ibm.com>
+Date: Thu, 26 Mar 2015 11:23:55 -0500
+Subject: [PATCH 28815/36546] ipr: Fix possible error path oops during initialization
+
+Fixes a possible oops during adapter initialization in some
+memory allocation failure error paths scenarios.
+
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Reviewed-by: Wen Xiong <wenxiong@linux.vnet.ibm.com>
+Reviewed-by: Daniel Kreling <kreling@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/scsi/ipr.c |   14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -9131,13 +9131,15 @@ static void ipr_free_cmd_blks(struct ipr
+ {
+ 	int i;
+ 
+-	for (i = 0; i < IPR_NUM_CMD_BLKS; i++) {
+-		if (ioa_cfg->ipr_cmnd_list[i])
+-			dma_pool_free(ioa_cfg->ipr_cmd_pool,
+-				      ioa_cfg->ipr_cmnd_list[i],
+-				      ioa_cfg->ipr_cmnd_list_dma[i]);
++	if (ioa_cfg->ipr_cmnd_list) {
++		for (i = 0; i < IPR_NUM_CMD_BLKS; i++) {
++			if (ioa_cfg->ipr_cmnd_list[i])
++				dma_pool_free(ioa_cfg->ipr_cmd_pool,
++					      ioa_cfg->ipr_cmnd_list[i],
++					      ioa_cfg->ipr_cmnd_list_dma[i]);
+ 
+-		ioa_cfg->ipr_cmnd_list[i] = NULL;
++			ioa_cfg->ipr_cmnd_list[i] = NULL;
++		}
+ 	}
+ 
+ 	if (ioa_cfg->ipr_cmd_pool)
