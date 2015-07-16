@@ -1,0 +1,79 @@
+From: Omar Sandoval <osandov@osandov.com>
+Date: Mon, 18 May 2015 02:16:29 -0700
+Patch-mainline: 4.2
+Git-commit: bb289b7be62db84b9630ce00367444c810cada2c
+References: bsc#934962
+Subject: [PATCH] Btrfs: fail on mismatched subvol and subvolid mount
+ options
+
+There's nothing to stop a user from passing both subvol= and subvolid=
+to mount, but if they don't refer to the same subvolume, someone is
+going to be surprised at some point. Error out on this case, but allow
+users to pass in both if they do match (which they could, for example,
+get out of /proc/mounts).
+
+Reviewed-by: David Sterba <dsterba@suse.cz>
+Signed-off-by: Omar Sandoval <osandov@osandov.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: David Sterba <dsterba@suse.cz>
+---
+ fs/btrfs/super.c |   33 +++++++++++++++++++++++++--------
+ 1 file changed, 25 insertions(+), 8 deletions(-)
+
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -1183,8 +1183,9 @@ static char *setup_root_args(char *args)
+ 	return buf;
+ }
+ 
+-static struct dentry *mount_subvol(const char *subvol_name, int flags,
+-				   const char *device_name, char *data)
++static struct dentry *mount_subvol(const char *subvol_name, u64 subvol_objectid,
++				   int flags, const char *device_name,
++				   char *data)
+ {
+ 	struct dentry *root;
+ 	struct vfsmount *mnt = NULL;
+@@ -1230,12 +1231,27 @@ static struct dentry *mount_subvol(const
+ 	/* mount_subtree() drops our reference on the vfsmount. */
+ 	mnt = NULL;
+ 
+-	if (!IS_ERR(root) && !is_subvolume_inode(root->d_inode)) {
++	if (!IS_ERR(root)) {
+ 		struct super_block *s = root->d_sb;
+-		dput(root);
+-		root = ERR_PTR(-EINVAL);
+-		deactivate_locked_super(s);
+-		pr_err("BTRFS: '%s' is not a valid subvolume\n", subvol_name);
++		struct inode *root_inode = root->d_inode;
++		u64 root_objectid = BTRFS_I(root_inode)->root->root_key.objectid;
++
++		ret = 0;
++		if (!is_subvolume_inode(root_inode)) {
++			printk(KERN_ERR "BTRFS: '%s' is not a valid subvolume\n",
++ 				subvol_name);
++			ret = -EINVAL;
++		}
++		if (subvol_objectid && root_objectid != subvol_objectid) {
++			printk(KERN_ERR "BTRFS: subvol '%s' does not match subvolid %llu\n",
++				subvol_name, subvol_objectid);
++			ret = -EINVAL;
++		}
++		if (ret) {
++			dput(root);
++			root = ERR_PTR(ret);
++			deactivate_locked_super(s);
++		}
+ 	}
+ 
+ out:
+@@ -1277,7 +1293,8 @@ static struct dentry *btrfs_mount(struct
+ 
+ 	if (subvol_name) {
+ 		/* mount_subvol() will free subvol_name. */
+-		return mount_subvol(subvol_name, flags, device_name, data);
++		return mount_subvol(subvol_name, subvol_objectid, flags,
++				    device_name, data);
+ 	}
+ 
+ 	error = btrfs_scan_one_device(device_name, mode, fs_type, &fs_devices);
