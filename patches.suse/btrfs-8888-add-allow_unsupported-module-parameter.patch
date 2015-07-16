@@ -18,24 +18,22 @@ Current:
 - ioctl: receive - completely disallow
 - ioctl: device replace - disallow
 - mount: raid56 - remount RO
-- mount: compression - deny mount
 - mount: seeding device - deny mount
 - balance: use of raid56 taints kernel
-- chattr: +c - disallow, no change
 
 Signed-off-by: David Sterba <dsterba@suse.cz>
 ---
- fs/btrfs/ctree.h   |    5 +++
- fs/btrfs/disk-io.c |   14 ++++++++++
+ fs/btrfs/ctree.h   |    5 ++++
+ fs/btrfs/disk-io.c |   14 +++++++++++
  fs/btrfs/file.c    |    8 +++++-
- fs/btrfs/ioctl.c   |   28 ++++++++++++++++++++-
- fs/btrfs/send.c    |    5 +++
- fs/btrfs/super.c   |   70 +++++++++++++++++++++++++++++++++++++++++++++++++++++
- 6 files changed, 128 insertions(+), 2 deletions(-)
+ fs/btrfs/ioctl.c   |   13 +++++++++-
+ fs/btrfs/send.c    |    5 ++++
+ fs/btrfs/super.c   |   65 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 108 insertions(+), 2 deletions(-)
 
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -4123,4 +4123,9 @@ int btrfs_verify_qgroup_counts(struct bt
+@@ -4124,4 +4124,9 @@ int btrfs_verify_qgroup_counts(struct bt
  			       u64 rfer, u64 excl);
  #endif
  
@@ -95,36 +93,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	 * Make sure we have enough space before we do the
 --- a/fs/btrfs/ioctl.c
 +++ b/fs/btrfs/ioctl.c
-@@ -142,6 +142,15 @@ void btrfs_inherit_iflags(struct inode *
- 
- 	flags = BTRFS_I(dir)->flags;
- 
-+	/*
-+	 * This should not happen, but just in case
-+	 */
-+	if (!btrfs_allow_unsupported && (flags & BTRFS_INODE_COMPRESS)) {
-+		printk_once(KERN_WARNING
-+			"btrfs: detected directory with compression bit set, not inherited, load module with allow_unsupported=1\n");
-+		flags &= ~BTRFS_INODE_COMPRESS;
-+	}
-+
- 	if (flags & BTRFS_INODE_NOCOMPRESS) {
- 		BTRFS_I(inode)->flags &= ~BTRFS_INODE_COMPRESS;
- 		BTRFS_I(inode)->flags |= BTRFS_INODE_NOCOMPRESS;
-@@ -205,6 +214,12 @@ static int btrfs_ioctl_setflags(struct f
- 	if (copy_from_user(&flags, arg, sizeof(flags)))
- 		return -EFAULT;
- 
-+	if (!btrfs_allow_unsupported && (flags & FS_COMPR_FL)) {
-+		printk_ratelimited(KERN_WARNING
-+			"btrfs: IOC_SETFLAGS: enabling compression is not supported, load module with allow_unsupported=1\n");
-+		return -EOPNOTSUPP;
-+	}
-+
- 	ret = check_flags(flags);
- 	if (ret)
- 		return ret;
-@@ -4985,6 +5000,7 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -5112,6 +5112,7 @@ long btrfs_ioctl(struct file *file, unsi
  {
  	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
  	void __user *argp = (void __user *)arg;
@@ -132,7 +101,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  	switch (cmd) {
  	case FS_IOC_GETFLAGS:
-@@ -5077,6 +5093,11 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -5204,6 +5205,11 @@ long btrfs_ioctl(struct file *file, unsi
  	case BTRFS_IOC_BALANCE_PROGRESS:
  		return btrfs_ioctl_balance_progress(root, argp);
  	case BTRFS_IOC_SET_RECEIVED_SUBVOL:
@@ -144,7 +113,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		return btrfs_ioctl_set_received_subvol(file, argp);
  	case BTRFS_IOC_SEND:
  		return btrfs_ioctl_send(file, argp);
-@@ -5097,6 +5118,11 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -5224,6 +5230,11 @@ long btrfs_ioctl(struct file *file, unsi
  	case BTRFS_IOC_QUOTA_RESCAN_WAIT:
  		return btrfs_ioctl_quota_rescan_wait(file, argp);
  	case BTRFS_IOC_DEV_REPLACE:
@@ -156,7 +125,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		return btrfs_ioctl_dev_replace(root, argp);
  	case BTRFS_IOC_GET_FSLABEL:
  		return btrfs_ioctl_get_fslabel(file, argp);
-@@ -5112,5 +5138,5 @@ long btrfs_ioctl(struct file *file, unsi
+@@ -5239,5 +5250,5 @@ long btrfs_ioctl(struct file *file, unsi
  		return btrfs_ioctl_set_features(file, argp);
  	}
  
@@ -187,19 +156,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  #include <linux/buffer_head.h>
  #include <linux/fs.h>
  #include <linux/pagemap.h>
-@@ -491,6 +492,11 @@ int btrfs_parse_options(struct btrfs_roo
- 			/* Fallthrough */
- 		case Opt_compress:
- 		case Opt_compress_type:
-+			if (!btrfs_allow_unsupported) {
-+				printk(KERN_WARNING "btrfs: compression is not supported, load module with allow_unsupported=1\n");
-+				ret = -EOPNOTSUPP;
-+				break;
-+			}
- 			compress = true;
- 			if (token == Opt_compress ||
- 			    token == Opt_compress_force ||
-@@ -655,6 +661,11 @@ int btrfs_parse_options(struct btrfs_roo
+@@ -655,6 +656,11 @@ int btrfs_parse_options(struct btrfs_roo
  					     "disabling disk space caching");
  			break;
  		case Opt_inode_cache:
@@ -211,7 +168,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  			btrfs_set_and_info(root, CHANGE_INODE_CACHE,
  					   "enabling inode map caching");
  			break;
-@@ -676,6 +687,11 @@ int btrfs_parse_options(struct btrfs_roo
+@@ -676,6 +682,11 @@ int btrfs_parse_options(struct btrfs_roo
  			btrfs_clear_opt(info->mount_opt, ENOSPC_DEBUG);
  			break;
  		case Opt_defrag:
@@ -223,7 +180,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  			btrfs_set_and_info(root, AUTO_DEFRAG,
  					   "enabling auto defrag");
  			break;
-@@ -1461,6 +1477,13 @@ static int btrfs_remount(struct super_bl
+@@ -1461,6 +1472,13 @@ static int btrfs_remount(struct super_bl
  			ret = -EACCES;
  			goto restore;
  		}
@@ -237,7 +194,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  
  		if (btrfs_super_log_root(fs_info->super_copy) != 0) {
  			ret = -EINVAL;
-@@ -2014,6 +2037,13 @@ static int __init init_btrfs_fs(void)
+@@ -2020,6 +2038,13 @@ static int __init init_btrfs_fs(void)
  
  	btrfs_print_info();
  
@@ -251,7 +208,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	err = btrfs_run_sanity_tests();
  	if (err)
  		goto unregister_ioctl;
-@@ -2068,6 +2098,46 @@ static void __exit exit_btrfs_fs(void)
+@@ -2074,6 +2099,46 @@ static void __exit exit_btrfs_fs(void)
  	btrfs_hash_exit();
  }
  
