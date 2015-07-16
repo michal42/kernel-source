@@ -1,0 +1,71 @@
+From e454a05da623c26544721b159caaacdb6dfe448c Mon Sep 17 00:00:00 2001
+From: Jesse Barnes <jbarnes@virtuousgeek.org>
+Date: Thu, 26 Sep 2013 17:55:58 -0700
+Subject: [PATCH] drm/i915/vlv: use correct units for rc6 residency v2
+Git-commit: e454a05da623c26544721b159caaacdb6dfe448c
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+We need to use the clock control reg to figure out how many CZ clks are in
+30ns and use that as the basis for our RC6 residency calculations.
+
+V2: use ULL everywhere for consistency (Chris)    factor out bias for clarity (Chris)
+
+Reference: https://bugs.freedesktop.org/show_bug.cgi?id=69692
+Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+Reviewed-by: Chris Wilson <chris@chris-wilson.co.uk>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/i915_reg.h   |    3 +++
+ drivers/gpu/drm/i915/i915_sysfs.c |   22 ++++++++++++++++++++--
+ 2 files changed, 23 insertions(+), 2 deletions(-)
+
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -1799,6 +1799,9 @@
+  */
+ #define HSW_CXT_TOTAL_SIZE		(17 * PAGE_SIZE)
+ 
++#define VLV_CLK_CTL2			0x101104
++#define   CLK_CTL2_CZCOUNT_30NS_SHIFT	28
++
+ /*
+  * Overlay regs
+  */
+--- a/drivers/gpu/drm/i915/i915_sysfs.c
++++ b/drivers/gpu/drm/i915/i915_sysfs.c
+@@ -37,12 +37,30 @@ static u32 calc_residency(struct drm_dev
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 	u64 raw_time; /* 32b value may overflow during fixed point math */
++	u64 units = 128ULL, div = 100000ULL, bias = 100ULL;
+ 
+ 	if (!intel_enable_rc6(dev))
+ 		return 0;
+ 
+-	raw_time = I915_READ(reg) * 128ULL;
+-	return DIV_ROUND_UP_ULL(raw_time, 100000);
++	/* On VLV, residency time is in CZ units rather than 1.28us */
++	if (IS_VALLEYVIEW(dev)) {
++		u32 clkctl2;
++
++		clkctl2 = I915_READ(VLV_CLK_CTL2) >>
++			CLK_CTL2_CZCOUNT_30NS_SHIFT;
++		if (!clkctl2) {
++			WARN(!clkctl2, "bogus CZ count value");
++			return 0;
++		}
++		units = DIV_ROUND_UP_ULL(30ULL * bias, (u64)clkctl2);
++		if (I915_READ(VLV_COUNTER_CONTROL) & VLV_COUNT_RANGE_HIGH)
++			units <<= 8;
++
++		div = 1000000ULL * bias;
++	}
++
++	raw_time = I915_READ(reg) * units;
++	return DIV_ROUND_UP_ULL(raw_time, div);
+ }
+ 
+ static ssize_t
