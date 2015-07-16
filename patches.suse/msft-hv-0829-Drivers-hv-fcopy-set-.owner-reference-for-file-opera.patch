@@ -1,0 +1,45 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Sat, 11 Apr 2015 18:07:50 -0700
+Patch-mainline: v4.2-rc1
+Subject: Drivers: hv: fcopy: set .owner reference for file operations
+Git-commit: 3f0dccf86cab38d96b67efdfc944954f5490d057
+
+Get an additional reference otherwise a crash is observed when hv_utils module is being unloaded while
+fcopy daemon is still running. .owner gives us an additional reference when
+someone holds a descriptor for the device.
+
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Tested-by: Alex Ng <alexng@microsoft.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/hv_fcopy.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/hv/hv_fcopy.c b/drivers/hv/hv_fcopy.c
+index a501301..d1475e6 100644
+--- a/drivers/hv/hv_fcopy.c
++++ b/drivers/hv/hv_fcopy.c
+@@ -360,12 +360,9 @@ static int fcopy_open(struct inode *inode, struct file *f)
+ }
+ 
+ /* XXX: there are still some tricky corner cases, e.g.,
+- * 1) In a SMP guest, when fcopy_release() runs between
++ * In an SMP guest, when fcopy_release() runs between
+  * schedule_delayed_work() and fcopy_send_data(), there is
+  * still a chance an obsolete message will be queued.
+- *
+- * 2) When the fcopy daemon is running, if we unload the driver,
+- * we'll notice a kernel oops when we kill the daemon later.
+  */
+ static int fcopy_release(struct inode *inode, struct file *f)
+ {
+@@ -385,6 +382,7 @@ static int fcopy_release(struct inode *inode, struct file *f)
+ 
+ 
+ static const struct file_operations fcopy_fops = {
++	.owner          = THIS_MODULE,
+ 	.read           = fcopy_read,
+ 	.write          = fcopy_write,
+ 	.release	= fcopy_release,

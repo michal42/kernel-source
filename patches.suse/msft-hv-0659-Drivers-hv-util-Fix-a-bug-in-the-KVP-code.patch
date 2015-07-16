@@ -1,0 +1,51 @@
+From: "K. Y. Srinivasan" <kys@microsoft.com>
+Date: Mon, 7 Jul 2014 16:34:25 -0700
+Patch-mainline: v3.16-rc5
+Subject: Drivers: hv: util: Fix a bug in the KVP code
+Git-commit: 9bd2d0dfe4714dd5d7c09a93a5c9ea9e14ceb3fc
+
+Add code to poll the channel since we process only one message
+at a time and the host may not interrupt us. Also increase the
+receive buffer size since some KVP messages are close to 8K bytes in size.
+
+(adjusted for v3.12-stable change)
+
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/hv_kvp.c |   13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+--- a/drivers/hv/hv_kvp.c
++++ b/drivers/hv/hv_kvp.c
+@@ -129,13 +129,15 @@ kvp_work_func(struct work_struct *dummy)
+ 
+ static void poll_channel(struct vmbus_channel *channel)
+ {
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&channel->inbound_lock, flags);
+-	hv_kvp_onchannelcallback(channel);
+-	spin_unlock_irqrestore(&channel->inbound_lock, flags);
++	if (channel->target_cpu != smp_processor_id())
++		smp_call_function_single(channel->target_cpu,
++					 hv_kvp_onchannelcallback,
++					 channel, true);
++	else
++		hv_kvp_onchannelcallback(channel);
+ }
+ 
++
+ static int kvp_handle_handshake(struct hv_kvp_msg *msg)
+ {
+ 	int ret = 1;
+@@ -578,7 +580,6 @@ response_done:
+ 	vmbus_sendpacket(channel, recv_buffer, buf_len, req_id,
+ 				VM_PKT_DATA_INBAND, 0);
+ 	poll_channel(channel);
+-
+ }
+ 
+ /*

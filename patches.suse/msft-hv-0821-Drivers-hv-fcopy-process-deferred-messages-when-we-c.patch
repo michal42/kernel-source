@@ -1,0 +1,67 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Sat, 11 Apr 2015 18:07:42 -0700
+Patch-mainline: v4.2-rc1
+Subject: Drivers: hv: fcopy: process deferred messages when we complete the transaction
+Git-commit: 242f31221d48793d07e161bc668e1aabd502c18b
+
+In theory, the host is not supposed to issue any requests before be reply to
+the previous one. In KVP we, however, support the following scenarios:
+1) A message was received before userspace daemon registered;
+2) A message was received while the previous one is still being processed.
+In FCOPY we support only the former. Add support for the later, use
+hv_poll_channel() to do the job.
+
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Tested-by: Alex Ng <alexng@microsoft.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/hv_fcopy.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/hv/hv_fcopy.c b/drivers/hv/hv_fcopy.c
+index cd453e4..8bdf752 100644
+--- a/drivers/hv/hv_fcopy.c
++++ b/drivers/hv/hv_fcopy.c
+@@ -98,6 +98,8 @@ static void fcopy_work_func(struct work_struct *dummy)
+ 	if (down_trylock(&fcopy_transaction.read_sema))
+ 		;
+ 
++	hv_poll_channel(fcopy_transaction.fcopy_context,
++			hv_fcopy_onchannelcallback);
+ }
+ 
+ static int fcopy_handle_handshake(u32 version)
+@@ -117,8 +119,8 @@ static int fcopy_handle_handshake(u32 version)
+ 	pr_info("FCP: user-mode registering done. Daemon version: %d\n",
+ 		version);
+ 	fcopy_transaction.active = false;
+-	if (fcopy_transaction.fcopy_context)
+-		hv_fcopy_onchannelcallback(fcopy_transaction.fcopy_context);
++	hv_poll_channel(fcopy_transaction.fcopy_context,
++			hv_fcopy_onchannelcallback);
+ 	in_hand_shake = false;
+ 	return 0;
+ }
+@@ -226,6 +228,7 @@ void hv_fcopy_onchannelcallback(void *context)
+ 		fcopy_transaction.fcopy_context = context;
+ 		return;
+ 	}
++	fcopy_transaction.fcopy_context = NULL;
+ 
+ 	vmbus_recvpacket(channel, recv_buffer, PAGE_SIZE * 2, &recvlen,
+ 			 &requestid);
+@@ -333,8 +336,11 @@ static ssize_t fcopy_write(struct file *file, const char __user *buf,
+ 	 * Complete the transaction by forwarding the result
+ 	 * to the host. But first, cancel the timeout.
+ 	 */
+-	if (cancel_delayed_work_sync(&fcopy_work))
++	if (cancel_delayed_work_sync(&fcopy_work)) {
+ 		fcopy_respond_to_host(response);
++		hv_poll_channel(fcopy_transaction.fcopy_context,
++				hv_fcopy_onchannelcallback);
++	}
+ 
+ 	return sizeof(int);
+ }
