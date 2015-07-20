@@ -1,0 +1,41 @@
+From: Nilesh Javali <nilesh.javali@qlogic.com>
+Date: Tue, 19 May 2015 05:51:58 -0400
+Subject: [PATCH] bnx2i: Fix call trace while device reset
+Patch-mainline: Sumbitted: 2015-05-19 scsi-misc
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/jejb/scsi.git
+Git-commit: 35843048e7e979df3b7b9f2ad49e21797a11386b
+References: FATE#318605 bsc#922057
+
+The driver waits for command completion event while cleanup of task
+within the frwd lock and back locks. The frwd lock was still held
+which caused the call trace while issuing a device reset.
+Release the frwd lock along with the back lock
+to avoid waiting in the lock context.
+
+Signed-off-by: Nilesh Javali <nilesh.javali@qlogic.com>
+Reviewed-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ drivers/scsi/bnx2i/bnx2i_iscsi.c |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index 1b8a971..7289437 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -1173,8 +1173,10 @@ static void bnx2i_cleanup_task(struct iscsi_task *task)
+ 		bnx2i_send_cmd_cleanup_req(hba, task->dd_data);
+ 
+ 		spin_unlock_bh(&conn->session->back_lock);
++		spin_unlock_bh(&conn->session->frwd_lock);
+ 		wait_for_completion_timeout(&bnx2i_conn->cmd_cleanup_cmpl,
+ 				msecs_to_jiffies(ISCSI_CMD_CLEANUP_TIMEOUT));
++		spin_lock_bh(&conn->session->frwd_lock);
+ 		spin_lock_bh(&conn->session->back_lock);
+ 	}
+ 	bnx2i_iscsi_unmap_sg_list(task->dd_data);
+-- 
+1.5.6
+
+

@@ -1,0 +1,69 @@
+From 5e550656d98e82b740d3744ef1df783cdc05386e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ville=20Syrj=C3=A4l=C3=A4?= <ville.syrjala@linux.intel.com>
+Date: Fri, 6 Sep 2013 23:29:07 +0300
+Subject: [PATCH] drm/i915: Add PIPE_CONF_CHECK_CLOCK_FUZZY()
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: 5e550656d98e82b740d3744ef1df783cdc05386e
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+Add a new pipe config check macro PIPE_CONF_CHECK_CLOCK_FUZZY() to make
+it trivial and error proof to compare clocks in a fuzzy manner.
+
+V2: Drop extra curly braces
+
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_display.c |   23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+--- a/drivers/gpu/drm/i915/intel_display.c
++++ b/drivers/gpu/drm/i915/intel_display.c
+@@ -8775,6 +8775,15 @@ intel_pipe_config_compare(struct drm_dev
+ 		return false; \
+ 	}
+ 
++#define PIPE_CONF_CHECK_CLOCK_FUZZY(name) \
++	if (!intel_fuzzy_clock_check(current_config->name, pipe_config->name)) { \
++		DRM_ERROR("mismatch in " #name " " \
++			  "(expected %i, found %i)\n", \
++			  current_config->name, \
++			  pipe_config->name); \
++		return false; \
++	}
++
+ #define PIPE_CONF_QUIRK(quirk)	\
+ 	((current_config->quirks | pipe_config->quirks) & (quirk))
+ 
+@@ -8864,21 +8873,15 @@ intel_pipe_config_compare(struct drm_dev
+ 	if (IS_G4X(dev) || INTEL_INFO(dev)->gen >= 5)
+ 		PIPE_CONF_CHECK_I(pipe_bpp);
+ 
++	if (!IS_HASWELL(dev))
++		PIPE_CONF_CHECK_CLOCK_FUZZY(adjusted_mode.clock);
++
+ #undef PIPE_CONF_CHECK_X
+ #undef PIPE_CONF_CHECK_I
+ #undef PIPE_CONF_CHECK_FLAGS
++#undef PIPE_CONF_CHECK_CLOCK_FUZZY
+ #undef PIPE_CONF_QUIRK
+ 
+-	if (!IS_HASWELL(dev)) {
+-		if (!intel_fuzzy_clock_check(current_config->adjusted_mode.clock,
+-					     pipe_config->adjusted_mode.clock)) {
+-			DRM_ERROR("mismatch in clock (expected %d, found %d)\n",
+-				  current_config->adjusted_mode.clock,
+-				  pipe_config->adjusted_mode.clock);
+-			return false;
+-		}
+-	}
+-
+ 	return true;
+ }
+ 

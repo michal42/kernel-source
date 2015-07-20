@@ -1,0 +1,71 @@
+From: John Soni Jose <sony.john@avagotech.com>
+Date: Thu, 25 Jun 2015 23:59:34 -0400
+Subject: be2iscsi: Fix processing CQE before connection resources are freed
+Git-commit: b7ab35b13379e709a2a1c3f1b3a59e5db62ce4e3
+Patch-mainline: v3.18-rc1
+References: FATE#318562 bsc#921786
+
+ Driver should process the completion queue entries before a connection
+ resources are freed. While running mixed traffic due to latency, driver
+ processes the CQE after the connection resources are freed. This fix
+ processes all the completion queue before the connection resources are
+ freed.
+
+Signed-off-by: John Soni Jose <sony.john-n@emulex.com>
+Signed-off-by: Jayamohan Kallickal <jayamohan.kallickal@emulex.com>
+Reviewed-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ drivers/scsi/be2iscsi/be_main.c |   12 ++++++++++++
+ drivers/scsi/be2iscsi/be_main.h |    3 +++
+ 2 files changed, 15 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/scsi/be2iscsi/be_main.c b/drivers/scsi/be2iscsi/be_main.c
+index 2e97bec..366d664 100644
+--- a/drivers/scsi/be2iscsi/be_main.c
++++ b/drivers/scsi/be2iscsi/be_main.c
+@@ -2111,6 +2111,17 @@ unsigned int beiscsi_process_cq(struct be_eq_obj *pbe_eq)
+ 		cri_index = BE_GET_CRI_FROM_CID(cid);
+ 		ep = phba->ep_array[cri_index];
+ 
++		if (ep == NULL) {
++			/* connection has already been freed
++			 * just move on to next one
++			 */
++			beiscsi_log(phba, KERN_WARNING,
++				    BEISCSI_LOG_INIT,
++				    "BM_%d : proc cqe of disconn ep: cid %d\n",
++				    cid);
++			goto proc_next_cqe;
++		}
++
+ 		beiscsi_ep = ep->dd_data;
+ 		beiscsi_conn = beiscsi_ep->conn;
+ 
+@@ -2220,6 +2231,7 @@ unsigned int beiscsi_process_cq(struct be_eq_obj *pbe_eq)
+ 			break;
+ 		}
+ 
++proc_next_cqe:
+ 		AMAP_SET_BITS(struct amap_sol_cqe, valid, sol, 0);
+ 		queue_tail_inc(cq);
+ 		sol = queue_tail_node(cq);
+diff --git a/drivers/scsi/be2iscsi/be_main.h b/drivers/scsi/be2iscsi/be_main.h
+index cb0e150..58fca0c 100644
+--- a/drivers/scsi/be2iscsi/be_main.h
++++ b/drivers/scsi/be2iscsi/be_main.h
+@@ -838,6 +838,9 @@ unsigned int beiscsi_process_cq(struct be_eq_obj *pbe_eq);
+ void hwi_ring_cq_db(struct beiscsi_hba *phba,
+ 		     unsigned int id, unsigned int num_processed,
+ 		     unsigned char rearm, unsigned char event);
++
++unsigned int beiscsi_process_cq(struct be_eq_obj *pbe_eq);
++
+ static inline bool beiscsi_error(struct beiscsi_hba *phba)
+ {
+ 	return phba->ue_detected || phba->fw_timeout;
+-- 
+1.7.1
+
+

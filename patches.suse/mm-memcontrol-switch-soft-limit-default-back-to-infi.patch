@@ -1,0 +1,52 @@
+From 24d404dc10b903da271e943a0f6b032dcbd177d8 Mon Sep 17 00:00:00 2001
+From: Johannes Weiner <hannes@cmpxchg.org>
+Date: Thu, 8 Jan 2015 14:32:35 -0800
+Subject: [PATCH] mm: memcontrol: switch soft limit default back to infinity
+Git-commit: 24d404dc10b903da271e943a0f6b032dcbd177d8
+Patch-mainline: 3.19-rc4
+References: bnc#931454
+
+Commit 3e32cb2e0a12 ("mm: memcontrol: lockless page counters")
+accidentally switched the soft limit default from infinity to zero,
+which turns all memcgs with even a single page into soft limit excessors
+and engages soft limit reclaim on all of them during global memory
+pressure.  This makes global reclaim generally more aggressive, but also
+inverts the meaning of existing soft limit configurations where unset
+soft limits are usually more generous than set ones.
+
+Signed-off-by: Johannes Weiner <hannes@cmpxchg.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+Acked-by: Vladimir Davydov <vdavydov@parallels.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+---
+ mm/memcontrol.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -5395,6 +5395,7 @@ mem_cgroup_css_alloc(struct cgroup_subsy
+ 	if (parent_css == NULL) {
+ 		root_mem_cgroup = memcg;
+ 		page_counter_init(&memcg->memory, NULL);
++		memcg->soft_limit = PAGE_COUNTER_MAX;
+ 		page_counter_init(&memcg->memsw, NULL);
+ 		page_counter_init(&memcg->kmem, NULL);
+ 	}
+@@ -5434,6 +5435,7 @@ mem_cgroup_css_online(struct cgroup_subs
+ 
+ 	if (parent->use_hierarchy) {
+ 		page_counter_init(&memcg->memory, &parent->memory);
++		memcg->soft_limit = PAGE_COUNTER_MAX;
+ 		page_counter_init(&memcg->memsw, &parent->memsw);
+ 		page_counter_init(&memcg->kmem, &parent->kmem);
+ 
+@@ -5443,6 +5445,7 @@ mem_cgroup_css_online(struct cgroup_subs
+ 		 */
+ 	} else {
+ 		page_counter_init(&memcg->memory, NULL);
++		memcg->soft_limit = PAGE_COUNTER_MAX;
+ 		page_counter_init(&memcg->memsw, NULL);
+ 		page_counter_init(&memcg->kmem, NULL);
+ 		/*

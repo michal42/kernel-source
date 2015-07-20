@@ -1,0 +1,110 @@
+Subject: [PATCH 3/4] ipr: Endian / sparse fixes
+From: brking@us.ibm.com
+Git-commit: Not yet
+Patch-mainline: http://www.spinics.net/lists/linux-scsi/msg85985.html
+Reference: fate#317990
+
+Some misc fixes for endianness checking with sparse so sparse with
+endian checking now runs clean. Fixes a minor bug in the process
+which was uncovered by sparse which would result in unnecessary
+error recovery for check conditions.
+
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+
+ drivers/scsi/ipr.c |   13 +++++++------
+ drivers/scsi/ipr.h |   13 ++++++-------
+ 2 files changed, 13 insertions(+), 13 deletions(-)
+
+--- a/drivers/scsi/ipr.h
++++ b/drivers/scsi/ipr.h
+@@ -1005,13 +1005,13 @@ struct ipr_hostrcb_type_24_error {
+ struct ipr_hostrcb_type_07_error {
+ 	u8 failure_reason[64];
+ 	struct ipr_vpd vpd;
+-	u32 data[222];
++	__be32 data[222];
+ }__attribute__((packed, aligned (4)));
+ 
+ struct ipr_hostrcb_type_17_error {
+ 	u8 failure_reason[64];
+ 	struct ipr_ext_vpd vpd;
+-	u32 data[476];
++	__be32 data[476];
+ }__attribute__((packed, aligned (4)));
+ 
+ struct ipr_hostrcb_config_element {
+@@ -1289,18 +1289,17 @@ struct ipr_resource_entry {
+ 	(((res)->bus << 24) | ((res)->target << 8) | (res)->lun)
+ 
+ 	u8 ata_class;
+-
+-	u8 flags;
+-	__be16 res_flags;
+-
+ 	u8 type;
+ 
++	u16 flags;
++	u16 res_flags;
++
+ 	u8 qmodel;
+ 	struct ipr_std_inq_data std_inq_data;
+ 
+ 	__be32 res_handle;
+ 	__be64 dev_id;
+-	__be64 lun_wwn;
++	u64 lun_wwn;
+ 	struct scsi_lun dev_lun;
+ 	u8 res_path[8];
+ 
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -1159,7 +1159,8 @@ static void ipr_init_res_entry(struct ip
+ 
+ 	if (ioa_cfg->sis64) {
+ 		proto = cfgtew->u.cfgte64->proto;
+-		res->res_flags = cfgtew->u.cfgte64->res_flags;
++		res->flags = be16_to_cpu(cfgtew->u.cfgte64->flags);
++		res->res_flags = be16_to_cpu(cfgtew->u.cfgte64->res_flags);
+ 		res->qmodel = IPR_QUEUEING_MODEL64(res);
+ 		res->type = cfgtew->u.cfgte64->res_type;
+ 
+@@ -1307,8 +1308,8 @@ static void ipr_update_res_entry(struct 
+ 	int new_path = 0;
+ 
+ 	if (res->ioa_cfg->sis64) {
+-		res->flags = cfgtew->u.cfgte64->flags;
+-		res->res_flags = cfgtew->u.cfgte64->res_flags;
++		res->flags = be16_to_cpu(cfgtew->u.cfgte64->flags);
++		res->res_flags = be16_to_cpu(cfgtew->u.cfgte64->res_flags);
+ 		res->type = cfgtew->u.cfgte64->res_type;
+ 
+ 		memcpy(&res->std_inq_data, &cfgtew->u.cfgte64->std_inq_data,
+@@ -1894,7 +1895,7 @@ static void ipr_log_array_error(struct i
+  * Return value:
+  * 	none
+  **/
+-static void ipr_log_hex_data(struct ipr_ioa_cfg *ioa_cfg, u32 *data, int len)
++static void ipr_log_hex_data(struct ipr_ioa_cfg *ioa_cfg, __be32 *data, int len)
+ {
+ 	int i;
+ 
+@@ -2264,7 +2265,7 @@ static void ipr_log_fabric_error(struct 
+ 			((unsigned long)fabric + be16_to_cpu(fabric->length));
+ 	}
+ 
+-	ipr_log_hex_data(ioa_cfg, (u32 *)fabric, add_len);
++	ipr_log_hex_data(ioa_cfg, (__be32 *)fabric, add_len);
+ }
+ 
+ /**
+@@ -2358,7 +2359,7 @@ static void ipr_log_sis64_fabric_error(s
+ 			((unsigned long)fabric + be16_to_cpu(fabric->length));
+ 	}
+ 
+-	ipr_log_hex_data(ioa_cfg, (u32 *)fabric, add_len);
++	ipr_log_hex_data(ioa_cfg, (__be32 *)fabric, add_len);
+ }
+ 
+ /**

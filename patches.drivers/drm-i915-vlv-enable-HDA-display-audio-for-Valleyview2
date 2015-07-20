@@ -1,0 +1,105 @@
+From 9ca2fe731b3f12afbc97cf0050dfa4184bd2234c Mon Sep 17 00:00:00 2001
+From: Mengdong Lin <mengdong.lin@intel.com>
+Date: Fri, 1 Nov 2013 00:17:03 -0400
+Subject: [PATCH] drm/i915/vlv: enable HDA display audio for Valleyview2
+Git-commit: 9ca2fe731b3f12afbc97cf0050dfa4184bd2234c
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+This patch defines HD-Audio configuration registers and enables display audio
+from HDA controller for Valleyview2.
+
+V2: fix missing offset VLV_DISPLAY_BASE
+V3: rename patch from 'enable HDMI audio' to 'enable HDA display audio', since    it's for both HDMI and DP audio
+V4: use enc_to_dig_port() to get port number, instead of using Haswell specific    function intel_ddi_get_encoder_port()
+
+Signed-off-by: Mengdong Lin <mengdong.lin@intel.com>
+Reviewed-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/i915_reg.h      |   18 ++++++++++++++++++
+ drivers/gpu/drm/i915/intel_display.c |   23 ++++++++++++++++++++---
+ 2 files changed, 38 insertions(+), 3 deletions(-)
+
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -4844,6 +4844,18 @@
+ 					CPT_AUD_CNTL_ST_B)
+ #define CPT_AUD_CNTRL_ST2		0xE50C0
+ 
++#define VLV_HDMIW_HDMIEDID_A		(VLV_DISPLAY_BASE + 0x62050)
++#define VLV_HDMIW_HDMIEDID_B		(VLV_DISPLAY_BASE + 0x62150)
++#define VLV_HDMIW_HDMIEDID(pipe) _PIPE(pipe, \
++					VLV_HDMIW_HDMIEDID_A, \
++					VLV_HDMIW_HDMIEDID_B)
++#define VLV_AUD_CNTL_ST_A		(VLV_DISPLAY_BASE + 0x620B4)
++#define VLV_AUD_CNTL_ST_B		(VLV_DISPLAY_BASE + 0x621B4)
++#define VLV_AUD_CNTL_ST(pipe) _PIPE(pipe, \
++					VLV_AUD_CNTL_ST_A, \
++					VLV_AUD_CNTL_ST_B)
++#define VLV_AUD_CNTL_ST2		(VLV_DISPLAY_BASE + 0x620C0)
++
+ /* These are the 4 32-bit write offset registers for each stream
+  * output buffer.  It determines the offset from the
+  * 3DSTATE_SO_BUFFERs that the next streamed vertex output goes to.
+@@ -4860,6 +4872,12 @@
+ #define CPT_AUD_CFG(pipe) _PIPE(pipe, \
+ 					CPT_AUD_CONFIG_A, \
+ 					CPT_AUD_CONFIG_B)
++#define VLV_AUD_CONFIG_A		(VLV_DISPLAY_BASE + 0x62000)
++#define VLV_AUD_CONFIG_B		(VLV_DISPLAY_BASE + 0x62100)
++#define VLV_AUD_CFG(pipe) _PIPE(pipe, \
++					VLV_AUD_CONFIG_A, \
++					VLV_AUD_CONFIG_B)
++
+ #define   AUD_CONFIG_N_VALUE_INDEX		(1 << 29)
+ #define   AUD_CONFIG_N_PROG_ENABLE		(1 << 28)
+ #define   AUD_CONFIG_UPPER_N_SHIFT		20
+--- a/drivers/gpu/drm/i915/intel_display.c
++++ b/drivers/gpu/drm/i915/intel_display.c
+@@ -6661,6 +6661,11 @@ static void ironlake_write_eld(struct dr
+ 		aud_config = IBX_AUD_CFG(pipe);
+ 		aud_cntl_st = IBX_AUD_CNTL_ST(pipe);
+ 		aud_cntrl_st2 = IBX_AUD_CNTL_ST2;
++	} else if (IS_VALLEYVIEW(connector->dev)) {
++		hdmiw_hdmiedid = VLV_HDMIW_HDMIEDID(pipe);
++		aud_config = VLV_AUD_CFG(pipe);
++		aud_cntl_st = VLV_AUD_CNTL_ST(pipe);
++		aud_cntrl_st2 = VLV_AUD_CNTL_ST2;
+ 	} else {
+ 		hdmiw_hdmiedid = CPT_HDMIW_HDMIEDID(pipe);
+ 		aud_config = CPT_AUD_CFG(pipe);
+@@ -6670,8 +6675,19 @@ static void ironlake_write_eld(struct dr
+ 
+ 	DRM_DEBUG_DRIVER("ELD on pipe %c\n", pipe_name(pipe));
+ 
+-	i = I915_READ(aud_cntl_st);
+-	i = (i >> 29) & DIP_PORT_SEL_MASK;		/* DIP_Port_Select, 0x1 = PortB */
++	if (IS_VALLEYVIEW(connector->dev))  {
++		struct intel_encoder *intel_encoder;
++		struct intel_digital_port *intel_dig_port;
++
++		intel_encoder = intel_attached_encoder(connector);
++		intel_dig_port = enc_to_dig_port(&intel_encoder->base);
++		i = intel_dig_port->port;
++	} else {
++		i = I915_READ(aud_cntl_st);
++		i = (i >> 29) & DIP_PORT_SEL_MASK;
++		/* DIP_Port_Select, 0x1 = PortB */
++	}
++
+ 	if (!i) {
+ 		DRM_DEBUG_DRIVER("Audio directed to unknown port\n");
+ 		/* operate blindly on all ports */
+@@ -9996,7 +10012,8 @@ static void intel_init_display(struct dr
+ 		}
+ 	} else if (IS_G4X(dev)) {
+ 		dev_priv->display.write_eld = g4x_write_eld;
+-	}
++	} else if (IS_VALLEYVIEW(dev))
++		dev_priv->display.write_eld = ironlake_write_eld;
+ 
+ 	/* Default just returns -ENODEV to indicate unsupported */
+ 	dev_priv->display.queue_flip = intel_default_queue_flip;

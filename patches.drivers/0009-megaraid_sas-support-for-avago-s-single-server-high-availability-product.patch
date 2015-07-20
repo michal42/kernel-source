@@ -1,0 +1,164 @@
+From: "Sumit.Saxena@avagotech.com" <Sumit.Saxena@avagotech.com>
+Date: Thu, 23 Apr 2015 16:32:09 +0530
+Subject: megaraid_sas : Support for Avago's Single server High Availability
+ product
+Git-commit: 5765c5b8b38ad8a5e2c5716ea9af29ff3f1d2a62
+Patch-mainline: v4.2-rc1
+References: bsc#922632, FATE#318592
+
+This patch will add support for Single Server High Availability(SSHA) cluster
+support.  Here is the short decsription of changes done to add support for
+SSHA-
+
+1) Host will send system's Unique ID based on DMI_PRODUCT_UUID to firmware.
+2) Toggle the devhandle in LDIO path for Remote LDs.
+
+Signed-off-by: Kashyap Desai <kashyap.desai@avagotech.com>
+Signed-off-by: Sumit Saxena <sumit.saxena@avagotech.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/megaraid/megaraid_sas.h        |   17 +++++++++++++++--
+ drivers/scsi/megaraid/megaraid_sas_base.c   |   16 +++++++++++++++-
+ drivers/scsi/megaraid/megaraid_sas_fusion.c |   20 ++++++++++++++++++++
+ 3 files changed, 50 insertions(+), 3 deletions(-)
+
+--- a/drivers/scsi/megaraid/megaraid_sas.h
++++ b/drivers/scsi/megaraid/megaraid_sas.h
+@@ -1273,8 +1273,10 @@ struct megasas_init_frame {
+ 	u32 queue_info_new_phys_addr_hi;	/*1Ch */
+ 	u32 queue_info_old_phys_addr_lo;	/*20h */
+ 	u32 queue_info_old_phys_addr_hi;	/*24h */
+-
+-	u32 reserved_4[6];	/*28h */
++	u32 reserved_4[2];	/*28h */
++	u32 system_info_lo;      /*30h */
++	u32 system_info_hi;      /*34h */
++	u32 reserved_5[2];	/*38h */
+ 
+ } __attribute__ ((packed));
+ 
+@@ -1651,12 +1653,22 @@ struct megasas_irq_context {
+ 	u32 MSIxIndex;
+ };
+ 
++struct MR_DRV_SYSTEM_INFO {
++	u8	infoVersion;
++	u8	systemIdLength;
++	u16	reserved0;
++	u8	systemId[64];
++	u8	reserved[1980];
++};
++
+ struct megasas_instance {
+ 
+ 	u32 *producer;
+ 	dma_addr_t producer_h;
+ 	u32 *consumer;
+ 	dma_addr_t consumer_h;
++	struct MR_DRV_SYSTEM_INFO *system_info_buf;
++	dma_addr_t system_info_h;
+ 	struct MR_LD_VF_AFFILIATION *vf_affiliation;
+ 	dma_addr_t vf_affiliation_h;
+ 	struct MR_LD_VF_AFFILIATION_111 *vf_affiliation_111;
+@@ -1771,6 +1783,7 @@ struct megasas_instance {
+ 	u16 throttlequeuedepth;
+ 	u8 mask_interrupts;
+ 	u8 is_imr;
++	bool dev_handle;
+ };
+ struct MR_LD_VF_MAP {
+ 	u32 size;
+--- a/drivers/scsi/megaraid/megaraid_sas_base.c
++++ b/drivers/scsi/megaraid/megaraid_sas_base.c
+@@ -5350,6 +5350,14 @@ static int megasas_probe_one(struct pci_
+ 		break;
+ 	}
+ 
++	instance->system_info_buf = dma_zalloc_coherent(&pdev->dev,
++							sizeof(struct MR_DRV_SYSTEM_INFO),
++							&instance->system_info_h,
++							GFP_ATOMIC);
++
++	if (!instance->system_info_buf)
++		dev_info(&instance->pdev->dev, "Can't allocate system info buffer\n");
++
+ 	/* Crash dump feature related initialisation*/
+ 	instance->drv_buf_index = 0;
+ 	instance->drv_buf_alloc = 0;
+@@ -5818,8 +5826,10 @@ megasas_resume(struct pci_dev *pdev)
+ 					    &instance->sriov_heartbeat_timer,
+ 					    megasas_sriov_heartbeat_handler,
+ 					    MEGASAS_SRIOV_HEARTBEAT_INTERVAL_VF);
+-		else
++		else {
+ 			instance->skip_heartbeat_timer_del = 1;
++			goto fail_init_mfi;
++		}
+ 	}
+ 
+ 	instance->instancet->enable_intr(instance);
+@@ -5975,6 +5985,10 @@ static void megasas_detach_one(struct pc
+ 		pci_free_consistent(pdev, CRASH_DMA_BUF_SIZE,
+ 			    instance->crash_dump_buf, instance->crash_dump_h);
+ 
++	if (instance->system_info_buf)
++		pci_free_consistent(pdev, sizeof(struct MR_DRV_SYSTEM_INFO),
++				    instance->system_info_buf, instance->system_info_h);
++
+ 	scsi_host_put(host);
+ 
+ 	pci_disable_device(pdev);
+--- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
++++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
+@@ -53,6 +53,7 @@
+ #include <scsi/scsi_device.h>
+ #include <scsi/scsi_host.h>
+ #include <scsi/scsi_dbg.h>
++#include <linux/dmi.h>
+ 
+ #include "megaraid_sas_fusion.h"
+ #include "megaraid_sas.h"
+@@ -633,6 +634,7 @@ megasas_ioc_init_fusion(struct megasas_i
+ 	union MEGASAS_REQUEST_DESCRIPTOR_UNION req_desc;
+ 	int i;
+ 	struct megasas_header *frame_hdr;
++	const char *sys_info;
+ 
+ 	fusion = instance->ctrl_context;
+ 
+@@ -696,6 +698,16 @@ megasas_ioc_init_fusion(struct megasas_i
+ 	/* Convert capability to LE32 */
+ 	cpu_to_le32s((u32 *)&init_frame->driver_operations.mfi_capabilities);
+ 
++	sys_info = dmi_get_system_info(DMI_PRODUCT_UUID);
++	if (instance->system_info_buf && sys_info) {
++		memcpy(instance->system_info_buf->systemId, sys_info,
++			strlen(sys_info) > 64 ? 64 : strlen(sys_info));
++		instance->system_info_buf->systemIdLength =
++			strlen(sys_info) > 64 ? 64 : strlen(sys_info);
++		init_frame->system_info_lo = instance->system_info_h;
++		init_frame->system_info_hi = 0;
++	}
++
+ 	init_frame->queue_info_new_phys_addr_hi =
+ 		cpu_to_le32(upper_32_bits(ioc_init_handle));
+ 	init_frame->queue_info_new_phys_addr_lo =
+@@ -1631,6 +1643,14 @@ megasas_build_ldio_fusion(struct megasas
+ 			cmd->pd_r1_lb = io_info.pd_after_lb;
+ 		} else
+ 			scp->SCp.Status &= ~MEGASAS_LOAD_BALANCE_FLAG;
++
++		if ((raidLUN[0] == 1) &&
++			(local_map_ptr->raidMap.devHndlInfo[io_info.pd_after_lb].validHandles > 2)) {
++			instance->dev_handle = !(instance->dev_handle);
++			io_info.devHandle =
++				local_map_ptr->raidMap.devHndlInfo[io_info.pd_after_lb].devHandle[instance->dev_handle];
++		}
++
+ 		cmd->request_desc->SCSIIO.DevHandle = io_info.devHandle;
+ 		io_request->DevHandle = io_info.devHandle;
+ 		/* populate the LUN field */

@@ -1,0 +1,105 @@
+From: Mark Fasheh <mfasheh@suse.de>
+Date: Thu, 18 Jun 2015 16:17:38 -0700
+Subject: [PATCH 6/6] btrfs: don't update mtime/ctime on deduped inodes
+Patch-mainline: v4.2
+References: bsc#937616
+
+One issue users have reported is that dedupe changes mtime on files,
+resulting in tools like rsync thinking that their contents have changed when
+in fact the data is exactly the same. We also skip the ctime update as no
+user-visible metadata changes here and we want dedupe to be transparent to
+the user.
+
+Clone still wants time changes, so we special case this in the code.
+
+This was tested with the btrfs-extent-same tool.
+
+Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+---
+ fs/btrfs/ioctl.c | 24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+--- a/fs/btrfs/ioctl.c
++++ b/fs/btrfs/ioctl.c
+@@ -61,7 +61,8 @@
+ #include "qgroup.h"
+ 
+ static int btrfs_clone(struct inode *src, struct inode *inode,
+-		       u64 off, u64 olen, u64 olen_aligned, u64 destoff);
++		       u64 off, u64 olen, u64 olen_aligned, u64 destoff,
++		       int no_time_update);
+ 
+ /* Mask out flags that are inappropriate for the given type of inode. */
+ static inline __u32 btrfs_mask_flags(umode_t mode, __u32 flags)
+@@ -2850,7 +2851,7 @@ static int btrfs_extent_same(struct inod
+ 	/* pass original length for comparison so we stay within i_size */
+ 	ret = btrfs_cmp_data(src, loff, dst, dst_loff, olen, &cmp);
+ 	if (ret == 0)
+-		ret = btrfs_clone(src, dst, loff, olen, len, dst_loff);
++		ret = btrfs_clone(src, dst, loff, olen, len, dst_loff, 1);
+ 
+ 	btrfs_double_extent_unlock(src, loff, dst, dst_loff, len);
+ 
+@@ -3008,13 +3009,15 @@ static int clone_finish_inode_update(str
+ 				     struct inode *inode,
+ 				     u64 endoff,
+ 				     const u64 destoff,
+-				     const u64 olen)
++				     const u64 olen,
++				     int no_time_update)
+ {
+ 	struct btrfs_root *root = BTRFS_I(inode)->root;
+ 	int ret;
+ 
+ 	inode_inc_iversion(inode);
+-	inode->i_mtime = inode->i_ctime = CURRENT_TIME;
++	if (!no_time_update)
++		inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+ 	/*
+ 	 * We round up to the block size at eof when determining which
+ 	 * extents to clone above, but shouldn't round up the file size.
+@@ -3099,13 +3102,13 @@ static void clone_update_extent_map(stru
+  * @inode: Inode to clone to
+  * @off: Offset within source to start clone from
+  * @olen: Original length, passed by user, of range to clone
+- * @olen_aligned: Block-aligned value of olen, extent_same uses
+- *               identical values here
++ * @olen_aligned: Block-aligned value of olen
+  * @destoff: Offset within @inode to start clone
++ * @no_time_update: Whether to update mtime/ctime on the target inode
+  */
+ static int btrfs_clone(struct inode *src, struct inode *inode,
+ 		       const u64 off, const u64 olen, const u64 olen_aligned,
+-		       const u64 destoff)
++		       const u64 destoff, int no_time_update)
+ {
+ 	struct btrfs_root *root = BTRFS_I(inode)->root;
+ 	struct btrfs_path *path = NULL;
+@@ -3427,7 +3430,8 @@ process_slot:
+ 					      root->sectorsize);
+ 			ret = clone_finish_inode_update(trans, inode,
+ 							last_dest_end,
+-							destoff, olen);
++							destoff, olen,
++							no_time_update);
+ 			if (ret)
+ 				goto out;
+ 			if (new_key.offset + datal >= destoff + len)
+@@ -3465,7 +3469,7 @@ process_slot:
+ 		clone_update_extent_map(inode, trans, NULL, last_dest_end,
+ 					destoff + len - last_dest_end);
+ 		ret = clone_finish_inode_update(trans, inode, destoff + len,
+-						destoff, olen);
++						destoff, olen, no_time_update);
+ 	}
+ 
+ out:
+@@ -3595,7 +3599,7 @@ static noinline long btrfs_ioctl_clone(s
+ 		btrfs_double_extent_lock(src, off, inode, destoff, len);
+ 	}
+ 
+-	ret = btrfs_clone(src, inode, off, olen, len, destoff);
++	ret = btrfs_clone(src, inode, off, olen, len, destoff, 0);
+ 
+ 	if (same_inode) {
+ 		u64 lock_start = min_t(u64, off, destoff);

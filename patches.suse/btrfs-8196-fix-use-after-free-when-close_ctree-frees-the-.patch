@@ -1,0 +1,67 @@
+From: Chris Mason <clm@fb.com>
+Date: Mon, 6 Apr 2015 18:17:00 -0700
+Patch-mainline: 4.1
+Git-commit: cdfb080e1853660952db5e5332727e59427856df
+References: bnc#938022
+Subject: [PATCH] Btrfs: fix use after free when close_ctree frees the
+ orphan_rsv
+
+Near the end of close_ctree, we're calling btrfs_free_block_rsv
+to free up the orphan rsv.  The problem is this call updates the
+space_info, which has already been freed.
+
+This adds a new __ function that directly calls kfree instead of trying
+to update the space infos.
+
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: Filipe Manana <fdmanana@suse.com>
+---
+ fs/btrfs/ctree.h       | 1 +
+ fs/btrfs/disk-io.c     | 2 +-
+ fs/btrfs/extent-tree.c | 5 +++++
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
+index ac86194..64375bd 100644
+--- a/fs/btrfs/ctree.h
++++ b/fs/btrfs/ctree.h
+@@ -3371,6 +3371,7 @@ struct btrfs_block_rsv *btrfs_alloc_block_rsv(struct btrfs_root *root,
+ 					      unsigned short type);
+ void btrfs_free_block_rsv(struct btrfs_root *root,
+ 			  struct btrfs_block_rsv *rsv);
++void __btrfs_free_block_rsv(struct btrfs_block_rsv *rsv);
+ int btrfs_block_rsv_add(struct btrfs_root *root,
+ 			struct btrfs_block_rsv *block_rsv, u64 num_bytes,
+ 			enum btrfs_reserve_flush_enum flush);
+diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
+index 9343cbd..f19be69 100644
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3753,7 +3753,7 @@ int close_ctree(struct btrfs_root *root)
+ 
+ 	btrfs_free_stripe_hash_table(fs_info);
+ 
+-	btrfs_free_block_rsv(root, root->orphan_block_rsv);
++	__btrfs_free_block_rsv(root->orphan_block_rsv);
+ 	root->orphan_block_rsv = NULL;
+ 
+ 	lock_chunks(root);
+diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
+index b2619b1..907e8cd 100644
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -4549,6 +4549,11 @@ void btrfs_free_block_rsv(struct btrfs_root *root,
+ 	kfree(rsv);
+ }
+ 
++void __btrfs_free_block_rsv(struct btrfs_block_rsv *rsv)
++{
++	kfree(rsv);
++}
++
+ int btrfs_block_rsv_add(struct btrfs_root *root,
+ 			struct btrfs_block_rsv *block_rsv, u64 num_bytes,
+ 			enum btrfs_reserve_flush_enum flush)
+-- 
+1.8.4.5
+

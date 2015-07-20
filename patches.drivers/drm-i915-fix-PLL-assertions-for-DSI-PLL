@@ -1,0 +1,141 @@
+From 23538ef193038d204b9ed0ef488fb3ba8e0066c2 Mon Sep 17 00:00:00 2001
+From: Jani Nikula <jani.nikula@intel.com>
+Date: Tue, 27 Aug 2013 15:12:22 +0300
+Subject: [PATCH] drm/i915: fix PLL assertions for DSI PLL
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: 23538ef193038d204b9ed0ef488fb3ba8e0066c2
+Patch-mainline: 3.13-rc1
+References: FATE#318416
+
+For DSI, we need to be asserting DSI PLL, not DPLL.
+
+This is a somewhat stopgap implementation. It's slightly ugly to have to
+pass the dsi parameter to intel_enable_pipe().
+
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Reviewed-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_display.c |   44 ++++++++++++++++++++++++++++-------
+ 1 file changed, 36 insertions(+), 8 deletions(-)
+
+--- a/drivers/gpu/drm/i915/intel_display.c
++++ b/drivers/gpu/drm/i915/intel_display.c
+@@ -929,6 +929,24 @@ void assert_pll(struct drm_i915_private
+ 	     state_string(state), state_string(cur_state));
+ }
+ 
++/* XXX: the dsi pll is shared between MIPI DSI ports */
++static void assert_dsi_pll(struct drm_i915_private *dev_priv, bool state)
++{
++	u32 val;
++	bool cur_state;
++
++	mutex_lock(&dev_priv->dpio_lock);
++	val = vlv_cck_read(dev_priv, CCK_REG_DSI_PLL_CONTROL);
++	mutex_unlock(&dev_priv->dpio_lock);
++
++	cur_state = val & DSI_PLL_VCO_EN;
++	WARN(cur_state != state,
++	     "DSI PLL state assertion failure (expected %s, current %s)\n",
++	     state_string(state), state_string(cur_state));
++}
++#define assert_dsi_pll_enabled(d) assert_dsi_pll(d, true)
++#define assert_dsi_pll_disabled(d) assert_dsi_pll(d, false)
++
+ struct intel_shared_dpll *
+ intel_crtc_to_shared_dpll(struct intel_crtc *crtc)
+ {
+@@ -1675,7 +1693,7 @@ static void lpt_disable_pch_transcoder(s
+  * returning.
+  */
+ static void intel_enable_pipe(struct drm_i915_private *dev_priv, enum pipe pipe,
+-			      bool pch_port)
++			      bool pch_port, bool dsi)
+ {
+ 	enum transcoder cpu_transcoder = intel_pipe_to_cpu_transcoder(dev_priv,
+ 								      pipe);
+@@ -1697,7 +1715,10 @@ static void intel_enable_pipe(struct drm
+ 	 * need the check.
+ 	 */
+ 	if (!HAS_PCH_SPLIT(dev_priv->dev))
+-		assert_pll_enabled(dev_priv, pipe);
++		if (dsi)
++			assert_dsi_pll_enabled(dev_priv);
++		else
++			assert_pll_enabled(dev_priv, pipe);
+ 	else {
+ 		if (pch_port) {
+ 			/* if driving the PCH, we need FDI enabled */
+@@ -3344,7 +3365,7 @@ static void ironlake_crtc_enable(struct
+ 	intel_crtc_load_lut(crtc);
+ 
+ 	intel_enable_pipe(dev_priv, pipe,
+-			  intel_crtc->config.has_pch_encoder);
++			  intel_crtc->config.has_pch_encoder, false);
+ 	intel_enable_plane(dev_priv, plane, pipe);
+ 	intel_enable_planes(crtc);
+ 	intel_crtc_update_cursor(crtc, true);
+@@ -3452,7 +3473,7 @@ static void haswell_crtc_enable(struct d
+ 	intel_ddi_enable_transcoder_func(crtc);
+ 
+ 	intel_enable_pipe(dev_priv, pipe,
+-			  intel_crtc->config.has_pch_encoder);
++			  intel_crtc->config.has_pch_encoder, false);
+ 	intel_enable_plane(dev_priv, plane, pipe);
+ 	intel_enable_planes(crtc);
+ 	intel_crtc_update_cursor(crtc, true);
+@@ -3708,6 +3729,7 @@ static void valleyview_crtc_enable(struc
+ 	struct intel_encoder *encoder;
+ 	int pipe = intel_crtc->pipe;
+ 	int plane = intel_crtc->plane;
++	bool is_dsi;
+ 
+ 	WARN_ON(!crtc->enabled);
+ 
+@@ -3721,6 +3743,8 @@ static void valleyview_crtc_enable(struc
+ 		if (encoder->pre_pll_enable)
+ 			encoder->pre_pll_enable(encoder);
+ 
++	is_dsi = intel_pipe_has_type(crtc, INTEL_OUTPUT_DSI);
++
+ 	vlv_enable_pll(intel_crtc);
+ 
+ 	for_each_encoder_on_crtc(dev, crtc, encoder)
+@@ -3731,7 +3755,7 @@ static void valleyview_crtc_enable(struc
+ 
+ 	intel_crtc_load_lut(crtc);
+ 
+-	intel_enable_pipe(dev_priv, pipe, false);
++	intel_enable_pipe(dev_priv, pipe, false, is_dsi);
+ 	intel_enable_plane(dev_priv, plane, pipe);
+ 	intel_enable_planes(crtc);
+ 	/* The fixup needs to happen before cursor is enabled */
+@@ -3771,7 +3795,7 @@ static void i9xx_crtc_enable(struct drm_
+ 
+ 	intel_crtc_load_lut(crtc);
+ 
+-	intel_enable_pipe(dev_priv, pipe, false);
++	intel_enable_pipe(dev_priv, pipe, false, false);
+ 	intel_enable_plane(dev_priv, plane, pipe);
+ 	intel_enable_planes(crtc);
+ 	/* The fixup needs to happen before cursor is enabled */
+@@ -6732,8 +6756,12 @@ void intel_crtc_load_lut(struct drm_crtc
+ 	if (!crtc->enabled || !intel_crtc->active)
+ 		return;
+ 
+-	if (!HAS_PCH_SPLIT(dev_priv->dev))
+-		assert_pll_enabled(dev_priv, pipe);
++	if (!HAS_PCH_SPLIT(dev_priv->dev)) {
++		if (intel_pipe_has_type(crtc, INTEL_OUTPUT_DSI))
++			assert_dsi_pll_enabled(dev_priv);
++		else
++			assert_pll_enabled(dev_priv, pipe);
++	}
+ 
+ 	/* use legacy palette for Ironlake */
+ 	if (HAS_PCH_SPLIT(dev))

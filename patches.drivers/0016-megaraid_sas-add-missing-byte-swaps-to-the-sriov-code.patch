@@ -1,0 +1,104 @@
+From: Christoph Hellwig <hch@lst.de>
+Date: Thu, 23 Apr 2015 16:33:54 +0530
+Subject: megaraid_sas : add missing byte swaps to the sriov code
+Git-commit: 2213a4673e46c951ed317792c095e4216e0d6b46
+Patch-mainline: v4.2-rc1
+References: bsc#922632, FATE#318592
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Sumit Saxena <sumit.saxena@avagotech.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/megaraid/megaraid_sas_base.c |   46 ++++++++++++++++--------------
+ 1 file changed, 25 insertions(+), 21 deletions(-)
+
+--- a/drivers/scsi/megaraid/megaraid_sas_base.c
++++ b/drivers/scsi/megaraid/megaraid_sas_base.c
+@@ -1922,20 +1922,22 @@ static int megasas_get_ld_vf_affiliation
+ 	dcmd->cmd = MFI_CMD_DCMD;
+ 	dcmd->cmd_status = 0xFF;
+ 	dcmd->sge_count = 1;
+-	dcmd->flags = MFI_FRAME_DIR_BOTH;
++	dcmd->flags = cpu_to_le16(MFI_FRAME_DIR_BOTH);
+ 	dcmd->timeout = 0;
+ 	dcmd->pad_0 = 0;
+-	dcmd->data_xfer_len = sizeof(struct MR_LD_VF_AFFILIATION_111);
+-	dcmd->opcode = MR_DCMD_LD_VF_MAP_GET_ALL_LDS_111;
++	dcmd->data_xfer_len =
++		cpu_to_le32(sizeof(struct MR_LD_VF_AFFILIATION_111));
++	dcmd->opcode = cpu_to_le32(MR_DCMD_LD_VF_MAP_GET_ALL_LDS_111);
+ 
+ 	if (initial)
+ 		dcmd->sgl.sge32[0].phys_addr =
+-			instance->vf_affiliation_111_h;
++			cpu_to_le32(instance->vf_affiliation_111_h);
+ 	else
+-		dcmd->sgl.sge32[0].phys_addr = new_affiliation_111_h;
++		dcmd->sgl.sge32[0].phys_addr =
++			cpu_to_le32(new_affiliation_111_h);
+ 
+-	dcmd->sgl.sge32[0].length =
+-		sizeof(struct MR_LD_VF_AFFILIATION_111);
++	dcmd->sgl.sge32[0].length = cpu_to_le32(
++		sizeof(struct MR_LD_VF_AFFILIATION_111));
+ 
+ 	printk(KERN_WARNING "megasas: SR-IOV: Getting LD/VF affiliation for "
+ 	       "scsi%d\n", instance->host->host_no);
+@@ -2033,20 +2035,22 @@ static int megasas_get_ld_vf_affiliation
+ 	dcmd->cmd = MFI_CMD_DCMD;
+ 	dcmd->cmd_status = 0xFF;
+ 	dcmd->sge_count = 1;
+-	dcmd->flags = MFI_FRAME_DIR_BOTH;
++	dcmd->flags = cpu_to_le16(MFI_FRAME_DIR_BOTH);
+ 	dcmd->timeout = 0;
+ 	dcmd->pad_0 = 0;
+-	dcmd->data_xfer_len = (MAX_LOGICAL_DRIVES + 1) *
+-		sizeof(struct MR_LD_VF_AFFILIATION);
+-	dcmd->opcode = MR_DCMD_LD_VF_MAP_GET_ALL_LDS;
++	dcmd->data_xfer_len = cpu_to_le32((MAX_LOGICAL_DRIVES + 1) *
++		sizeof(struct MR_LD_VF_AFFILIATION));
++	dcmd->opcode = cpu_to_le32(MR_DCMD_LD_VF_MAP_GET_ALL_LDS);
+ 
+ 	if (initial)
+-		dcmd->sgl.sge32[0].phys_addr = instance->vf_affiliation_h;
++		dcmd->sgl.sge32[0].phys_addr =
++			cpu_to_le32(instance->vf_affiliation_h);
+ 	else
+-		dcmd->sgl.sge32[0].phys_addr = new_affiliation_h;
++		dcmd->sgl.sge32[0].phys_addr =
++			cpu_to_le32(new_affiliation_h);
+ 
+-	dcmd->sgl.sge32[0].length = (MAX_LOGICAL_DRIVES + 1) *
+-		sizeof(struct MR_LD_VF_AFFILIATION);
++	dcmd->sgl.sge32[0].length = cpu_to_le32((MAX_LOGICAL_DRIVES + 1) *
++		sizeof(struct MR_LD_VF_AFFILIATION));
+ 
+ 	printk(KERN_WARNING "megasas: SR-IOV: Getting LD/VF affiliation for "
+ 	       "scsi%d\n", instance->host->host_no);
+@@ -2196,17 +2200,17 @@ int megasas_sriov_start_heartbeat(struct
+ 
+ 	memset(dcmd->mbox.b, 0, MFI_MBOX_SIZE);
+ 
+-	dcmd->mbox.s[0] = sizeof(struct MR_CTRL_HB_HOST_MEM);
++	dcmd->mbox.s[0] = cpu_to_le16(sizeof(struct MR_CTRL_HB_HOST_MEM));
+ 	dcmd->cmd = MFI_CMD_DCMD;
+ 	dcmd->cmd_status = 0xFF;
+ 	dcmd->sge_count = 1;
+-	dcmd->flags = MFI_FRAME_DIR_BOTH;
++	dcmd->flags = cpu_to_le16(MFI_FRAME_DIR_BOTH);
+ 	dcmd->timeout = 0;
+ 	dcmd->pad_0 = 0;
+-	dcmd->data_xfer_len = sizeof(struct MR_CTRL_HB_HOST_MEM);
+-	dcmd->opcode = MR_DCMD_CTRL_SHARED_HOST_MEM_ALLOC;
+-	dcmd->sgl.sge32[0].phys_addr = instance->hb_host_mem_h;
+-	dcmd->sgl.sge32[0].length = sizeof(struct MR_CTRL_HB_HOST_MEM);
++	dcmd->data_xfer_len = cpu_to_le32(sizeof(struct MR_CTRL_HB_HOST_MEM));
++	dcmd->opcode = cpu_to_le32(MR_DCMD_CTRL_SHARED_HOST_MEM_ALLOC);
++	dcmd->sgl.sge32[0].phys_addr = cpu_to_le32(instance->hb_host_mem_h);
++	dcmd->sgl.sge32[0].length = cpu_to_le32(sizeof(struct MR_CTRL_HB_HOST_MEM));
+ 
+ 	printk(KERN_WARNING "megasas: SR-IOV: Starting heartbeat for scsi%d\n",
+ 	       instance->host->host_no);

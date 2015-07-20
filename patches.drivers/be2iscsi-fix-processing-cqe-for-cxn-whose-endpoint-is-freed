@@ -1,0 +1,41 @@
+From: John Soni Jose <<sony.john-n@emulex.com>
+Date: Thu, 25 Jun 2015 23:34:37 -0400
+Subject: be2iscsi: Fix processing cqe for cxn whose endpoint is freed
+Git-commit: 11206081ad895d83e717bfe23603168dc307d904
+Patch-mainline: v3.16-rc1
+References: FATE#318562 bsc#921786
+
+ During heavy IO in multipath environment with many active sessions
+ and port-bouncing happening, there is a race condition because of
+ which beiscsi_prcess_cqe() gets called for a connection whose
+ endpoint is freed.
+
+ Checking endpoint reference for a connection before processing in
+ beiscsi_process_cq().
+
+Signed-off-by: Minh Tran <minhduc.tran@emulex.com>
+Signed-off-by: John Soni Jose <sony.john-n@emulex.com>
+Signed-off-by: Jayamohan Kallickal <jayamohan.kallickal@emulex.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ drivers/scsi/be2iscsi/be_main.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/scsi/be2iscsi/be_main.c b/drivers/scsi/be2iscsi/be_main.c
+index df6b978..1956b72 100644
+--- a/drivers/scsi/be2iscsi/be_main.c
++++ b/drivers/scsi/be2iscsi/be_main.c
+@@ -2111,7 +2111,7 @@ unsigned int beiscsi_process_cq(struct be_eq_obj *pbe_eq)
+ 		cri_index = BE_GET_CRI_FROM_CID(cid);
+ 		ep = phba->ep_array[cri_index];
+ 
+-		if (ep == NULL) {
++		if (unlikely(ep == NULL)) {
+ 			/* connection has already been freed
+ 			 * just move on to next one
+ 			 */
+-- 
+1.7.1
+
+

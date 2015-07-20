@@ -1,0 +1,75 @@
+From: Keith Mange <keith.mange@microsoft.com>
+Date: Tue, 26 May 2015 14:23:01 -0700
+Patch-mainline: v4.2-rc1
+Subject: Drivers: hv: vmbus:Update preferred vmbus protocol version to windows 10.
+Git-commit: 6c4e5f9c9ff41ea997fd0f345b3b2b88c113eb68
+
+Add support for Windows 10.
+
+Signed-off-by: Keith Mange <keith.mange@microsoft.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/connection.c | 8 +++++---
+ include/linux/hyperv.h  | 4 +++-
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/hv/connection.c b/drivers/hv/connection.c
+index acd50e9..4fc2e88 100644
+--- a/drivers/hv/connection.c
++++ b/drivers/hv/connection.c
+@@ -58,6 +58,9 @@ static __u32 vmbus_get_next_version(__u32 current_version)
+ 	case (VERSION_WIN8_1):
+ 		return VERSION_WIN8;
+ 
++	case (VERSION_WIN10):
++		return VERSION_WIN8_1;
++
+ 	case (VERSION_WS2008):
+ 	default:
+ 		return VERSION_INVAL;
+@@ -80,7 +83,7 @@ static int vmbus_negotiate_version(struct vmbus_channel_msginfo *msginfo,
+ 	msg->interrupt_page = virt_to_phys(vmbus_connection.int_page);
+ 	msg->monitor_page1 = virt_to_phys(vmbus_connection.monitor_pages[0]);
+ 	msg->monitor_page2 = virt_to_phys(vmbus_connection.monitor_pages[1]);
+-	if (version == VERSION_WIN8_1) {
++	if (version >= VERSION_WIN8_1) {
+ 		msg->target_vcpu = hv_context.vp_index[get_cpu()];
+ 		put_cpu();
+ 	}
+@@ -376,8 +379,7 @@ void vmbus_on_event(unsigned long data)
+ 	int cpu = smp_processor_id();
+ 	union hv_synic_event_flags *event;
+ 
+-	if ((vmbus_proto_version == VERSION_WS2008) ||
+-		(vmbus_proto_version == VERSION_WIN7)) {
++	if (vmbus_proto_version < VERSION_WIN8) {
+ 		maxdword = MAX_NUM_CHANNELS_SUPPORTED >> 5;
+ 		recv_int_page = vmbus_connection.recv_int_page;
+ 	} else {
+diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
+index 3932a99..4317cd1 100644
+--- a/include/linux/hyperv.h
++++ b/include/linux/hyperv.h
+@@ -160,17 +160,19 @@ hv_get_ringbuffer_availbytes(struct hv_ring_buffer_info *rbi,
+  * 1 . 1  (Windows 7)
+  * 2 . 4  (Windows 8)
+  * 3 . 0  (Windows 8 R2)
++ * 4 . 0  (Windows 10)
+  */
+ 
+ #define VERSION_WS2008  ((0 << 16) | (13))
+ #define VERSION_WIN7    ((1 << 16) | (1))
+ #define VERSION_WIN8    ((2 << 16) | (4))
+ #define VERSION_WIN8_1    ((3 << 16) | (0))
++#define VERSION_WIN10	((4 << 16) | (0))
+ 
+ 
+ #define VERSION_INVAL -1
+ 
+-#define VERSION_CURRENT VERSION_WIN8_1
++#define VERSION_CURRENT VERSION_WIN10
+ 
+ /* Make maximum size of pipe payload of 16K */
+ #define MAX_PIPE_DATA_PAYLOAD		(sizeof(u8) * 16384)

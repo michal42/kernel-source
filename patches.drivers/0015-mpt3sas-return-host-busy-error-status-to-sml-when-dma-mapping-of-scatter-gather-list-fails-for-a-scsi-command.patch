@@ -1,0 +1,46 @@
+From: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Date: Thu, 25 Jun 2015 14:24:35 +0530
+Subject: [SCSI] mpt3sas: Return host busy error status to SML when DMA mapping of scatter gather list fails for a SCSI command
+Git-commit: 100163b74bd2014eed683783ac5db3eec1795a24
+References: bsc#922628, FATE#318595
+Patch-mainline: on linux-scsi list
+
+scsi_dma_map API will return a negative value (i.e. -ENOMEM)
+if DMA mapping of sg lists fails and zero if the sg list in the
+SCSI cmd is NULL. But drivers doesn't handled sg list DMA mapping
+failure case properly.
+
+So, Updated the code to return host busy error status to SCSI MID Layer(SML),
+when DMA mapping of scatter gather list fails for a SCSI command.
+So that SML will retry this SCSI cmd after some time.
+
+Changes in v2:
+	Patch version change only.
+
+Signed-off-by: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Reviewed-by: Johannes Thumshirn <jthumshirn@suse.de>
+---
+ drivers/scsi/mpt3sas/mpt3sas_base.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/scsi/mpt3sas/mpt3sas_base.c
++++ b/drivers/scsi/mpt3sas/mpt3sas_base.c
+@@ -1363,7 +1363,7 @@ _base_build_sg_scmd_ieee(struct MPT3SAS_
+ 
+ 	sg_scmd = scsi_sglist(scmd);
+ 	sges_left = scsi_dma_map(scmd);
+-	if (!sges_left) {
++	if (sges_left < 0) {
+ 		sdev_printk(KERN_ERR, scmd->device,
+ 			"pci_map_sg failed: request for %d bytes!\n",
+ 			scsi_bufflen(scmd));
+@@ -1432,7 +1432,7 @@ _base_build_sg_scmd_ieee(struct MPT3SAS_
+  fill_in_last_segment:
+ 
+ 	/* fill the last segment */
+-	while (sges_left) {
++	while (sges_left > 0) {
+ 		if (sges_left == 1)
+ 			_base_add_sg_single_ieee(sg_local,
+ 			    simple_sgl_flags_last, 0, sg_dma_len(sg_scmd),

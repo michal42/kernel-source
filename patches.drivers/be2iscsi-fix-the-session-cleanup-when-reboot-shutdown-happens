@@ -1,0 +1,124 @@
+From: John Soni Jose <<sony.john-n@emulex.com>
+Date: Thu, 25 Jun 2015 23:21:10 -0400
+Subject: be2iscsi: Fix the session cleanup when reboot/shutdown happens
+Git-commit: 9343be749085c2229622ef47058dca4937e30882
+Patch-mainline: v3.15-rc1
+References: FATE#318562 bsc#921786
+
+ In iSCSI Boot scenario, when machine is reboot/shutdown phase
+ the active sessions are not closed. Driver queue cleanup is
+ done as part of unload and device is disabled.
+
+ Sessions are still active, iSCSI commands are issued from
+ session which comes to driver, as driver cleanup and device
+ disabled there is kernel stack dump with errors.
+
+ Fix is invoking iscsi_session_failure with ISCSI_ERR_INVALID_HOST
+ on all the active sessions when shutdown routine is called.
+
+Signed-off-by: John Soni Jose <sony.john-n@emulex.com>
+Signed-off-by: Jayamohan Kallickal <jayamohan.kallickal@emulex.com>
+Reviewed-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ drivers/scsi/be2iscsi/be.h       |    1 +
+ drivers/scsi/be2iscsi/be_cmds.c  |   17 ++++++++++++++++-
+ drivers/scsi/be2iscsi/be_cmds.h  |    1 +
+ drivers/scsi/be2iscsi/be_iscsi.c |    1 +
+ drivers/scsi/be2iscsi/be_main.c  |    2 ++
+ drivers/scsi/be2iscsi/be_main.h  |    1 +
+ 6 files changed, 22 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/scsi/be2iscsi/be.h b/drivers/scsi/be2iscsi/be.h
+index bc6277d..019c4ff 100644
+--- a/drivers/scsi/be2iscsi/be.h
++++ b/drivers/scsi/be2iscsi/be.h
+@@ -139,6 +139,7 @@ struct be_ctrl_info {
+ #define PAGE_SHIFT_4K 12
+ #define PAGE_SIZE_4K (1 << PAGE_SHIFT_4K)
+ #define mcc_timeout		120000 /* 12s timeout */
++#define BEISCSI_LOGOUT_SYNC_DELAY	250
+ 
+ /* Returns number of pages spanned by the data starting at the given addr */
+ #define PAGES_4K_SPANNED(_address, size)				\
+diff --git a/drivers/scsi/be2iscsi/be_cmds.c b/drivers/scsi/be2iscsi/be_cmds.c
+index 2b35240..80d97f3 100644
+--- a/drivers/scsi/be2iscsi/be_cmds.c
++++ b/drivers/scsi/be2iscsi/be_cmds.c
+@@ -413,8 +413,23 @@ static struct be_mcc_compl *be_mcc_compl_get(struct beiscsi_hba *phba)
+ 	return NULL;
+ }
+ 
+-static void be2iscsi_fail_session(struct iscsi_cls_session *cls_session)
++/**
++ * be2iscsi_fail_session(): Closing session with appropriate error
++ * @cls_session: ptr to session
++ *
++ * Depending on adapter state appropriate error flag is passed.
++ **/
++void be2iscsi_fail_session(struct iscsi_cls_session *cls_session)
+ {
++	struct Scsi_Host *shost = iscsi_session_to_shost(cls_session);
++	struct beiscsi_hba *phba = iscsi_host_priv(shost);
++	uint32_t iscsi_err_flag;
++
++	if (phba->state & BE_ADAPTER_STATE_SHUTDOWN)
++		iscsi_err_flag = ISCSI_ERR_INVALID_HOST;
++	else
++		iscsi_err_flag = ISCSI_ERR_CONN_FAILED;
++
+ 	iscsi_session_failure(cls_session->dd_data, ISCSI_ERR_CONN_FAILED);
+ }
+ 
+diff --git a/drivers/scsi/be2iscsi/be_cmds.h b/drivers/scsi/be2iscsi/be_cmds.h
+index 0851eee..cf1b5d1 100644
+--- a/drivers/scsi/be2iscsi/be_cmds.h
++++ b/drivers/scsi/be2iscsi/be_cmds.h
+@@ -1326,4 +1326,5 @@ void be_wrb_hdr_prepare(struct be_mcc_wrb *wrb, int payload_len,
+ void be_cmd_hdr_prepare(struct be_cmd_req_hdr *req_hdr,
+ 			u8 subsystem, u8 opcode, int cmd_len);
+ 
++void be2iscsi_fail_session(struct iscsi_cls_session *cls_session);
+ #endif /* !BEISCSI_CMDS_H */
+diff --git a/drivers/scsi/be2iscsi/be_iscsi.c b/drivers/scsi/be2iscsi/be_iscsi.c
+index 557a155..93c29cd 100644
+--- a/drivers/scsi/be2iscsi/be_iscsi.c
++++ b/drivers/scsi/be2iscsi/be_iscsi.c
+@@ -1390,6 +1390,7 @@ void beiscsi_ep_disconnect(struct iscsi_endpoint *ep)
+ 	beiscsi_mccq_compl(phba, tag, NULL, NULL);
+ 	beiscsi_close_conn(beiscsi_ep, tcp_upload_flag);
+ free_ep:
++	msleep(BEISCSI_LOGOUT_SYNC_DELAY);
+ 	beiscsi_free_ep(beiscsi_ep);
+ 	beiscsi_unbind_conn_to_cid(phba, beiscsi_ep->ep_cid);
+ 	iscsi_destroy_endpoint(beiscsi_ep->openiscsi_ep);
+diff --git a/drivers/scsi/be2iscsi/be_main.c b/drivers/scsi/be2iscsi/be_main.c
+index 7fd8eed..cefbf55 100644
+--- a/drivers/scsi/be2iscsi/be_main.c
++++ b/drivers/scsi/be2iscsi/be_main.c
+@@ -5267,6 +5267,8 @@ static void beiscsi_shutdown(struct pci_dev *pcidev)
+ 		return;
+ 	}
+ 
++	phba->state = BE_ADAPTER_STATE_SHUTDOWN;
++	iscsi_host_for_each_session(phba->shost, be2iscsi_fail_session);
+ 	beiscsi_quiesce(phba, BEISCSI_CLEAN_UNLOAD);
+ 	pci_disable_device(pcidev);
+ }
+diff --git a/drivers/scsi/be2iscsi/be_main.h b/drivers/scsi/be2iscsi/be_main.h
+index c2cd73b..860d6ef 100644
+--- a/drivers/scsi/be2iscsi/be_main.h
++++ b/drivers/scsi/be2iscsi/be_main.h
+@@ -100,6 +100,7 @@
+ #define BE_ADAPTER_LINK_UP	0x001
+ #define BE_ADAPTER_LINK_DOWN	0x002
+ #define BE_ADAPTER_PCI_ERR	0x004
++#define BE_ADAPTER_STATE_SHUTDOWN	0x008
+ #define BE_ADAPTER_CHECK_BOOT	0x010
+ 
+ #define BEISCSI_CLEAN_UNLOAD	0x01
+-- 
+1.7.1
+
+
