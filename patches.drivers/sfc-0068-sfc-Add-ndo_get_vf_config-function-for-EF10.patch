@@ -1,0 +1,66 @@
+From: Shradha Shah <sshah@solarflare.com>
+Date: Wed, 20 May 2015 11:11:18 +0100
+Subject: sfc: Add ndo_get_vf_config() function for EF10
+Patch-mainline: v4.2-rc1
+Git-commit: b9af90499a9ac3b42f364216ec65e9c096c3a076
+References: bsc#923037 FATE#318563
+
+rtnetlink calls ndo_get_vf_config when compiling information
+about a network interface, so that the VFs associated with a PF
+can be listed (eg: ip link show).
+Implement a response to this entry point and return PF-set MAC
+address for VF in ndo_get_vf_config
+
+Signed-off-by: Shradha Shah <sshah@solarflare.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/sfc/ef10_sriov.c |   23 +++++++++++++++++++++++
+ drivers/net/ethernet/sfc/ef10_sriov.h |    7 ++-----
+ 2 files changed, 25 insertions(+), 5 deletions(-)
+
+--- a/drivers/net/ethernet/sfc/ef10_sriov.c
++++ b/drivers/net/ethernet/sfc/ef10_sriov.c
+@@ -521,3 +521,26 @@ fail:
+ 	memset(vf->mac, 0, ETH_ALEN);
+ 	return rc;
+ }
++
++int efx_ef10_sriov_get_vf_config(struct efx_nic *efx, int vf_i,
++				 struct ifla_vf_info *ivf)
++{
++	struct efx_ef10_nic_data *nic_data = efx->nic_data;
++	struct ef10_vf *vf;
++
++	if (vf_i >= efx->vf_count)
++		return -EINVAL;
++
++	if (!nic_data->vf)
++		return -EOPNOTSUPP;
++
++	vf = nic_data->vf + vf_i;
++
++	ivf->vf = vf_i;
++	ivf->tx_rate = 0;
++	ether_addr_copy(ivf->mac, vf->mac);
++	ivf->vlan = 0;
++	ivf->qos = 0;
++
++	return 0;
++}
+--- a/drivers/net/ethernet/sfc/ef10_sriov.h
++++ b/drivers/net/ethernet/sfc/ef10_sriov.h
+@@ -55,11 +55,8 @@ static inline int efx_ef10_sriov_set_vf_
+ 	return -EOPNOTSUPP;
+ }
+ 
+-static inline int efx_ef10_sriov_get_vf_config(struct efx_nic *efx, int vf,
+-					       struct ifla_vf_info *ivf)
+-{
+-	return -EOPNOTSUPP;
+-}
++int efx_ef10_sriov_get_vf_config(struct efx_nic *efx, int vf_i,
++				 struct ifla_vf_info *ivf);
+ 
+ int efx_ef10_vswitching_probe_pf(struct efx_nic *efx);
+ int efx_ef10_vswitching_probe_vf(struct efx_nic *efx);
