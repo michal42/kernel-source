@@ -1,0 +1,139 @@
+From: Shradha Shah <sshah@solarflare.com>
+Date: Tue, 2 Jun 2015 11:38:16 +0100
+Subject: sfc: Implement ndo_gets_phys_port_id() for EF10 VFs
+Patch-mainline: v4.2-rc1
+Git-commit: 1d051e009851334899e2041c3d8dcde36e2db1c2
+References: bsc#923037 FATE#318563
+
+Signed-off-by: Shradha Shah <sshah@solarflare.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/sfc/ef10.c       |   11 +++++++++++
+ drivers/net/ethernet/sfc/ef10_sriov.c |   14 ++++++++++++++
+ drivers/net/ethernet/sfc/ef10_sriov.h |    3 +++
+ drivers/net/ethernet/sfc/efx.c        |    1 +
+ drivers/net/ethernet/sfc/net_driver.h |    2 ++
+ drivers/net/ethernet/sfc/nic.h        |    1 +
+ drivers/net/ethernet/sfc/sriov.c      |   11 +++++++++++
+ drivers/net/ethernet/sfc/sriov.h      |    2 ++
+ 8 files changed, 45 insertions(+)
+
+--- a/drivers/net/ethernet/sfc/ef10.c
++++ b/drivers/net/ethernet/sfc/ef10.c
+@@ -406,6 +406,16 @@ static int efx_ef10_probe(struct efx_nic
+ 
+ 	efx_ptp_probe(efx, NULL);
+ 
++#ifdef CONFIG_SFC_SRIOV
++	if ((efx->pci_dev->physfn) && (!efx->pci_dev->is_physfn)) {
++		struct pci_dev *pci_dev_pf = efx->pci_dev->physfn;
++		struct efx_nic *efx_pf = pci_get_drvdata(pci_dev_pf);
++
++		efx_pf->type->get_mac_address(efx_pf, nic_data->port_id);
++	} else
++#endif
++		ether_addr_copy(nic_data->port_id, efx->net_dev->perm_addr);
++
+ 	return 0;
+ 
+ fail5:
+@@ -4140,6 +4150,7 @@ const struct efx_nic_type efx_hunt_a0_vf
+ 	.vswitching_probe = efx_ef10_vswitching_probe_vf,
+ 	.vswitching_restore = efx_ef10_vswitching_restore_vf,
+ 	.vswitching_remove = efx_ef10_vswitching_remove_vf,
++	.sriov_get_phys_port_id = efx_ef10_sriov_get_phys_port_id,
+ #endif
+ 	.get_mac_address = efx_ef10_get_mac_address_vf,
+ 	.set_mac_address = efx_ef10_set_mac_address,
+--- a/drivers/net/ethernet/sfc/ef10_sriov.c
++++ b/drivers/net/ethernet/sfc/ef10_sriov.c
+@@ -735,3 +735,17 @@ int efx_ef10_sriov_get_vf_config(struct
+ 
+ 	return 0;
+ }
++
++int efx_ef10_sriov_get_phys_port_id(struct efx_nic *efx,
++				    struct netdev_phys_port_id *ppid)
++{
++	struct efx_ef10_nic_data *nic_data = efx->nic_data;
++
++	if (!is_valid_ether_addr(nic_data->port_id))
++		return -EOPNOTSUPP;
++
++	ppid->id_len = ETH_ALEN;
++	memcpy(ppid->id, nic_data->port_id, ppid->id_len);
++
++	return 0;
++}
+--- a/drivers/net/ethernet/sfc/ef10_sriov.h
++++ b/drivers/net/ethernet/sfc/ef10_sriov.h
+@@ -54,6 +54,9 @@ int efx_ef10_sriov_get_vf_config(struct
+ int efx_ef10_sriov_set_vf_link_state(struct efx_nic *efx, int vf_i,
+ 				     int link_state);
+ 
++int efx_ef10_sriov_get_phys_port_id(struct efx_nic *efx,
++				    struct netdev_phys_port_id *ppid);
++
+ int efx_ef10_vswitching_probe_pf(struct efx_nic *efx);
+ int efx_ef10_vswitching_probe_vf(struct efx_nic *efx);
+ int efx_ef10_vswitching_restore_pf(struct efx_nic *efx);
+--- a/drivers/net/ethernet/sfc/efx.c
++++ b/drivers/net/ethernet/sfc/efx.c
+@@ -2282,6 +2282,7 @@ static const struct net_device_ops efx_n
+ 	.ndo_set_vf_spoofchk	= efx_sriov_set_vf_spoofchk,
+ 	.ndo_get_vf_config	= efx_sriov_get_vf_config,
+ 	.ndo_set_vf_link_state  = efx_sriov_set_vf_link_state,
++	.ndo_get_phys_port_id   = efx_sriov_get_phys_port_id,
+ #endif
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	.ndo_poll_controller = efx_netpoll,
+--- a/drivers/net/ethernet/sfc/net_driver.h
++++ b/drivers/net/ethernet/sfc/net_driver.h
+@@ -1350,6 +1350,8 @@ struct efx_nic_type {
+ 				   struct ifla_vf_info *ivi);
+ 	int (*sriov_set_vf_link_state)(struct efx_nic *efx, int vf_i,
+ 				       int link_state);
++	int (*sriov_get_phys_port_id)(struct efx_nic *efx,
++				      struct netdev_phys_port_id *ppid);
+ 	int (*vswitching_probe)(struct efx_nic *efx);
+ 	int (*vswitching_restore)(struct efx_nic *efx);
+ 	void (*vswitching_remove)(struct efx_nic *efx);
+--- a/drivers/net/ethernet/sfc/nic.h
++++ b/drivers/net/ethernet/sfc/nic.h
+@@ -505,6 +505,7 @@ struct efx_ef10_nic_data {
+ 	unsigned int vport_id;
+ 	bool must_probe_vswitching;
+ 	unsigned int pf_index;
++	u8 port_id[ETH_ALEN];
+ #ifdef CONFIG_SFC_SRIOV
+ 	unsigned int vf_index;
+ 	struct ef10_vf *vf;
+--- a/drivers/net/ethernet/sfc/sriov.c
++++ b/drivers/net/ethernet/sfc/sriov.c
+@@ -70,3 +70,14 @@ int efx_sriov_set_vf_link_state(struct n
+ 	else
+ 		return -EOPNOTSUPP;
+ }
++
++int efx_sriov_get_phys_port_id(struct net_device *net_dev,
++			       struct netdev_phys_port_id *ppid)
++{
++	struct efx_nic *efx = netdev_priv(net_dev);
++
++	if (efx->type->sriov_get_phys_port_id)
++		return efx->type->sriov_get_phys_port_id(efx, ppid);
++	else
++		return -EOPNOTSUPP;
++}
+--- a/drivers/net/ethernet/sfc/sriov.h
++++ b/drivers/net/ethernet/sfc/sriov.h
+@@ -23,6 +23,8 @@ int efx_sriov_get_vf_config(struct net_d
+ 			    struct ifla_vf_info *ivi);
+ int efx_sriov_set_vf_link_state(struct net_device *net_dev, int vf_i,
+ 				int link_state);
++int efx_sriov_get_phys_port_id(struct net_device *net_dev,
++			       struct netdev_phys_port_id *ppid);
+ 
+ #endif /* CONFIG_SFC_SRIOV */
+ 
