@@ -1,0 +1,125 @@
+From: Shradha Shah <sshah@solarflare.com>
+Date: Wed, 20 May 2015 11:09:15 +0100
+Subject: sfc: Store vf_index in nic_data for Ef10.
+Patch-mainline: v4.2-rc1
+Git-commit: 88a37de674f8a7c7622bb00d78437153b31e3797
+References: bsc#923037 FATE#318563
+
+Added function efx_ef10_get_vf_index to store the vf_index
+in nic_data during probe
+
+vf_index is needed in future patches to access a particular
+VF in the VF data structure.
+
+Moved efx_ef10_probe_pf and efx_ef10_probe_vf in order to
+used efx_ef10_remove
+
+Signed-off-by: Shradha Shah <sshah@solarflare.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/sfc/ef10.c |   68 ++++++++++++++++++++++++++++++----------
+ drivers/net/ethernet/sfc/nic.h  |    1 
+ 2 files changed, 52 insertions(+), 17 deletions(-)
+
+--- a/drivers/net/ethernet/sfc/ef10.c
++++ b/drivers/net/ethernet/sfc/ef10.c
+@@ -119,6 +119,26 @@ static int efx_ef10_get_pf_index(struct
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_SFC_SRIOV
++static int efx_ef10_get_vf_index(struct efx_nic *efx)
++{
++	MCDI_DECLARE_BUF(outbuf, MC_CMD_GET_FUNCTION_INFO_OUT_LEN);
++	struct efx_ef10_nic_data *nic_data = efx->nic_data;
++	size_t outlen;
++	int rc;
++
++	rc = efx_mcdi_rpc(efx, MC_CMD_GET_FUNCTION_INFO, NULL, 0, outbuf,
++			  sizeof(outbuf), &outlen);
++	if (rc)
++		return rc;
++	if (outlen < sizeof(outbuf))
++		return -EIO;
++
++	nic_data->vf_index = MCDI_DWORD(outbuf, GET_FUNCTION_INFO_OUT_VF);
++	return 0;
++}
++#endif
++
+ static int efx_ef10_init_datapath_caps(struct efx_nic *efx)
+ {
+ 	MCDI_DECLARE_BUF(outbuf, MC_CMD_GET_CAPABILITIES_OUT_LEN);
+@@ -328,23 +348,6 @@ fail1:
+ 	return rc;
+ }
+ 
+-static int efx_ef10_probe_pf(struct efx_nic *efx)
+-{
+-	return efx_ef10_probe(efx);
+-}
+-
+-#ifdef CONFIG_SFC_SRIOV
+-static int efx_ef10_probe_vf(struct efx_nic *efx)
+-{
+-	return efx_ef10_probe(efx);
+-}
+-#else
+-static int efx_ef10_probe_vf(struct efx_nic *efx __attribute__ ((unused)))
+-{
+-	return 0;
+-}
+-#endif
+-
+ static int efx_ef10_free_vis(struct efx_nic *efx)
+ {
+ 	MCDI_DECLARE_BUF_OUT_OR_ERR(outbuf, 0);
+@@ -561,6 +564,37 @@ static void efx_ef10_remove(struct efx_n
+ 	kfree(nic_data);
+ }
+ 
++static int efx_ef10_probe_pf(struct efx_nic *efx)
++{
++	return efx_ef10_probe(efx);
++}
++
++#ifdef CONFIG_SFC_SRIOV
++static int efx_ef10_probe_vf(struct efx_nic *efx)
++{
++	int rc;
++
++	rc = efx_ef10_probe(efx);
++	if (rc)
++		return rc;
++
++	rc = efx_ef10_get_vf_index(efx);
++	if (rc)
++		goto fail;
++
++	return 0;
++
++fail:
++	efx_ef10_remove(efx);
++	return rc;
++}
++#else
++static int efx_ef10_probe_vf(struct efx_nic *efx __attribute__ ((unused)))
++{
++	return 0;
++}
++#endif
++
+ static int efx_ef10_alloc_vis(struct efx_nic *efx,
+ 			      unsigned int min_vis, unsigned int max_vis)
+ {
+--- a/drivers/net/ethernet/sfc/nic.h
++++ b/drivers/net/ethernet/sfc/nic.h
+@@ -506,6 +506,7 @@ struct efx_ef10_nic_data {
+ 	bool must_probe_vswitching;
+ 	unsigned int pf_index;
+ #ifdef CONFIG_SFC_SRIOV
++	unsigned int vf_index;
+ 	struct ef10_vf *vf;
+ #endif
+ 	u8 vport_mac[ETH_ALEN];

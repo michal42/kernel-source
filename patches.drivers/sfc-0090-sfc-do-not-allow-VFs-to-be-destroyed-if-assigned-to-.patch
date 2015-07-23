@@ -1,0 +1,32 @@
+From: Daniel Pieczko <dpieczko@solarflare.com>
+Date: Tue, 2 Jun 2015 11:40:31 +0100
+Subject: sfc: do not allow VFs to be destroyed if assigned to guests
+Patch-mainline: v4.2-rc1
+Git-commit: 71158bf2e748e2710616f59a823619af3c5505a7
+References: bsc#923037 FATE#318563
+
+Signed-off-by: Shradha Shah <sshah@solarflare.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/sfc/ef10_sriov.c |    9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/drivers/net/ethernet/sfc/ef10_sriov.c
++++ b/drivers/net/ethernet/sfc/ef10_sriov.c
+@@ -417,6 +417,15 @@ static int efx_ef10_pci_sriov_disable(st
+ {
+ 	struct pci_dev *dev = efx->pci_dev;
+ 
++	if (!efx->vf_count)
++		return 0;
++
++	if (pci_vfs_assigned(dev)) {
++		netif_err(efx, drv, efx->net_dev, "VFs are assigned to guests; "
++			  "please detach them before disabling SR-IOV\n");
++		return -EBUSY;
++	}
++
+ 	pci_disable_sriov(dev);
+ 	efx_ef10_sriov_free_vf_vswitching(efx);
+ 	efx->vf_count = 0;

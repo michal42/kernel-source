@@ -1,0 +1,52 @@
+From: Edward Cree <ecree@solarflare.com>
+Date: Wed, 27 May 2015 13:14:26 +0100
+Subject: sfc: add module parameter to enable MCDI logging on new functions
+Patch-mainline: v4.2-rc1
+Git-commit: 42ca087fbfe4a961cd7ff09bbc31b3e17eabc06b
+References: bsc#923037 FATE#318563
+
+As many issues are encountered at probe time, where MCDI logging can't be
+ enabled through the sysfs node, this change adds a module parameter
+ 'mcdi_logging_default', which defaults to false.  When set to true, newly-
+ probed functions will have MCDI logging enabled.  The setting can
+ subsequently be changed as normal through the sysfs node.
+
+Signed-off-by: Edward Cree <ecree@solarflare.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/ethernet/sfc/mcdi.c |    9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/drivers/net/ethernet/sfc/mcdi.c
++++ b/drivers/net/ethernet/sfc/mcdi.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <linux/delay.h>
++#include <linux/moduleparam.h>
+ #include <asm/cmpxchg.h>
+ #include "net_driver.h"
+ #include "nic.h"
+@@ -54,6 +55,13 @@ static int efx_mcdi_drv_attach(struct ef
+ static bool efx_mcdi_poll_once(struct efx_nic *efx);
+ static void efx_mcdi_abandon(struct efx_nic *efx);
+ 
++#ifdef CONFIG_SFC_MCDI_LOGGING
++static bool mcdi_logging_default;
++module_param(mcdi_logging_default, bool, 0644);
++MODULE_PARM_DESC(mcdi_logging_default,
++		 "Enable MCDI logging on newly-probed functions");
++#endif
++
+ int efx_mcdi_init(struct efx_nic *efx)
+ {
+ 	struct efx_mcdi_iface *mcdi;
+@@ -71,6 +79,7 @@ int efx_mcdi_init(struct efx_nic *efx)
+ 	mcdi->logging_buffer = (char *)__get_free_page(GFP_KERNEL);
+ 	if (!mcdi->logging_buffer)
+ 		goto fail1;
++	mcdi->logging_enabled = mcdi_logging_default;
+ #endif
+ 	init_waitqueue_head(&mcdi->wq);
+ 	spin_lock_init(&mcdi->iface_lock);
