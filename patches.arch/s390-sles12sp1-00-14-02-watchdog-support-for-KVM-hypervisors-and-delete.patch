@@ -1,0 +1,97 @@
+From: Xu Wang <gesaint@linux.vnet.ibm.com>
+Subject: s390/watchdog: support for KVM hypervisors and delete pr_info messages
+Patch-mainline: v4.1-rc1
+Git-commit: b2527d2009903a06b0076bb89166c72a0f17823b
+References: bsc#934543,FATE#318087,LTC#VS1417
+
+Summary:     s390/watchdog: diag288 watchdog device support for KVM hypervisors
+Description: This feature enables watchdog support for KVM guests. As KVM
+             behaves just like LPAR, we can rework the code to make that
+             behaviour the standard one and z/VM the special case.
+
+Upstream-Description:
+
+             s390/watchdog: support for KVM hypervisors and delete pr_info messages
+
+             This patch extends the diag288 watchdog driver to be able to deal with KVM
+             hypervisors. Only z/VM needs special handling, we can use the same interface
+             as on LPAR. Remove all pr_info output to avoid misconception. Because there
+             is no value in these messages and only the pr_err messages make sense.
+
+             Signed-off-by: Xu Wang <gesaint@linux.vnet.ibm.com>
+             Reviewed-by: David Hildenbrand <dahi@linux.vnet.ibm.com>
+             Acked-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Xu Wang <gesaint@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/watchdog/diag288_wdt.c |   18 ++++--------------
+ 1 file changed, 4 insertions(+), 14 deletions(-)
+
+--- a/drivers/watchdog/diag288_wdt.c
++++ b/drivers/watchdog/diag288_wdt.c
+@@ -125,9 +125,7 @@ static int wdt_start(struct watchdog_dev
+ 		ret = __diag288_vm(func, dev->timeout, ebc_cmd, len);
+ 		WARN_ON(ret != 0);
+ 		kfree(ebc_cmd);
+-	}
+-
+-	if (MACHINE_IS_LPAR) {
++	} else {
+ 		ret = __diag288_lpar(WDT_FUNC_INIT,
+ 				     dev->timeout, LPARWDT_RESTART);
+ 	}
+@@ -136,7 +134,6 @@ static int wdt_start(struct watchdog_dev
+ 		pr_err("The watchdog cannot be activated\n");
+ 		return ret;
+ 	}
+-	pr_info("The watchdog was activated\n");
+ 	return 0;
+ }
+ 
+@@ -145,7 +142,6 @@ static int wdt_stop(struct watchdog_devi
+ 	int ret;
+ 
+ 	ret = __diag288(WDT_FUNC_CANCEL, 0, 0, 0);
+-	pr_info("The watchdog was deactivated\n");
+ 	return ret;
+ }
+ 
+@@ -177,10 +173,9 @@ static int wdt_ping(struct watchdog_devi
+ 		ret = __diag288_vm(func, dev->timeout, ebc_cmd, len);
+ 		WARN_ON(ret != 0);
+ 		kfree(ebc_cmd);
+-	}
+-
+-	if (MACHINE_IS_LPAR)
++	} else {
+ 		ret = __diag288_lpar(WDT_FUNC_CHANGE, dev->timeout, 0);
++	}
+ 
+ 	if (ret)
+ 		pr_err("The watchdog timer cannot be started or reset\n");
+@@ -273,21 +268,16 @@ static int __init diag288_init(void)
+ 	watchdog_set_nowayout(&wdt_dev, nowayout_info);
+ 
+ 	if (MACHINE_IS_VM) {
+-		pr_info("The watchdog device driver detected a z/VM environment\n");
+ 		if (__diag288_vm(WDT_FUNC_INIT, 15,
+ 				 ebc_begin, sizeof(ebc_begin)) != 0) {
+ 			pr_err("The watchdog cannot be initialized\n");
+ 			return -EINVAL;
+ 		}
+-	} else if (MACHINE_IS_LPAR) {
+-		pr_info("The watchdog device driver detected an LPAR environment\n");
++	} else {
+ 		if (__diag288_lpar(WDT_FUNC_INIT, 30, LPARWDT_RESTART)) {
+ 			pr_err("The watchdog cannot be initialized\n");
+ 			return -EINVAL;
+ 		}
+-	} else {
+-		pr_err("Linux runs in an environment that does not support the diag288 watchdog\n");
+-		return -ENODEV;
+ 	}
+ 
+ 	if (__diag288_lpar(WDT_FUNC_CANCEL, 0, 0)) {
