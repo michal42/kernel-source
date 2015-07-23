@@ -1,0 +1,455 @@
+From: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Subject: s390/cpum_cf: Export event names in sysfs
+Patch-mainline: v3.14-rc1
+Git-commit: c716832513f30430179b60ac5ffd203c53f7eb40
+References: bsc#934396,FATE#318024,LTC#KRN1203
+
+Summary:     s390/perf: add support for the CPU-measurement sampling facility
+Description: Use the CPU-measurement sampling facility to obtain performance
+             data for Linux in LPAR mode.  You can use the perf tool on Linux
+             to access the hardware sample data of the CPU-measurement
+             sampling facility.
+
+Upstream-Description:
+
+             s390/cpum_cf: Export event names in sysfs
+
+             Provide PMU event attributes for supported counters and export their symbolic
+             names to the sysfs "events" directory.
+
+             See the /sys/devices/cpum_cf/events/ directory for a list of available counters.
+             Note that you might require counter set authorizations for the LPAR to use them.
+
+             Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/perf_event.h     |   23 ++
+ arch/s390/kernel/Makefile              |    3 
+ arch/s390/kernel/perf_cpum_cf.c        |    1 
+ arch/s390/kernel/perf_cpum_cf_events.c |  322 +++++++++++++++++++++++++++++++++
+ arch/s390/kernel/perf_event.c          |   12 +
+ 5 files changed, 358 insertions(+), 3 deletions(-)
+
+--- a/arch/s390/include/asm/perf_event.h
++++ b/arch/s390/include/asm/perf_event.h
+@@ -1,11 +1,18 @@
+ /*
+  * Performance event support - s390 specific definitions.
+  *
+- * Copyright IBM Corp. 2009, 2012
++ * Copyright IBM Corp. 2009, 2013
+  * Author(s): Martin Schwidefsky <schwidefsky@de.ibm.com>
+  *	      Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+  */
+ 
++#ifndef _ASM_S390_PERF_EVENT_H
++#define _ASM_S390_PERF_EVENT_H
++
++#ifdef CONFIG_64BIT
++
++#include <linux/perf_event.h>
++#include <linux/device.h>
+ #include <asm/cpu_mf.h>
+ 
+ /* CPU-measurement counter facility */
+@@ -15,7 +22,18 @@
+ #define PMU_F_RESERVED			0x1000
+ #define PMU_F_ENABLED			0x2000
+ 
+-#ifdef CONFIG_64BIT
++/* Perf defintions for PMU event attributes in sysfs */
++extern __init const struct attribute_group **cpumf_cf_event_group(void);
++extern ssize_t cpumf_events_sysfs_show(struct device *dev,
++				       struct device_attribute *attr,
++				       char *page);
++#define EVENT_VAR(_cat, _name)		event_attr_##_cat##_##_name
++#define EVENT_PTR(_cat, _name)		(&EVENT_VAR(_cat, _name).attr.attr)
++
++#define CPUMF_EVENT_ATTR(cat, name, id)			\
++	PMU_EVENT_ATTR(name, EVENT_VAR(cat, name), id, cpumf_events_sysfs_show)
++#define CPUMF_EVENT_PTR(cat, name)	EVENT_PTR(cat, name)
++
+ 
+ /* Perf callbacks */
+ struct pt_regs;
+@@ -24,3 +42,4 @@ extern unsigned long perf_misc_flags(str
+ #define perf_misc_flags(regs) perf_misc_flags(regs)
+ 
+ #endif /* CONFIG_64BIT */
++#endif /* _ASM_S390_PERF_EVENT_H */
+--- a/arch/s390/kernel/Makefile
++++ b/arch/s390/kernel/Makefile
+@@ -57,7 +57,8 @@ obj-$(CONFIG_FUNCTION_TRACER)	+= mcount.
+ obj-$(CONFIG_CRASH_DUMP)	+= crash_dump.o
+ 
+ ifdef CONFIG_64BIT
+-obj-$(CONFIG_PERF_EVENTS)	+= perf_event.o perf_cpum_cf.o
++obj-$(CONFIG_PERF_EVENTS)	+= perf_event.o perf_cpum_cf.o \
++						perf_cpum_cf_events.o
+ obj-y				+= runtime_instr.o cache.o
+ endif
+ 
+--- a/arch/s390/kernel/perf_cpum_cf.c
++++ b/arch/s390/kernel/perf_cpum_cf.c
+@@ -680,6 +680,7 @@ static int __init cpumf_pmu_init(void)
+ 		goto out;
+ 	}
+ 
++	cpumf_pmu.attr_groups = cpumf_cf_event_group();
+ 	rc = perf_pmu_register(&cpumf_pmu, "cpum_cf", PERF_TYPE_RAW);
+ 	if (rc) {
+ 		pr_err("Registering the cpum_cf PMU failed with rc=%i\n", rc);
+--- /dev/null
++++ b/arch/s390/kernel/perf_cpum_cf_events.c
+@@ -0,0 +1,322 @@
++/*
++ * Perf PMU sysfs events attributes for available CPU-measurement counters
++ *
++ */
++
++#include <linux/slab.h>
++#include <linux/perf_event.h>
++
++
++/* BEGIN: CPUM_CF COUNTER DEFINITIONS =================================== */
++
++CPUMF_EVENT_ATTR(cf, CPU_CYCLES, 0x0000);
++CPUMF_EVENT_ATTR(cf, INSTRUCTIONS, 0x0001);
++CPUMF_EVENT_ATTR(cf, L1I_DIR_WRITES, 0x0002);
++CPUMF_EVENT_ATTR(cf, L1I_PENALTY_CYCLES, 0x0003);
++CPUMF_EVENT_ATTR(cf, PROBLEM_STATE_CPU_CYCLES, 0x0020);
++CPUMF_EVENT_ATTR(cf, PROBLEM_STATE_INSTRUCTIONS, 0x0021);
++CPUMF_EVENT_ATTR(cf, PROBLEM_STATE_L1I_DIR_WRITES, 0x0022);
++CPUMF_EVENT_ATTR(cf, PROBLEM_STATE_L1I_PENALTY_CYCLES, 0x0023);
++CPUMF_EVENT_ATTR(cf, PROBLEM_STATE_L1D_DIR_WRITES, 0x0024);
++CPUMF_EVENT_ATTR(cf, PROBLEM_STATE_L1D_PENALTY_CYCLES, 0x0025);
++CPUMF_EVENT_ATTR(cf, L1D_DIR_WRITES, 0x0004);
++CPUMF_EVENT_ATTR(cf, L1D_PENALTY_CYCLES, 0x0005);
++CPUMF_EVENT_ATTR(cf, PRNG_FUNCTIONS, 0x0040);
++CPUMF_EVENT_ATTR(cf, PRNG_CYCLES, 0x0041);
++CPUMF_EVENT_ATTR(cf, PRNG_BLOCKED_FUNCTIONS, 0x0042);
++CPUMF_EVENT_ATTR(cf, PRNG_BLOCKED_CYCLES, 0x0043);
++CPUMF_EVENT_ATTR(cf, SHA_FUNCTIONS, 0x0044);
++CPUMF_EVENT_ATTR(cf, SHA_CYCLES, 0x0045);
++CPUMF_EVENT_ATTR(cf, SHA_BLOCKED_FUNCTIONS, 0x0046);
++CPUMF_EVENT_ATTR(cf, SHA_BLOCKED_CYCLES, 0x0047);
++CPUMF_EVENT_ATTR(cf, DEA_FUNCTIONS, 0x0048);
++CPUMF_EVENT_ATTR(cf, DEA_CYCLES, 0x0049);
++CPUMF_EVENT_ATTR(cf, DEA_BLOCKED_FUNCTIONS, 0x004a);
++CPUMF_EVENT_ATTR(cf, DEA_BLOCKED_CYCLES, 0x004b);
++CPUMF_EVENT_ATTR(cf, AES_FUNCTIONS, 0x004c);
++CPUMF_EVENT_ATTR(cf, AES_CYCLES, 0x004d);
++CPUMF_EVENT_ATTR(cf, AES_BLOCKED_FUNCTIONS, 0x004e);
++CPUMF_EVENT_ATTR(cf, AES_BLOCKED_CYCLES, 0x004f);
++CPUMF_EVENT_ATTR(cf_z10, L1I_L2_SOURCED_WRITES, 0x0080);
++CPUMF_EVENT_ATTR(cf_z10, L1D_L2_SOURCED_WRITES, 0x0081);
++CPUMF_EVENT_ATTR(cf_z10, L1I_L3_LOCAL_WRITES, 0x0082);
++CPUMF_EVENT_ATTR(cf_z10, L1D_L3_LOCAL_WRITES, 0x0083);
++CPUMF_EVENT_ATTR(cf_z10, L1I_L3_REMOTE_WRITES, 0x0084);
++CPUMF_EVENT_ATTR(cf_z10, L1D_L3_REMOTE_WRITES, 0x0085);
++CPUMF_EVENT_ATTR(cf_z10, L1D_LMEM_SOURCED_WRITES, 0x0086);
++CPUMF_EVENT_ATTR(cf_z10, L1I_LMEM_SOURCED_WRITES, 0x0087);
++CPUMF_EVENT_ATTR(cf_z10, L1D_RO_EXCL_WRITES, 0x0088);
++CPUMF_EVENT_ATTR(cf_z10, L1I_CACHELINE_INVALIDATES, 0x0089);
++CPUMF_EVENT_ATTR(cf_z10, ITLB1_WRITES, 0x008a);
++CPUMF_EVENT_ATTR(cf_z10, DTLB1_WRITES, 0x008b);
++CPUMF_EVENT_ATTR(cf_z10, TLB2_PTE_WRITES, 0x008c);
++CPUMF_EVENT_ATTR(cf_z10, TLB2_CRSTE_WRITES, 0x008d);
++CPUMF_EVENT_ATTR(cf_z10, TLB2_CRSTE_HPAGE_WRITES, 0x008e);
++CPUMF_EVENT_ATTR(cf_z10, ITLB1_MISSES, 0x0091);
++CPUMF_EVENT_ATTR(cf_z10, DTLB1_MISSES, 0x0092);
++CPUMF_EVENT_ATTR(cf_z10, L2C_STORES_SENT, 0x0093);
++CPUMF_EVENT_ATTR(cf_z196, L1D_L2_SOURCED_WRITES, 0x0080);
++CPUMF_EVENT_ATTR(cf_z196, L1I_L2_SOURCED_WRITES, 0x0081);
++CPUMF_EVENT_ATTR(cf_z196, DTLB1_MISSES, 0x0082);
++CPUMF_EVENT_ATTR(cf_z196, ITLB1_MISSES, 0x0083);
++CPUMF_EVENT_ATTR(cf_z196, L2C_STORES_SENT, 0x0085);
++CPUMF_EVENT_ATTR(cf_z196, L1D_OFFBOOK_L3_SOURCED_WRITES, 0x0086);
++CPUMF_EVENT_ATTR(cf_z196, L1D_ONBOOK_L4_SOURCED_WRITES, 0x0087);
++CPUMF_EVENT_ATTR(cf_z196, L1I_ONBOOK_L4_SOURCED_WRITES, 0x0088);
++CPUMF_EVENT_ATTR(cf_z196, L1D_RO_EXCL_WRITES, 0x0089);
++CPUMF_EVENT_ATTR(cf_z196, L1D_OFFBOOK_L4_SOURCED_WRITES, 0x008a);
++CPUMF_EVENT_ATTR(cf_z196, L1I_OFFBOOK_L4_SOURCED_WRITES, 0x008b);
++CPUMF_EVENT_ATTR(cf_z196, DTLB1_HPAGE_WRITES, 0x008c);
++CPUMF_EVENT_ATTR(cf_z196, L1D_LMEM_SOURCED_WRITES, 0x008d);
++CPUMF_EVENT_ATTR(cf_z196, L1I_LMEM_SOURCED_WRITES, 0x008e);
++CPUMF_EVENT_ATTR(cf_z196, L1I_OFFBOOK_L3_SOURCED_WRITES, 0x008f);
++CPUMF_EVENT_ATTR(cf_z196, DTLB1_WRITES, 0x0090);
++CPUMF_EVENT_ATTR(cf_z196, ITLB1_WRITES, 0x0091);
++CPUMF_EVENT_ATTR(cf_z196, TLB2_PTE_WRITES, 0x0092);
++CPUMF_EVENT_ATTR(cf_z196, TLB2_CRSTE_HPAGE_WRITES, 0x0093);
++CPUMF_EVENT_ATTR(cf_z196, TLB2_CRSTE_WRITES, 0x0094);
++CPUMF_EVENT_ATTR(cf_z196, L1D_ONCHIP_L3_SOURCED_WRITES, 0x0096);
++CPUMF_EVENT_ATTR(cf_z196, L1D_OFFCHIP_L3_SOURCED_WRITES, 0x0098);
++CPUMF_EVENT_ATTR(cf_z196, L1I_ONCHIP_L3_SOURCED_WRITES, 0x0099);
++CPUMF_EVENT_ATTR(cf_z196, L1I_OFFCHIP_L3_SOURCED_WRITES, 0x009b);
++CPUMF_EVENT_ATTR(cf_zec12, DTLB1_MISSES, 0x0080);
++CPUMF_EVENT_ATTR(cf_zec12, ITLB1_MISSES, 0x0081);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_L2I_SOURCED_WRITES, 0x0082);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_L2I_SOURCED_WRITES, 0x0083);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_L2D_SOURCED_WRITES, 0x0084);
++CPUMF_EVENT_ATTR(cf_zec12, DTLB1_WRITES, 0x0085);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_LMEM_SOURCED_WRITES, 0x0087);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_LMEM_SOURCED_WRITES, 0x0089);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_RO_EXCL_WRITES, 0x008a);
++CPUMF_EVENT_ATTR(cf_zec12, DTLB1_HPAGE_WRITES, 0x008b);
++CPUMF_EVENT_ATTR(cf_zec12, ITLB1_WRITES, 0x008c);
++CPUMF_EVENT_ATTR(cf_zec12, TLB2_PTE_WRITES, 0x008d);
++CPUMF_EVENT_ATTR(cf_zec12, TLB2_CRSTE_HPAGE_WRITES, 0x008e);
++CPUMF_EVENT_ATTR(cf_zec12, TLB2_CRSTE_WRITES, 0x008f);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_ONCHIP_L3_SOURCED_WRITES, 0x0090);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_OFFCHIP_L3_SOURCED_WRITES, 0x0091);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_OFFBOOK_L3_SOURCED_WRITES, 0x0092);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_ONBOOK_L4_SOURCED_WRITES, 0x0093);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_OFFBOOK_L4_SOURCED_WRITES, 0x0094);
++CPUMF_EVENT_ATTR(cf_zec12, TX_NC_TEND, 0x0095);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_ONCHIP_L3_SOURCED_WRITES_IV, 0x0096);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_OFFCHIP_L3_SOURCED_WRITES_IV, 0x0097);
++CPUMF_EVENT_ATTR(cf_zec12, L1D_OFFBOOK_L3_SOURCED_WRITES_IV, 0x0098);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_ONCHIP_L3_SOURCED_WRITES, 0x0099);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_OFFCHIP_L3_SOURCED_WRITES, 0x009a);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_OFFBOOK_L3_SOURCED_WRITES, 0x009b);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_ONBOOK_L4_SOURCED_WRITES, 0x009c);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_OFFBOOK_L4_SOURCED_WRITES, 0x009d);
++CPUMF_EVENT_ATTR(cf_zec12, TX_C_TEND, 0x009e);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_ONCHIP_L3_SOURCED_WRITES_IV, 0x009f);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_OFFCHIP_L3_SOURCED_WRITES_IV, 0x00a0);
++CPUMF_EVENT_ATTR(cf_zec12, L1I_OFFBOOK_L3_SOURCED_WRITES_IV, 0x00a1);
++CPUMF_EVENT_ATTR(cf_zec12, TX_NC_TABORT, 0x00b1);
++CPUMF_EVENT_ATTR(cf_zec12, TX_C_TABORT_NO_SPECIAL, 0x00b2);
++CPUMF_EVENT_ATTR(cf_zec12, TX_C_TABORT_SPECIAL, 0x00b3);
++
++static struct attribute *cpumcf_pmu_event_attr[] = {
++	CPUMF_EVENT_PTR(cf, CPU_CYCLES),
++	CPUMF_EVENT_PTR(cf, INSTRUCTIONS),
++	CPUMF_EVENT_PTR(cf, L1I_DIR_WRITES),
++	CPUMF_EVENT_PTR(cf, L1I_PENALTY_CYCLES),
++	CPUMF_EVENT_PTR(cf, PROBLEM_STATE_CPU_CYCLES),
++	CPUMF_EVENT_PTR(cf, PROBLEM_STATE_INSTRUCTIONS),
++	CPUMF_EVENT_PTR(cf, PROBLEM_STATE_L1I_DIR_WRITES),
++	CPUMF_EVENT_PTR(cf, PROBLEM_STATE_L1I_PENALTY_CYCLES),
++	CPUMF_EVENT_PTR(cf, PROBLEM_STATE_L1D_DIR_WRITES),
++	CPUMF_EVENT_PTR(cf, PROBLEM_STATE_L1D_PENALTY_CYCLES),
++	CPUMF_EVENT_PTR(cf, L1D_DIR_WRITES),
++	CPUMF_EVENT_PTR(cf, L1D_PENALTY_CYCLES),
++	CPUMF_EVENT_PTR(cf, PRNG_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, PRNG_CYCLES),
++	CPUMF_EVENT_PTR(cf, PRNG_BLOCKED_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, PRNG_BLOCKED_CYCLES),
++	CPUMF_EVENT_PTR(cf, SHA_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, SHA_CYCLES),
++	CPUMF_EVENT_PTR(cf, SHA_BLOCKED_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, SHA_BLOCKED_CYCLES),
++	CPUMF_EVENT_PTR(cf, DEA_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, DEA_CYCLES),
++	CPUMF_EVENT_PTR(cf, DEA_BLOCKED_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, DEA_BLOCKED_CYCLES),
++	CPUMF_EVENT_PTR(cf, AES_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, AES_CYCLES),
++	CPUMF_EVENT_PTR(cf, AES_BLOCKED_FUNCTIONS),
++	CPUMF_EVENT_PTR(cf, AES_BLOCKED_CYCLES),
++	NULL,
++};
++
++static struct attribute *cpumcf_z10_pmu_event_attr[] __initdata = {
++	CPUMF_EVENT_PTR(cf_z10, L1I_L2_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1D_L2_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1I_L3_LOCAL_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1D_L3_LOCAL_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1I_L3_REMOTE_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1D_L3_REMOTE_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1D_LMEM_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1I_LMEM_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1D_RO_EXCL_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, L1I_CACHELINE_INVALIDATES),
++	CPUMF_EVENT_PTR(cf_z10, ITLB1_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, DTLB1_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, TLB2_PTE_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, TLB2_CRSTE_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, TLB2_CRSTE_HPAGE_WRITES),
++	CPUMF_EVENT_PTR(cf_z10, ITLB1_MISSES),
++	CPUMF_EVENT_PTR(cf_z10, DTLB1_MISSES),
++	CPUMF_EVENT_PTR(cf_z10, L2C_STORES_SENT),
++	NULL,
++};
++
++static struct attribute *cpumcf_z196_pmu_event_attr[] __initdata = {
++	CPUMF_EVENT_PTR(cf_z196, L1D_L2_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_L2_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, DTLB1_MISSES),
++	CPUMF_EVENT_PTR(cf_z196, ITLB1_MISSES),
++	CPUMF_EVENT_PTR(cf_z196, L2C_STORES_SENT),
++	CPUMF_EVENT_PTR(cf_z196, L1D_OFFBOOK_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1D_ONBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_ONBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1D_RO_EXCL_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1D_OFFBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_OFFBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, DTLB1_HPAGE_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1D_LMEM_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_LMEM_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_OFFBOOK_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, DTLB1_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, ITLB1_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, TLB2_PTE_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, TLB2_CRSTE_HPAGE_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, TLB2_CRSTE_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1D_ONCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1D_OFFCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_ONCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_z196, L1I_OFFCHIP_L3_SOURCED_WRITES),
++	NULL,
++};
++
++static struct attribute *cpumcf_zec12_pmu_event_attr[] __initdata = {
++	CPUMF_EVENT_PTR(cf_zec12, DTLB1_MISSES),
++	CPUMF_EVENT_PTR(cf_zec12, ITLB1_MISSES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_L2I_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_L2I_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_L2D_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, DTLB1_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_LMEM_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_LMEM_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_RO_EXCL_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, DTLB1_HPAGE_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, ITLB1_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, TLB2_PTE_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, TLB2_CRSTE_HPAGE_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, TLB2_CRSTE_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_ONCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_OFFCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_OFFBOOK_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_ONBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_OFFBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, TX_NC_TEND),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_ONCHIP_L3_SOURCED_WRITES_IV),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_OFFCHIP_L3_SOURCED_WRITES_IV),
++	CPUMF_EVENT_PTR(cf_zec12, L1D_OFFBOOK_L3_SOURCED_WRITES_IV),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_ONCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_OFFCHIP_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_OFFBOOK_L3_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_ONBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_OFFBOOK_L4_SOURCED_WRITES),
++	CPUMF_EVENT_PTR(cf_zec12, TX_C_TEND),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_ONCHIP_L3_SOURCED_WRITES_IV),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_OFFCHIP_L3_SOURCED_WRITES_IV),
++	CPUMF_EVENT_PTR(cf_zec12, L1I_OFFBOOK_L3_SOURCED_WRITES_IV),
++	CPUMF_EVENT_PTR(cf_zec12, TX_NC_TABORT),
++	CPUMF_EVENT_PTR(cf_zec12, TX_C_TABORT_NO_SPECIAL),
++	CPUMF_EVENT_PTR(cf_zec12, TX_C_TABORT_SPECIAL),
++	NULL,
++};
++
++/* END: CPUM_CF COUNTER DEFINITIONS ===================================== */
++
++static struct attribute_group cpumsf_pmu_events_group = {
++	.name = "events",
++	.attrs = cpumcf_pmu_event_attr,
++};
++
++PMU_FORMAT_ATTR(event, "config:0-63");
++
++static struct attribute *cpumsf_pmu_format_attr[] = {
++	&format_attr_event.attr,
++	NULL,
++};
++
++static struct attribute_group cpumsf_pmu_format_group = {
++	.name = "format",
++	.attrs = cpumsf_pmu_format_attr,
++};
++
++static const struct attribute_group *cpumsf_pmu_attr_groups[] = {
++	&cpumsf_pmu_events_group,
++	&cpumsf_pmu_format_group,
++	NULL,
++};
++
++
++static __init struct attribute **merge_attr(struct attribute **a,
++					    struct attribute **b)
++{
++	struct attribute **new;
++	int j, i;
++
++	for (j = 0; a[j]; j++)
++		;
++	for (i = 0; b[i]; i++)
++		j++;
++	j++;
++
++	new = kmalloc(sizeof(struct attribute *) * j, GFP_KERNEL);
++	if (!new)
++		return NULL;
++	j = 0;
++	for (i = 0; a[i]; i++)
++		new[j++] = a[i];
++	for (i = 0; b[i]; i++)
++		new[j++] = b[i];
++	new[j] = NULL;
++
++	return new;
++}
++
++__init const struct attribute_group **cpumf_cf_event_group(void)
++{
++	struct attribute **combined, **model;
++	struct cpuid cpu_id;
++
++	get_cpu_id(&cpu_id);
++	switch (cpu_id.machine) {
++	case 0x2097:
++	case 0x2098:
++		model = cpumcf_z10_pmu_event_attr;
++		break;
++	case 0x2817:
++	case 0x2818:
++		model = cpumcf_z196_pmu_event_attr;
++		break;
++	case 0x2827:
++	case 0x2828:
++		model = cpumcf_zec12_pmu_event_attr;
++		break;
++	default:
++		model = NULL;
++		break;
++	};
++
++	if (!model)
++		goto out;
++
++	combined = merge_attr(cpumcf_pmu_event_attr, model);
++	if (combined)
++		cpumsf_pmu_events_group.attrs = combined;
++out:
++	return cpumsf_pmu_attr_groups;
++}
+--- a/arch/s390/kernel/perf_event.c
++++ b/arch/s390/kernel/perf_event.c
+@@ -16,6 +16,7 @@
+ #include <linux/kvm_host.h>
+ #include <linux/percpu.h>
+ #include <linux/export.h>
++#include <linux/sysfs.h>
+ #include <asm/irq.h>
+ #include <asm/cpu_mf.h>
+ #include <asm/lowcore.h>
+@@ -172,3 +173,14 @@ void perf_callchain_kernel(struct perf_c
+ 	__store_trace(entry, head, S390_lowcore.thread_info,
+ 		      S390_lowcore.thread_info + THREAD_SIZE);
+ }
++
++/* Perf defintions for PMU event attributes in sysfs */
++ssize_t cpumf_events_sysfs_show(struct device *dev,
++				struct device_attribute *attr, char *page)
++{
++	struct perf_pmu_events_attr *pmu_attr;
++
++	pmu_attr = container_of(attr, struct perf_pmu_events_attr, attr);
++	return sprintf(page, "event=0x%04llx,name=%s\n",
++		       pmu_attr->id, attr->attr.name);
++}
