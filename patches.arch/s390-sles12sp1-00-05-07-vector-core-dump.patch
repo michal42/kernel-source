@@ -1,0 +1,117 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/ptrace: always include vector registers in core files
+Patch-mainline: v3.19-rc1
+Git-commit: 7490daf01f11b5b692f69963eaee9be4adc135c3
+References: bsc#934391,FATE#318028,LTC#KRN1207
+
+Summary:     s390: vector facility support
+Description: With this feature, Linux user space applications will be
+             able to utilize the vector extension facility.
+
+             The vector extension facility is introduced with the z13
+             processor family. The facility adds vector registers to the
+             CPU and instructions to operate on the vector register.
+
+Upstream-Description:
+
+             s390/ptrace: always include vector registers in core files
+
+             On machines with support for vector registers the signal frame includes
+             an area for the vector registers and the ptrace regset interface allow
+             read and write. This is true even if the task never used any vector
+             instruction. Only elf core dumps do not include the vector registers,
+             to make things consistent always include the vector register note in
+             core dumps create on a machine with vector register support.
+
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/ptrace.c |   18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -1070,12 +1070,6 @@ static int s390_tdb_set(struct task_stru
+ 	return 0;
+ }
+ 
+-static int s390_vxrs_active(struct task_struct *target,
+-			      const struct user_regset *regset)
+-{
+-	return !!target->thread.vxrs;
+-}
+-
+ static int s390_vxrs_low_get(struct task_struct *target,
+ 			     const struct user_regset *regset,
+ 			     unsigned int pos, unsigned int count,
+@@ -1084,6 +1078,8 @@ static int s390_vxrs_low_get(struct task
+ 	__u64 vxrs[__NUM_VXRS_LOW];
+ 	int i;
+ 
++	if (!MACHINE_HAS_VX)
++		return -ENODEV;
+ 	if (target->thread.vxrs) {
+ 		if (target == current)
+ 			save_vx_regs(target->thread.vxrs);
+@@ -1102,6 +1098,8 @@ static int s390_vxrs_low_set(struct task
+ 	__u64 vxrs[__NUM_VXRS_LOW];
+ 	int i, rc;
+ 
++	if (!MACHINE_HAS_VX)
++		return -ENODEV;
+ 	if (!target->thread.vxrs) {
+ 		rc = alloc_vector_registers(target);
+ 		if (rc)
+@@ -1127,6 +1125,8 @@ static int s390_vxrs_high_get(struct tas
+ {
+ 	__vector128 vxrs[__NUM_VXRS_HIGH];
+ 
++	if (!MACHINE_HAS_VX)
++		return -ENODEV;
+ 	if (target->thread.vxrs) {
+ 		if (target == current)
+ 			save_vx_regs(target->thread.vxrs);
+@@ -1144,6 +1144,8 @@ static int s390_vxrs_high_set(struct tas
+ {
+ 	int rc;
+ 
++	if (!MACHINE_HAS_VX)
++		return -ENODEV;
+ 	if (!target->thread.vxrs) {
+ 		rc = alloc_vector_registers(target);
+ 		if (rc)
+@@ -1228,7 +1230,6 @@ static const struct user_regset s390_reg
+ 		.n = __NUM_VXRS_LOW,
+ 		.size = sizeof(__u64),
+ 		.align = sizeof(__u64),
+-		.active = s390_vxrs_active,
+ 		.get = s390_vxrs_low_get,
+ 		.set = s390_vxrs_low_set,
+ 	},
+@@ -1237,7 +1238,6 @@ static const struct user_regset s390_reg
+ 		.n = __NUM_VXRS_HIGH,
+ 		.size = sizeof(__vector128),
+ 		.align = sizeof(__vector128),
+-		.active = s390_vxrs_active,
+ 		.get = s390_vxrs_high_get,
+ 		.set = s390_vxrs_high_set,
+ 	},
+@@ -1451,7 +1451,6 @@ static const struct user_regset s390_com
+ 		.n = __NUM_VXRS_LOW,
+ 		.size = sizeof(__u64),
+ 		.align = sizeof(__u64),
+-		.active = s390_vxrs_active,
+ 		.get = s390_vxrs_low_get,
+ 		.set = s390_vxrs_low_set,
+ 	},
+@@ -1460,7 +1459,6 @@ static const struct user_regset s390_com
+ 		.n = __NUM_VXRS_HIGH,
+ 		.size = sizeof(__vector128),
+ 		.align = sizeof(__vector128),
+-		.active = s390_vxrs_active,
+ 		.get = s390_vxrs_high_get,
+ 		.set = s390_vxrs_high_set,
+ 	},
