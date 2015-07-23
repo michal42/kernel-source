@@ -1,0 +1,52 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/smp: reenable smt after resume
+Patch-mainline: v4.0-rc6
+Git-commit: 1833c9f647e9bda1cd24653ff8f9c207b5f5b911
+References: bsc#934387,FATE#318041,LTC#KRN1216
+
+Summary:     s390: add multi-threading support
+Description: With this feature, the Linux kernel can make use of the
+             multi-threading facility. With the multi-threading facility
+             enabled a single core will surface multiple CPUs. In Linux
+             terms this is called SMT or Hyperthreading support.
+
+Upstream-Description:
+
+             s390/smp: reenable smt after resume
+
+             After a suspend/resume cycle we missed to enable smt again, which leads
+             to all sorts of bugs, since the kernel assumes smt is enabled, while the
+             hardware thinks it is not.
+
+             Reported-and-tested-by: Sebastian Ott <sebott@linux.vnet.ibm.com>
+             Reported-by: Stefan Haberland <stefan.haberland@de.ibm.com>
+             Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/swsusp_asm64.S |   11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+--- a/arch/s390/kernel/swsusp_asm64.S
++++ b/arch/s390/kernel/swsusp_asm64.S
+@@ -177,6 +177,17 @@ restart_entry:
+ 	lhi	%r1,1
+ 	sigp	%r1,%r0,SIGP_SET_ARCHITECTURE
+ 	sam64
++#ifdef CONFIG_SMP
++	larl	%r1,smp_cpu_mt_shift
++	icm	%r1,15,0(%r1)
++	jz	smt_done
++	llgfr	%r1,%r1
++smt_loop:
++	sigp	%r1,%r0,SIGP_SET_MULTI_THREADING
++	brc	8,smt_done			/* accepted */
++	brc	2,smt_loop			/* busy, try again */
++smt_done:
++#endif
+ 	larl	%r1,.Lnew_pgm_check_psw
+ 	lpswe	0(%r1)
+ pgm_check_entry:
