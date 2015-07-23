@@ -1,0 +1,74 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/compat: correct ucontext layout for high gprs
+Patch-mainline: v3.16-rc2
+Git-commit: b9c9a33b765b0dd9279a99fcbb63f54950655e77
+References: bsc#934391,FATE#318028,LTC#KRN1207
+
+Summary:     s390: vector facility support
+Description: With this feature, Linux user space applications will be
+             able to utilize the vector extension facility.
+
+             The vector extension facility is introduced with the z13
+             processor family. The facility adds vector registers to the
+             CPU and instructions to operate on the vector register.
+
+Upstream-Description:
+
+             s390/compat: correct ucontext layout for high gprs
+
+             The uc_sigmask definition in the kernel differs from the one in the
+             glibc, the kernel uc_sigmask has 64 bits while the glibc verison
+             is 1024 bits. The extension of the ucontext structure for 64-bit
+             register support for 31-bit compat processes added a new field
+             uc_gprs_high which starts 8 bytes after the uc_sigmask field.
+             As the glibc view of the ucontext assumes a size of 128 bytes for
+             uc_sigmask add a 120 byte padding to the kernel structure
+             ucontext_extended after the 8 byte uc_sigmask.
+
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/uapi/asm/ucontext.h |    8 ++++++--
+ arch/s390/kernel/compat_linux.h       |    4 +++-
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+--- a/arch/s390/include/uapi/asm/ucontext.h
++++ b/arch/s390/include/uapi/asm/ucontext.h
+@@ -16,7 +16,9 @@ struct ucontext_extended {
+ 	struct ucontext  *uc_link;
+ 	stack_t		  uc_stack;
+ 	_sigregs	  uc_mcontext;
+-	unsigned long	  uc_sigmask[2];
++	sigset_t	  uc_sigmask;
++	/* Allow for uc_sigmask growth.  Glibc uses a 1024-bit sigset_t.  */
++	unsigned char	  __unused[128 - sizeof(sigset_t)];
+ 	unsigned long	  uc_gprs_high[16];
+ };
+ 
+@@ -27,7 +29,9 @@ struct ucontext {
+ 	struct ucontext  *uc_link;
+ 	stack_t		  uc_stack;
+ 	_sigregs          uc_mcontext;
+-	sigset_t	  uc_sigmask;	/* mask last for extensibility */
++	sigset_t	  uc_sigmask;
++	/* Allow for uc_sigmask growth.  Glibc uses a 1024-bit sigset_t.  */
++	unsigned char	  __unused[128 - sizeof(sigset_t)];
+ };
+ 
+ #endif /* !_ASM_S390_UCONTEXT_H */
+--- a/arch/s390/kernel/compat_linux.h
++++ b/arch/s390/kernel/compat_linux.h
+@@ -69,7 +69,9 @@ struct ucontext32 {
+ 	__u32			uc_link;	/* pointer */	
+ 	compat_stack_t		uc_stack;
+ 	_sigregs32		uc_mcontext;
+-	compat_sigset_t		uc_sigmask;	/* mask last for extensibility */
++	compat_sigset_t		uc_sigmask;
++	/* Allow for uc_sigmask growth.  Glibc uses a 1024-bit sigset_t.  */
++	unsigned char		__unused[128 - sizeof(compat_sigset_t)];
+ };
+ 
+ struct stat64_emu31;
