@@ -37,20 +37,54 @@ moan()
     bad=1
 }
 
+check_git_commit()
+{
+    local sha1
+
+    sha1=$(echo "$header" | sed -n 's/^Git-commit: *//ip')
+    if test -z "$sha1"; then
+        moan "$filename: No Git-commit header"
+    elif ! expr "$sha1" : '[0-9a-f]\{40\} *$' >/dev/null; then
+        moan "$filename: Malformed Git-commit header (use the full sha1 hash)"
+    fi
+}
+
+check_tag()
+{
+    local tag=$1
+
+    if ! echo "$header" | grep -iq "^$tag:.*[[:alnum:]]"; then
+        moan "$filename: No $tag header"
+    fi
+}
+
 check_patch()
 {
     local filename=$1 content=$2
     local header="$(sed '/^--- /,$ d' "$content")"
-    local required_headers="Subject From"
+    local mainline
 
-    if ! $relaxed; then
-        required_headers="$required_headers Patch-mainline"
-    fi
-    for tag in $required_headers; do
-        if ! echo "$header" | grep -iq "^$tag:.*[[:alnum:]]"; then
-            moan "$filename: No $tag header"
-        fi
+    for tag in Subject From; do
+        check_tag "$tag"
     done
+
+    mainline=$(echo "$header" | sed -n 's/^Patch-mainline: *//ip')
+    case "$mainline" in
+    "")
+        moan "$filename: No Patch-mainline header"
+        ;;
+    v*)
+        check_git_commit
+        ;;
+    "Queued in subsystem maintainer repository")
+        check_git_commit
+        check_tag "Git-repo"
+        ;;
+    Submitted,\ * | Not\ yet,\ * | Never,\ *)
+        ;;
+    *)
+        moan "$filename: Patch-mainline header has invalid value"
+    esac
 
     # Allow patches without a suse signoff in private clones
     suse_domains_re='(suse\.(de|com|cz)|novell\.com)'
