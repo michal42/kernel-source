@@ -1,0 +1,41 @@
+From: dvaleev@suse.com
+Patch-mainline: Never, kABI
+Reference: bsc#938934
+Subject: Unbreak kABI after disabling HIBERNATION on Power
+This is fixes kABI breakage after disabling CONFIG_HIBERNATION
+on Power
+
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+
+--- a/arch/powerpc/platforms/pseries/suspend.c
++++ b/arch/powerpc/platforms/pseries/suspend.c
+@@ -35,6 +35,15 @@ static struct rtas_suspend_me_data suspe
+ static atomic_t suspending;
+ 
+ /**
++ * HACK HACK. Make kabi happy (bsc#38934)
++**/
++bool system_entering_hibernation(void)
++{
++	return 0;
++}
++EXPORT_SYMBOL(system_entering_hibernation);
++
++/**
+  * pseries_suspend_begin - First phase of hibernation
+  *
+  * Check to ensure we are in a valid state to hibernate
+--- a/include/linux/suspend.h
++++ b/include/linux/suspend.h
+@@ -329,7 +329,11 @@ static inline void swsusp_unset_page_fre
+ 
+ static inline void hibernation_set_ops(const struct platform_hibernation_ops *ops) {}
+ static inline int hibernate(void) { return -ENOSYS; }
++#ifndef CONFIG_PPC_PSERIES
+ static inline bool system_entering_hibernation(void) { return false; }
++#else
++bool system_entering_hibernation(void);
++#endif
+ #endif /* CONFIG_HIBERNATION */
+ 
+ /* Hibernation and suspend events */
