@@ -1,0 +1,40 @@
+From: Prashant Sreedharan <prashant@broadcom.com>
+Date: Wed, 14 Jan 2015 11:33:49 -0800
+Subject: [PATCH 13/18] tg3: tg3_timer() should grab tp->lock before checking
+ for tp->irq_sync
+Patch-mainline: v3.19-rc5
+Git-commit: 4fd190a938cbb28ac9d42c5c86f5c829cc014537
+References: bnc#921778 FATE#318558
+
+This is to avoid the race between tg3_timer() and the execution paths
+which does not invoke tg3_timer_stop() and releases tp->lock before
+calling synchronize_irq()
+
+Reported-by: Peter Hurley <peter@hurleysoftware.com>
+Tested-by: Peter Hurley <peter@hurleysoftware.com>
+Signed-off-by: Prashant Sreedharan <prashant@broadcom.com>
+Signed-off-by: Michael Chan <mchan@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/tg3.c |    8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+--- a/drivers/net/ethernet/broadcom/tg3.c
++++ b/drivers/net/ethernet/broadcom/tg3.c
+@@ -10901,11 +10901,13 @@ static void tg3_timer(unsigned long __op
+ {
+ 	struct tg3 *tp = (struct tg3 *) __opaque;
+ 
+-	if (tp->irq_sync || tg3_flag(tp, RESET_TASK_PENDING))
+-		goto restart_timer;
+-
+ 	spin_lock(&tp->lock);
+ 
++	if (tp->irq_sync || tg3_flag(tp, RESET_TASK_PENDING)) {
++		spin_unlock(&tp->lock);
++		goto restart_timer;
++	}
++
+ 	if (tg3_asic_rev(tp) == ASIC_REV_5717 ||
+ 	    tg3_flag(tp, 57765_CLASS))
+ 		tg3_chk_missed_msi(tp);
