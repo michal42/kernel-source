@@ -1,0 +1,94 @@
+From: Dominik Dingel <dingel@linux.vnet.ibm.com>
+Subject: s390/mm: do not initialize storage keys
+Patch-mainline: v3.13-rc1
+Git-commit: 127c1feffff8078400f01372712c600d0f9eef51
+References: bsc#934390,FATE#318088,LTC#VS1423
+
+Summary:     s390/mm: do not initialize storage keys
+Description: With this patch, storage keys will not be initialized,
+             which can bring performance enhancements during bootup
+             as well as under KVM.
+
+Upstream-Description:
+
+             s390/mm: do not initialize storage keys
+
+             With dirty and referenced bits implemented in software it is unnecessary
+             to initialize the storage key for every page. With this patch not a single
+             storage key operation is done for a system that does not use KVM.
+             For KVM set_pte_at/pgste_set_key will do the initialization for the guest
+             view of the storage key when the mapping for the page is established in
+             the host.
+
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Dominik Dingel <dingel@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/page.h |    7 ++++++-
+ arch/s390/kernel/early.c     |    2 ++
+ arch/s390/mm/pageattr.c      |    4 +++-
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+
+--- a/arch/s390/include/asm/page.h
++++ b/arch/s390/include/asm/page.h
+@@ -30,7 +30,12 @@
+ #include <asm/setup.h>
+ #ifndef __ASSEMBLY__
+ 
+-void storage_key_init_range(unsigned long start, unsigned long end);
++static inline void storage_key_init_range(unsigned long start, unsigned long end)
++{
++#if PAGE_DEFAULT_KEY
++	__storage_key_init_range(start, end);
++#endif
++}
+ 
+ static inline void clear_page(void *page)
+ {
+--- a/arch/s390/kernel/early.c
++++ b/arch/s390/kernel/early.c
+@@ -205,6 +205,7 @@ static noinline __init void clear_bss_se
+  */
+ static noinline __init void init_kernel_storage_key(void)
+ {
++#if PAGE_DEFAULT_KEY
+ 	unsigned long end_pfn, init_pfn;
+ 
+ 	end_pfn = PFN_UP(__pa(&_end));
+@@ -212,6 +213,7 @@ static noinline __init void init_kernel_
+ 	for (init_pfn = 0 ; init_pfn < end_pfn; init_pfn++)
+ 		page_set_storage_key(init_pfn << PAGE_SHIFT,
+ 				     PAGE_DEFAULT_KEY, 0);
++#endif
+ }
+ 
+ static __initdata char sysinfo_page[PAGE_SIZE] __aligned(PAGE_SIZE);
+--- a/arch/s390/mm/pageattr.c
++++ b/arch/s390/mm/pageattr.c
+@@ -9,6 +9,7 @@
+ #include <asm/pgtable.h>
+ #include <asm/page.h>
+ 
++#if PAGE_DEFAULT_KEY
+ static inline unsigned long sske_frame(unsigned long addr, unsigned char skey)
+ {
+ 	asm volatile(".insn rrf,0xb22b0000,%[skey],%[addr],9,0"
+@@ -16,7 +17,7 @@ static inline unsigned long sske_frame(u
+ 	return addr;
+ }
+ 
+-void storage_key_init_range(unsigned long start, unsigned long end)
++void __storage_key_init_range(unsigned long start, unsigned long end)
+ {
+ 	unsigned long boundary, size;
+ 
+@@ -36,6 +37,7 @@ void storage_key_init_range(unsigned lon
+ 		start += PAGE_SIZE;
+ 	}
+ }
++#endif
+ 
+ static pte_t *walk_page_table(unsigned long addr)
+ {

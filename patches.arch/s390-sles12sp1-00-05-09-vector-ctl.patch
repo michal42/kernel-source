@@ -1,0 +1,60 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/ctl_reg: add union type for control register 0
+Patch-mainline: v3.16-rc4
+Git-commit: 5f4e87a227757198f4cf0495f7fd6c47a28aacb6
+References: bsc#934291,FATE#318028,LTC#127774
+
+Description:  kernel: vector register corruption
+Symptom:      Vector register contents may be corrupted after a machine check.
+              This can lead to data corruption.
+Problem:      The machine check handler validated vector register contents by
+              loading them with the contents that have been stored to the
+              machine check extended save area. Unfortunately the handler used
+              the wrong address for this.
+Solution:     Use the correct address and also always validate the registers.
+Reproduction: Workload with vector register usage and generate machine checks.
+
+Upstream-Description:
+
+              s390/ctl_reg: add union type for control register 0
+
+              Add 'union ctlreg0_bits' to easily allow setting and testing bits of
+              control register 0 bits.
+              This patch only adds the bits needed for the new guest access functions.
+              Other bits and control registers can be added when needed.
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Reviewed-by: Thomas Huth <thuth@linux.vnet.ibm.com>
+              Reviewed-by: Cornelia Huck <cornelia.huck@de.ibm.com>
+              Signed-off-by: Christian Borntraeger <borntraeger@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/include/asm/ctl_reg.h |   14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+--- a/arch/s390/include/asm/ctl_reg.h
++++ b/arch/s390/include/asm/ctl_reg.h
+@@ -61,6 +61,20 @@
+ 	__ctl_load(__dummy, cr, cr);	\
+ })
+ 
++union ctlreg0 {
++	unsigned long val;
++	struct {
++#ifdef CONFIG_64BIT
++		unsigned long	   : 32;
++#endif
++		unsigned long	   : 3;
++		unsigned long lap  : 1; /* Low-address-protection control */
++		unsigned long	   : 4;
++		unsigned long edat : 1; /* Enhanced-DAT-enablement control */
++		unsigned long	   : 23;
++	};
++};
++
+ #ifdef CONFIG_SMP
+ 
+ extern void smp_ctl_set_bit(int cr, int bit);

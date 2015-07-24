@@ -1,0 +1,146 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: s390/hypfs: Eliminate hypfs interval
+Patch-mainline: v4.0-rc1
+Git-commit: a178220df3a55c3ec46c2c2f0788a377acdb79c3
+References: bsc#934400,FATE#318070,LTC#KRN1311
+
+Summary:     hypfs: Add diag 0c support
+Description: With this feature, you can read the CPU performance metrics
+             provided by the z/VM diagnose 0C. This then allows to get
+             the management time for each online CPU of the guest where
+             the diagnose is executed.
+
+             The new debugfs file /sys/kernel/debug/s390_hypfs/diag_0c
+             exports the diag0C binary data to user space via an
+             open/read/close interface.
+
+             The binary data consists out of a header structure followed
+             by an array that contains the diagnose 0c data for each
+             online CPU.
+
+Upstream-Description:
+
+             s390/hypfs: Eliminate hypfs interval
+
+             Currently the binary hypfs interfaces provides new data only once within
+             an interval time of one second. This patch removes this restriction and
+             now new data is returned immediately on every read on a hypfs binary file.
+
+             This is done in order to allow more consistent snapshots for programs
+             that read multiple hypfs binary files.
+
+             Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/hypfs/hypfs.h      |    3 --
+ arch/s390/hypfs/hypfs_dbfs.c |   49 ++++++++++---------------------------------
+ 2 files changed, 12 insertions(+), 40 deletions(-)
+
+--- a/arch/s390/hypfs/hypfs.h
++++ b/arch/s390/hypfs/hypfs.h
+@@ -48,7 +48,6 @@ struct hypfs_dbfs_data {
+ 	void			*buf_free_ptr;
+ 	size_t			size;
+ 	struct hypfs_dbfs_file	*dbfs_file;
+-	struct kref		kref;
+ };
+ 
+ struct hypfs_dbfs_file {
+@@ -58,8 +57,6 @@ struct hypfs_dbfs_file {
+ 	void		(*data_free)(const void *buf_free_ptr);
+ 
+ 	/* Private data for hypfs_dbfs.c */
+-	struct hypfs_dbfs_data	*data;
+-	struct delayed_work	data_free_work;
+ 	struct mutex		lock;
+ 	struct dentry		*dentry;
+ };
+--- a/arch/s390/hypfs/hypfs_dbfs.c
++++ b/arch/s390/hypfs/hypfs_dbfs.c
+@@ -17,33 +17,16 @@ static struct hypfs_dbfs_data *hypfs_dbf
+ 	data = kmalloc(sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+ 		return NULL;
+-	kref_init(&data->kref);
+ 	data->dbfs_file = f;
+ 	return data;
+ }
+ 
+-static void hypfs_dbfs_data_free(struct kref *kref)
++static void hypfs_dbfs_data_free(struct hypfs_dbfs_data *data)
+ {
+-	struct hypfs_dbfs_data *data;
+-
+-	data = container_of(kref, struct hypfs_dbfs_data, kref);
+ 	data->dbfs_file->data_free(data->buf_free_ptr);
+ 	kfree(data);
+ }
+ 
+-static void data_free_delayed(struct work_struct *work)
+-{
+-	struct hypfs_dbfs_data *data;
+-	struct hypfs_dbfs_file *df;
+-
+-	df = container_of(work, struct hypfs_dbfs_file, data_free_work.work);
+-	mutex_lock(&df->lock);
+-	data = df->data;
+-	df->data = NULL;
+-	mutex_unlock(&df->lock);
+-	kref_put(&data->kref, hypfs_dbfs_data_free);
+-}
+-
+ static ssize_t dbfs_read(struct file *file, char __user *buf,
+ 			 size_t size, loff_t *ppos)
+ {
+@@ -56,28 +39,21 @@ static ssize_t dbfs_read(struct file *fi
+ 
+ 	df = file_inode(file)->i_private;
+ 	mutex_lock(&df->lock);
+-	if (!df->data) {
+-		data = hypfs_dbfs_data_alloc(df);
+-		if (!data) {
+-			mutex_unlock(&df->lock);
+-			return -ENOMEM;
+-		}
+-		rc = df->data_create(&data->buf, &data->buf_free_ptr,
+-				     &data->size);
+-		if (rc) {
+-			mutex_unlock(&df->lock);
+-			kfree(data);
+-			return rc;
+-		}
+-		df->data = data;
+-		schedule_delayed_work(&df->data_free_work, HZ);
++	data = hypfs_dbfs_data_alloc(df);
++	if (!data) {
++		mutex_unlock(&df->lock);
++		return -ENOMEM;
++	}
++	rc = df->data_create(&data->buf, &data->buf_free_ptr, &data->size);
++	if (rc) {
++		mutex_unlock(&df->lock);
++		kfree(data);
++		return rc;
+ 	}
+-	data = df->data;
+-	kref_get(&data->kref);
+ 	mutex_unlock(&df->lock);
+ 
+ 	rc = simple_read_from_buffer(buf, size, ppos, data->buf, data->size);
+-	kref_put(&data->kref, hypfs_dbfs_data_free);
++	hypfs_dbfs_data_free(data);
+ 	return rc;
+ }
+ 
+@@ -93,7 +69,6 @@ int hypfs_dbfs_create_file(struct hypfs_
+ 	if (IS_ERR(df->dentry))
+ 		return PTR_ERR(df->dentry);
+ 	mutex_init(&df->lock);
+-	INIT_DELAYED_WORK(&df->data_free_work, data_free_delayed);
+ 	return 0;
+ }
+ 

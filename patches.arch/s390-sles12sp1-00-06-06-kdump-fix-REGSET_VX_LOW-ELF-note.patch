@@ -1,0 +1,34 @@
+From: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Subject: kdump: fix REGSET_VX_LOW vector register ELF notes
+Patch-mainline: not yet
+Git-commit: -
+References: bsc#934387,FATE#318041,LTC#126393
+
+Description:  kdump: fix REGSET_VX_LOW vector register ELF notes
+Symptom:      The the first 16 registers are not stored correctly for kdump.
+Problem:      The REGSET_VX_LOW ELF notes should contain the lower 64 bit
+              halfes of the first sixteen 128 bit vector registers.
+              Unfortunately currently we copy the upper halfes.
+Solution:     Correctly copy the lower halfes.
+Reproduction: - Start program that loads vector registers and then loops
+              - Use kdump to dump system
+              - Use crash tool on dump
+              - Issue "bt -A" and verify vector registers
+
+Signed-off-by: Michael Holzheu <holzheu@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/crash_dump.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/arch/s390/kernel/crash_dump.c
++++ b/arch/s390/kernel/crash_dump.c
+@@ -410,7 +410,7 @@ static void *nt_s390_vx_low(void *ptr, _
+ 	ptr += len;
+ 	/* Copy lower halves of SIMD registers 0-15 */
+ 	for (i = 0; i < 16; i++) {
+-		memcpy(ptr, &vx_regs[i], 8);
++		memcpy(ptr, &vx_regs[i].u[2], 8);
+ 		ptr += 8;
+ 	}
+ 	return ptr;

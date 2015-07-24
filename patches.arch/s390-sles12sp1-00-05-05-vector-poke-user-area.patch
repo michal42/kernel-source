@@ -1,0 +1,173 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390: fix ptrace of user area if the inferior uses vector registers
+Patch-mainline: v3.19-rc1
+Git-commit: 86c558e8d3b774580faf8250092388d52cfde63e
+References: bsc#934391,FATE#318028,LTC#KRN1207
+
+Summary:     s390: vector facility support
+Description: With this feature, Linux user space applications will be
+             able to utilize the vector extension facility.
+
+             The vector extension facility is introduced with the z13
+             processor family. The facility adds vector registers to the
+             CPU and instructions to operate on the vector register.
+
+Upstream-Description:
+
+             s390: fix ptrace of user area if the inferior uses vector registers
+
+             The floating point registers of a process that uses vector instruction are
+             not store into task->thread.fp_regs anymore but in the upper halves of the
+             first 16 vector registers.
+             The ptrace interface for the peeks and pokes to the user area fails to take
+             this into account. Fix __peek_user[_compat] and __poke_user[_compat]
+             to use the vector array for the floating pointer register if the process
+             has one.
+
+             Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/ptrace.c |   97 +++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 75 insertions(+), 22 deletions(-)
+
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -236,14 +236,27 @@ static unsigned long __peek_user(struct
+ 		 */
+ 		tmp = 0;
+ 
++	} else if (addr == (addr_t) &dummy->regs.fp_regs.fpc) {
++		/*
++		 * floating point control reg. is in the thread structure
++		 */
++		tmp = child->thread.fp_regs.fpc;
++		tmp <<= BITS_PER_LONG - 32;
++
+ 	} else if (addr < (addr_t) (&dummy->regs.fp_regs + 1)) {
+-		/* 
+-		 * floating point regs. are stored in the thread structure
++		/*
++		 * floating point regs. are either in child->thread.fp_regs
++		 * or the child->thread.vxrs array
+ 		 */
+-		offset = addr - (addr_t) &dummy->regs.fp_regs;
+-		tmp = *(addr_t *)((addr_t) &child->thread.fp_regs + offset);
+-		if (addr == (addr_t) &dummy->regs.fp_regs.fpc)
+-			tmp <<= BITS_PER_LONG - 32;
++		offset = addr - (addr_t) &dummy->regs.fp_regs.fprs;
++#ifdef CONFIG_64BIT
++		if (child->thread.vxrs)
++			tmp = *(addr_t *)
++			       ((addr_t) child->thread.vxrs + 2*offset);
++		else
++#endif
++			tmp = *(addr_t *)
++			       ((addr_t) &child->thread.fp_regs.fprs + offset);
+ 
+ 	} else if (addr < (addr_t) (&dummy->regs.per_info + 1)) {
+ 		/*
+@@ -364,16 +377,29 @@ static int __poke_user(struct task_struc
+ 		 */
+ 		return 0;
+ 
++	} else if (addr == (addr_t) &dummy->regs.fp_regs.fpc) {
++		/*
++		 * floating point control reg. is in the thread structure
++		 */
++		if ((unsigned int) data != 0 ||
++		    test_fp_ctl(data >> (BITS_PER_LONG - 32)))
++			return -EINVAL;
++		child->thread.fp_regs.fpc = data >> (BITS_PER_LONG - 32);
++
+ 	} else if (addr < (addr_t) (&dummy->regs.fp_regs + 1)) {
+ 		/*
+-		 * floating point regs. are stored in the thread structure
++		 * floating point regs. are either in child->thread.fp_regs
++		 * or the child->thread.vxrs array
+ 		 */
+-		if (addr == (addr_t) &dummy->regs.fp_regs.fpc)
+-			if ((unsigned int) data != 0 ||
+-			    test_fp_ctl(data >> (BITS_PER_LONG - 32)))
+-				return -EINVAL;
+-		offset = addr - (addr_t) &dummy->regs.fp_regs;
+-		*(addr_t *)((addr_t) &child->thread.fp_regs + offset) = data;
++		offset = addr - (addr_t) &dummy->regs.fp_regs.fprs;
++#ifdef CONFIG_64BIT
++		if (child->thread.vxrs)
++			*(addr_t *)((addr_t)
++				child->thread.vxrs + 2*offset) = data;
++		else
++#endif
++			*(addr_t *)((addr_t)
++				&child->thread.fp_regs.fprs + offset) = data;
+ 
+ 	} else if (addr < (addr_t) (&dummy->regs.per_info + 1)) {
+ 		/*
+@@ -591,12 +617,26 @@ static u32 __peek_user_compat(struct tas
+ 		 */
+ 		tmp = 0;
+ 
++	} else if (addr == (addr_t) &dummy32->regs.fp_regs.fpc) {
++		/*
++		 * floating point control reg. is in the thread structure
++		 */
++		tmp = child->thread.fp_regs.fpc;
++
+ 	} else if (addr < (addr_t) (&dummy32->regs.fp_regs + 1)) {
+ 		/*
+-		 * floating point regs. are stored in the thread structure 
++		 * floating point regs. are either in child->thread.fp_regs
++		 * or the child->thread.vxrs array
+ 		 */
+-	        offset = addr - (addr_t) &dummy32->regs.fp_regs;
+-		tmp = *(__u32 *)((addr_t) &child->thread.fp_regs + offset);
++		offset = addr - (addr_t) &dummy32->regs.fp_regs.fprs;
++#ifdef CONFIG_64BIT
++		if (child->thread.vxrs)
++			tmp = *(__u32 *)
++			       ((addr_t) child->thread.vxrs + 2*offset);
++		else
++#endif
++			tmp = *(__u32 *)
++			       ((addr_t) &child->thread.fp_regs.fprs + offset);
+ 
+ 	} else if (addr < (addr_t) (&dummy32->regs.per_info + 1)) {
+ 		/*
+@@ -699,15 +739,28 @@ static int __poke_user_compat(struct tas
+ 		 */
+ 		return 0;
+ 
+-	} else if (addr < (addr_t) (&dummy32->regs.fp_regs + 1)) {
++	} else if (addr == (addr_t) &dummy32->regs.fp_regs.fpc) {
+ 		/*
+-		 * floating point regs. are stored in the thread structure 
++		 * floating point control reg. is in the thread structure
+ 		 */
+-		if (addr == (addr_t) &dummy32->regs.fp_regs.fpc &&
+-		    test_fp_ctl(tmp))
++		if (test_fp_ctl(tmp))
+ 			return -EINVAL;
+-	        offset = addr - (addr_t) &dummy32->regs.fp_regs;
+-		*(__u32 *)((addr_t) &child->thread.fp_regs + offset) = tmp;
++		child->thread.fp_regs.fpc = data;
++
++	} else if (addr < (addr_t) (&dummy32->regs.fp_regs + 1)) {
++		/*
++		 * floating point regs. are either in child->thread.fp_regs
++		 * or the child->thread.vxrs array
++		 */
++		offset = addr - (addr_t) &dummy32->regs.fp_regs.fprs;
++#ifdef CONFIG_64BIT
++		if (child->thread.vxrs)
++			*(__u32 *)((addr_t)
++				child->thread.vxrs + 2*offset) = tmp;
++		else
++#endif
++			*(__u32 *)((addr_t)
++				&child->thread.fp_regs.fprs + offset) = tmp;
+ 
+ 	} else if (addr < (addr_t) (&dummy32->regs.per_info + 1)) {
+ 		/*
