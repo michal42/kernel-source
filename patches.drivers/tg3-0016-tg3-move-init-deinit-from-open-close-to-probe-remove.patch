@@ -1,0 +1,82 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Thu, 8 Jan 2015 16:13:07 +0100
+Subject: [PATCH 16/18] tg3: move init/deinit from open/close to probe/remove
+Patch-mainline: v4.0-rc1
+Git-commit: 20d14a5d377a6265c2e89986d052f79dff922217
+References: bnc#921778 FATE#318558
+
+Move init and deinit of PTP support from open/close functions
+to probe/remove funcs to avoid removing/re-adding of associated PTP
+device(s) during ifup/ifdown.
+
+v2: tg3_ptp_init call moved to correct place (thx. Prashant)
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+Acked-by: Prashant Sreedharan <prashant@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/tg3.c |   25 +++++++++++--------------
+ 1 file changed, 11 insertions(+), 14 deletions(-)
+--- a/drivers/net/ethernet/broadcom/tg3.c
++++ b/drivers/net/ethernet/broadcom/tg3.c
+@@ -11571,11 +11571,7 @@ static int tg3_start(struct tg3 *tp, boo
+ 	tg3_flag_set(tp, INIT_COMPLETE);
+ 	tg3_enable_ints(tp);
+ 
+-	if (init)
+-		tg3_ptp_init(tp);
+-	else
+-		tg3_ptp_resume(tp);
+-
++	tg3_ptp_resume(tp);
+ 
+ 	tg3_full_unlock(tp);
+ 
+@@ -11696,13 +11692,6 @@ static int tg3_open(struct net_device *d
+ 		pci_set_power_state(tp->pdev, PCI_D3hot);
+ 	}
+ 
+-	if (tg3_flag(tp, PTP_CAPABLE)) {
+-		tp->ptp_clock = ptp_clock_register(&tp->ptp_info,
+-						   &tp->pdev->dev);
+-		if (IS_ERR(tp->ptp_clock))
+-			tp->ptp_clock = NULL;
+-	}
+-
+ 	return err;
+ }
+ 
+@@ -11716,8 +11705,6 @@ static int tg3_close(struct net_device *
+ 		return -EAGAIN;
+ 	}
+ 
+-	tg3_ptp_fini(tp);
+-
+ 	tg3_stop(tp);
+ 
+ 	/* Clear stats across close / open calls */
+@@ -17879,6 +17866,14 @@ static int tg3_init_one(struct pci_dev *
+ 		goto err_out_apeunmap;
+ 	}
+ 
++	if (tg3_flag(tp, PTP_CAPABLE)) {
++		tg3_ptp_init(tp);
++		tp->ptp_clock = ptp_clock_register(&tp->ptp_info,
++						   &tp->pdev->dev);
++		if (IS_ERR(tp->ptp_clock))
++			tp->ptp_clock = NULL;
++	}
++
+ 	netdev_info(dev, "Tigon3 [partno(%s) rev %04x] (%s) MAC address %pM\n",
+ 		    tp->board_part_number,
+ 		    tg3_chip_rev_id(tp),
+@@ -17954,6 +17949,8 @@ static void tg3_remove_one(struct pci_de
+ 	if (dev) {
+ 		struct tg3 *tp = netdev_priv(dev);
+ 
++		tg3_ptp_fini(tp);
++
+ 		release_firmware(tp->fw);
+ 
+ 		tg3_reset_task_cancel(tp);
