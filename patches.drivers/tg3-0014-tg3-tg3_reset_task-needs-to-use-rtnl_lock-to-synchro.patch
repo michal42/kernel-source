@@ -1,0 +1,46 @@
+From: Prashant Sreedharan <prashant@broadcom.com>
+Date: Wed, 14 Jan 2015 11:34:17 -0800
+Subject: [PATCH 14/18] tg3: tg3_reset_task() needs to use rtnl_lock to
+ synchronize
+Patch-mainline: v3.19-rc5
+Git-commit: db84bf43ef23157cbb40ce8626475187f5ae90c3
+References: bnc#921778 FATE#318558
+
+Currently tg3_reset_task() uses only tp->lock for synchronizing with code
+paths like tg3_open() etc. But since tp->lock is released before doing
+synchronize_irq(), rtnl_lock should be taken in tg3_reset_task() to
+synchronize it with other code paths.
+
+Reported-by: Peter Hurley <peter@hurleysoftware.com>
+Tested-by: Peter Hurley <peter@hurleysoftware.com>
+Signed-off-by: Prashant Sreedharan <prashant@broadcom.com>
+Signed-off-by: Michael Chan <mchan@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/tg3.c |    3 +++
+ 1 file changed, 3 insertions(+)
+--- a/drivers/net/ethernet/broadcom/tg3.c
++++ b/drivers/net/ethernet/broadcom/tg3.c
+@@ -11101,11 +11101,13 @@ static void tg3_reset_task(struct work_s
+ 	struct tg3 *tp = container_of(work, struct tg3, reset_task);
+ 	int err;
+ 
++	rtnl_lock();
+ 	tg3_full_lock(tp, 0);
+ 
+ 	if (!netif_running(tp->dev)) {
+ 		tg3_flag_clear(tp, RESET_TASK_PENDING);
+ 		tg3_full_unlock(tp);
++		rtnl_unlock();
+ 		return;
+ 	}
+ 
+@@ -11138,6 +11140,7 @@ out:
+ 		tg3_phy_start(tp);
+ 
+ 	tg3_flag_clear(tp, RESET_TASK_PENDING);
++	rtnl_unlock();
+ }
+ 
+ static int tg3_request_irq(struct tg3 *tp, int irq_num)
