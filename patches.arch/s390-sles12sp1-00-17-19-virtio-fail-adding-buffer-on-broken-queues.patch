@@ -1,0 +1,71 @@
+From: David Hildenbrand <dahi@linux.vnet.ibm.com>
+Subject: virtio: fail adding buffer on broken queues.
+Patch-mainline: v3.15-rc1
+Git-commit: 70670444c20a10717acdc1f4c1e420852995496d
+References: bsc#935410,FATE#318050,LTC#VS1256
+
+Summary:     s390/virtio: Performance enhanced paravirtualized I/O drivers
+Description: This feature enhances performance of the paravirtualized I/O
+             drivers on s390 with focus on virtio and virtio-ccw.
+
+Upstream-Description:
+
+             virtio: fail adding buffer on broken queues.
+
+             Heinz points out that adding buffers to a broken virtqueue (which
+             should "never happen") still works.  Failing allows drivers to detect
+             and complain about broken devices.
+
+             Now drivers are robust, we can add this extra check.
+
+             Reported-by: Heinz Graalfs <graalfs@linux.vnet.ibm.com>
+             Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+
+
+Signed-off-by: David Hildenbrand <dahi@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/virtio/virtio_ring.c |   11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -203,6 +203,11 @@ static inline int virtqueue_add(struct v
+ 
+ 	BUG_ON(data == NULL);
+ 
++	if (unlikely(vq->broken)) {
++		END_USE(vq);
++		return -EIO;
++	}
++
+ #ifdef DEBUG
+ 	{
+ 		ktime_t now = ktime_get();
+@@ -309,7 +314,7 @@ add_head:
+  * Caller must ensure we don't call this with other virtqueue operations
+  * at the same time (except where noted).
+  *
+- * Returns zero or a negative error (ie. ENOSPC, ENOMEM).
++ * Returns zero or a negative error (ie. ENOSPC, ENOMEM, EIO).
+  */
+ int virtqueue_add_sgs(struct virtqueue *_vq,
+ 		      struct scatterlist *sgs[],
+@@ -347,7 +352,7 @@ EXPORT_SYMBOL_GPL(virtqueue_add_sgs);
+  * Caller must ensure we don't call this with other virtqueue operations
+  * at the same time (except where noted).
+  *
+- * Returns zero or a negative error (ie. ENOSPC, ENOMEM).
++ * Returns zero or a negative error (ie. ENOSPC, ENOMEM, EIO).
+  */
+ int virtqueue_add_outbuf(struct virtqueue *vq,
+ 			 struct scatterlist sg[], unsigned int num,
+@@ -369,7 +374,7 @@ EXPORT_SYMBOL_GPL(virtqueue_add_outbuf);
+  * Caller must ensure we don't call this with other virtqueue operations
+  * at the same time (except where noted).
+  *
+- * Returns zero or a negative error (ie. ENOSPC, ENOMEM).
++ * Returns zero or a negative error (ie. ENOSPC, ENOMEM, EIO).
+  */
+ int virtqueue_add_inbuf(struct virtqueue *vq,
+ 			struct scatterlist sg[], unsigned int num,
