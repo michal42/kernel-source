@@ -1,0 +1,49 @@
+From: David Hildenbrand <dahi@linux.vnet.ibm.com>
+Subject: KVM: s390: virtio-ccw: Handle command rejects.
+Patch-mainline: v3.14-rc3
+Git-commit: 19e4735bd7f02bd38db43a8521377b35f236b3b6
+References: bsc#935410,FATE#318050,LTC#VS1256
+
+Summary:     s390/virtio: Performance enhanced paravirtualized I/O drivers
+Description: This feature enhances performance of the paravirtualized I/O
+             drivers on s390 with focus on virtio and virtio-ccw.
+
+Upstream-Description:
+
+             KVM: s390: virtio-ccw: Handle command rejects.
+
+             A command reject for a ccw may happen if we run on a host not supporting
+             a certain feature. We want to be able to handle this as special case of
+             command failure, so let's split this off from the generic -EIO error code.
+
+             Reviewed-by: Thomas Huth <thuth@linux.vnet.ibm.com>
+             Signed-off-by: Cornelia Huck <cornelia.huck@de.ibm.com>
+             Signed-off-by: Christian Borntraeger <borntraeger@de.ibm.com>
+
+
+Signed-off-by: David Hildenbrand <dahi@linux.vnet.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/kvm/virtio_ccw.c |   11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+--- a/drivers/s390/kvm/virtio_ccw.c
++++ b/drivers/s390/kvm/virtio_ccw.c
+@@ -639,8 +639,15 @@ static void virtio_ccw_int_handler(struc
+ 	     (SCSW_STCTL_ALERT_STATUS | SCSW_STCTL_STATUS_PEND))) {
+ 		/* OK */
+ 	}
+-	if (irb_is_error(irb))
+-		vcdev->err = -EIO; /* XXX - use real error */
++	if (irb_is_error(irb)) {
++		/* Command reject? */
++		if ((scsw_dstat(&irb->scsw) & DEV_STAT_UNIT_CHECK) &&
++		    (irb->ecw[0] & SNS0_CMD_REJECT))
++			vcdev->err = -EOPNOTSUPP;
++		else
++			/* Map everything else to -EIO. */
++			vcdev->err = -EIO;
++	}
+ 	if (vcdev->curr_io & activity) {
+ 		switch (activity) {
+ 		case VIRTIO_CCW_DOING_READ_FEAT:
