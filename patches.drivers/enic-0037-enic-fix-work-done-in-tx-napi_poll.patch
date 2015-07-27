@@ -1,0 +1,32 @@
+From: Govindarajulu Varadarajan <_govind@gmx.com>
+Date: Thu, 13 Nov 2014 04:12:06 +0530
+Subject: [PATCH 37/56] enic: fix work done in tx napi_poll
+Patch-mainline: v3.19-rc1
+Git-commit: f41281d02f8b94e136f78cb1b6a5d78182c222bd
+References: bsc#922871 fate#318754
+
+With the commit d75b1ade567 ("net: less interrupt masking in NAPI") napi repoll
+is done only when work_done == budget. In tx napi poll we always return 0.
+So tx napi is not called again and we do not clean up the tx ring.
+
+Signed-off-by: Govindarajulu Varadarajan <_govind@gmx.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Gary Ching-Pang Lin <glin@suse.com>
+---
+ drivers/net/ethernet/cisco/enic/enic_main.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/cisco/enic/enic_main.c
++++ b/drivers/net/ethernet/cisco/enic/enic_main.c
+@@ -1316,9 +1316,10 @@ static int enic_poll_msix_wq(struct napi
+ 	if (!wq_work_done) {
+ 		napi_complete(napi);
+ 		vnic_intr_unmask(&enic->intr[intr]);
++		return 0;
+ 	}
+ 
+-	return 0;
++	return budget;
+ }
+ 
+ static int enic_poll_msix_rq(struct napi_struct *napi, int budget)
