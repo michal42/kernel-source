@@ -1,0 +1,76 @@
+From: Govindarajulu Varadarajan <_govind@gmx.com>
+Date: Thu, 11 Jun 2015 11:52:55 +0530
+Subject: [PATCH 55/56] enic: check return value for stat dump
+Patch-mainline: v4.1-rc8
+Git-commit: 19b596bda1c5400808635fde0d521c1f89a6c1a3
+References: bsc#922871 fate#318754
+
+We do not check the return value of enic_dev_stats_dump(). If allocation
+fails, we will hit NULL pointer reference.
+
+Return only if memory allocation fails. For other failures, we return the
+previously recorded values.
+
+Signed-off-by: Govindarajulu Varadarajan <_govind@gmx.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Gary Ching-Pang Lin <glin@suse.com>
+---
+ drivers/net/ethernet/cisco/enic/enic_ethtool.c |   18 ++++++++++++++++--
+ drivers/net/ethernet/cisco/enic/enic_main.c    |    9 ++++++++-
+ 2 files changed, 24 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/cisco/enic/enic_ethtool.c
++++ b/drivers/net/ethernet/cisco/enic/enic_ethtool.c
+@@ -130,8 +130,15 @@ static void enic_get_drvinfo(struct net_
+ {
+ 	struct enic *enic = netdev_priv(netdev);
+ 	struct vnic_devcmd_fw_info *fw_info;
++	int err;
+ 
+-	enic_dev_fw_info(enic, &fw_info);
++	err = enic_dev_fw_info(enic, &fw_info);
++	/* return only when pci_zalloc_consistent fails in vnic_dev_fw_info
++	 * For other failures, like devcmd failure, we return previously
++	 * recorded info.
++	 */
++	if (err == -ENOMEM)
++		return;
+ 
+ 	strlcpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
+ 	strlcpy(drvinfo->version, DRV_VERSION, sizeof(drvinfo->version));
+@@ -180,8 +187,15 @@ static void enic_get_ethtool_stats(struc
+ 	struct enic *enic = netdev_priv(netdev);
+ 	struct vnic_stats *vstats;
+ 	unsigned int i;
++	int err;
+ 
+-	enic_dev_stats_dump(enic, &vstats);
++	err = enic_dev_stats_dump(enic, &vstats);
++	/* return only when pci_zalloc_consistent fails in vnic_dev_stats_dump
++	 * For other failures, like devcmd failure, we return previously
++	 * recorded stats.
++	 */
++	if (err == -ENOMEM)
++		return;
+ 
+ 	for (i = 0; i < enic_n_tx_stats; i++)
+ 		*(data++) = ((u64 *)&vstats->tx)[enic_tx_stats[i].index];
+--- a/drivers/net/ethernet/cisco/enic/enic_main.c
++++ b/drivers/net/ethernet/cisco/enic/enic_main.c
+@@ -611,8 +611,15 @@ static struct rtnl_link_stats64 *enic_ge
+ {
+ 	struct enic *enic = netdev_priv(netdev);
+ 	struct vnic_stats *stats;
++	int err;
+ 
+-	enic_dev_stats_dump(enic, &stats);
++	err = enic_dev_stats_dump(enic, &stats);
++	/* return only when pci_zalloc_consistent fails in vnic_dev_stats_dump
++	 * For other failures, like devcmd failure, we return previously
++	 * recorded stats.
++	 */
++	if (err == -ENOMEM)
++		return net_stats;
+ 
+ 	net_stats->tx_packets = stats->tx.tx_frames_ok;
+ 	net_stats->tx_bytes = stats->tx.tx_bytes_ok;
