@@ -1,0 +1,58 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Thu, 26 Feb 2015 14:48:07 +0100
+Subject: [PATCH 08/12] bnx2: disable toggling of rxvlan if necessary
+Patch-mainline: v4.1-rc1
+Git-commit: 26caa3469a2de617d95c29371571a9585603a023
+References: bsc#922052 FATE#318602
+
+The bnx2 driver uses .ndo_fix_features to force enable of Rx VLAN tag
+stripping when the card cannot disable it. The driver should remove
+NETIF_F_HW_VLAN_CTAG_RX flag from hw_features instead so it is fixed
+for the ethtool.
+
+Cc: Sony Chacko <sony.chacko@qlogic.com>
+Cc: Dept-HSGLinuxNICDev@qlogic.com
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2.c |   15 +++------------
+ 1 file changed, 3 insertions(+), 12 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2.c
++++ b/drivers/net/ethernet/broadcom/bnx2.c
+@@ -7711,17 +7711,6 @@ bnx2_set_phys_id(struct net_device *dev,
+ 	return 0;
+ }
+ 
+-static netdev_features_t
+-bnx2_fix_features(struct net_device *dev, netdev_features_t features)
+-{
+-	struct bnx2 *bp = netdev_priv(dev);
+-
+-	if (!(bp->flags & BNX2_FLAG_CAN_KEEP_VLAN))
+-		features |= NETIF_F_HW_VLAN_CTAG_RX;
+-
+-	return features;
+-}
+-
+ static int
+ bnx2_set_features(struct net_device *dev, netdev_features_t features)
+ {
+@@ -8528,7 +8517,6 @@ static const struct net_device_ops bnx2_
+ 	.ndo_validate_addr	= eth_validate_addr,
+ 	.ndo_set_mac_address	= bnx2_change_mac_addr,
+ 	.ndo_change_mtu		= bnx2_change_mtu,
+-	.ndo_fix_features	= bnx2_fix_features,
+ 	.ndo_set_features	= bnx2_set_features,
+ 	.ndo_tx_timeout		= bnx2_tx_timeout,
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+@@ -8579,6 +8567,9 @@ bnx2_init_one(struct pci_dev *pdev, cons
+ 	dev->features |= dev->hw_features;
+ 	dev->priv_flags |= IFF_UNICAST_FLT;
+ 
++	if (!(bp->flags & BNX2_FLAG_CAN_KEEP_VLAN))
++		dev->hw_features &= ~NETIF_F_HW_VLAN_CTAG_RX;
++
+ 	if ((rc = register_netdev(dev))) {
+ 		dev_err(&pdev->dev, "Cannot register net device\n");
+ 		goto error;
