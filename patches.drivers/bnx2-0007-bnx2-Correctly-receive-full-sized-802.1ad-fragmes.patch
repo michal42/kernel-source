@@ -1,0 +1,36 @@
+From: Vlad Yasevich <vyasevich@gmail.com>
+Date: Tue, 30 Sep 2014 19:39:37 -0400
+Subject: [PATCH 07/12] bnx2: Correctly receive full sized 802.1ad fragmes
+Patch-mainline: v3.17
+Git-commit: 1b0ecb28b0cc216535ce6477d39aa610c3ff68a1
+References: bsc#922052 FATE#318602
+
+This driver, similar to tg3, has a check that will
+cause full sized 802.1ad frames to be dropped.  The
+frame will be larger then the standard mtu due to the
+presense of vlan header that has not been stripped.
+The driver should not drop this frame and should process
+it just like it does for 802.1q.
+
+CC: Sony Chacko <sony.chacko@qlogic.com>
+CC: Dept-HSGLinuxNICDev@qlogic.com
+Signed-off-by: Vladislav Yasevich <vyasevic@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2.c |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2.c
++++ b/drivers/net/ethernet/broadcom/bnx2.c
+@@ -3237,8 +3237,9 @@ bnx2_rx_int(struct bnx2 *bp, struct bnx2
+ 
+ 		skb->protocol = eth_type_trans(skb, bp->dev);
+ 
+-		if ((len > (bp->dev->mtu + ETH_HLEN)) &&
+-			(ntohs(skb->protocol) != 0x8100)) {
++		if (len > (bp->dev->mtu + ETH_HLEN) &&
++		    skb->protocol != htons(0x8100) &&
++		    skb->protocol != htons(ETH_P_8021AD)) {
+ 
+ 			dev_kfree_skb(skb);
+ 			goto next_rx;
