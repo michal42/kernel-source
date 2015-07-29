@@ -1,0 +1,45 @@
+From: Sagi Grimberg <sagig@mellanox.com>
+Date: Sun, 18 May 2014 18:32:40 +0300
+Subject: [PATCH 008/117] mlx5_core: Copy DIF fields only when input and output
+ space values match
+Patch-mainline: v3.16-rc1
+Git-commit: c7f44fbda68a6b2d6ceb10e45c711750e779bace
+References: bsc#923036 FATE#318772
+
+Some DIF implementations (SCSI initiator/target) may want to use different
+input/output values for application tag and/or reference tag. So in
+case memory/wire domain values don't match HW must not copy them.
+
+Signed-off-by: Sagi Grimberg <sagig@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/infiniband/hw/mlx5/qp.c |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+--- a/drivers/infiniband/hw/mlx5/qp.c
++++ b/drivers/infiniband/hw/mlx5/qp.c
+@@ -2078,6 +2078,7 @@ static int mlx5_set_bsf(struct ib_mr *si
+ 	struct ib_sig_domain *wire = &sig_attrs->wire;
+ 	int ret, selector;
+ 
++	memset(bsf, 0, sizeof(*bsf));
+ 	switch (sig_attrs->mem.sig_type) {
+ 	case IB_SIG_TYPE_T10_DIF:
+ 		if (sig_attrs->wire.sig_type != IB_SIG_TYPE_T10_DIF)
+@@ -2090,9 +2091,11 @@ static int mlx5_set_bsf(struct ib_mr *si
+ 			/* Same block structure */
+ 			basic->bsf_size_sbs = 1 << 4;
+ 			if (mem->sig.dif.bg_type == wire->sig.dif.bg_type)
+-				basic->wire.copy_byte_mask = 0xff;
+-			else
+-				basic->wire.copy_byte_mask = 0x3f;
++				basic->wire.copy_byte_mask |= 0xc0;
++			if (mem->sig.dif.app_tag == wire->sig.dif.app_tag)
++				basic->wire.copy_byte_mask |= 0x30;
++			if (mem->sig.dif.ref_tag == wire->sig.dif.ref_tag)
++				basic->wire.copy_byte_mask |= 0x0f;
+ 		} else
+ 			basic->wire.bs_selector = bs_selector(wire->sig.dif.pi_interval);
+ 
