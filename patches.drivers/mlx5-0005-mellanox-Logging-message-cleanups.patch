@@ -1,0 +1,280 @@
+From: Joe Perches <joe@perches.com>
+Date: Wed, 7 May 2014 12:52:57 -0700
+Subject: [PATCH 005/117] mellanox: Logging message cleanups
+Patch-mainline: v3.16-rc1
+Git-commit: 1a91de28831a1bd913e14dacf25763f3672e24a9 (partial)
+References: bsc#923036 FATE#318772
+
+Use a more current logging style.
+
+o Coalesce formats
+o Add missing spaces for coalesced formats
+o Align arguments for modified formats
+o Add missing newlines for some logging messages
+o Use DRV_NAME as part of format instead of %s, DRV_NAME to
+  reduce overall text.
+o Use ..., ##__VA_ARGS__ instead of args... in macros
+o Correct a few format typos
+o Use a single line message where appropriate
+
+Signed-off-by: Joe Perches <joe@perches.com>
+Acked-By: Amir Vadai <amirv@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/cmd.c       |    4 +-
+ drivers/net/ethernet/mellanox/mlx5/core/eq.c        |    9 +++--
+ drivers/net/ethernet/mellanox/mlx5/core/main.c      |   14 ++++----
+ drivers/net/ethernet/mellanox/mlx5/core/mlx5_core.h |   34 ++++++++++----------
+ drivers/net/ethernet/mellanox/mlx5/core/mr.c        |    8 ++--
+ drivers/net/ethernet/mellanox/mlx5/core/pagealloc.c |   15 +++++---
+ drivers/net/ethernet/mellanox/mlx5/core/qp.c        |    4 +-
+ 7 files changed, 49 insertions(+), 39 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/cmd.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/cmd.c
+@@ -621,8 +621,8 @@ static int wait_func(struct mlx5_core_de
+ 			       mlx5_command_str(msg_to_opcode(ent->in)),
+ 			       msg_to_opcode(ent->in));
+ 	}
+-	mlx5_core_dbg(dev, "err %d, delivery status %s(%d)\n", err,
+-		      deliv_status_to_str(ent->status), ent->status);
++	mlx5_core_dbg(dev, "err %d, delivery status %s(%d)\n",
++		      err, deliv_status_to_str(ent->status), ent->status);
+ 
+ 	return err;
+ }
+--- a/drivers/net/ethernet/mellanox/mlx5/core/eq.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/eq.c
+@@ -208,7 +208,8 @@ static int mlx5_eq_int(struct mlx5_core_
+ 		 */
+ 		rmb();
+ 
+-		mlx5_core_dbg(eq->dev, "eqn %d, eqe type %s\n", eq->eqn, eqe_type_str(eqe->type));
++		mlx5_core_dbg(eq->dev, "eqn %d, eqe type %s\n",
++			      eq->eqn, eqe_type_str(eqe->type));
+ 		switch (eqe->type) {
+ 		case MLX5_EVENT_TYPE_COMP:
+ 			cqn = be32_to_cpu(eqe->data.comp.cqn) & 0xffffff;
+@@ -270,14 +271,16 @@ static int mlx5_eq_int(struct mlx5_core_
+ 				u16 func_id = be16_to_cpu(eqe->data.req_pages.func_id);
+ 				s32 npages = be32_to_cpu(eqe->data.req_pages.num_pages);
+ 
+-				mlx5_core_dbg(dev, "page request for func 0x%x, napges %d\n", func_id, npages);
++				mlx5_core_dbg(dev, "page request for func 0x%x, npages %d\n",
++					      func_id, npages);
+ 				mlx5_core_req_pages_handler(dev, func_id, npages);
+ 			}
+ 			break;
+ 
+ 
+ 		default:
+-			mlx5_core_warn(dev, "Unhandled event 0x%x on EQ 0x%x\n", eqe->type, eq->eqn);
++			mlx5_core_warn(dev, "Unhandled event 0x%x on EQ 0x%x\n",
++				       eqe->type, eq->eqn);
+ 			break;
+ 		}
+ 
+--- a/drivers/net/ethernet/mellanox/mlx5/core/main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/main.c
+@@ -66,10 +66,10 @@ static int set_dma_caps(struct pci_dev *
+ 
+ 	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
+ 	if (err) {
+-		dev_warn(&pdev->dev, "Warning: couldn't set 64-bit PCI DMA mask.\n");
++		dev_warn(&pdev->dev, "Warning: couldn't set 64-bit PCI DMA mask\n");
+ 		err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+ 		if (err) {
+-			dev_err(&pdev->dev, "Can't set PCI DMA mask, aborting.\n");
++			dev_err(&pdev->dev, "Can't set PCI DMA mask, aborting\n");
+ 			return err;
+ 		}
+ 	}
+@@ -77,11 +77,11 @@ static int set_dma_caps(struct pci_dev *
+ 	err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
+ 	if (err) {
+ 		dev_warn(&pdev->dev,
+-			 "Warning: couldn't set 64-bit consistent PCI DMA mask.\n");
++			 "Warning: couldn't set 64-bit consistent PCI DMA mask\n");
+ 		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
+ 		if (err) {
+ 			dev_err(&pdev->dev,
+-				"Can't set consistent PCI DMA mask, aborting.\n");
++				"Can't set consistent PCI DMA mask, aborting\n");
+ 			return err;
+ 		}
+ 	}
+@@ -95,7 +95,7 @@ static int request_bar(struct pci_dev *p
+ 	int err = 0;
+ 
+ 	if (!(pci_resource_flags(pdev, 0) & IORESOURCE_MEM)) {
+-		dev_err(&pdev->dev, "Missing registers BAR, aborting.\n");
++		dev_err(&pdev->dev, "Missing registers BAR, aborting\n");
+ 		return -ENODEV;
+ 	}
+ 
+@@ -319,13 +319,13 @@ int mlx5_dev_init(struct mlx5_core_dev *
+ 
+ 	err = pci_enable_device(pdev);
+ 	if (err) {
+-		dev_err(&pdev->dev, "Cannot enable PCI device, aborting.\n");
++		dev_err(&pdev->dev, "Cannot enable PCI device, aborting\n");
+ 		goto err_dbg;
+ 	}
+ 
+ 	err = request_bar(pdev);
+ 	if (err) {
+-		dev_err(&pdev->dev, "error requesting BARs, aborting.\n");
++		dev_err(&pdev->dev, "error requesting BARs, aborting\n");
+ 		goto err_disable;
+ 	}
+ 
+--- a/drivers/net/ethernet/mellanox/mlx5/core/mlx5_core.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/mlx5_core.h
+@@ -39,24 +39,26 @@
+ 
+ extern int mlx5_core_debug_mask;
+ 
+-#define mlx5_core_dbg(dev, format, arg...)				       \
+-pr_debug("%s:%s:%d:(pid %d): " format, (dev)->priv.name, __func__, __LINE__,   \
+-	 current->pid, ##arg)
+-
+-#define mlx5_core_dbg_mask(dev, mask, format, arg...)			       \
+-do {									       \
+-	if ((mask) & mlx5_core_debug_mask)				       \
+-		pr_debug("%s:%s:%d:(pid %d): " format, (dev)->priv.name,       \
+-			 __func__, __LINE__, current->pid, ##arg);	       \
++#define mlx5_core_dbg(dev, format, ...)					\
++	pr_debug("%s:%s:%d:(pid %d): " format,				\
++		 (dev)->priv.name, __func__, __LINE__, current->pid,	\
++		 ##__VA_ARGS__)
++
++#define mlx5_core_dbg_mask(dev, mask, format, ...)			\
++do {									\
++	if ((mask) & mlx5_core_debug_mask)				\
++		mlx5_core_dbg(dev, format, ##__VA_ARGS__);		\
+ } while (0)
+ 
+-#define mlx5_core_err(dev, format, arg...) \
+-pr_err("%s:%s:%d:(pid %d): " format, (dev)->priv.name, __func__, __LINE__,     \
+-	current->pid, ##arg)
+-
+-#define mlx5_core_warn(dev, format, arg...) \
+-pr_warn("%s:%s:%d:(pid %d): " format, (dev)->priv.name, __func__, __LINE__,    \
+-	current->pid, ##arg)
++#define mlx5_core_err(dev, format, ...)					\
++	pr_err("%s:%s:%d:(pid %d): " format,				\
++	       (dev)->priv.name, __func__, __LINE__, current->pid,	\
++	       ##__VA_ARGS__)
++
++#define mlx5_core_warn(dev, format, ...)				\
++	pr_warn("%s:%s:%d:(pid %d): " format,				\
++		(dev)->priv.name, __func__, __LINE__, current->pid,	\
++		##__VA_ARGS__)
+ 
+ enum {
+ 	MLX5_CMD_DATA, /* print command payload only */
+--- a/drivers/net/ethernet/mellanox/mlx5/core/mr.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/mr.c
+@@ -73,7 +73,7 @@ int mlx5_core_create_mkey(struct mlx5_co
+ 	}
+ 
+ 	if (err) {
+-		mlx5_core_dbg(dev, "cmd exec faile %d\n", err);
++		mlx5_core_dbg(dev, "cmd exec failed %d\n", err);
+ 		return err;
+ 	}
+ 
+@@ -191,7 +191,8 @@ int mlx5_core_create_psv(struct mlx5_cor
+ 	}
+ 
+ 	if (out.hdr.status) {
+-		mlx5_core_err(dev, "create_psv bad status %d\n", out.hdr.status);
++		mlx5_core_err(dev, "create_psv bad status %d\n",
++			      out.hdr.status);
+ 		return mlx5_cmd_status_to_err(&out.hdr);
+ 	}
+ 
+@@ -220,7 +221,8 @@ int mlx5_core_destroy_psv(struct mlx5_co
+ 	}
+ 
+ 	if (out.hdr.status) {
+-		mlx5_core_err(dev, "destroy_psv bad status %d\n", out.hdr.status);
++		mlx5_core_err(dev, "destroy_psv bad status %d\n",
++			      out.hdr.status);
+ 		err = mlx5_cmd_status_to_err(&out.hdr);
+ 		goto out;
+ 	}
+--- a/drivers/net/ethernet/mellanox/mlx5/core/pagealloc.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/pagealloc.c
+@@ -311,7 +311,8 @@ retry:
+ 	in->num_entries = cpu_to_be32(npages);
+ 	err = mlx5_cmd_exec(dev, in, inlen, &out, sizeof(out));
+ 	if (err) {
+-		mlx5_core_warn(dev, "func_id 0x%x, npages %d, err %d\n", func_id, npages, err);
++		mlx5_core_warn(dev, "func_id 0x%x, npages %d, err %d\n",
++			       func_id, npages, err);
+ 		goto out_alloc;
+ 	}
+ 	dev->priv.fw_pages += npages;
+@@ -319,7 +320,8 @@ retry:
+ 	if (out.hdr.status) {
+ 		err = mlx5_cmd_status_to_err(&out.hdr);
+ 		if (err) {
+-			mlx5_core_warn(dev, "func_id 0x%x, npages %d, status %d\n", func_id, npages, out.hdr.status);
++			mlx5_core_warn(dev, "func_id 0x%x, npages %d, status %d\n",
++				       func_id, npages, out.hdr.status);
+ 			goto out_alloc;
+ 		}
+ 	}
+@@ -378,7 +380,7 @@ static int reclaim_pages(struct mlx5_cor
+ 	mlx5_core_dbg(dev, "npages %d, outlen %d\n", npages, outlen);
+ 	err = mlx5_cmd_exec(dev, &in, sizeof(in), out, outlen);
+ 	if (err) {
+-		mlx5_core_err(dev, "failed recliaming pages\n");
++		mlx5_core_err(dev, "failed reclaiming pages\n");
+ 		goto out_free;
+ 	}
+ 	dev->priv.fw_pages -= npages;
+@@ -414,8 +416,8 @@ static void pages_work_handler(struct wo
+ 		err = give_pages(dev, req->func_id, req->npages, 1);
+ 
+ 	if (err)
+-		mlx5_core_warn(dev, "%s fail %d\n", req->npages < 0 ?
+-			       "reclaim" : "give", err);
++		mlx5_core_warn(dev, "%s fail %d\n",
++			       req->npages < 0 ? "reclaim" : "give", err);
+ 
+ 	kfree(req);
+ }
+@@ -487,7 +489,8 @@ int mlx5_reclaim_startup_pages(struct ml
+ 					    optimal_reclaimed_pages(),
+ 					    &nclaimed);
+ 			if (err) {
+-				mlx5_core_warn(dev, "failed reclaiming pages (%d)\n", err);
++				mlx5_core_warn(dev, "failed reclaiming pages (%d)\n",
++					       err);
+ 				return err;
+ 			}
+ 			if (nclaimed)
+--- a/drivers/net/ethernet/mellanox/mlx5/core/qp.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/qp.c
+@@ -79,7 +79,7 @@ int mlx5_core_create_qp(struct mlx5_core
+ 
+ 	err = mlx5_cmd_exec(dev, in, inlen, &out, sizeof(out));
+ 	if (err) {
+-		mlx5_core_warn(dev, "ret %d", err);
++		mlx5_core_warn(dev, "ret %d\n", err);
+ 		return err;
+ 	}
+ 
+@@ -96,7 +96,7 @@ int mlx5_core_create_qp(struct mlx5_core
+ 	err = radix_tree_insert(&table->tree, qp->qpn, qp);
+ 	spin_unlock_irq(&table->lock);
+ 	if (err) {
+-		mlx5_core_warn(dev, "err %d", err);
++		mlx5_core_warn(dev, "err %d\n", err);
+ 		goto err_cmd;
+ 	}
+ 
