@@ -1,0 +1,126 @@
+From: Haggai Abramonvsky <hagaya@mellanox.com>
+Date: Thu, 4 Jun 2015 19:30:48 +0300
+Subject: [PATCH 079/117] mlx5: Enable mutual support for IB and Ethernet
+Patch-mainline: v4.2-rc1
+Git-commit: 4aa17b2879f66e478aa9b81cc3bbade6416126aa
+References: bsc#923036 FATE#318772
+
+Ethernet functionality is only available when working in ISSI > 0 mode.
+
+Previously, the IB driver wasn't ready to work on that mode, and hence
+building both the IB driver and the Ethernet functionality in the core
+driver were disallowed by Kconfigs.
+
+Now, once we have all the pre-steps in place, we can remove this limitation.
+
+The last steps in the IB driver for getting that setup to work are:
+create dummy SRQ for the driver's use (until now we could use XRC_SRQ
+as SRQ and XRC_SRQ, after moving to ISSI > 0, we separate XRC SRQs from
+basic SRQs) and adapt the create QP function to be compatible with ISSI > 0.
+
+Signed-off-by: Haggai Abramovsky <hagaya@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/infiniband/hw/mlx5/main.c               |   22 ++++++++++++++++++++++
+ drivers/infiniband/hw/mlx5/mlx5_ib.h            |    1 +
+ drivers/infiniband/hw/mlx5/qp.c                 |    3 ++-
+ drivers/net/ethernet/mellanox/mlx5/core/Kconfig |    2 +-
+ drivers/net/ethernet/mellanox/mlx5/core/qp.c    |    7 +++++++
+ 5 files changed, 33 insertions(+), 2 deletions(-)
+
+--- a/drivers/infiniband/hw/mlx5/main.c
++++ b/drivers/infiniband/hw/mlx5/main.c
+@@ -1144,8 +1144,29 @@ static int create_dev_resources(struct m
+ 	atomic_inc(&devr->p0->usecnt);
+ 	atomic_set(&devr->s0->usecnt, 0);
+ 
++	memset(&attr, 0, sizeof(attr));
++	attr.attr.max_sge = 1;
++	attr.attr.max_wr = 1;
++	attr.srq_type = IB_SRQT_BASIC;
++	devr->s1 = mlx5_ib_create_srq(devr->p0, &attr, NULL);
++	if (IS_ERR(devr->s1)) {
++		ret = PTR_ERR(devr->s1);
++		goto error5;
++	}
++	devr->s1->device	= &dev->ib_dev;
++	devr->s1->pd		= devr->p0;
++	devr->s1->uobject       = NULL;
++	devr->s1->event_handler = NULL;
++	devr->s1->srq_context   = NULL;
++	devr->s1->srq_type      = IB_SRQT_BASIC;
++	devr->s1->ext.xrc.cq	= devr->c0;
++	atomic_inc(&devr->p0->usecnt);
++	atomic_set(&devr->s0->usecnt, 0);
++
+ 	return 0;
+ 
++error5:
++	mlx5_ib_destroy_srq(devr->s0);
+ error4:
+ 	mlx5_ib_dealloc_xrcd(devr->x1);
+ error3:
+@@ -1160,6 +1181,7 @@ error0:
+ 
+ static void destroy_dev_resources(struct mlx5_ib_resources *devr)
+ {
++	mlx5_ib_destroy_srq(devr->s1);
+ 	mlx5_ib_destroy_srq(devr->s0);
+ 	mlx5_ib_dealloc_xrcd(devr->x0);
+ 	mlx5_ib_dealloc_xrcd(devr->x1);
+--- a/drivers/infiniband/hw/mlx5/mlx5_ib.h
++++ b/drivers/infiniband/hw/mlx5/mlx5_ib.h
+@@ -356,6 +356,7 @@ struct mlx5_ib_resources {
+ 	struct ib_xrcd	*x1;
+ 	struct ib_pd	*p0;
+ 	struct ib_srq	*s0;
++	struct ib_srq	*s1;
+ };
+ 
+ struct mlx5_ib_dev {
+--- a/drivers/infiniband/hw/mlx5/qp.c
++++ b/drivers/infiniband/hw/mlx5/qp.c
+@@ -948,7 +948,8 @@ static int create_qp_common(struct mlx5_
+ 			in->ctx.rq_type_srqn |= cpu_to_be32(to_msrq(init_attr->srq)->msrq.srqn);
+ 		} else {
+ 			in->ctx.xrcd = cpu_to_be32(to_mxrcd(devr->x1)->xrcdn);
+-			in->ctx.rq_type_srqn |= cpu_to_be32(to_msrq(devr->s0)->msrq.srqn);
++			in->ctx.rq_type_srqn |=
++				cpu_to_be32(to_msrq(devr->s1)->msrq.srqn);
+ 		}
+ 	}
+ 
+--- a/drivers/net/ethernet/mellanox/mlx5/core/Kconfig
++++ b/drivers/net/ethernet/mellanox/mlx5/core/Kconfig
+@@ -12,7 +12,7 @@ config MLX5_CORE
+ 
+ config MLX5_CORE_EN
+ 	bool "Mellanox Technologies ConnectX-4 Ethernet support"
+-	depends on MLX5_INFINIBAND=n && NETDEVICES && ETHERNET && PCI && MLX5_CORE
++	depends on NETDEVICES && ETHERNET && PCI && MLX5_CORE
+ 	default n
+ 	---help---
+ 	  Ethernet support in Mellanox Technologies ConnectX-4 NIC.
+--- a/drivers/net/ethernet/mellanox/mlx5/core/qp.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/qp.c
+@@ -98,10 +98,17 @@ int mlx5_core_create_qp(struct mlx5_core
+ 	struct mlx5_destroy_qp_mbox_in din;
+ 	struct mlx5_destroy_qp_mbox_out dout;
+ 	int err;
++	void *qpc;
+ 
+ 	memset(&out, 0, sizeof(out));
+ 	in->hdr.opcode = cpu_to_be16(MLX5_CMD_OP_CREATE_QP);
+ 
++	if (dev->issi) {
++		qpc = MLX5_ADDR_OF(create_qp_in, in, qpc);
++		/* 0xffffff means we ask to work with cqe version 0 */
++		MLX5_SET(qpc, qpc, user_index, 0xffffff);
++	}
++
+ 	err = mlx5_cmd_exec(dev, in, inlen, &out, sizeof(out));
+ 	if (err) {
+ 		mlx5_core_warn(dev, "ret %d\n", err);
