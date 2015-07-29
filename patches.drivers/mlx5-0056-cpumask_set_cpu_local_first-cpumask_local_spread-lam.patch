@@ -1,0 +1,160 @@
+From: Rusty Russell <rusty@rustcorp.com.au>
+Date: Sat, 9 May 2015 03:14:13 +0930
+Subject: [PATCH 056/117] cpumask_set_cpu_local_first => cpumask_local_spread,
+ lament
+Patch-mainline: v4.1-rc6
+Git-commit: f36963c9d3f6f415732710da3acdd8608a9fa0e5 (partial)
+References: bsc#923036 FATE#318772
+
+da91309e0a7e (cpumask: Utility function to set n'th cpu...) created a
+genuinely weird function.  I never saw it before, it went through DaveM.
+(He only does this to make us other maintainers feel better about our own
+mistakes.)
+
+cpumask_set_cpu_local_first's purpose is say "I need to spread things
+across N online cpus, choose the ones on this numa node first"; you call
+it in a loop.
+
+It can fail.  One of the two callers ignores this, the other aborts and
+fails the device open.
+
+It can fail in two ways: allocating the off-stack cpumask, or through a
+convoluted codepath which AFAICT can only occur if cpu_online_mask
+changes.  Which shouldn't happen, because if cpu_online_mask can change
+while you call this, it could return a now-offline cpu anyway.
+
+It contains a nonsensical test "!cpumask_of_node(numa_node)".  This was
+drawn to my attention by Geert, who said this causes a warning on Sparc.
+It sets a single bit in a cpumask instead of returning a cpu number,
+because that's what the callers want.
+
+It could be made more efficient by passing the previous cpu rather than
+an index, but that would be more invasive to the callers.
+
+Fixes: da91309e0a7e8966d916a74cce42ed170fde06bf
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au> (then rebased)
+Tested-by: Amir Vadai <amirv@mellanox.com>
+Acked-by: Amir Vadai <amirv@mellanox.com>
+Acked-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ include/linux/cpumask.h |    6 +---
+ lib/cpumask.c           |   72 ++++++++++++++++--------------------------------
+ 2 files changed, 27 insertions(+), 51 deletions(-)
+
+--- a/include/linux/cpumask.h
++++ b/include/linux/cpumask.h
+@@ -142,10 +142,8 @@ static inline unsigned int cpumask_any_b
+ 	return 1;
+ }
+ 
+-static inline int cpumask_set_cpu_local_first(int i, int numa_node, cpumask_t *dstp)
++static inline unsigned int cpumask_local_spread(unsigned int i, int node)
+ {
+-	set_bit(0, cpumask_bits(dstp));
+-
+ 	return 0;
+ }
+ 
+@@ -199,7 +197,7 @@ static inline unsigned int cpumask_next_
+ 
+ int cpumask_next_and(int n, const struct cpumask *, const struct cpumask *);
+ int cpumask_any_but(const struct cpumask *mask, unsigned int cpu);
+-int cpumask_set_cpu_local_first(int i, int numa_node, cpumask_t *dstp);
++unsigned int cpumask_local_spread(unsigned int i, int node);
+ 
+ /**
+  * for_each_cpu - iterate over every cpu in a mask
+--- a/lib/cpumask.c
++++ b/lib/cpumask.c
+@@ -166,64 +166,42 @@ void __init free_bootmem_cpumask_var(cpu
+ #endif
+ 
+ /**
+- * cpumask_set_cpu_local_first - set i'th cpu with local numa cpu's first
+- *
++ * cpumask_local_spread - select the i'th cpu with local numa cpu's first
+  * @i: index number
+- * @numa_node: local numa_node
+- * @dstp: cpumask with the relevant cpu bit set according to the policy
++ * @node: local numa_node
+  *
+- * This function sets the cpumask according to a numa aware policy.
+- * cpumask could be used as an affinity hint for the IRQ related to a
+- * queue. When the policy is to spread queues across cores - local cores
+- * first.
++ * This function selects an online CPU according to a numa aware policy;
++ * local cpus are returned first, followed by non-local ones, then it
++ * wraps around.
+  *
+- * Returns 0 on success, -ENOMEM for no memory, and -EAGAIN when failed to set
+- * the cpu bit and need to re-call the function.
++ * It's not very efficient, but useful for setup.
+  */
+-int cpumask_set_cpu_local_first(int i, int numa_node, cpumask_t *dstp)
++unsigned int cpumask_local_spread(unsigned int i, int node)
+ {
+-	cpumask_var_t mask;
+ 	int cpu;
+-	int ret = 0;
+-
+-	if (!zalloc_cpumask_var(&mask, GFP_KERNEL))
+-		return -ENOMEM;
+ 
++	/* Wrap: we always want a cpu. */
+ 	i %= num_online_cpus();
+ 
+-	if (!cpumask_of_node(numa_node)) {
+-		/* Use all online cpu's for non numa aware system */
+-		cpumask_copy(mask, cpu_online_mask);
++	if (node == -1) {
++		for_each_cpu(cpu, cpu_online_mask)
++			if (i-- == 0)
++				return cpu;
+ 	} else {
+-		int n;
+-
+-		cpumask_and(mask,
+-			    cpumask_of_node(numa_node), cpu_online_mask);
++		/* NUMA first. */
++		for_each_cpu_and(cpu, cpumask_of_node(node), cpu_online_mask)
++			if (i-- == 0)
++				return cpu;
++
++		for_each_cpu(cpu, cpu_online_mask) {
++			/* Skip NUMA nodes, done above. */
++			if (cpumask_test_cpu(cpu, cpumask_of_node(node)))
++				continue;
+ 
+-		n = cpumask_weight(mask);
+-		if (i >= n) {
+-			i -= n;
+-
+-			/* If index > number of local cpu's, mask out local
+-			 * cpu's
+-			 */
+-			cpumask_andnot(mask, cpu_online_mask, mask);
++			if (i-- == 0)
++				return cpu;
+ 		}
+ 	}
+-
+-	for_each_cpu(cpu, mask) {
+-		if (--i < 0)
+-			goto out;
+-	}
+-
+-	ret = -EAGAIN;
+-
+-out:
+-	free_cpumask_var(mask);
+-
+-	if (!ret)
+-		cpumask_set_cpu(cpu, dstp);
+-
+-	return ret;
++	BUG();
+ }
+-EXPORT_SYMBOL(cpumask_set_cpu_local_first);
++EXPORT_SYMBOL(cpumask_local_spread);
