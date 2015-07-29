@@ -1,0 +1,85 @@
+From: Achiad Shochat <achiad@mellanox.com>
+Date: Tue, 23 Jun 2015 17:14:20 +0300
+Subject: [PATCH 096/117] net/mlx5e: Remove mlx5e_cq.sqrq back-pointer
+Patch-mainline: v4.2-rc1
+Git-commit: e33910548a4090671094336397ed383c252463ff
+References: bsc#923036 FATE#318772
+
+Use container_of() instead.
+
+Signed-off-by: Achiad Shochat <achiad@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en.h      |    1 -
+ drivers/net/ethernet/mellanox/mlx5/core/en_main.c |    3 ---
+ drivers/net/ethernet/mellanox/mlx5/core/en_rx.c   |    2 +-
+ drivers/net/ethernet/mellanox/mlx5/core/en_tx.c   |    2 +-
+ drivers/net/ethernet/mellanox/mlx5/core/en_txrx.c |    2 +-
+ 5 files changed, 3 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en.h
+@@ -208,7 +208,6 @@ enum cq_flags {
+ struct mlx5e_cq {
+ 	/* data path - accessed per cqe */
+ 	struct mlx5_cqwq           wq;
+-	void                      *sqrq;
+ 	unsigned long              flags;
+ 
+ 	/* data path - accessed per napi poll */
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
+@@ -853,8 +853,6 @@ static int mlx5e_open_tx_cqs(struct mlx5
+ 				    priv->params.tx_cq_moderation_pkts);
+ 		if (err)
+ 			goto err_close_tx_cqs;
+-
+-		c->sq[tc].cq.sqrq = &c->sq[tc];
+ 	}
+ 
+ 	return 0;
+@@ -946,7 +944,6 @@ static int mlx5e_open_channel(struct mlx
+ 			    priv->params.rx_cq_moderation_pkts);
+ 	if (err)
+ 		goto err_close_tx_cqs;
+-	c->rq.cq.sqrq = &c->rq;
+ 
+ 	napi_enable(&c->napi);
+ 
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_rx.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_rx.c
+@@ -191,7 +191,7 @@ static inline void mlx5e_build_rx_skb(st
+ 
+ bool mlx5e_poll_rx_cq(struct mlx5e_cq *cq, int budget)
+ {
+-	struct mlx5e_rq *rq = cq->sqrq;
++	struct mlx5e_rq *rq = container_of(cq, struct mlx5e_rq, cq);
+ 	int i;
+ 
+ 	/* avoid accessing cq (dma coherent memory) if not needed */
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_tx.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_tx.c
+@@ -264,7 +264,7 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *c
+ 	if (!test_and_clear_bit(MLX5E_CQ_HAS_CQES, &cq->flags))
+ 		return false;
+ 
+-	sq = cq->sqrq;
++	sq = container_of(cq, struct mlx5e_sq, cq);
+ 
+ 	npkts = 0;
+ 	nbytes = 0;
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_txrx.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_txrx.c
+@@ -65,7 +65,7 @@ int mlx5e_napi_poll(struct napi_struct *
+ 
+ 	busy |= mlx5e_poll_rx_cq(&c->rq.cq, budget);
+ 
+-	busy |= mlx5e_post_rx_wqes(c->rq.cq.sqrq);
++	busy |= mlx5e_post_rx_wqes(&c->rq);
+ 
+ 	if (busy)
+ 		return budget;
