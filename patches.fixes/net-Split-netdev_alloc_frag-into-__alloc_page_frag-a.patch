@@ -31,8 +31,8 @@ Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: Benjamin Poirier <bpoirier@suse.com>
 ---
  include/linux/skbuff.h |    2 
- net/core/skbuff.c      |  119 ++++++++++++++++++++++++++++++++-----------------
- 2 files changed, 80 insertions(+), 41 deletions(-)
+ net/core/skbuff.c      |  122 +++++++++++++++++++++++++++++++------------------
+ 2 files changed, 81 insertions(+), 43 deletions(-)
 
 --- a/include/linux/skbuff.h
 +++ b/include/linux/skbuff.h
@@ -47,7 +47,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.com>
   *	@gfp_mask: alloc_pages_node mask. Set __GFP_NOMEMALLOC if not for network packet RX
 --- a/net/core/skbuff.c
 +++ b/net/core/skbuff.c
-@@ -352,60 +352,86 @@ struct netdev_alloc_cache {
+@@ -352,62 +352,87 @@ struct netdev_alloc_cache {
  	unsigned int		pagecnt_bias;
  };
  static DEFINE_PER_CPU(struct netdev_alloc_cache, netdev_alloc_cache);
@@ -68,6 +68,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.com>
 +	if (order) {
 +		gfp_mask |= __GFP_COMP | __GFP_NOWARN | __GFP_NORETRY |
 +			    __GFP_NOMEMALLOC;
++		gfp_mask &= ~__GFP_WAIT;
 +		page = alloc_pages_node(NUMA_NO_NODE, gfp_mask, order);
 +		nc->frag.size = PAGE_SIZE << (page ? order : 0);
 +	}
@@ -102,9 +103,11 @@ Acked-by: Benjamin Poirier <bpoirier@suse.com>
 +		/* if size can vary use frag.size else just use PAGE_SIZE */
 +		size = NETDEV_FRAG_PAGE_MAX_ORDER ? nc->frag.size : PAGE_SIZE;
  
--			if (order)
+-			if (order) {
 -				gfp |= __GFP_COMP | __GFP_NOWARN |
 -				       __GFP_NOMEMALLOC;
+-				gfp &= ~__GFP_WAIT;
+-			}
 -			nc->frag.page = alloc_pages(gfp, order);
 -			if (likely(nc->frag.page))
 -				break;
@@ -175,7 +178,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.com>
  	local_irq_restore(flags);
  	return data;
  }
-@@ -423,6 +449,17 @@ void *netdev_alloc_frag(unsigned int fra
+@@ -425,6 +450,17 @@ void *netdev_alloc_frag(unsigned int fra
  }
  EXPORT_SYMBOL(netdev_alloc_frag);
  
