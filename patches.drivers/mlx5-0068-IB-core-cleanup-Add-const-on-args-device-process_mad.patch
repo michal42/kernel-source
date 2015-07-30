@@ -1,0 +1,521 @@
+From: Ira Weiny <ira.weiny@intel.com>
+Date: Sun, 31 May 2015 17:15:30 -0400
+Subject: [PATCH 068/117] IB/core cleanup: Add const on args -
+ device->process_mad
+Patch-mainline: v4.2-rc1
+Git-commit: a97e2d86a9b88ea9e9a280b594b80f0eec2c955b
+References: bsc#923036 FATE#318772
+
+The process_mad device function declares some parameters as "in".  Make those
+parameters const and adjust the call tree under process_mad in the various
+drivers accordingly.
+
+Signed-off-by: Ira Weiny <ira.weiny@intel.com>
+Reviewed-by: Hal Rosenstock <hal@mellanox.com>
+Reviewed-by: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/infiniband/hw/amso1100/c2_provider.c  |    6 +++---
+ drivers/infiniband/hw/cxgb3/iwch_provider.c   |    6 +++---
+ drivers/infiniband/hw/cxgb4/provider.c        |    5 +++--
+ drivers/infiniband/hw/ehca/ehca_iverbs.h      |    4 ++--
+ drivers/infiniband/hw/ehca/ehca_sqp.c         |   14 +++++++-------
+ drivers/infiniband/hw/ipath/ipath_mad.c       |    8 ++++----
+ drivers/infiniband/hw/ipath/ipath_verbs.h     |    6 +++---
+ drivers/infiniband/hw/mlx4/mad.c              |   21 +++++++++++----------
+ drivers/infiniband/hw/mlx4/mlx4_ib.h          |    8 ++++----
+ drivers/infiniband/hw/mlx5/mad.c              |    8 ++++----
+ drivers/infiniband/hw/mlx5/mlx5_ib.h          |    8 ++++----
+ drivers/infiniband/hw/mthca/mthca_cmd.c       |    4 ++--
+ drivers/infiniband/hw/mthca/mthca_cmd.h       |    4 ++--
+ drivers/infiniband/hw/mthca/mthca_dev.h       |    6 +++---
+ drivers/infiniband/hw/mthca/mthca_mad.c       |   10 +++++-----
+ drivers/infiniband/hw/nes/nes_verbs.c         |    4 ++--
+ drivers/infiniband/hw/ocrdma/ocrdma_ah.c      |    6 +++---
+ drivers/infiniband/hw/ocrdma/ocrdma_ah.h      |    6 +++---
+ drivers/infiniband/hw/qib/qib_mad.c           |   10 +++++-----
+ drivers/infiniband/hw/qib/qib_verbs.h         |    4 ++--
+ drivers/net/ethernet/mellanox/mlx5/core/mad.c |    2 +-
+ include/linux/mlx5/driver.h                   |    2 +-
+ include/rdma/ib_verbs.h                       |    6 +++---
+ 23 files changed, 80 insertions(+), 78 deletions(-)
+
+--- a/drivers/infiniband/hw/amso1100/c2_provider.c
++++ b/drivers/infiniband/hw/amso1100/c2_provider.c
+@@ -587,9 +587,9 @@ static int c2_multicast_detach(struct ib
+ static int c2_process_mad(struct ib_device *ibdev,
+ 			  int mad_flags,
+ 			  u8 port_num,
+-			  struct ib_wc *in_wc,
+-			  struct ib_grh *in_grh,
+-			  struct ib_mad *in_mad, struct ib_mad *out_mad)
++			  const struct ib_wc *in_wc,
++			  const struct ib_grh *in_grh,
++			  const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	pr_debug("%s:%u\n", __func__, __LINE__);
+ 	return -ENOSYS;
+--- a/drivers/infiniband/hw/cxgb3/iwch_provider.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_provider.c
+@@ -85,9 +85,9 @@ static int iwch_multicast_detach(struct
+ static int iwch_process_mad(struct ib_device *ibdev,
+ 			    int mad_flags,
+ 			    u8 port_num,
+-			    struct ib_wc *in_wc,
+-			    struct ib_grh *in_grh,
+-			    struct ib_mad *in_mad, struct ib_mad *out_mad)
++			    const struct ib_wc *in_wc,
++			    const struct ib_grh *in_grh,
++			    const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	return -ENOSYS;
+ }
+--- a/drivers/infiniband/hw/cxgb4/provider.c
++++ b/drivers/infiniband/hw/cxgb4/provider.c
+@@ -80,8 +80,9 @@ static int c4iw_multicast_detach(struct
+ }
+ 
+ static int c4iw_process_mad(struct ib_device *ibdev, int mad_flags,
+-			    u8 port_num, struct ib_wc *in_wc,
+-			    struct ib_grh *in_grh, struct ib_mad *in_mad,
++			    u8 port_num, const struct ib_wc *in_wc,
++			    const struct ib_grh *in_grh,
++			    const struct ib_mad *in_mad,
+ 			    struct ib_mad *out_mad)
+ {
+ 	return -ENOSYS;
+--- a/drivers/infiniband/hw/ehca/ehca_iverbs.h
++++ b/drivers/infiniband/hw/ehca/ehca_iverbs.h
+@@ -188,8 +188,8 @@ int ehca_dealloc_ucontext(struct ib_ucon
+ int ehca_mmap(struct ib_ucontext *context, struct vm_area_struct *vma);
+ 
+ int ehca_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-		     struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		     struct ib_mad *in_mad,
++		     const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		     const struct ib_mad *in_mad,
+ 		     struct ib_mad *out_mad);
+ 
+ void ehca_poll_eqs(unsigned long data);
+--- a/drivers/infiniband/hw/ehca/ehca_sqp.c
++++ b/drivers/infiniband/hw/ehca/ehca_sqp.c
+@@ -140,10 +140,10 @@ struct vertcfl {
+ } __attribute__ ((packed));
+ 
+ static int ehca_process_perf(struct ib_device *ibdev, u8 port_num,
+-			     struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			     struct ib_mad *in_mad, struct ib_mad *out_mad)
++			     const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			     const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+-	struct ib_perf *in_perf = (struct ib_perf *)in_mad;
++	const struct ib_perf *in_perf = (const struct ib_perf *)in_mad;
+ 	struct ib_perf *out_perf = (struct ib_perf *)out_mad;
+ 	struct ib_class_port_info *poi =
+ 		(struct ib_class_port_info *)out_perf->data;
+@@ -187,8 +187,8 @@ static int ehca_process_perf(struct ib_d
+ 
+ 		/* if request was globally routed, copy route info */
+ 		if (in_grh) {
+-			struct vertcfl *vertcfl =
+-				(struct vertcfl *)&in_grh->version_tclass_flow;
++			const struct vertcfl *vertcfl =
++				(const struct vertcfl *)&in_grh->version_tclass_flow;
+ 			memcpy(poi->redirect_gid, in_grh->dgid.raw,
+ 			       sizeof(poi->redirect_gid));
+ 			tcslfl->tc        = vertcfl->tc;
+@@ -217,8 +217,8 @@ perf_reply:
+ }
+ 
+ int ehca_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-		     struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		     struct ib_mad *in_mad, struct ib_mad *out_mad)
++		     const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		     const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	int ret;
+ 
+--- a/drivers/infiniband/hw/ipath/ipath_mad.c
++++ b/drivers/infiniband/hw/ipath/ipath_mad.c
+@@ -1251,7 +1251,7 @@ static int recv_pma_set_portcounters_ext
+ }
+ 
+ static int process_subn(struct ib_device *ibdev, int mad_flags,
+-			u8 port_num, struct ib_mad *in_mad,
++			u8 port_num, const struct ib_mad *in_mad,
+ 			struct ib_mad *out_mad)
+ {
+ 	struct ib_smp *smp = (struct ib_smp *)out_mad;
+@@ -1383,7 +1383,7 @@ bail:
+ }
+ 
+ static int process_perf(struct ib_device *ibdev, u8 port_num,
+-			struct ib_mad *in_mad,
++			const struct ib_mad *in_mad,
+ 			struct ib_mad *out_mad)
+ {
+ 	struct ib_pma_mad *pmp = (struct ib_pma_mad *)out_mad;
+@@ -1484,8 +1484,8 @@ bail:
+  * This is called by the ib_mad module.
+  */
+ int ipath_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-		      struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		      struct ib_mad *in_mad, struct ib_mad *out_mad)
++		      const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		      const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	int ret;
+ 
+--- a/drivers/infiniband/hw/ipath/ipath_verbs.h
++++ b/drivers/infiniband/hw/ipath/ipath_verbs.h
+@@ -701,9 +701,9 @@ static inline void ipath_schedule_send(s
+ int ipath_process_mad(struct ib_device *ibdev,
+ 		      int mad_flags,
+ 		      u8 port_num,
+-		      struct ib_wc *in_wc,
+-		      struct ib_grh *in_grh,
+-		      struct ib_mad *in_mad, struct ib_mad *out_mad);
++		      const struct ib_wc *in_wc,
++		      const struct ib_grh *in_grh,
++		      const struct ib_mad *in_mad, struct ib_mad *out_mad);
+ 
+ /*
+  * Compare the lower 24 bits of the two values.
+--- a/drivers/infiniband/hw/mlx4/mad.c
++++ b/drivers/infiniband/hw/mlx4/mad.c
+@@ -111,8 +111,9 @@ __be64 mlx4_ib_get_new_demux_tid(struct
+ }
+ 
+ int mlx4_MAD_IFC(struct mlx4_ib_dev *dev, int mad_ifc_flags,
+-		 int port, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		 void *in_mad, void *response_mad)
++		 int port, const struct ib_wc *in_wc,
++		 const struct ib_grh *in_grh,
++		 const void *in_mad, void *response_mad)
+ {
+ 	struct mlx4_cmd_mailbox *inmailbox, *outmailbox;
+ 	void *inbox;
+@@ -220,7 +221,7 @@ static void update_sm_ah(struct mlx4_ib_
+  * Snoop SM MADs for port info, GUID info, and  P_Key table sets, so we can
+  * synthesize LID change, Client-Rereg, GID change, and P_Key change events.
+  */
+-static void smp_snoop(struct ib_device *ibdev, u8 port_num, struct ib_mad *mad,
++static void smp_snoop(struct ib_device *ibdev, u8 port_num, const struct ib_mad *mad,
+ 		      u16 prev_lid)
+ {
+ 	struct ib_port_info *pinfo;
+@@ -356,7 +357,7 @@ static void node_desc_override(struct ib
+ 	}
+ }
+ 
+-static void forward_trap(struct mlx4_ib_dev *dev, u8 port_num, struct ib_mad *mad)
++static void forward_trap(struct mlx4_ib_dev *dev, u8 port_num, const struct ib_mad *mad)
+ {
+ 	int qpn = mad->mad_hdr.mgmt_class != IB_MGMT_CLASS_SUBN_LID_ROUTED;
+ 	struct ib_mad_send_buf *send_buf;
+@@ -646,8 +647,8 @@ static int mlx4_ib_demux_mad(struct ib_d
+ }
+ 
+ static int ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-			struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			struct ib_mad *in_mad, struct ib_mad *out_mad)
++			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	u16 slid, prev_lid = 0;
+ 	int err;
+@@ -749,8 +750,8 @@ static void edit_counter(struct mlx4_cou
+ }
+ 
+ static int iboe_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-			struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			struct ib_mad *in_mad, struct ib_mad *out_mad)
++			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	struct mlx4_cmd_mailbox *mailbox;
+ 	struct mlx4_ib_dev *dev = to_mdev(ibdev);
+@@ -790,8 +791,8 @@ static int iboe_process_mad(struct ib_de
+ }
+ 
+ int mlx4_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-			struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			struct ib_mad *in_mad, struct ib_mad *out_mad)
++			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	switch (rdma_port_get_link_layer(ibdev, port_num)) {
+ 	case IB_LINK_LAYER_INFINIBAND:
+--- a/drivers/infiniband/hw/mlx4/mlx4_ib.h
++++ b/drivers/infiniband/hw/mlx4/mlx4_ib.h
+@@ -664,11 +664,11 @@ int mlx4_ib_post_recv(struct ib_qp *ibqp
+ 		      struct ib_recv_wr **bad_wr);
+ 
+ int mlx4_MAD_IFC(struct mlx4_ib_dev *dev, int mad_ifc_flags,
+-		 int port, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		 void *in_mad, void *response_mad);
++		 int port, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		 const void *in_mad, void *response_mad);
+ int mlx4_ib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 port_num,
+-			struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			struct ib_mad *in_mad, struct ib_mad *out_mad);
++			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			const struct ib_mad *in_mad, struct ib_mad *out_mad);
+ int mlx4_ib_mad_init(struct mlx4_ib_dev *dev);
+ void mlx4_ib_mad_cleanup(struct mlx4_ib_dev *dev);
+ 
+--- a/drivers/infiniband/hw/mlx5/mad.c
++++ b/drivers/infiniband/hw/mlx5/mad.c
+@@ -41,8 +41,8 @@ enum {
+ };
+ 
+ int mlx5_MAD_IFC(struct mlx5_ib_dev *dev, int ignore_mkey, int ignore_bkey,
+-		 u8 port, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		 void *in_mad, void *response_mad)
++		 u8 port, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		 const void *in_mad, void *response_mad)
+ {
+ 	u8 op_modifier = 0;
+ 
+@@ -58,8 +58,8 @@ int mlx5_MAD_IFC(struct mlx5_ib_dev *dev
+ }
+ 
+ int mlx5_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-			struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			struct ib_mad *in_mad, struct ib_mad *out_mad)
++			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	u16 slid;
+ 	int err;
+--- a/drivers/infiniband/hw/mlx5/mlx5_ib.h
++++ b/drivers/infiniband/hw/mlx5/mlx5_ib.h
+@@ -459,8 +459,8 @@ void __mlx5_ib_cq_clean(struct mlx5_ib_c
+ void mlx5_ib_cq_clean(struct mlx5_ib_cq *cq, u32 qpn, struct mlx5_ib_srq *srq);
+ void mlx5_ib_free_srq_wqe(struct mlx5_ib_srq *srq, int wqe_index);
+ int mlx5_MAD_IFC(struct mlx5_ib_dev *dev, int ignore_mkey, int ignore_bkey,
+-		 u8 port, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		 void *in_mad, void *response_mad);
++		 u8 port, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		 const void *in_mad, void *response_mad);
+ struct ib_ah *create_ib_ah(struct ib_ah_attr *ah_attr,
+ 			   struct mlx5_ib_ah *ah);
+ struct ib_ah *mlx5_ib_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr);
+@@ -516,8 +516,8 @@ int mlx5_ib_map_phys_fmr(struct ib_fmr *
+ int mlx5_ib_unmap_fmr(struct list_head *fmr_list);
+ int mlx5_ib_fmr_dealloc(struct ib_fmr *ibfmr);
+ int mlx5_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-			struct ib_wc *in_wc, struct ib_grh *in_grh,
+-			struct ib_mad *in_mad, struct ib_mad *out_mad);
++			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++			const struct ib_mad *in_mad, struct ib_mad *out_mad);
+ struct ib_xrcd *mlx5_ib_alloc_xrcd(struct ib_device *ibdev,
+ 					  struct ib_ucontext *context,
+ 					  struct ib_udata *udata);
+--- a/drivers/infiniband/hw/mthca/mthca_cmd.c
++++ b/drivers/infiniband/hw/mthca/mthca_cmd.c
+@@ -1858,8 +1858,8 @@ int mthca_CONF_SPECIAL_QP(struct mthca_d
+ }
+ 
+ int mthca_MAD_IFC(struct mthca_dev *dev, int ignore_mkey, int ignore_bkey,
+-		  int port, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		  void *in_mad, void *response_mad)
++		  int port, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		  const void *in_mad, void *response_mad)
+ {
+ 	struct mthca_mailbox *inmailbox, *outmailbox;
+ 	void *inbox;
+--- a/drivers/infiniband/hw/mthca/mthca_cmd.h
++++ b/drivers/infiniband/hw/mthca/mthca_cmd.h
+@@ -312,8 +312,8 @@ int mthca_QUERY_QP(struct mthca_dev *dev
+ 		   struct mthca_mailbox *mailbox);
+ int mthca_CONF_SPECIAL_QP(struct mthca_dev *dev, int type, u32 qpn);
+ int mthca_MAD_IFC(struct mthca_dev *dev, int ignore_mkey, int ignore_bkey,
+-		  int port, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		  void *in_mad, void *response_mad);
++		  int port, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		  const void *in_mad, void *response_mad);
+ int mthca_READ_MGM(struct mthca_dev *dev, int index,
+ 		   struct mthca_mailbox *mailbox);
+ int mthca_WRITE_MGM(struct mthca_dev *dev, int index,
+--- a/drivers/infiniband/hw/mthca/mthca_dev.h
++++ b/drivers/infiniband/hw/mthca/mthca_dev.h
+@@ -576,9 +576,9 @@ int mthca_multicast_detach(struct ib_qp
+ int mthca_process_mad(struct ib_device *ibdev,
+ 		      int mad_flags,
+ 		      u8 port_num,
+-		      struct ib_wc *in_wc,
+-		      struct ib_grh *in_grh,
+-		      struct ib_mad *in_mad,
++		      const struct ib_wc *in_wc,
++		      const struct ib_grh *in_grh,
++		      const struct ib_mad *in_mad,
+ 		      struct ib_mad *out_mad);
+ int mthca_create_agents(struct mthca_dev *dev);
+ void mthca_free_agents(struct mthca_dev *dev);
+--- a/drivers/infiniband/hw/mthca/mthca_mad.c
++++ b/drivers/infiniband/hw/mthca/mthca_mad.c
+@@ -104,7 +104,7 @@ static void update_sm_ah(struct mthca_de
+  */
+ static void smp_snoop(struct ib_device *ibdev,
+ 		      u8 port_num,
+-		      struct ib_mad *mad,
++		      const struct ib_mad *mad,
+ 		      u16 prev_lid)
+ {
+ 	struct ib_event event;
+@@ -160,7 +160,7 @@ static void node_desc_override(struct ib
+ 
+ static void forward_trap(struct mthca_dev *dev,
+ 			 u8 port_num,
+-			 struct ib_mad *mad)
++			 const struct ib_mad *mad)
+ {
+ 	int qpn = mad->mad_hdr.mgmt_class != IB_MGMT_CLASS_SUBN_LID_ROUTED;
+ 	struct ib_mad_send_buf *send_buf;
+@@ -195,9 +195,9 @@ static void forward_trap(struct mthca_de
+ int mthca_process_mad(struct ib_device *ibdev,
+ 		      int mad_flags,
+ 		      u8 port_num,
+-		      struct ib_wc *in_wc,
+-		      struct ib_grh *in_grh,
+-		      struct ib_mad *in_mad,
++		      const struct ib_wc *in_wc,
++		      const struct ib_grh *in_grh,
++		      const struct ib_mad *in_mad,
+ 		      struct ib_mad *out_mad)
+ {
+ 	int err;
+--- a/drivers/infiniband/hw/nes/nes_verbs.c
++++ b/drivers/infiniband/hw/nes/nes_verbs.c
+@@ -3222,8 +3222,8 @@ static int nes_multicast_detach(struct i
+  * nes_process_mad
+  */
+ static int nes_process_mad(struct ib_device *ibdev, int mad_flags,
+-		u8 port_num, struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		struct ib_mad *in_mad, struct ib_mad *out_mad)
++		u8 port_num, const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	nes_debug(NES_DBG_INIT, "\n");
+ 	return -ENOSYS;
+--- a/drivers/infiniband/hw/ocrdma/ocrdma_ah.c
++++ b/drivers/infiniband/hw/ocrdma/ocrdma_ah.c
+@@ -165,9 +165,9 @@ int ocrdma_modify_ah(struct ib_ah *ibah,
+ int ocrdma_process_mad(struct ib_device *ibdev,
+ 		       int process_mad_flags,
+ 		       u8 port_num,
+-		       struct ib_wc *in_wc,
+-		       struct ib_grh *in_grh,
+-		       struct ib_mad *in_mad, struct ib_mad *out_mad)
++		       const struct ib_wc *in_wc,
++		       const struct ib_grh *in_grh,
++		       const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	return IB_MAD_RESULT_SUCCESS;
+ }
+--- a/drivers/infiniband/hw/ocrdma/ocrdma_ah.h
++++ b/drivers/infiniband/hw/ocrdma/ocrdma_ah.h
+@@ -36,7 +36,7 @@ int ocrdma_modify_ah(struct ib_ah *, str
+ int ocrdma_process_mad(struct ib_device *,
+ 		       int process_mad_flags,
+ 		       u8 port_num,
+-		       struct ib_wc *in_wc,
+-		       struct ib_grh *in_grh,
+-		       struct ib_mad *in_mad, struct ib_mad *out_mad);
++		       const struct ib_wc *in_wc,
++		       const struct ib_grh *in_grh,
++		       const struct ib_mad *in_mad, struct ib_mad *out_mad);
+ #endif				/* __OCRDMA_AH_H__ */
+--- a/drivers/infiniband/hw/qib/qib_mad.c
++++ b/drivers/infiniband/hw/qib/qib_mad.c
+@@ -1826,7 +1826,7 @@ static int pma_set_portcounters_ext(stru
+ }
+ 
+ static int process_subn(struct ib_device *ibdev, int mad_flags,
+-			u8 port, struct ib_mad *in_mad,
++			u8 port, const struct ib_mad *in_mad,
+ 			struct ib_mad *out_mad)
+ {
+ 	struct ib_smp *smp = (struct ib_smp *)out_mad;
+@@ -1978,7 +1978,7 @@ bail:
+ }
+ 
+ static int process_perf(struct ib_device *ibdev, u8 port,
+-			struct ib_mad *in_mad,
++			const struct ib_mad *in_mad,
+ 			struct ib_mad *out_mad)
+ {
+ 	struct ib_pma_mad *pmp = (struct ib_pma_mad *)out_mad;
+@@ -2271,7 +2271,7 @@ static int check_cc_key(struct qib_ibpor
+ }
+ 
+ static int process_cc(struct ib_device *ibdev, int mad_flags,
+-			u8 port, struct ib_mad *in_mad,
++			u8 port, const struct ib_mad *in_mad,
+ 			struct ib_mad *out_mad)
+ {
+ 	struct ib_cc_mad *ccp = (struct ib_cc_mad *)out_mad;
+@@ -2372,8 +2372,8 @@ bail:
+  * This is called by the ib_mad module.
+  */
+ int qib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port,
+-		    struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		    struct ib_mad *in_mad, struct ib_mad *out_mad)
++		    const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		    const struct ib_mad *in_mad, struct ib_mad *out_mad)
+ {
+ 	int ret;
+ 	struct qib_ibport *ibp = to_iport(ibdev, port);
+--- a/drivers/infiniband/hw/qib/qib_verbs.h
++++ b/drivers/infiniband/hw/qib/qib_verbs.h
+@@ -864,8 +864,8 @@ void qib_cap_mask_chg(struct qib_ibport
+ void qib_sys_guid_chg(struct qib_ibport *ibp);
+ void qib_node_desc_chg(struct qib_ibport *ibp);
+ int qib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+-		    struct ib_wc *in_wc, struct ib_grh *in_grh,
+-		    struct ib_mad *in_mad, struct ib_mad *out_mad);
++		    const struct ib_wc *in_wc, const struct ib_grh *in_grh,
++		    const struct ib_mad *in_mad, struct ib_mad *out_mad);
+ int qib_create_agents(struct qib_ibdev *dev);
+ void qib_free_agents(struct qib_ibdev *dev);
+ 
+--- a/drivers/net/ethernet/mellanox/mlx5/core/mad.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/mad.c
+@@ -36,7 +36,7 @@
+ #include <linux/mlx5/cmd.h>
+ #include "mlx5_core.h"
+ 
+-int mlx5_core_mad_ifc(struct mlx5_core_dev *dev, void *inb, void *outb,
++int mlx5_core_mad_ifc(struct mlx5_core_dev *dev, const void *inb, void *outb,
+ 		      u16 opmod, u8 port)
+ {
+ 	struct mlx5_mad_ifc_mbox_in *in = NULL;
+--- a/include/linux/mlx5/driver.h
++++ b/include/linux/mlx5/driver.h
+@@ -652,7 +652,7 @@ int mlx5_core_dump_fill_mkey(struct mlx5
+ 			     u32 *mkey);
+ int mlx5_core_alloc_pd(struct mlx5_core_dev *dev, u32 *pdn);
+ int mlx5_core_dealloc_pd(struct mlx5_core_dev *dev, u32 pdn);
+-int mlx5_core_mad_ifc(struct mlx5_core_dev *dev, void *inb, void *outb,
++int mlx5_core_mad_ifc(struct mlx5_core_dev *dev, const void *inb, void *outb,
+ 		      u16 opmod, u8 port);
+ void mlx5_pagealloc_init(struct mlx5_core_dev *dev);
+ void mlx5_pagealloc_cleanup(struct mlx5_core_dev *dev);
+--- a/include/rdma/ib_verbs.h
++++ b/include/rdma/ib_verbs.h
+@@ -1591,9 +1591,9 @@ struct ib_device {
+ 	int                        (*process_mad)(struct ib_device *device,
+ 						  int process_mad_flags,
+ 						  u8 port_num,
+-						  struct ib_wc *in_wc,
+-						  struct ib_grh *in_grh,
+-						  struct ib_mad *in_mad,
++						  const struct ib_wc *in_wc,
++						  const struct ib_grh *in_grh,
++						  const struct ib_mad *in_mad,
+ 						  struct ib_mad *out_mad);
+ 	struct ib_xrcd *	   (*alloc_xrcd)(struct ib_device *device,
+ 						 struct ib_ucontext *ucontext,

@@ -1,0 +1,88 @@
+From: Achiad Shochat <achiad@mellanox.com>
+Date: Thu, 11 Jun 2015 14:47:33 +0300
+Subject: [PATCH 089/117] net/mlx5e: Add transport domain to the ethernet
+ TIRs/TISs
+Patch-mainline: v4.2-rc1
+Git-commit: 3191e05feafaae58c04973ae8a157393eaa30519
+References: bsc#923036 FATE#318772
+
+Allocate and use transport domain by the Ethernet driver code.
+
+Signed-off-by: Achiad Shochat <achiad@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en.h      |    1 +
+ drivers/net/ethernet/mellanox/mlx5/core/en_main.c |   16 +++++++++++++++-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en.h
+@@ -389,6 +389,7 @@ struct mlx5e_priv {
+ 	struct mutex               state_lock; /* Protects Interface state */
+ 	struct mlx5_uar            cq_uar;
+ 	u32                        pdn;
++	u32                        tdn;
+ 	struct mlx5_core_mr        mr;
+ 
+ 	struct mlx5e_channel     **channel;
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
+@@ -1102,6 +1102,7 @@ static int mlx5e_open_tis(struct mlx5e_p
+ 	memset(in, 0, sizeof(in));
+ 
+ 	MLX5_SET(tisc, tisc, prio,  tc);
++	MLX5_SET(tisc, tisc, transport_domain, priv->tdn);
+ 
+ 	return mlx5_core_create_tis(mdev, in, sizeof(in), &priv->tisn[tc]);
+ }
+@@ -1200,6 +1201,8 @@ static void mlx5e_build_tir_ctx(struct m
+ {
+ 	void *hfso = MLX5_ADDR_OF(tirc, tirc, rx_hash_field_selector_outer);
+ 
++	MLX5_SET(tirc, tirc, transport_domain, priv->tdn);
++
+ #define ROUGH_MAX_L2_L3_HDR_SZ 256
+ 
+ #define MLX5_HASH_IP     (MLX5_HASH_FIELD_SEL_SRC_IP   |\
+@@ -1819,11 +1822,18 @@ static void *mlx5e_create_netdev(struct
+ 		goto err_unmap_free_uar;
+ 	}
+ 
++	err = mlx5_alloc_transport_domain(mdev, &priv->tdn);
++	if (err) {
++		netdev_err(netdev, "%s: mlx5_alloc_transport_domain failed, %d\n",
++			   __func__, err);
++		goto err_dealloc_pd;
++	}
++
+ 	err = mlx5e_create_mkey(priv, priv->pdn, &priv->mr);
+ 	if (err) {
+ 		netdev_err(netdev, "%s: mlx5e_create_mkey failed, %d\n",
+ 			   __func__, err);
+-		goto err_dealloc_pd;
++		goto err_dealloc_transport_domain;
+ 	}
+ 
+ 	err = register_netdev(netdev);
+@@ -1840,6 +1850,9 @@ static void *mlx5e_create_netdev(struct
+ err_destroy_mkey:
+ 	mlx5_core_destroy_mkey(mdev, &priv->mr);
+ 
++err_dealloc_transport_domain:
++	mlx5_dealloc_transport_domain(mdev, priv->tdn);
++
+ err_dealloc_pd:
+ 	mlx5_core_dealloc_pd(mdev, priv->pdn);
+ 
+@@ -1859,6 +1872,7 @@ static void mlx5e_destroy_netdev(struct
+ 
+ 	unregister_netdev(netdev);
+ 	mlx5_core_destroy_mkey(priv->mdev, &priv->mr);
++	mlx5_dealloc_transport_domain(priv->mdev, priv->tdn);
+ 	mlx5_core_dealloc_pd(priv->mdev, priv->pdn);
+ 	mlx5_unmap_free_uar(priv->mdev, &priv->cq_uar);
+ 	mlx5e_disable_async_events(priv);

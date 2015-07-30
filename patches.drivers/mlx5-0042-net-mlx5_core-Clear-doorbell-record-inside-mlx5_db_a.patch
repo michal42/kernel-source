@@ -1,0 +1,69 @@
+From: Saeed Mahameed <saeedm@mellanox.com>
+Date: Thu, 2 Apr 2015 17:07:23 +0300
+Subject: [PATCH 042/117] net/mlx5_core: Clear doorbell record inside
+ mlx5_db_alloc()
+Patch-mainline: v4.1-rc1
+Git-commit: b812b5441e359adb9bd44108f7f91e5b0ba4a768
+References: bsc#923036 FATE#318772
+
+Do it in one place instead of every where the function is invoked
+
+Signed-off-by: Achiad Shochat <achiad@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Eli Cohen <eli@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/infiniband/hw/mlx5/cq.c                 |    2 --
+ drivers/infiniband/hw/mlx5/qp.c                 |    3 ---
+ drivers/infiniband/hw/mlx5/srq.c                |    2 --
+ drivers/net/ethernet/mellanox/mlx5/core/alloc.c |    3 +++
+ 4 files changed, 3 insertions(+), 7 deletions(-)
+
+--- a/drivers/infiniband/hw/mlx5/cq.c
++++ b/drivers/infiniband/hw/mlx5/cq.c
+@@ -697,8 +697,6 @@ static int create_cq_kernel(struct mlx5_
+ 
+ 	cq->mcq.set_ci_db  = cq->db.db;
+ 	cq->mcq.arm_db     = cq->db.db + 1;
+-	*cq->mcq.set_ci_db = 0;
+-	*cq->mcq.arm_db    = 0;
+ 	cq->mcq.cqe_sz = cqe_size;
+ 
+ 	err = alloc_cq_buf(dev, &cq->buf, entries, cqe_size);
+--- a/drivers/infiniband/hw/mlx5/qp.c
++++ b/drivers/infiniband/hw/mlx5/qp.c
+@@ -734,9 +734,6 @@ static int create_kernel_qp(struct mlx5_
+ 		goto err_free;
+ 	}
+ 
+-	qp->db.db[0] = 0;
+-	qp->db.db[1] = 0;
+-
+ 	qp->sq.wrid = kmalloc(qp->sq.wqe_cnt * sizeof(*qp->sq.wrid), GFP_KERNEL);
+ 	qp->sq.wr_data = kmalloc(qp->sq.wqe_cnt * sizeof(*qp->sq.wr_data), GFP_KERNEL);
+ 	qp->rq.wrid = kmalloc(qp->rq.wqe_cnt * sizeof(*qp->rq.wrid), GFP_KERNEL);
+--- a/drivers/infiniband/hw/mlx5/srq.c
++++ b/drivers/infiniband/hw/mlx5/srq.c
+@@ -165,8 +165,6 @@ static int create_srq_kernel(struct mlx5
+ 		return err;
+ 	}
+ 
+-	*srq->db.db = 0;
+-
+ 	if (mlx5_buf_alloc(dev->mdev, buf_size, PAGE_SIZE * 2, &srq->buf)) {
+ 		mlx5_ib_dbg(dev, "buf alloc failed\n");
+ 		err = -ENOMEM;
+--- a/drivers/net/ethernet/mellanox/mlx5/core/alloc.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/alloc.c
+@@ -171,6 +171,9 @@ static int mlx5_alloc_db_from_pgdir(stru
+ 	db->db      = pgdir->db_page + offset / sizeof(*pgdir->db_page);
+ 	db->dma     = pgdir->db_dma  + offset;
+ 
++	db->db[0] = 0;
++	db->db[1] = 0;
++
+ 	return 0;
+ }
+ 

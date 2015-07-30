@@ -1,0 +1,119 @@
+From: Achiad Shochat <achiad@mellanox.com>
+Date: Tue, 23 Jun 2015 17:14:18 +0300
+Subject: [PATCH 094/117] net/mlx5e: Avoid TX CQE generation if more xmit
+ packets expected
+Patch-mainline: v4.2-rc1
+Git-commit: 059ba072eba4d6e10ab637779013960a7c9ddce2
+References: bsc#923036 FATE#318772
+
+In order to save PCI BW consumed by TX CQEs and to reduce the amount of
+CPU cache misses caused by TX CQE reading, we request TX CQE generation
+only when skb->xmit_more=0.
+
+As a consequence of the above, a single TX CQE may now indicate the
+transmission completion of multiple TX SKBs.
+
+This also handles a problem introduced in commit b1b8105ebf41 "net/mlx5e:
+Support NETIF_F_SG" where we didn't ask for NOP completions while the
+driver didn't have the proper code to handle this case.
+
+Fixes: b1b8105ebf41 ('net/mlx5e: Support NETIF_F_SG')
+Signed-off-by: Achiad Shochat <achiad@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_tx.c |   60 ++++++++++++++----------
+ 1 file changed, 35 insertions(+), 25 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_tx.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_tx.c
+@@ -210,7 +210,6 @@ static netdev_tx_t mlx5e_sq_xmit(struct
+ 
+ 	cseg->opmod_idx_opcode	= cpu_to_be32((sq->pc << 8) | opcode);
+ 	cseg->qpn_ds		= cpu_to_be32((sq->sqn << 8) | ds_cnt);
+-	cseg->fm_ce_se		= MLX5_WQE_CTRL_CQ_UPDATE;
+ 
+ 	sq->skb[pi] = skb;
+ 
+@@ -225,6 +224,7 @@ static netdev_tx_t mlx5e_sq_xmit(struct
+ 		sq->stats.stopped++;
+ 	}
+ 
++	cseg->fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
+ 	mlx5e_tx_notify_hw(sq, wqe);
+ 
+ 	/* fill sq edge with nops to avoid wqe wrap around */
+@@ -279,36 +279,46 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *c
+ 
+ 	for (i = 0; i < MLX5E_TX_CQ_POLL_BUDGET; i++) {
+ 		struct mlx5_cqe64 *cqe;
+-		struct sk_buff *skb;
+-		u16 ci;
+-		int j;
++		u16 wqe_counter;
++		bool last_wqe;
+ 
+ 		cqe = mlx5e_get_cqe(cq);
+ 		if (!cqe)
+ 			break;
+ 
+-		ci = sqcc & sq->wq.sz_m1;
+-		skb = sq->skb[ci];
++		wqe_counter = be16_to_cpu(cqe->wqe_counter);
+ 
+-		if (unlikely(!skb)) { /* nop */
+-			sq->stats.nop++;
+-			sqcc++;
+-			continue;
+-		}
+-
+-		for (j = 0; j < MLX5E_TX_SKB_CB(skb)->num_dma; j++) {
+-			dma_addr_t addr;
+-			u32 size;
+-
+-			mlx5e_dma_get(sq, dma_fifo_cc, &addr, &size);
+-			dma_fifo_cc++;
+-			dma_unmap_single(sq->pdev, addr, size, DMA_TO_DEVICE);
+-		}
+-
+-		npkts++;
+-		nbytes += MLX5E_TX_SKB_CB(skb)->num_bytes;
+-		sqcc += MLX5E_TX_SKB_CB(skb)->num_wqebbs;
+-		dev_kfree_skb(skb);
++		do {
++			struct sk_buff *skb;
++			u16 ci;
++			int j;
++
++			last_wqe = (sqcc == wqe_counter);
++
++			ci = sqcc & sq->wq.sz_m1;
++			skb = sq->skb[ci];
++
++			if (unlikely(!skb)) { /* nop */
++				sq->stats.nop++;
++				sqcc++;
++				continue;
++			}
++
++			for (j = 0; j < MLX5E_TX_SKB_CB(skb)->num_dma; j++) {
++				dma_addr_t addr;
++				u32 size;
++
++				mlx5e_dma_get(sq, dma_fifo_cc, &addr, &size);
++				dma_fifo_cc++;
++				dma_unmap_single(sq->pdev, addr, size,
++						 DMA_TO_DEVICE);
++			}
++
++			npkts++;
++			nbytes += MLX5E_TX_SKB_CB(skb)->num_bytes;
++			sqcc += MLX5E_TX_SKB_CB(skb)->num_wqebbs;
++			dev_kfree_skb(skb);
++		} while (!last_wqe);
+ 	}
+ 
+ 	mlx5_cqwq_update_db_record(&cq->wq);

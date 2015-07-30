@@ -1,0 +1,39 @@
+From: Sagi Grimberg <sagig@mellanox.com>
+Date: Sun, 18 May 2014 18:32:38 +0300
+Subject: [PATCH 006/117] mlx5_core: Fix signature handover operation for
+ interleaved buffers
+Patch-mainline: v3.16-rc1
+Git-commit: 8524867b9c3d11e38de084f47e2128f43e74610a
+References: bsc#923036 FATE#318772
+
+When the data and protection are interleaved in the memory domain, no
+need to expand the mkey total length.
+
+At the moment no Linux user works (iSER initiator & target) in
+interleaved mode. This may change in the future as for SCSI
+pass-through devices there is no real point in target performing
+de-interleaving and re-interleaving of the protection data in the PT
+stage. Regardless, signature verbs support this mode.
+
+Signed-off-by: Sagi Grimberg <sagig@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/infiniband/hw/mlx5/qp.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/hw/mlx5/qp.c
++++ b/drivers/infiniband/hw/mlx5/qp.c
+@@ -2275,7 +2275,10 @@ static int set_sig_umr_wr(struct ib_send
+ 
+ 	/* length of the protected region, data + protection */
+ 	region_len = wr->sg_list->length;
+-	if (wr->wr.sig_handover.prot)
++	if (wr->wr.sig_handover.prot &&
++	    (wr->wr.sig_handover.prot->lkey != wr->sg_list->lkey  ||
++	     wr->wr.sig_handover.prot->addr != wr->sg_list->addr  ||
++	     wr->wr.sig_handover.prot->length != wr->sg_list->length))
+ 		region_len += wr->wr.sig_handover.prot->length;
+ 
+ 	/**

@@ -1,0 +1,92 @@
+From: Saeed Mahameed <saeedm@mellanox.com>
+Date: Thu, 28 May 2015 22:28:45 +0300
+Subject: [PATCH 064/117] net/mlx5_core: Set/Query port MTU commands
+Patch-mainline: v4.2-rc1
+Git-commit: e725440e75da8c4d617a31c4e38216acc55c24e3
+References: bsc#923036 FATE#318772
+
+Introduce set/Query low level functions to access MTU in hardware. To be
+used by the netdev.
+
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Amir Vadai <amirv@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/port.c |   53 +++++++++++++++++++++++++
+ include/linux/mlx5/driver.h                    |    4 +
+ 2 files changed, 57 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/port.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/port.c
+@@ -211,3 +211,56 @@ int mlx5_query_port_status(struct mlx5_c
+ 	*status = MLX5_GET(paos_reg, out, oper_status);
+ 	return err;
+ }
++
++static int mlx5_query_port_mtu(struct mlx5_core_dev *dev,
++			       int *admin_mtu, int *max_mtu, int *oper_mtu)
++{
++	u32 in[MLX5_ST_SZ_DW(pmtu_reg)];
++	u32 out[MLX5_ST_SZ_DW(pmtu_reg)];
++	int err;
++
++	memset(in, 0, sizeof(in));
++
++	MLX5_SET(pmtu_reg, in, local_port, 1);
++
++	err = mlx5_core_access_reg(dev, in, sizeof(in), out,
++				   sizeof(out), MLX5_REG_PMTU, 0, 0);
++	if (err)
++		return err;
++
++	if (max_mtu)
++		*max_mtu  = MLX5_GET(pmtu_reg, out, max_mtu);
++	if (oper_mtu)
++		*oper_mtu = MLX5_GET(pmtu_reg, out, oper_mtu);
++	if (admin_mtu)
++		*admin_mtu = MLX5_GET(pmtu_reg, out, admin_mtu);
++
++	return 0;
++}
++
++int mlx5_set_port_mtu(struct mlx5_core_dev *dev, int mtu)
++{
++	u32 in[MLX5_ST_SZ_DW(pmtu_reg)];
++	u32 out[MLX5_ST_SZ_DW(pmtu_reg)];
++
++	memset(in, 0, sizeof(in));
++
++	MLX5_SET(pmtu_reg, in, admin_mtu, mtu);
++	MLX5_SET(pmtu_reg, in, local_port, 1);
++
++	return mlx5_core_access_reg(dev, in, sizeof(in), out, sizeof(out),
++				    MLX5_REG_PMTU, 0, 1);
++}
++EXPORT_SYMBOL_GPL(mlx5_set_port_mtu);
++
++int mlx5_query_port_max_mtu(struct mlx5_core_dev *dev, int *max_mtu)
++{
++	return mlx5_query_port_mtu(dev, NULL, max_mtu, NULL);
++}
++EXPORT_SYMBOL_GPL(mlx5_query_port_max_mtu);
++
++int mlx5_query_port_oper_mtu(struct mlx5_core_dev *dev, int *oper_mtu)
++{
++	return mlx5_query_port_mtu(dev, NULL, NULL, oper_mtu);
++}
++EXPORT_SYMBOL_GPL(mlx5_query_port_oper_mtu);
+--- a/include/linux/mlx5/driver.h
++++ b/include/linux/mlx5/driver.h
+@@ -700,6 +700,10 @@ int mlx5_set_port_status(struct mlx5_cor
+ 			 enum mlx5_port_status status);
+ int mlx5_query_port_status(struct mlx5_core_dev *dev, u8 *status);
+ 
++int mlx5_set_port_mtu(struct mlx5_core_dev *dev, int mtu);
++int mlx5_query_port_max_mtu(struct mlx5_core_dev *dev, int *max_mtu);
++int mlx5_query_port_oper_mtu(struct mlx5_core_dev *dev, int *oper_mtu);
++
+ int mlx5_debug_eq_add(struct mlx5_core_dev *dev, struct mlx5_eq *eq);
+ void mlx5_debug_eq_remove(struct mlx5_core_dev *dev, struct mlx5_eq *eq);
+ int mlx5_core_eq_query(struct mlx5_core_dev *dev, struct mlx5_eq *eq,

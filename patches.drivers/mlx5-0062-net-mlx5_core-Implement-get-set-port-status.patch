@@ -1,0 +1,83 @@
+From: Rana Shahout <ranas@mellanox.com>
+Date: Thu, 28 May 2015 22:28:43 +0300
+Subject: [PATCH 062/117] net/mlx5_core: Implement get/set port status
+Patch-mainline: v4.2-rc1
+Git-commit: 4c916a798058c1acf5a980438416020932c24aca
+References: bsc#923036 FATE#318772
+
+Implemet get/set port status low level functions to be exposed by the
+netdev.
+
+Signed-off-by: Rana Shahout <ranas@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Amir Vadai <amirv@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/port.c |   32 +++++++++++++++++++++++++
+ include/linux/mlx5/driver.h                    |    8 ++++++
+ 2 files changed, 40 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/port.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/port.c
+@@ -179,3 +179,35 @@ int mlx5_set_port_proto(struct mlx5_core
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(mlx5_set_port_proto);
++
++int mlx5_set_port_status(struct mlx5_core_dev *dev,
++			 enum mlx5_port_status status)
++{
++	u32 in[MLX5_ST_SZ_DW(paos_reg)];
++	u32 out[MLX5_ST_SZ_DW(paos_reg)];
++
++	memset(in, 0, sizeof(in));
++
++	MLX5_SET(paos_reg, in, admin_status, status);
++	MLX5_SET(paos_reg, in, ase, 1);
++
++	return mlx5_core_access_reg(dev, in, sizeof(in), out,
++				    sizeof(out), MLX5_REG_PAOS, 0, 1);
++}
++
++int mlx5_query_port_status(struct mlx5_core_dev *dev, u8 *status)
++{
++	u32 in[MLX5_ST_SZ_DW(paos_reg)];
++	u32 out[MLX5_ST_SZ_DW(paos_reg)];
++	int err;
++
++	memset(in, 0, sizeof(in));
++
++	err = mlx5_core_access_reg(dev, in, sizeof(in), out,
++				   sizeof(out), MLX5_REG_PAOS, 0, 0);
++	if (err)
++		return err;
++
++	*status = MLX5_GET(paos_reg, out, oper_status);
++	return err;
++}
+--- a/include/linux/mlx5/driver.h
++++ b/include/linux/mlx5/driver.h
+@@ -142,6 +142,11 @@ enum mlx5_dev_event {
+ 	MLX5_DEV_EVENT_CLIENT_REREG,
+ };
+ 
++enum mlx5_port_status {
++	MLX5_PORT_UP        = 1 << 1,
++	MLX5_PORT_DOWN      = 1 << 2,
++};
++
+ struct mlx5_uuar_info {
+ 	struct mlx5_uar	       *uars;
+ 	int			num_uars;
+@@ -691,6 +696,9 @@ int mlx5_query_port_proto_admin(struct m
+ 				u32 *proto_admin, int proto_mask);
+ int mlx5_set_port_proto(struct mlx5_core_dev *dev, u32 proto_admin,
+ 			int proto_mask);
++int mlx5_set_port_status(struct mlx5_core_dev *dev,
++			 enum mlx5_port_status status);
++int mlx5_query_port_status(struct mlx5_core_dev *dev, u8 *status);
+ 
+ int mlx5_debug_eq_add(struct mlx5_core_dev *dev, struct mlx5_eq *eq);
+ void mlx5_debug_eq_remove(struct mlx5_core_dev *dev, struct mlx5_eq *eq);

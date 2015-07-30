@@ -1,0 +1,135 @@
+From: Saeed Mahameed <saeedm@mellanox.com>
+Date: Thu, 28 May 2015 22:28:42 +0300
+Subject: [PATCH 061/117] net/mlx5_core: Implement access functions of ptys
+ register fields
+Patch-mainline: v4.2-rc1
+Git-commit: adb0c9545bce6f1b1d563e988e6ee5531861d449
+References: bsc#923036 FATE#318772
+
+Those registers will be used by the ethtool to set/get settings.
+
+Signed-off-by: Rana Shahout <ranas@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Amir Vadai <amirv@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/port.c |   77 +++++++++++++++++++++++++
+ include/linux/mlx5/driver.h                    |   14 ++++
+ 2 files changed, 91 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/port.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/port.c
+@@ -102,3 +102,80 @@ int mlx5_set_port_caps(struct mlx5_core_
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(mlx5_set_port_caps);
++
++int mlx5_query_port_ptys(struct mlx5_core_dev *dev, u32 *ptys,
++			 int ptys_size, int proto_mask)
++{
++	u32 in[MLX5_ST_SZ_DW(ptys_reg)];
++	int err;
++
++	memset(in, 0, sizeof(in));
++	MLX5_SET(ptys_reg, in, local_port, 1);
++	MLX5_SET(ptys_reg, in, proto_mask, proto_mask);
++
++	err = mlx5_core_access_reg(dev, in, sizeof(in), ptys,
++				   ptys_size, MLX5_REG_PTYS, 0, 0);
++
++	return err;
++}
++EXPORT_SYMBOL_GPL(mlx5_query_port_ptys);
++
++int mlx5_query_port_proto_cap(struct mlx5_core_dev *dev,
++			      u32 *proto_cap, int proto_mask)
++{
++	u32 out[MLX5_ST_SZ_DW(ptys_reg)];
++	int err;
++
++	err = mlx5_query_port_ptys(dev, out, sizeof(out), proto_mask);
++	if (err)
++		return err;
++
++	if (proto_mask == MLX5_PTYS_EN)
++		*proto_cap = MLX5_GET(ptys_reg, out, eth_proto_capability);
++	else
++		*proto_cap = MLX5_GET(ptys_reg, out, ib_proto_capability);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mlx5_query_port_proto_cap);
++
++int mlx5_query_port_proto_admin(struct mlx5_core_dev *dev,
++				u32 *proto_admin, int proto_mask)
++{
++	u32 out[MLX5_ST_SZ_DW(ptys_reg)];
++	int err;
++
++	err = mlx5_query_port_ptys(dev, out, sizeof(out), proto_mask);
++	if (err)
++		return err;
++
++	if (proto_mask == MLX5_PTYS_EN)
++		*proto_admin = MLX5_GET(ptys_reg, out, eth_proto_admin);
++	else
++		*proto_admin = MLX5_GET(ptys_reg, out, ib_proto_admin);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mlx5_query_port_proto_admin);
++
++int mlx5_set_port_proto(struct mlx5_core_dev *dev, u32 proto_admin,
++			int proto_mask)
++{
++	u32 in[MLX5_ST_SZ_DW(ptys_reg)];
++	u32 out[MLX5_ST_SZ_DW(ptys_reg)];
++	int err;
++
++	memset(in, 0, sizeof(in));
++
++	MLX5_SET(ptys_reg, in, local_port, 1);
++	MLX5_SET(ptys_reg, in, proto_mask, proto_mask);
++	if (proto_mask == MLX5_PTYS_EN)
++		MLX5_SET(ptys_reg, in, eth_proto_admin, proto_admin);
++	else
++		MLX5_SET(ptys_reg, in, ib_proto_admin, proto_admin);
++
++	err = mlx5_core_access_reg(dev, in, sizeof(in), out,
++				   sizeof(out), MLX5_REG_PTYS, 0, 1);
++	return err;
++}
++EXPORT_SYMBOL_GPL(mlx5_set_port_proto);
+--- a/include/linux/mlx5/driver.h
++++ b/include/linux/mlx5/driver.h
+@@ -497,6 +497,11 @@ enum {
+ 	MLX5_COMP_EQ_SIZE = 1024,
+ };
+ 
++enum {
++	MLX5_PTYS_IB = 1 << 0,
++	MLX5_PTYS_EN = 1 << 2,
++};
++
+ struct mlx5_db_pgdir {
+ 	struct list_head	list;
+ 	DECLARE_BITMAP(bitmap, MLX5_DB_PER_PAGE);
+@@ -676,7 +681,16 @@ void mlx5_qp_debugfs_cleanup(struct mlx5
+ int mlx5_core_access_reg(struct mlx5_core_dev *dev, void *data_in,
+ 			 int size_in, void *data_out, int size_out,
+ 			 u16 reg_num, int arg, int write);
++
+ int mlx5_set_port_caps(struct mlx5_core_dev *dev, u8 port_num, u32 caps);
++int mlx5_query_port_ptys(struct mlx5_core_dev *dev, u32 *ptys,
++			 int ptys_size, int proto_mask);
++int mlx5_query_port_proto_cap(struct mlx5_core_dev *dev,
++			      u32 *proto_cap, int proto_mask);
++int mlx5_query_port_proto_admin(struct mlx5_core_dev *dev,
++				u32 *proto_admin, int proto_mask);
++int mlx5_set_port_proto(struct mlx5_core_dev *dev, u32 proto_admin,
++			int proto_mask);
+ 
+ int mlx5_debug_eq_add(struct mlx5_core_dev *dev, struct mlx5_eq *eq);
+ void mlx5_debug_eq_remove(struct mlx5_core_dev *dev, struct mlx5_eq *eq);

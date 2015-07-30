@@ -1,0 +1,35 @@
+From: Eli Cohen <eli@dev.mellanox.co.il>
+Date: Thu, 23 Oct 2014 15:57:26 +0300
+Subject: [PATCH 023/117] net/mlx5_core: Call synchronize_irq() before freeing
+ EQ buffer
+Patch-mainline: v3.18-rc3
+Git-commit: 96e4be06cbfcb8c9c2da7c77bacce0e56b581c0b
+References: bsc#923036 FATE#318772
+
+After destroying the EQ, the object responsible for generating interrupts, call
+synchronize_irq() to ensure that any handler routines running on other CPU
+cores finish execution. Only then free the EQ buffer. This patch solves a very
+rare case when we get panic on driver unload.
+The same thing is done when we destroy a CQ which is one of the sources
+generating interrupts. In the case of CQ we want to avoid completion handlers
+on a CQ that was destroyed. In the case we do the same to avoid receiving
+asynchronous events after the EQ has been destroyed and its buffers freed.
+
+Signed-off-by: Eli Cohen <eli@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/eq.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/eq.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/eq.c
+@@ -420,6 +420,7 @@ int mlx5_destroy_unmap_eq(struct mlx5_co
+ 	if (err)
+ 		mlx5_core_warn(dev, "failed to destroy a previously created eq: eqn %d\n",
+ 			       eq->eqn);
++	synchronize_irq(table->msix_arr[eq->irqn].vector);
+ 	mlx5_buf_free(dev, &eq->buf);
+ 
+ 	return err;

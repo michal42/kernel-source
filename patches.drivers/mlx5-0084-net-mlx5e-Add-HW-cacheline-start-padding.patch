@@ -1,0 +1,88 @@
+From: Saeed Mahameed <saeedm@mellanox.com>
+Date: Thu, 11 Jun 2015 14:47:28 +0300
+Subject: [PATCH 084/117] net/mlx5e: Add HW cacheline start padding
+Patch-mainline: v4.2-rc1
+Git-commit: fc11fbf9a785b25c5d07f05a30d4169ec39818da
+References: bsc#923036 FATE#318772
+
+Enable HW cacheline start padding and align RX WQE size to cacheline
+while considering HW start padding. Also, fix dma_unmap call to use
+the correct SKB data buffer size.
+
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_main.c |    5 ++++-
+ drivers/net/ethernet/mellanox/mlx5/core/en_rx.c   |   10 +++++-----
+ include/linux/mlx5/device.h                       |    4 ++++
+ 3 files changed, 13 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
+@@ -309,12 +309,15 @@ static int mlx5e_create_rq(struct mlx5e_
+ 
+ 	rq->wqe_sz = (priv->params.lro_en) ? priv->params.lro_wqe_sz :
+ 					     MLX5E_SW2HW_MTU(priv->netdev->mtu);
++	rq->wqe_sz = SKB_DATA_ALIGN(rq->wqe_sz + MLX5E_NET_IP_ALIGN);
+ 
+ 	for (i = 0; i < wq_sz; i++) {
+ 		struct mlx5e_rx_wqe *wqe = mlx5_wq_ll_get_wqe(&rq->wq, i);
++		u32 byte_count = rq->wqe_sz - MLX5E_NET_IP_ALIGN;
+ 
+ 		wqe->data.lkey       = c->mkey_be;
+-		wqe->data.byte_count = cpu_to_be32(rq->wqe_sz);
++		wqe->data.byte_count =
++			cpu_to_be32(byte_count | MLX5_HW_START_PADDING);
+ 	}
+ 
+ 	rq->pdev    = c->pdev;
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_rx.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_rx.c
+@@ -45,18 +45,18 @@ static inline int mlx5e_alloc_rx_wqe(str
+ 	if (unlikely(!skb))
+ 		return -ENOMEM;
+ 
+-	skb_reserve(skb, MLX5E_NET_IP_ALIGN);
+-
+ 	dma_addr = dma_map_single(rq->pdev,
+ 				  /* hw start padding */
+-				  skb->data - MLX5E_NET_IP_ALIGN,
+-				  /* hw   end padding */
++				  skb->data,
++				  /* hw end padding */
+ 				  rq->wqe_sz,
+ 				  DMA_FROM_DEVICE);
+ 
+ 	if (unlikely(dma_mapping_error(rq->pdev, dma_addr)))
+ 		goto err_free_skb;
+ 
++	skb_reserve(skb, MLX5E_NET_IP_ALIGN);
++
+ 	*((dma_addr_t *)skb->cb) = dma_addr;
+ 	wqe->data.addr = cpu_to_be64(dma_addr + MLX5E_NET_IP_ALIGN);
+ 
+@@ -217,7 +217,7 @@ bool mlx5e_poll_rx_cq(struct mlx5e_cq *c
+ 
+ 		dma_unmap_single(rq->pdev,
+ 				 *((dma_addr_t *)skb->cb),
+-				 skb_end_offset(skb),
++				 rq->wqe_sz,
+ 				 DMA_FROM_DEVICE);
+ 
+ 		if (unlikely((cqe->op_own >> 4) != MLX5_CQE_RESP_SEND)) {
+--- a/include/linux/mlx5/device.h
++++ b/include/linux/mlx5/device.h
+@@ -132,6 +132,10 @@ enum {
+ };
+ 
+ enum {
++	MLX5_HW_START_PADDING = MLX5_INLINE_SEG,
++};
++
++enum {
+ 	MLX5_MIN_PKEY_TABLE_SIZE = 128,
+ 	MLX5_MAX_LOG_PKEY_TABLE  = 5,
+ };

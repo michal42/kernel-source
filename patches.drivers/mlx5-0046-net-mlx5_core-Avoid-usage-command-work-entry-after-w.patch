@@ -1,0 +1,36 @@
+From: Ira Gusinsky <irenag@mellanox.com>
+Date: Thu, 2 Apr 2015 17:07:27 +0300
+Subject: [PATCH 046/117] net/mlx5_core: Avoid usage command work entry after
+ writing command doorbell
+Patch-mainline: v4.1-rc1
+Git-commit: 21db507439ec3a76a9587f2ad50ad3e4d13f4440
+References: bsc#923036 FATE#318772
+
+Avoid usage of command work entry in cmd_work_handler since it can be released
+by mlx5_cmd_invoke before the work handler returns to running.
+
+Signed-off-by: Ira Gusinsky <irenag@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: Eli Cohen <eli@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/cmd.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/cmd.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/cmd.c
+@@ -516,10 +516,11 @@ static void cmd_work_handler(struct work
+ 	ktime_get_ts(&ent->ts1);
+ 
+ 	/* ring doorbell after the descriptor is valid */
++	mlx5_core_dbg(dev, "writing 0x%x to command doorbell\n", 1 << ent->idx);
+ 	wmb();
+ 	iowrite32be(1 << ent->idx, &dev->iseg->cmd_dbell);
+-	mlx5_core_dbg(dev, "write 0x%x to command doorbell\n", 1 << ent->idx);
+ 	mmiowb();
++	/* if not in polling don't use ent after this point */
+ 	if (cmd->mode == CMD_MODE_POLLING) {
+ 		poll_timeout(ent);
+ 		/* make sure we read the descriptor after ownership is SW */
