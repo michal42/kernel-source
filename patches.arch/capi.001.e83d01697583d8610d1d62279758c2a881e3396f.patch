@@ -1,0 +1,337 @@
+From e83d01697583d8610d1d62279758c2a881e3396f Mon Sep 17 00:00:00 2001
+From: Ian Munsie <imunsie@au1.ibm.com>
+Date: Wed, 8 Oct 2014 19:54:50 +1100
+Subject: powerpc/cell: Move spu_handle_mm_fault() out of cell platform
+References: fate#318475
+Patch-mainline: v3.18
+Git-commit: e83d01697583d8610d1d62279758c2a881e3396f
+
+Currently spu_handle_mm_fault() is in the cell platform.
+
+This code is generically useful for other non-cell co-processors on powerpc.
+
+This patch moves this function out of the cell platform into arch/powerpc/mm so
+that others may use it.
+
+Signed-off-by: Ian Munsie <imunsie@au1.ibm.com>
+Signed-off-by: Michael Neuling <mikey@neuling.org>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+
+diff --git a/arch/powerpc/Kconfig b/arch/powerpc/Kconfig
+index 98ae8b7..88eace4 100644
+--- a/arch/powerpc/Kconfig
++++ b/arch/powerpc/Kconfig
+@@ -608,6 +608,10 @@ config PPC_SUBPAGE_PROT
+ 	  to set access permissions (read/write, readonly, or no access)
+ 	  on the 4k subpages of each 64k page.
+ 
++config PPC_COPRO_BASE
++	bool
++	default n
++
+ config SCHED_SMT
+ 	bool "SMT (Hyperthreading) scheduler support"
+ 	depends on PPC64 && SMP
+diff --git a/arch/powerpc/include/asm/copro.h b/arch/powerpc/include/asm/copro.h
+new file mode 100644
+index 0000000..51cae85
+--- /dev/null
++++ b/arch/powerpc/include/asm/copro.h
+@@ -0,0 +1,16 @@
++/*
++ * Copyright 2014 IBM Corp.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#ifndef _ASM_POWERPC_COPRO_H
++#define _ASM_POWERPC_COPRO_H
++
++int copro_handle_mm_fault(struct mm_struct *mm, unsigned long ea,
++			  unsigned long dsisr, unsigned *flt);
++
++#endif /* _ASM_POWERPC_COPRO_H */
+diff --git a/arch/powerpc/include/asm/spu.h b/arch/powerpc/include/asm/spu.h
+index 37b7ca3..a6e6e2b 100644
+--- a/arch/powerpc/include/asm/spu.h
++++ b/arch/powerpc/include/asm/spu.h
+@@ -27,6 +27,8 @@
+ #include <linux/workqueue.h>
+ #include <linux/device.h>
+ #include <linux/mutex.h>
++#include <asm/reg.h>
++#include <asm/copro.h>
+ 
+ #define LS_SIZE (256 * 1024)
+ #define LS_ADDR_MASK (LS_SIZE - 1)
+@@ -277,9 +279,6 @@ void spu_remove_dev_attr(struct device_attribute *attr);
+ int spu_add_dev_attr_group(struct attribute_group *attrs);
+ void spu_remove_dev_attr_group(struct attribute_group *attrs);
+ 
+-int spu_handle_mm_fault(struct mm_struct *mm, unsigned long ea,
+-		unsigned long dsisr, unsigned *flt);
+-
+ /*
+  * Notifier blocks:
+  *
+diff --git a/arch/powerpc/mm/Makefile b/arch/powerpc/mm/Makefile
+index d0130ff..325e861 100644
+--- a/arch/powerpc/mm/Makefile
++++ b/arch/powerpc/mm/Makefile
+@@ -34,3 +34,4 @@ obj-$(CONFIG_TRANSPARENT_HUGEPAGE) += hugepage-hash64.o
+ obj-$(CONFIG_PPC_SUBPAGE_PROT)	+= subpage-prot.o
+ obj-$(CONFIG_NOT_COHERENT_CACHE) += dma-noncoherent.o
+ obj-$(CONFIG_HIGHMEM)		+= highmem.o
++obj-$(CONFIG_PPC_COPRO_BASE)	+= copro_fault.o
+diff --git a/arch/powerpc/mm/copro_fault.c b/arch/powerpc/mm/copro_fault.c
+new file mode 100644
+index 0000000..ba7df14
+--- /dev/null
++++ b/arch/powerpc/mm/copro_fault.c
+@@ -0,0 +1,92 @@
++/*
++ * CoProcessor (SPU/AFU) mm fault handler
++ *
++ * (C) Copyright IBM Deutschland Entwicklung GmbH 2007
++ *
++ * Author: Arnd Bergmann <arndb@de.ibm.com>
++ * Author: Jeremy Kerr <jk@ozlabs.org>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++#include <linux/sched.h>
++#include <linux/mm.h>
++#include <linux/export.h>
++#include <asm/reg.h>
++
++/*
++ * This ought to be kept in sync with the powerpc specific do_page_fault
++ * function. Currently, there are a few corner cases that we haven't had
++ * to handle fortunately.
++ */
++int copro_handle_mm_fault(struct mm_struct *mm, unsigned long ea,
++		unsigned long dsisr, unsigned *flt)
++{
++	struct vm_area_struct *vma;
++	unsigned long is_write;
++	int ret;
++
++	if (mm == NULL)
++		return -EFAULT;
++
++	if (mm->pgd == NULL)
++		return -EFAULT;
++
++	down_read(&mm->mmap_sem);
++	ret = -EFAULT;
++	vma = find_vma(mm, ea);
++	if (!vma)
++		goto out_unlock;
++
++	if (ea < vma->vm_start) {
++		if (!(vma->vm_flags & VM_GROWSDOWN))
++			goto out_unlock;
++		if (expand_stack(vma, ea))
++			goto out_unlock;
++	}
++
++	is_write = dsisr & DSISR_ISSTORE;
++	if (is_write) {
++		if (!(vma->vm_flags & VM_WRITE))
++			goto out_unlock;
++	} else {
++		if (dsisr & DSISR_PROTFAULT)
++			goto out_unlock;
++		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
++			goto out_unlock;
++	}
++
++	ret = 0;
++	*flt = handle_mm_fault(mm, vma, ea, is_write ? FAULT_FLAG_WRITE : 0);
++	if (unlikely(*flt & VM_FAULT_ERROR)) {
++		if (*flt & VM_FAULT_OOM) {
++			ret = -ENOMEM;
++			goto out_unlock;
++		} else if (*flt & VM_FAULT_SIGBUS) {
++			ret = -EFAULT;
++			goto out_unlock;
++		}
++		BUG();
++	}
++
++	if (*flt & VM_FAULT_MAJOR)
++		current->maj_flt++;
++	else
++		current->min_flt++;
++
++out_unlock:
++	up_read(&mm->mmap_sem);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(copro_handle_mm_fault);
+diff --git a/arch/powerpc/platforms/cell/Kconfig b/arch/powerpc/platforms/cell/Kconfig
+index 9978f59..870b6db 100644
+--- a/arch/powerpc/platforms/cell/Kconfig
++++ b/arch/powerpc/platforms/cell/Kconfig
+@@ -86,6 +86,7 @@ config SPU_FS_64K_LS
+ config SPU_BASE
+ 	bool
+ 	default n
++	select PPC_COPRO_BASE
+ 
+ config CBE_RAS
+ 	bool "RAS features for bare metal Cell BE"
+diff --git a/arch/powerpc/platforms/cell/Makefile b/arch/powerpc/platforms/cell/Makefile
+index fe053e7..2d16884 100644
+--- a/arch/powerpc/platforms/cell/Makefile
++++ b/arch/powerpc/platforms/cell/Makefile
+@@ -20,7 +20,7 @@ spu-manage-$(CONFIG_PPC_CELL_COMMON)	+= spu_manage.o
+ 
+ obj-$(CONFIG_SPU_BASE)			+= spu_callbacks.o spu_base.o \
+ 					   spu_notify.o \
+-					   spu_syscalls.o spu_fault.o \
++					   spu_syscalls.o \
+ 					   $(spu-priv1-y) \
+ 					   $(spu-manage-y) \
+ 					   spufs/
+diff --git a/arch/powerpc/platforms/cell/spu_fault.c b/arch/powerpc/platforms/cell/spu_fault.c
+deleted file mode 100644
+index 641e727..0000000
+--- a/arch/powerpc/platforms/cell/spu_fault.c
++++ /dev/null
+@@ -1,94 +0,0 @@
+-/*
+- * SPU mm fault handler
+- *
+- * (C) Copyright IBM Deutschland Entwicklung GmbH 2007
+- *
+- * Author: Arnd Bergmann <arndb@de.ibm.com>
+- * Author: Jeremy Kerr <jk@ozlabs.org>
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation; either version 2, or (at your option)
+- * any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+- */
+-#include <linux/sched.h>
+-#include <linux/mm.h>
+-#include <linux/export.h>
+-
+-#include <asm/spu.h>
+-#include <asm/spu_csa.h>
+-
+-/*
+- * This ought to be kept in sync with the powerpc specific do_page_fault
+- * function. Currently, there are a few corner cases that we haven't had
+- * to handle fortunately.
+- */
+-int spu_handle_mm_fault(struct mm_struct *mm, unsigned long ea,
+-		unsigned long dsisr, unsigned *flt)
+-{
+-	struct vm_area_struct *vma;
+-	unsigned long is_write;
+-	int ret;
+-
+-	if (mm == NULL)
+-		return -EFAULT;
+-
+-	if (mm->pgd == NULL)
+-		return -EFAULT;
+-
+-	down_read(&mm->mmap_sem);
+-	ret = -EFAULT;
+-	vma = find_vma(mm, ea);
+-	if (!vma)
+-		goto out_unlock;
+-
+-	if (ea < vma->vm_start) {
+-		if (!(vma->vm_flags & VM_GROWSDOWN))
+-			goto out_unlock;
+-		if (expand_stack(vma, ea))
+-			goto out_unlock;
+-	}
+-
+-	is_write = dsisr & MFC_DSISR_ACCESS_PUT;
+-	if (is_write) {
+-		if (!(vma->vm_flags & VM_WRITE))
+-			goto out_unlock;
+-	} else {
+-		if (dsisr & MFC_DSISR_ACCESS_DENIED)
+-			goto out_unlock;
+-		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
+-			goto out_unlock;
+-	}
+-
+-	ret = 0;
+-	*flt = handle_mm_fault(mm, vma, ea, is_write ? FAULT_FLAG_WRITE : 0);
+-	if (unlikely(*flt & VM_FAULT_ERROR)) {
+-		if (*flt & VM_FAULT_OOM) {
+-			ret = -ENOMEM;
+-			goto out_unlock;
+-		} else if (*flt & (VM_FAULT_SIGBUS | VM_FAULT_SIGSEGV)) {
+-			ret = -EFAULT;
+-			goto out_unlock;
+-		}
+-		BUG();
+-	}
+-
+-	if (*flt & VM_FAULT_MAJOR)
+-		current->maj_flt++;
+-	else
+-		current->min_flt++;
+-
+-out_unlock:
+-	up_read(&mm->mmap_sem);
+-	return ret;
+-}
+-EXPORT_SYMBOL_GPL(spu_handle_mm_fault);
+diff --git a/arch/powerpc/platforms/cell/spufs/fault.c b/arch/powerpc/platforms/cell/spufs/fault.c
+index 8cb6260..e45894a 100644
+--- a/arch/powerpc/platforms/cell/spufs/fault.c
++++ b/arch/powerpc/platforms/cell/spufs/fault.c
+@@ -138,7 +138,7 @@ int spufs_handle_class1(struct spu_context *ctx)
+ 	if (ctx->state == SPU_STATE_RUNNABLE)
+ 		ctx->spu->stats.hash_flt++;
+ 
+-	/* we must not hold the lock when entering spu_handle_mm_fault */
++	/* we must not hold the lock when entering copro_handle_mm_fault */
+ 	spu_release(ctx);
+ 
+ 	access = (_PAGE_PRESENT | _PAGE_USER);
+@@ -149,7 +149,7 @@ int spufs_handle_class1(struct spu_context *ctx)
+ 
+ 	/* hashing failed, so try the actual fault handler */
+ 	if (ret)
+-		ret = spu_handle_mm_fault(current->mm, ea, dsisr, &flt);
++		ret = copro_handle_mm_fault(current->mm, ea, dsisr, &flt);
+ 
+ 	/*
+ 	 * This is nasty: we need the state_mutex for all the bookkeeping even
+-- 
+cgit v0.10.2
+
