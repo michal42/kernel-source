@@ -1,0 +1,40 @@
+From 13da704682471669685ccc3fe111fd6c0127b2eb Mon Sep 17 00:00:00 2001
+From: Ian Munsie <imunsie@au1.ibm.com>
+Date: Mon, 8 Dec 2014 19:17:58 +1100
+Subject: [PATCH] cxl: Early return from cxl_handle_fault for a shut down
+References: fate#318475
+Patch-mainline: v4.0
+Git-commit: 13da704682471669685ccc3fe111fd6c0127b2eb
+ context
+
+If a context is being detached and we get a translation fault for it
+there is little point getting it's mm and handling the fault, so just
+respond with an address error and return earlier.
+
+Signed-off-by: Ian Munsie <imunsie@au1.ibm.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/misc/cxl/fault.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/misc/cxl/fault.c b/drivers/misc/cxl/fault.c
+index f8684bc..e010302 100644
+--- a/drivers/misc/cxl/fault.c
++++ b/drivers/misc/cxl/fault.c
+@@ -180,6 +180,12 @@ void cxl_handle_fault(struct work_struct *fault_work)
+ 		return;
+ 	}
+ 
++	/* Early return if the context is being / has been detached */
++	if (ctx->status == CLOSED) {
++		cxl_ack_ae(ctx);
++		return;
++	}
++
+ 	pr_devel("CXL BOTTOM HALF handling fault for afu pe: %i. "
+ 		"DSISR: %#llx DAR: %#llx\n", ctx->pe, dsisr, dar);
+ 
+-- 
+2.1.4
+

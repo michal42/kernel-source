@@ -1,0 +1,100 @@
+From eb01d4c2388ce3b5bcc120d0f72912117ed7599d Mon Sep 17 00:00:00 2001
+From: Ian Munsie <imunsie@au1.ibm.com>
+Date: Tue, 28 Oct 2014 14:25:30 +1100
+Subject: [PATCH] cxl: Fix PSL error due to duplicate segment table entries
+References: fate#318475
+Patch-mainline: v3.18
+Git-commit: eb01d4c2388ce3b5bcc120d0f72912117ed7599d
+
+In certain circumstances the PSL (Power Service Layer, which provides
+translation services for CXL hardware) can send an interrupt for a
+segment miss that the kernel has already handled. This can happen if
+multiple translations for the same segment are queued in the PSL before
+the kernel has restarted the first translation.
+
+The CXL driver does not expect this situation and does not check if a
+segment had already been handled. This could cause a duplicate segment
+table entry which in turn caused a PSL error taking down the card.
+
+This patch fixes the issue by checking for existing entries in the
+segment table that match the segment we are trying to insert, so as to
+avoid inserting duplicate entries.
+
+Signed-off-by: Ian Munsie <imunsie@au1.ibm.com>
+Reviewed-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/misc/cxl/fault.c | 28 ++++++++++++++++++++++------
+ 1 file changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/misc/cxl/fault.c b/drivers/misc/cxl/fault.c
+index cb4f323..c99e896 100644
+--- a/drivers/misc/cxl/fault.c
++++ b/drivers/misc/cxl/fault.c
+@@ -21,11 +21,20 @@
+ 
+ #include "cxl.h"
+ 
+-/* This finds a free SSTE for the given SLB */
++static bool sste_matches(struct cxl_sste *sste, struct copro_slb *slb)
++{
++	return ((sste->vsid_data == cpu_to_be64(slb->vsid)) &&
++		(sste->esid_data == cpu_to_be64(slb->esid)));
++}
++
++/*
++ * This finds a free SSTE for the given SLB, or returns NULL if it's already in
++ * the segment table.
++ */
+ static struct cxl_sste* find_free_sste(struct cxl_context *ctx,
+ 				       struct copro_slb *slb)
+ {
+-	struct cxl_sste *primary, *sste;
++	struct cxl_sste *primary, *sste, *ret = NULL;
+ 	unsigned int mask = (ctx->sst_size >> 7) - 1; /* SSTP0[SegTableSize] */
+ 	unsigned int entry;
+ 	unsigned int hash;
+@@ -38,15 +47,19 @@ static struct cxl_sste* find_free_sste(struct cxl_context *ctx,
+ 	primary = ctx->sstp + (hash << 3);
+ 
+ 	for (entry = 0, sste = primary; entry < 8; entry++, sste++) {
+-		if (!(be64_to_cpu(sste->esid_data) & SLB_ESID_V))
+-			return sste;
++		if (!ret && !(be64_to_cpu(sste->esid_data) & SLB_ESID_V))
++			ret = sste;
++		if (sste_matches(sste, slb))
++			return NULL;
+ 	}
++	if (ret)
++		return ret;
+ 
+ 	/* Nothing free, select an entry to cast out */
+-	sste = primary + ctx->sst_lru;
++	ret = primary + ctx->sst_lru;
+ 	ctx->sst_lru = (ctx->sst_lru + 1) & 0x7;
+ 
+-	return sste;
++	return ret;
+ }
+ 
+ static void cxl_load_segment(struct cxl_context *ctx, struct copro_slb *slb)
+@@ -57,12 +70,15 @@ static void cxl_load_segment(struct cxl_context *ctx, struct copro_slb *slb)
+ 
+ 	spin_lock_irqsave(&ctx->sste_lock, flags);
+ 	sste = find_free_sste(ctx, slb);
++	if (!sste)
++		goto out_unlock;
+ 
+ 	pr_devel("CXL Populating SST[%li]: %#llx %#llx\n",
+ 			sste - ctx->sstp, slb->vsid, slb->esid);
+ 
+ 	sste->vsid_data = cpu_to_be64(slb->vsid);
+ 	sste->esid_data = cpu_to_be64(slb->esid);
++out_unlock:
+ 	spin_unlock_irqrestore(&ctx->sste_lock, flags);
+ }
+ 
+-- 
+2.1.4
+
