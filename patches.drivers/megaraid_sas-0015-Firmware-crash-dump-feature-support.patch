@@ -68,13 +68,11 @@ Reviewed-by: Tomas Henzl <thenzl@redhat.com>
 Signed-off-by: Christoph Hellwig <hch@lst.de>
 Acked-by: Johannes Thumshirn <jthumshirn@suse.de>
 ---
- drivers/scsi/megaraid/megaraid_sas.h        |  58 +++++-
- drivers/scsi/megaraid/megaraid_sas_base.c   | 294 +++++++++++++++++++++++++++-
- drivers/scsi/megaraid/megaraid_sas_fusion.c | 172 +++++++++++++++-
+ drivers/scsi/megaraid/megaraid_sas.h        |   58 +++++
+ drivers/scsi/megaraid/megaraid_sas_base.c   |  294 +++++++++++++++++++++++++++-
+ drivers/scsi/megaraid/megaraid_sas_fusion.c |  172 ++++++++++++++++
  3 files changed, 519 insertions(+), 5 deletions(-)
 
-diff --git a/drivers/scsi/megaraid/megaraid_sas.h b/drivers/scsi/megaraid/megaraid_sas.h
-index bc7adcf..e0f03e2 100644
 --- a/drivers/scsi/megaraid/megaraid_sas.h
 +++ b/drivers/scsi/megaraid/megaraid_sas.h
 @@ -105,6 +105,9 @@
@@ -173,7 +171,7 @@ index bc7adcf..e0f03e2 100644
  
  	u8 flag;
  	u8 unload;
-@@ -1830,4 +1882,8 @@ u16 MR_LdSpanArrayGet(u32 ld, u32 span, struct MR_FW_RAID_MAP_ALL *map);
+@@ -1830,4 +1882,8 @@ u16 MR_LdSpanArrayGet(u32 ld, u32 span,
  u16 MR_PdDevHandleGet(u32 pd, struct MR_FW_RAID_MAP_ALL *map);
  u16 MR_GetLDTgtId(u32 ld, struct MR_FW_RAID_MAP_ALL *map);
  
@@ -182,11 +180,9 @@ index bc7adcf..e0f03e2 100644
 +void megasas_free_host_crash_buffer(struct megasas_instance *instance);
 +void megasas_fusion_crash_dump_wq(struct work_struct *work);
  #endif				/*LSI_MEGARAID_SAS_H */
-diff --git a/drivers/scsi/megaraid/megaraid_sas_base.c b/drivers/scsi/megaraid/megaraid_sas_base.c
-index 836711b..5dfdf8f 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_base.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_base.c
-@@ -2569,6 +2569,152 @@ static int megasas_change_queue_depth(struct scsi_device *sdev,
+@@ -2571,6 +2571,152 @@ static int megasas_change_queue_depth(st
  	return queue_depth;
  }
  
@@ -339,7 +335,7 @@ index 836711b..5dfdf8f 100644
  /*
   * Scsi host template for megaraid_sas driver
   */
-@@ -2584,6 +2730,7 @@ static struct scsi_host_template megasas_template = {
+@@ -2586,6 +2732,7 @@ static struct scsi_host_template megasas
  	.eh_bus_reset_handler = megasas_reset_bus_host,
  	.eh_host_reset_handler = megasas_reset_bus_host,
  	.eh_timed_out = megasas_reset_timer,
@@ -347,7 +343,7 @@ index 836711b..5dfdf8f 100644
  	.bios_param = megasas_bios_param,
  	.use_clustering = ENABLE_CLUSTERING,
  	.change_queue_depth = megasas_change_queue_depth,
-@@ -3889,6 +4036,59 @@ megasas_get_ctrl_info(struct megasas_instance *instance,
+@@ -3891,6 +4038,59 @@ megasas_get_ctrl_info(struct megasas_ins
  	return ret;
  }
  
@@ -407,7 +403,7 @@ index 836711b..5dfdf8f 100644
  /**
   * megasas_issue_init_mfi -	Initializes the FW
   * @instance:		Adapter soft state
-@@ -4286,6 +4486,27 @@ static int megasas_init_fw(struct megasas_instance *instance)
+@@ -4288,6 +4488,27 @@ static int megasas_init_fw(struct megasa
  			dev_info(&instance->pdev->dev,
  				 "VF requestorId %d\n", instance->requestorId);
  		}
@@ -435,7 +431,7 @@ index 836711b..5dfdf8f 100644
  	}
  	instance->max_sectors_per_req = instance->max_num_sge *
  						PAGE_SIZE / 512;
-@@ -4805,6 +5026,23 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -4807,6 +5028,23 @@ static int megasas_probe_one(struct pci_
  		break;
  	}
  
@@ -459,7 +455,7 @@ index 836711b..5dfdf8f 100644
  	megasas_poll_wait_aen = 0;
  	instance->flag_ieee = 0;
  	instance->ev = NULL;
-@@ -4866,9 +5104,10 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -4868,9 +5106,10 @@ static int megasas_probe_one(struct pci_
  	if ((instance->pdev->device == PCI_DEVICE_ID_LSI_FUSION) ||
  	    (instance->pdev->device == PCI_DEVICE_ID_LSI_PLASMA) ||
  	    (instance->pdev->device == PCI_DEVICE_ID_LSI_INVADER) ||
@@ -472,7 +468,7 @@ index 836711b..5dfdf8f 100644
  		INIT_WORK(&instance->work_init, process_fw_state_change_wq);
  
  	/*
-@@ -5356,6 +5595,8 @@ static void megasas_detach_one(struct pci_dev *pdev)
+@@ -5358,6 +5597,8 @@ static void megasas_detach_one(struct pc
  	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
  		del_timer_sync(&instance->sriov_heartbeat_timer);
  
@@ -481,7 +477,7 @@ index 836711b..5dfdf8f 100644
  	scsi_remove_host(instance->host);
  	megasas_flush_cache(instance);
  	megasas_shutdown_controller(instance, MR_DCMD_CTRL_SHUTDOWN);
-@@ -5446,6 +5687,10 @@ static void megasas_detach_one(struct pci_dev *pdev)
+@@ -5448,6 +5689,10 @@ static void megasas_detach_one(struct pc
  				    instance->hb_host_mem,
  				    instance->hb_host_mem_h);
  
@@ -492,7 +488,7 @@ index 836711b..5dfdf8f 100644
  	scsi_host_put(host);
  
  	pci_disable_device(pdev);
-@@ -5537,6 +5782,45 @@ static unsigned int megasas_mgmt_poll(struct file *file, poll_table *wait)
+@@ -5539,6 +5784,45 @@ static unsigned int megasas_mgmt_poll(st
  	return mask;
  }
  
@@ -538,7 +534,7 @@ index 836711b..5dfdf8f 100644
  /**
   * megasas_mgmt_fw_ioctl -	Issues management ioctls to FW
   * @instance:			Adapter soft state
-@@ -5583,6 +5867,12 @@ megasas_mgmt_fw_ioctl(struct megasas_instance *instance,
+@@ -5585,6 +5869,12 @@ megasas_mgmt_fw_ioctl(struct megasas_ins
  					       MFI_FRAME_SGL64 |
  					       MFI_FRAME_SENSE64));
  
@@ -551,11 +547,9 @@ index 836711b..5dfdf8f 100644
  	/*
  	 * The management interface between applications and the fw uses
  	 * MFI frames. E.g, RAID configuration changes, LD property changes
-diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.c b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-index f554a2a..9283129 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-@@ -91,6 +91,8 @@ void megasas_start_timer(struct megasas_instance *instance,
+@@ -91,6 +91,8 @@ void megasas_start_timer(struct megasas_
  extern struct megasas_mgmt_info megasas_mgmt_info;
  extern int resetwaittime;
  
@@ -564,7 +558,7 @@ index f554a2a..9283129 100644
  /**
   * megasas_enable_intr_fusion -	Enables interrupts
   * @regs:			MFI register set
-@@ -2057,7 +2059,7 @@ irqreturn_t megasas_isr_fusion(int irq, void *devp)
+@@ -2057,7 +2059,7 @@ irqreturn_t megasas_isr_fusion(int irq,
  {
  	struct megasas_irq_context *irq_context = devp;
  	struct megasas_instance *instance = irq_context->instance;
@@ -573,7 +567,7 @@ index f554a2a..9283129 100644
  
  	if (instance->mask_interrupts)
  		return IRQ_NONE;
-@@ -2079,7 +2081,16 @@ irqreturn_t megasas_isr_fusion(int irq, void *devp)
+@@ -2079,7 +2081,16 @@ irqreturn_t megasas_isr_fusion(int irq,
  		/* If we didn't complete any commands, check for FW fault */
  		fw_state = instance->instancet->read_fw_status_reg(
  			instance->reg_set) & MFI_STATE_MASK;
@@ -591,7 +585,7 @@ index f554a2a..9283129 100644
  			printk(KERN_WARNING "megaraid_sas: Iop2SysDoorbellInt"
  			       "for scsi%d\n", instance->host->host_no);
  			schedule_work(&instance->work_init);
-@@ -2232,6 +2243,49 @@ megasas_read_fw_status_reg_fusion(struct megasas_register_set __iomem *regs)
+@@ -2232,6 +2243,49 @@ megasas_read_fw_status_reg_fusion(struct
  }
  
  /**
@@ -641,15 +635,15 @@ index f554a2a..9283129 100644
   * megasas_adp_reset_fusion -	For controller reset
   * @regs:				MFI register set
   */
-@@ -2374,6 +2428,7 @@ int megasas_reset_fusion(struct Scsi_Host *shost, int iotimeout)
+@@ -2457,6 +2511,7 @@ int megasas_reset_fusion(struct Scsi_Hos
  	struct megasas_cmd *cmd_mfi;
  	union MEGASAS_REQUEST_DESCRIPTOR_UNION *req_desc;
- 	u32 host_diag, abs_state, status_reg, reset_adapter;
+ 	u32 abs_state, status_reg, reset_adapter;
 +	u32 io_timeout_in_crash_mode = 0;
  
  	instance = (struct megasas_instance *)shost->hostdata;
  	fusion = instance->ctrl_context;
-@@ -2387,6 +2442,42 @@ int megasas_reset_fusion(struct Scsi_Host *shost, int iotimeout)
+@@ -2470,6 +2525,42 @@ int megasas_reset_fusion(struct Scsi_Hos
  		mutex_unlock(&instance->reset_mutex);
  		return FAILED;
  	}
@@ -692,7 +686,7 @@ index f554a2a..9283129 100644
  
  	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
  		del_timer_sync(&instance->sriov_heartbeat_timer);
-@@ -2653,6 +2744,15 @@ int megasas_reset_fusion(struct Scsi_Host *shost, int iotimeout)
+@@ -2665,6 +2756,15 @@ int megasas_reset_fusion(struct Scsi_Hos
  			printk(KERN_WARNING "megaraid_sas: Reset "
  			       "successful for scsi%d.\n",
  				instance->host->host_no);
@@ -708,7 +702,7 @@ index f554a2a..9283129 100644
  			retval = SUCCESS;
  			goto out;
  		}
-@@ -2681,6 +2781,74 @@ out:
+@@ -2693,6 +2793,74 @@ out:
  	return retval;
  }
  
@@ -783,6 +777,3 @@ index f554a2a..9283129 100644
  /* Fusion OCR work queue */
  void megasas_fusion_ocr_wq(struct work_struct *work)
  {
--- 
-2.4.2
-
