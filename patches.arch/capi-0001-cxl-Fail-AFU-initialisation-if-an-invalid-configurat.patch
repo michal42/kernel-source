@@ -1,0 +1,53 @@
+From 3d5be0392f52489b7572903d83f1f267f26e6b69 Mon Sep 17 00:00:00 2001
+From: Ian Munsie <imunsie@au1.ibm.com>
+Date: Wed, 4 Feb 2015 19:09:02 +1100
+Subject: [PATCH] cxl: Fail AFU initialisation if an invalid configuration
+References: fate#318475
+Patch-mainline: v4.0
+Git-commit: 3d5be0392f52489b7572903d83f1f267f26e6b69
+ record is found
+
+If an AFU claims to have a configuration record but doesn't actually
+contain a vendor and device ID, fail the AFU initialisation. Right now
+this is just a way of politely letting AFU developers know that they
+need to fix their config space, but later on we may expose the AFUs as
+actual PCI devices in their own right and don't want to inadvertendly
+expose an AFU with a bad config space.
+
+Signed-off-by: Ian Munsie <imunsie@au1.ibm.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/misc/cxl/pci.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/misc/cxl/pci.c b/drivers/misc/cxl/pci.c
+index 2b2e1b8..1ef0164 100644
+--- a/drivers/misc/cxl/pci.c
++++ b/drivers/misc/cxl/pci.c
+@@ -598,6 +598,8 @@ static int cxl_read_afu_descriptor(struct cxl_afu *afu)
+ 
+ static int cxl_afu_descriptor_looks_ok(struct cxl_afu *afu)
+ {
++	int i;
++
+ 	if (afu->psa && afu->adapter->ps_size <
+ 			(afu->pp_offset + afu->pp_size*afu->max_procs_virtualised)) {
+ 		dev_err(&afu->dev, "per-process PSA can't fit inside the PSA!\n");
+@@ -607,6 +609,13 @@ static int cxl_afu_descriptor_looks_ok(struct cxl_afu *afu)
+ 	if (afu->pp_psa && (afu->pp_size < PAGE_SIZE))
+ 		dev_warn(&afu->dev, "AFU uses < PAGE_SIZE per-process PSA!");
+ 
++	for (i = 0; i < afu->crs_num; i++) {
++		if ((cxl_afu_cr_read32(afu, i, 0) == 0)) {
++			dev_err(&afu->dev, "ABORTING: AFU configuration record %i is invalid\n", i);
++			return -EINVAL;
++		}
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.1.4
+
