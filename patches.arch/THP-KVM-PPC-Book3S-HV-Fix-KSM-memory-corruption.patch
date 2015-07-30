@@ -1,0 +1,106 @@
+From 138d3c60df18a77b39ab26a38d1e9bbe6f4e828b Mon Sep 17 00:00:00 2001
+From: Paul Mackerras <paulus@samba.org>
+Date: Mon, 3 Nov 2014 15:51:58 +1100
+Subject: [PATCH 1/7] KVM: PPC: Book3S HV: Fix KSM memory corruption
+References: bsc#937132
+Patch-mainline: v3.19
+Git-commit: b4a839009a0842759c0405662637b8f1f35ff460
+
+Testing with KSM active in the host showed occasional corruption of
+guest memory.  Typically a page that should have contained zeroes
+would contain values that look like the contents of a user process
+stack (values such as 0x0000_3fff_xxxx_xxx).
+
+Code inspection in kvmppc_h_protect revealed that there was a race
+condition with the possibility of granting write access to a page
+which is read-only in the host page tables.  The code attempts to keep
+the host mapping read-only if the host userspace PTE is read-only, but
+if that PTE had been temporarily made invalid for any reason, the
+read-only check would not trigger and the host HPTE could end up
+read-write.  Examination of the guest HPT in the failure situation
+revealed that there were indeed shared pages which should have been
+read-only that were mapped read-write.
+
+To close this race, we don't let a page go from being read-only to
+being read-write, as far as the real HPTE mapping the page is
+concerned (the guest view can go to read-write, but the actual mapping
+stays read-only).  When the guest tries to write to the page, we take
+an HDSI and let kvmppc_book3s_hv_page_fault take care of providing a
+writable HPTE for the page.
+
+This eliminates the occasional corruption of shared pages
+that was previously seen with KSM active.
+
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Alexander Graf <agraf@suse.de>
+(cherry picked from commit b4a839009a0842759c0405662637b8f1f35ff460)
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ arch/powerpc/kvm/book3s_hv_rm_mmu.c | 44 ++++++++++++++-----------------------
+ 1 file changed, 17 insertions(+), 27 deletions(-)
+
+diff --git a/arch/powerpc/kvm/book3s_hv_rm_mmu.c b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+index 084ad54c73cd..411720f59643 100644
+--- a/arch/powerpc/kvm/book3s_hv_rm_mmu.c
++++ b/arch/powerpc/kvm/book3s_hv_rm_mmu.c
+@@ -667,40 +667,30 @@ long kvmppc_h_protect(struct kvm_vcpu *vcpu, unsigned long flags,
+ 		rev->guest_rpte = r;
+ 		note_hpte_modification(kvm, rev);
+ 	}
+-	r = (be64_to_cpu(hpte[1]) & ~mask) | bits;
+ 
+ 	/* Update HPTE */
+ 	if (v & HPTE_V_VALID) {
+-		rb = compute_tlbie_rb(v, r, pte_index);
+-		hpte[0] = cpu_to_be64(v & ~HPTE_V_VALID);
+-		do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags), true);
+ 		/*
+-		 * If the host has this page as readonly but the guest
+-		 * wants to make it read/write, reduce the permissions.
+-		 * Checking the host permissions involves finding the
+-		 * memslot and then the Linux PTE for the page.
++		 * If the page is valid, don't let it transition from
++		 * readonly to writable.  If it should be writable, we'll
++		 * take a trap and let the page fault code sort it out.
+ 		 */
+-		if (hpte_is_writable(r) && kvm->arch.using_mmu_notifiers) {
+-			unsigned long psize, gfn, hva;
+-			struct kvm_memory_slot *memslot;
+-			pgd_t *pgdir = vcpu->arch.pgdir;
+-			pte_t pte;
+-
+-			psize = hpte_page_size(v, r);
+-			gfn = ((r & HPTE_R_RPN) & ~(psize - 1)) >> PAGE_SHIFT;
+-			memslot = __gfn_to_memslot(kvm_memslots_raw(kvm), gfn);
+-			if (memslot) {
+-				hva = __gfn_to_hva_memslot(memslot, gfn);
+-				pte = lookup_linux_pte_and_update(pgdir, hva,
+-								  1, &psize);
+-				if (pte_present(pte) && !pte_write(pte))
+-					r = hpte_make_readonly(r);
+-			}
++		pte = be64_to_cpu(hpte[1]);
++		r = (pte & ~mask) | bits;
++		if (hpte_is_writable(r) && kvm->arch.using_mmu_notifiers &&
++		    !hpte_is_writable(pte))
++			r = hpte_make_readonly(r);
++		/* If the PTE is changing, invalidate it first */
++		if (r != pte) {
++			rb = compute_tlbie_rb(v, r, pte_index);
++			hpte[0] = cpu_to_be64((v & ~HPTE_V_VALID) |
++					      HPTE_V_ABSENT);
++			do_tlbies(kvm, &rb, 1, global_invalidates(kvm, flags),
++				  true);
++			hpte[1] = cpu_to_be64(r);
+ 		}
+ 	}
+-	hpte[1] = cpu_to_be64(r);
+-	eieio();
+-	hpte[0] = cpu_to_be64(v & ~HPTE_V_HVLOCK);
++	unlock_hpte(hpte, v & ~HPTE_V_HVLOCK);
+ 	asm volatile("ptesync" : : : "memory");
+ 	return H_SUCCESS;
+ }
+-- 
+2.1.4
+
