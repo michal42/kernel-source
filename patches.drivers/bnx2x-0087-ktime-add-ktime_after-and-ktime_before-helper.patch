@@ -1,0 +1,61 @@
+From: Daniel Borkmann <dborkman@redhat.com>
+Date: Wed, 11 Jun 2014 18:19:28 +0200
+Subject: [PATCH 87/91] ktime: add ktime_after and ktime_before helper
+Patch-mainline: v3.16-rc1
+Git-commit: 67cb9366ff5f99868100198efba5ca88aaa6ad25
+References: bsc#922056 FATE#318604
+
+Add two minimal helper functions analogous to time_before() and
+time_after() that will later on both be needed by SCTP code.
+
+Signed-off-by: Daniel Borkmann <dborkman@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ include/linux/ktime.h    |   24 ++++++++++++++++++++++++
+ net/sctp/sm_make_chunk.c |    2 +-
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+--- a/include/linux/ktime.h
++++ b/include/linux/ktime.h
+@@ -304,6 +304,30 @@ static inline int ktime_compare(const kt
+ 	return 0;
+ }
+ 
++/**
++ * ktime_after - Compare if a ktime_t value is bigger than another one.
++ * @cmp1:	comparable1
++ * @cmp2:	comparable2
++ *
++ * Return: true if cmp1 happened after cmp2.
++ */
++static inline bool ktime_after(const ktime_t cmp1, const ktime_t cmp2)
++{
++	return ktime_compare(cmp1, cmp2) > 0;
++}
++
++/**
++ * ktime_before - Compare if a ktime_t value is smaller than another one.
++ * @cmp1:	comparable1
++ * @cmp2:	comparable2
++ *
++ * Return: true if cmp1 happened before cmp2.
++ */
++static inline bool ktime_before(const ktime_t cmp1, const ktime_t cmp2)
++{
++	return ktime_compare(cmp1, cmp2) < 0;
++}
++
+ static inline s64 ktime_to_us(const ktime_t kt)
+ {
+ 	struct timeval tv = ktime_to_timeval(kt);
+--- a/net/sctp/sm_make_chunk.c
++++ b/net/sctp/sm_make_chunk.c
+@@ -1794,7 +1794,7 @@ no_hmac:
+ 	else
+ 		kt = ktime_get();
+ 
+-	if (!asoc && ktime_compare(bear_cookie->expiration, kt) < 0) {
++	if (!asoc && ktime_before(bear_cookie->expiration, kt)) {
+ 		/*
+ 		 * Section 3.3.10.3 Stale Cookie Error (3)
+ 		 *
