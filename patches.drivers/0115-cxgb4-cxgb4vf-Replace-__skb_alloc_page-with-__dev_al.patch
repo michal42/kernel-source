@@ -1,0 +1,81 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Tue, 11 Nov 2014 09:26:42 -0800
+Subject: [PATCH 115/230] cxgb4/cxgb4vf: Replace __skb_alloc_page with
+ __dev_alloc_page
+Patch-mainline: v3.19-rc1
+Git-commit: aa9cd31c3f3ee36dc459b6070bacc581c1bfc334
+References: bsc#924378 FATE#318565 bsc#921338
+
+Drop the bloated use of __skb_alloc_page and replace it with
+__dev_alloc_page.  In addition update the one other spot that is
+allocating a page so that it allocates with the correct flags.
+
+Cc: Hariprasad S <hariprasad@chelsio.com>
+Cc: Casey Leedom <leedom@chelsio.com>
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/chelsio/cxgb4/sge.c   |    6 +++---
+ drivers/net/ethernet/chelsio/cxgb4vf/sge.c |    7 ++++---
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/chelsio/cxgb4/sge.c
++++ b/drivers/net/ethernet/chelsio/cxgb4/sge.c
+@@ -576,7 +576,7 @@ static unsigned int refill_fl(struct ada
+ 	__be64 *d = &q->desc[q->pidx];
+ 	struct rx_sw_desc *sd = &q->sdesc[q->pidx];
+ 
+-	gfp |= __GFP_NOWARN | __GFP_COLD;
++	gfp |= __GFP_NOWARN;
+ 
+ 	if (s->fl_pg_order == 0)
+ 		goto alloc_small_pages;
+@@ -585,7 +585,7 @@ static unsigned int refill_fl(struct ada
+ 	 * Prefer large buffers
+ 	 */
+ 	while (n) {
+-		pg = alloc_pages(gfp | __GFP_COMP, s->fl_pg_order);
++		pg = __dev_alloc_pages(gfp, s->fl_pg_order);
+ 		if (unlikely(!pg)) {
+ 			q->large_alloc_failed++;
+ 			break;       /* fall back to single pages */
+@@ -615,7 +615,7 @@ static unsigned int refill_fl(struct ada
+ 
+ alloc_small_pages:
+ 	while (n--) {
+-		pg = __skb_alloc_page(gfp, NULL);
++		pg = __dev_alloc_page(gfp);
+ 		if (unlikely(!pg)) {
+ 			q->alloc_failed++;
+ 			break;
+--- a/drivers/net/ethernet/chelsio/cxgb4vf/sge.c
++++ b/drivers/net/ethernet/chelsio/cxgb4vf/sge.c
+@@ -598,6 +598,8 @@ static unsigned int refill_fl(struct ada
+ 	 */
+ 	BUG_ON(fl->avail + n > fl->size - FL_PER_EQ_UNIT);
+ 
++	gfp |= __GFP_NOWARN;
++
+ 	/*
+ 	 * If we support large pages, prefer large buffers and fail over to
+ 	 * small pages if we can't allocate large pages to satisfy the refill.
+@@ -608,8 +610,7 @@ static unsigned int refill_fl(struct ada
+ 		goto alloc_small_pages;
+ 
+ 	while (n) {
+-		page = alloc_pages(gfp | __GFP_COMP | __GFP_NOWARN,
+-				   s->fl_pg_order);
++		page = __dev_alloc_pages(gfp, s->fl_pg_order);
+ 		if (unlikely(!page)) {
+ 			/*
+ 			 * We've failed inour attempt to allocate a "large
+@@ -653,7 +654,7 @@ static unsigned int refill_fl(struct ada
+ 
+ alloc_small_pages:
+ 	while (n--) {
+-		page = __skb_alloc_page(gfp | __GFP_NOWARN, NULL);
++		page = __dev_alloc_page(gfp);
+ 		if (unlikely(!page)) {
+ 			fl->alloc_failed++;
+ 			break;

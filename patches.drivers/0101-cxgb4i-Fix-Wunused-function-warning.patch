@@ -1,0 +1,89 @@
+From: Anish Bhatt <anish@chelsio.com>
+Date: Tue, 14 Oct 2014 20:07:23 -0700
+Subject: [PATCH 101/230] cxgb4i : Fix -Wunused-function warning
+Patch-mainline: v3.18-rc1
+Git-commit: f42bb57c61fd21fb7e30a2b99dbeb1671666bc47
+References: bsc#924384 FATE#318570 bsc#921338
+
+A bunch of ipv6 related code is left on by default. While this causes no
+compilation issues, there is no need to have this enabled by default. Guard
+with an ipv6 check, which also takes care of a -Wunused-function warning.
+
+Signed-off-by: Anish Bhatt <anish@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/scsi/cxgbi/cxgb4i/cxgb4i.c |    8 ++++++++
+ drivers/scsi/cxgbi/libcxgbi.c      |    2 ++
+ 2 files changed, 10 insertions(+)
+
+--- a/drivers/scsi/cxgbi/cxgb4i/cxgb4i.c
++++ b/drivers/scsi/cxgbi/cxgb4i/cxgb4i.c
+@@ -259,6 +259,7 @@ static void send_act_open_req(struct cxg
+ 	cxgb4_l2t_send(csk->cdev->ports[csk->port_id], skb, csk->l2t);
+ }
+ 
++#if IS_ENABLED(CONFIG_IPV6)
+ static void send_act_open_req6(struct cxgbi_sock *csk, struct sk_buff *skb,
+ 			       struct l2t_entry *e)
+ {
+@@ -344,6 +345,7 @@ static void send_act_open_req6(struct cx
+ 
+ 	cxgb4_l2t_send(csk->cdev->ports[csk->port_id], skb, csk->l2t);
+ }
++#endif
+ 
+ static void send_close_req(struct cxgbi_sock *csk)
+ {
+@@ -781,9 +783,11 @@ static void csk_act_open_retry_timer(uns
+ 	if (csk->csk_family == AF_INET) {
+ 		send_act_open_func = send_act_open_req;
+ 		skb = alloc_wr(size, 0, GFP_ATOMIC);
++#if IS_ENABLED(CONFIG_IPV6)
+ 	} else {
+ 		send_act_open_func = send_act_open_req6;
+ 		skb = alloc_wr(size6, 0, GFP_ATOMIC);
++#endif
+ 	}
+ 
+ 	if (!skb)
+@@ -1335,8 +1339,10 @@ static int init_act_open(struct cxgbi_so
+ 
+ 	if (csk->csk_family == AF_INET)
+ 		skb = alloc_wr(size, 0, GFP_NOIO);
++#if IS_ENABLED(CONFIG_IPV6)
+ 	else
+ 		skb = alloc_wr(size6, 0, GFP_NOIO);
++#endif
+ 
+ 	if (!skb)
+ 		goto rel_resource;
+@@ -1370,8 +1376,10 @@ static int init_act_open(struct cxgbi_so
+ 	cxgbi_sock_set_state(csk, CTP_ACTIVE_OPEN);
+ 	if (csk->csk_family == AF_INET)
+ 		send_act_open_req(csk, skb, csk->l2t);
++#if IS_ENABLED(CONFIG_IPV6)
+ 	else
+ 		send_act_open_req6(csk, skb, csk->l2t);
++#endif
+ 	neigh_release(n);
+ 
+ 	return 0;
+--- a/drivers/scsi/cxgbi/libcxgbi.c
++++ b/drivers/scsi/cxgbi/libcxgbi.c
+@@ -275,6 +275,7 @@ struct cxgbi_device *cxgbi_device_find_b
+ }
+ EXPORT_SYMBOL_GPL(cxgbi_device_find_by_netdev_rcu);
+ 
++#if IS_ENABLED(CONFIG_IPV6)
+ static struct cxgbi_device *cxgbi_device_find_by_mac(struct net_device *ndev,
+ 						     int *port)
+ {
+@@ -307,6 +308,7 @@ static struct cxgbi_device *cxgbi_device
+ 		  ndev, ndev->name);
+ 	return NULL;
+ }
++#endif
+ 
+ void cxgbi_hbas_remove(struct cxgbi_device *cdev)
+ {

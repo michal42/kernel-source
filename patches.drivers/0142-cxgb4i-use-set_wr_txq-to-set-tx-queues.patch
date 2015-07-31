@@ -1,0 +1,77 @@
+From: Karen Xie <kxie@chelsio.com>
+Date: Thu, 11 Dec 2014 19:13:44 -0800
+Subject: [PATCH 142/230] cxgb4i: use set_wr_txq() to set tx queues
+Patch-mainline: v3.19-rc1
+Git-commit: 2126bc5e872cefd808a6590c5cec797997a6490d
+References: bsc#924384 FATE#318570 bsc#921338
+
+use cxgb4's set_wr_txq() for setting of the tx queue for a outgoing packet.
+remove the similar function in cxgb4i.
+
+Signed-off-by: Karen Xie <kxie@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/scsi/cxgbi/cxgb4i/cxgb4i.c |   16 +++++-----------
+ 1 file changed, 5 insertions(+), 11 deletions(-)
+
+--- a/drivers/scsi/cxgbi/cxgb4i/cxgb4i.c
++++ b/drivers/scsi/cxgbi/cxgb4i/cxgb4i.c
+@@ -157,12 +157,6 @@ static struct scsi_transport_template *c
+ #define RCV_BUFSIZ_MASK		0x3FFU
+ #define MAX_IMM_TX_PKT_LEN	128
+ 
+-static inline void set_queue(struct sk_buff *skb, unsigned int queue,
+-				const struct cxgbi_sock *csk)
+-{
+-	skb->queue_mapping = queue;
+-}
+-
+ static int push_tx_frames(struct cxgbi_sock *, int);
+ 
+ /*
+@@ -404,7 +398,7 @@ static void send_abort_req(struct cxgbi_
+ 
+ 	csk->cpl_abort_req = NULL;
+ 	req = (struct cpl_abort_req *)skb->head;
+-	set_queue(skb, CPL_PRIORITY_DATA, csk);
++	set_wr_txq(skb, CPL_PRIORITY_DATA, csk->port_id);
+ 	req->cmd = CPL_ABORT_SEND_RST;
+ 	t4_set_arp_err_handler(skb, csk, abort_arp_failure);
+ 	INIT_TP_WR(req, csk->tid);
+@@ -430,7 +424,7 @@ static void send_abort_rpl(struct cxgbi_
+ 		csk, csk->state, csk->flags, csk->tid, rst_status);
+ 
+ 	csk->cpl_abort_rpl = NULL;
+-	set_queue(skb, CPL_PRIORITY_DATA, csk);
++	set_wr_txq(skb, CPL_PRIORITY_DATA, csk->port_id);
+ 	INIT_TP_WR(rpl, csk->tid);
+ 	OPCODE_TID(rpl) = cpu_to_be32(MK_OPCODE_TID(CPL_ABORT_RPL, csk->tid));
+ 	rpl->cmd = rst_status;
+@@ -556,7 +550,7 @@ static inline int send_tx_flowc_wr(struc
+ 	flowc->mnemval[8].mnemonic = FW_FLOWC_MNEM_TXDATAPLEN_MAX;
+ 	flowc->mnemval[8].val = 16384;
+ 
+-	set_queue(skb, CPL_PRIORITY_DATA, csk);
++	set_wr_txq(skb, CPL_PRIORITY_DATA, csk->port_id);
+ 
+ 	log_debug(1 << CXGBI_DBG_TOE | 1 << CXGBI_DBG_SOCK,
+ 		"csk 0x%p, tid 0x%x, %u,%u,%u,%u,%u,%u,%u.\n",
+@@ -662,7 +656,7 @@ static int push_tx_frames(struct cxgbi_s
+ 			break;
+ 		}
+ 		__skb_unlink(skb, &csk->write_queue);
+-		set_queue(skb, CPL_PRIORITY_DATA, csk);
++		set_wr_txq(skb, CPL_PRIORITY_DATA, csk->port_id);
+ 		skb->csum = credits_needed + flowclen16;
+ 		csk->wr_cred -= credits_needed;
+ 		csk->wr_una_cred += credits_needed;
+@@ -1554,7 +1548,7 @@ static int ddp_ppod_write_idata(struct c
+ 		return -ENOMEM;
+ 	}
+ 	req = (struct ulp_mem_io *)skb->head;
+-	set_queue(skb, CPL_PRIORITY_CONTROL, NULL);
++	set_wr_txq(skb, CPL_PRIORITY_CONTROL, 0);
+ 
+ 	ulp_mem_io_set_hdr(lldi, req, wr_len, dlen, pm_addr);
+ 	idata = (struct ulptx_idata *)(req + 1);

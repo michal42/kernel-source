@@ -1,0 +1,62 @@
+From: Hariprasad Shenai <hariprasad@chelsio.com>
+Date: Fri, 30 Jan 2015 08:49:27 +0530
+Subject: [PATCH 187/230] cxgb4: Remove preprocessor check for CONFIG_CXGB4_DCB
+Patch-mainline: v4.0-rc1
+Git-commit: 3051fa617a3bb753185341a2040eaa454a54669e
+References: bsc#924378 FATE#318565 bsc#921338
+
+In commit dc9daab226aa ("cxgb4: Added support in debugfs to dump
+sge_qinfo") a preprocessor check for CONFIG_CXGB4_DCB got added, which should
+have been CONFIG_CHELSIO_T4_DCB. After adding the right preprocessor, build
+fails due to missing function ethqset2pinfo. Fixing that as well.
+
+V2: Updated description since the patch also fixes build failure
+
+Reported-by: Paul Bolle <pebolle@tiscal.nl>
+Signed-off-by: Hariprasad Shenai <hariprasad@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c |   24 ++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
++++ b/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
+@@ -1229,6 +1229,28 @@ static const struct file_operations rss_
+ 	.release = seq_release_private
+ };
+ 
++/**
++ * ethqset2pinfo - return port_info of an Ethernet Queue Set
++ * @adap: the adapter
++ * @qset: Ethernet Queue Set
++ */
++static inline struct port_info *ethqset2pinfo(struct adapter *adap, int qset)
++{
++	int pidx;
++
++	for_each_port(adap, pidx) {
++		struct port_info *pi = adap2pinfo(adap, pidx);
++
++		if (qset >= pi->first_qset &&
++		    qset < pi->first_qset + pi->nqsets)
++			return pi;
++	}
++
++	/* should never happen! */
++	BUG_ON(1);
++	return NULL;
++}
++
+ static int sge_qinfo_show(struct seq_file *seq, void *v)
+ {
+ 	struct adapter *adap = seq->private;
+@@ -1272,7 +1294,7 @@ do { \
+ 		T("TxQ inuse:", q.in_use);
+ 		T("TxQ CIDX:", q.cidx);
+ 		T("TxQ PIDX:", q.pidx);
+-#ifdef CONFIG_CXGB4_DCB
++#ifdef CONFIG_CHELSIO_T4_DCB
+ 		T("DCB Prio:", dcb_prio);
+ 		S3("u", "DCB PGID:",
+ 		   (ethqset2pinfo(adap, base_qset + i)->dcb.pgid >>
