@@ -1,0 +1,52 @@
+From: Joseph Gasparakis <joseph.gasparakis@intel.com>
+Date: Thu, 24 Oct 2013 06:27:10 +0000
+Subject: vxlan: Have the NIC drivers do less work for offloads
+Patch-mainline: v3.13-rc1
+Git-commit: e6cd988c27bb5918630db67b3526c9e78e786818
+References: bsc#938963 FATE#319084
+
+This patch removes the burden from the NIC drivers to check if the
+vxlan driver is enabled in the kernel and also makes available
+the vxlan headrooms to them.
+
+Signed-off-by: Joseph Gasparakis <joseph.gasparakis@intel.com>
+Tested-by: Kavindya Deegala <kavindya.s.deegala@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/vxlan.c |    4 ----
+ include/net/vxlan.h |   11 +++++++++++
+ 2 files changed, 11 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -60,10 +60,6 @@
+ 
+ #define VXLAN_N_VID	(1u << 24)
+ #define VXLAN_VID_MASK	(VXLAN_N_VID - 1)
+-/* IP header + UDP + VXLAN + Ethernet header */
+-#define VXLAN_HEADROOM (20 + 8 + 8 + 14)
+-/* IPv6 header + UDP + VXLAN + Ethernet header */
+-#define VXLAN6_HEADROOM (40 + 8 + 8 + 14)
+ #define VXLAN_HLEN (sizeof(struct udphdr) + sizeof(struct vxlanhdr))
+ 
+ #define VXLAN_FLAGS 0x08000000	/* struct vxlanhdr.vx_flags required value. */
+--- a/include/net/vxlan.h
++++ b/include/net/vxlan.h
+@@ -36,5 +36,16 @@ int vxlan_xmit_skb(struct vxlan_sock *vs
+ 
+ __be16 vxlan_src_port(__u16 port_min, __u16 port_max, struct sk_buff *skb);
+ 
++/* IP header + UDP + VXLAN + Ethernet header */
++#define VXLAN_HEADROOM (20 + 8 + 8 + 14)
++/* IPv6 header + UDP + VXLAN + Ethernet header */
++#define VXLAN6_HEADROOM (40 + 8 + 8 + 14)
++
++#if IS_ENABLED(CONFIG_VXLAN)
+ void vxlan_get_rx_port(struct net_device *netdev);
++#else
++static inline void vxlan_get_rx_port(struct net_device *netdev)
++{
++}
++#endif
+ #endif
