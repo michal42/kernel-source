@@ -1,0 +1,91 @@
+From: Yuval Mintz <Yuval.Mintz@qlogic.com>
+Date: Thu, 12 Jun 2014 07:55:31 +0300
+Subject: [PATCH 32/91] bnx2x: Check for UNDI in uncommon branch
+Patch-mainline: v3.16-rc1
+Git-commit: b17b0ca1642c23f0cd4e4cf52cdb9970798f3501
+References: bsc#922056 FATE#318604
+
+If L2FW utilized by the UNDI driver has the same version number as that
+of the regular FW, a driver loading after UNDI and receiving an uncommon
+answer from management will mistakenly assume the loaded FW matches its
+own requirement and try to exist the flow via FLR.
+
+Signed-off-by: Yuval Mintz <yuval.mintz@qlogic.com>
+Signed-off-by: Ariel Elior <ariel.elior@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c |   42 +++++++++++++++--------
+ 1 file changed, 29 insertions(+), 13 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+@@ -10071,6 +10071,23 @@ static void bnx2x_prev_unload_close_mac(
+ #define BCM_5710_UNDI_FW_MF_MINOR	(0x08)
+ #define BCM_5710_UNDI_FW_MF_VERS	(0x05)
+ 
++static bool bnx2x_prev_is_after_undi(struct bnx2x *bp)
++{
++	/* UNDI marks its presence in DORQ -
++	 * it initializes CID offset for normal bell to 0x7
++	 */
++	if (!(REG_RD(bp, MISC_REG_RESET_REG_1) &
++	    MISC_REGISTERS_RESET_REG_1_RST_DORQ))
++		return false;
++
++	if (REG_RD(bp, DORQ_REG_NORM_CID_OFST) == 0x7) {
++		BNX2X_DEV_INFO("UNDI previously loaded\n");
++		return true;
++	}
++
++	return false;
++}
++
+ static void bnx2x_prev_unload_undi_inc(struct bnx2x *bp, u8 inc)
+ {
+ 	u16 rcq, bd;
+@@ -10273,6 +10290,10 @@ static int bnx2x_prev_unload_uncommon(st
+ 
+ 	BNX2X_DEV_INFO("Path is unmarked\n");
+ 
++	/* Cannot proceed with FLR if UNDI is loaded, since FW does not match */
++	if (bnx2x_prev_is_after_undi(bp))
++		goto out;
++
+ 	/* If function has FLR capabilities, and existing FW version matches
+ 	 * the one required, then FLR will be sufficient to clean any residue
+ 	 * left by previous driver
+@@ -10293,6 +10314,7 @@ static int bnx2x_prev_unload_uncommon(st
+ 
+ 	BNX2X_DEV_INFO("Could not FLR\n");
+ 
++out:
+ 	/* Close the MCP request, return failure*/
+ 	rc = bnx2x_prev_mcp_done(bp);
+ 	if (!rc)
+@@ -10330,19 +10352,13 @@ static int bnx2x_prev_unload_common(stru
+ 		/* close LLH filters towards the BRB */
+ 		bnx2x_set_rx_filter(&bp->link_params, 0);
+ 
+-		/* Check if the UNDI driver was previously loaded
+-		 * UNDI driver initializes CID offset for normal bell to 0x7
+-		 */
+-		if (reset_reg & MISC_REGISTERS_RESET_REG_1_RST_DORQ) {
+-			tmp_reg = REG_RD(bp, DORQ_REG_NORM_CID_OFST);
+-			if (tmp_reg == 0x7) {
+-				BNX2X_DEV_INFO("UNDI previously loaded\n");
+-				prev_undi = true;
+-				/* clear the UNDI indication */
+-				REG_WR(bp, DORQ_REG_NORM_CID_OFST, 0);
+-				/* clear possible idle check errors */
+-				REG_RD(bp, NIG_REG_NIG_INT_STS_CLR_0);
+-			}
++		/* Check if the UNDI driver was previously loaded */
++		if (bnx2x_prev_is_after_undi(bp)) {
++			prev_undi = true;
++			/* clear the UNDI indication */
++			REG_WR(bp, DORQ_REG_NORM_CID_OFST, 0);
++			/* clear possible idle check errors */
++			REG_RD(bp, NIG_REG_NIG_INT_STS_CLR_0);
+ 		}
+ 		if (!CHIP_IS_E1x(bp))
+ 			/* block FW from writing to host */
