@@ -1,0 +1,103 @@
+From: Richard Cochran <richardcochran@gmail.com>
+Date: Fri, 21 Nov 2014 20:51:20 +0000
+Subject: [PATCH 76/77] igb: enable internal PPS for the i210
+Patch-mainline: v4.0-rc1
+Git-commit: 00c65578b47bec3f92ce259d0c9d959ac54fff28
+References: bsc#922836 Fate#318523
+
+The i210 device can produce an interrupt on the full second. This
+patch allows using this interrupt to generate an internal PPS event
+for adjusting the kernel system time.
+
+Signed-off-by: Richard Cochran <richardcochran@gmail.com>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/igb/igb_main.c |   18 ++++++++++++++--
+ drivers/net/ethernet/intel/igb/igb_ptp.c  |   32 ++++++++++++++++++++++++++++--
+ 2 files changed, 45 insertions(+), 5 deletions(-)
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -5386,14 +5386,26 @@ void igb_update_stats(struct igb_adapter
+ static void igb_tsync_interrupt(struct igb_adapter *adapter)
+ {
+ 	struct e1000_hw *hw = &adapter->hw;
+-	u32 tsicr = rd32(E1000_TSICR);
++	struct ptp_clock_event event;
++	u32 ack = 0, tsicr = rd32(E1000_TSICR);
++
++	if (tsicr & TSINTR_SYS_WRAP) {
++		event.type = PTP_CLOCK_PPS;
++		if (adapter->ptp_caps.pps)
++			ptp_clock_event(adapter->ptp_clock, &event);
++		else
++			dev_err(&adapter->pdev->dev, "unexpected SYS WRAP");
++		ack |= TSINTR_SYS_WRAP;
++	}
+ 
+ 	if (tsicr & E1000_TSICR_TXTS) {
+-		/* acknowledge the interrupt */
+-		wr32(E1000_TSICR, E1000_TSICR_TXTS);
+ 		/* retrieve hardware timestamp */
+ 		schedule_work(&adapter->ptp_tx_work);
++		ack |= E1000_TSICR_TXTS;
+ 	}
++
++	/* acknowledge the interrupts */
++	wr32(E1000_TSICR, ack);
+ }
+ 
+ static irqreturn_t igb_msix_other(int irq, void *data)
+--- a/drivers/net/ethernet/intel/igb/igb_ptp.c
++++ b/drivers/net/ethernet/intel/igb/igb_ptp.c
+@@ -361,6 +361,34 @@ static int igb_ptp_settime_i210(struct p
+ 	return 0;
+ }
+ 
++static int igb_ptp_feature_enable_i210(struct ptp_clock_info *ptp,
++				       struct ptp_clock_request *rq, int on)
++{
++	struct igb_adapter *igb =
++		container_of(ptp, struct igb_adapter, ptp_caps);
++	struct e1000_hw *hw = &igb->hw;
++	unsigned long flags;
++	u32 tsim;
++
++	switch (rq->type) {
++	case PTP_CLK_REQ_PPS:
++		spin_lock_irqsave(&igb->tmreg_lock, flags);
++		tsim = rd32(E1000_TSIM);
++		if (on)
++			tsim |= TSINTR_SYS_WRAP;
++		else
++			tsim &= ~TSINTR_SYS_WRAP;
++		wr32(E1000_TSIM, tsim);
++		spin_unlock_irqrestore(&igb->tmreg_lock, flags);
++		return 0;
++
++	default:
++		break;
++	}
++
++	return -EOPNOTSUPP;
++}
++
+ static int igb_ptp_feature_enable(struct ptp_clock_info *ptp,
+ 				  struct ptp_clock_request *rq, int on)
+ {
+@@ -803,12 +831,12 @@ void igb_ptp_init(struct igb_adapter *ad
+ 		adapter->ptp_caps.owner = THIS_MODULE;
+ 		adapter->ptp_caps.max_adj = 62499999;
+ 		adapter->ptp_caps.n_ext_ts = 0;
+-		adapter->ptp_caps.pps = 0;
++		adapter->ptp_caps.pps = 1;
+ 		adapter->ptp_caps.adjfreq = igb_ptp_adjfreq_82580;
+ 		adapter->ptp_caps.adjtime = igb_ptp_adjtime_i210;
+ 		adapter->ptp_caps.gettime = igb_ptp_gettime_i210;
+ 		adapter->ptp_caps.settime = igb_ptp_settime_i210;
+-		adapter->ptp_caps.enable = igb_ptp_feature_enable;
++		adapter->ptp_caps.enable = igb_ptp_feature_enable_i210;
+ 		/* Enable the timer functions by clearing bit 31. */
+ 		wr32(E1000_TSAUXC, 0x0);
+ 		break;

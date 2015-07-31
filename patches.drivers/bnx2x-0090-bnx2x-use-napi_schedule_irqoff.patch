@@ -1,0 +1,42 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Wed, 29 Oct 2014 17:07:50 -0700
+Subject: [PATCH 90/91] bnx2x: use napi_schedule_irqoff()
+Patch-mainline: v3.19-rc1
+Git-commit: f5fbf115691c350f88bae103f629503e201a7bff
+References: bsc#922056 FATE#318604
+
+bnx2x_msix_fp_int() and bnx2x_interrupt() run from hard interrupt
+context.
+
+They can use napi_schedule_irqoff() instead of napi_schedule()
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Ariel Elior <ariel.elior@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c  |    2 +-
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
+@@ -1139,7 +1139,7 @@ static irqreturn_t bnx2x_msix_fp_int(int
+ 		prefetch(fp->txdata_ptr[cos]->tx_cons_sb);
+ 
+ 	prefetch(&fp->sb_running_index[SM_RX_ID]);
+-	napi_schedule(&bnx2x_fp(bp, fp->index, napi));
++	napi_schedule_irqoff(&bnx2x_fp(bp, fp->index, napi));
+ 
+ 	return IRQ_HANDLED;
+ }
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+@@ -1931,7 +1931,7 @@ irqreturn_t bnx2x_interrupt(int irq, voi
+ 			for_each_cos_in_tx_queue(fp, cos)
+ 				prefetch(fp->txdata_ptr[cos]->tx_cons_sb);
+ 			prefetch(&fp->sb_running_index[SM_RX_ID]);
+-			napi_schedule(&bnx2x_fp(bp, fp->index, napi));
++			napi_schedule_irqoff(&bnx2x_fp(bp, fp->index, napi));
+ 			status &= ~mask;
+ 		}
+ 	}

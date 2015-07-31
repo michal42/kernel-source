@@ -1,0 +1,124 @@
+From: Yuval Mintz <Yuval.Mintz@qlogic.com>
+Date: Wed, 1 Apr 2015 10:02:19 +0300
+Subject: [PATCH 75/91] bnx2x: Fix kdump on 4-port device
+Patch-mainline: v4.0-rc7
+Git-commit: 3d6b72534a109be4353b161a09a5683b441d0941
+References: bsc#922056 FATE#318604
+
+When running in a kdump kernel, it's very likely that due to sync. loss with
+management firmware the first PCI function to probe and reach the previous
+unload flow would decide it can reset the chip and continue onward. While doing
+so, it will only close its own Rx port.
+
+On a 4-port device where 2nd port on engine is a 1g-port, the 2nd port would
+allow ingress traffic after the chip is reset [assuming it was active on the
+first kernel]. This would later cause a HW attention.
+
+This changes driver flow to close both ports' 1g capabilities during the
+previous driver unload flow prior to the chip reset.
+
+Signed-off-by: Yuval Mintz <Yuval.Mintz@qlogic.com>
+Signed-off-by: Ariel Elior <Ariel.Elior@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c |   53 +++++++++++++++--------
+ 1 file changed, 35 insertions(+), 18 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+@@ -128,8 +128,8 @@ struct bnx2x_mac_vals {
+ 	u32 xmac_val;
+ 	u32 emac_addr;
+ 	u32 emac_val;
+-	u32 umac_addr;
+-	u32 umac_val;
++	u32 umac_addr[2];
++	u32 umac_val[2];
+ 	u32 bmac_addr;
+ 	u32 bmac_val[2];
+ };
+@@ -10153,6 +10153,25 @@ static u32 bnx2x_get_pretend_reg(struct
+ 	return base + (BP_ABS_FUNC(bp)) * stride;
+ }
+ 
++static bool bnx2x_prev_unload_close_umac(struct bnx2x *bp,
++					 u8 port, u32 reset_reg,
++					 struct bnx2x_mac_vals *vals)
++{
++	u32 mask = MISC_REGISTERS_RESET_REG_2_UMAC0 << port;
++	u32 base_addr;
++
++	if (!(mask & reset_reg))
++		return false;
++
++	BNX2X_DEV_INFO("Disable umac Rx %02x\n", port);
++	base_addr = port ? GRCBASE_UMAC1 : GRCBASE_UMAC0;
++	vals->umac_addr[port] = base_addr + UMAC_REG_COMMAND_CONFIG;
++	vals->umac_val[port] = REG_RD(bp, vals->umac_addr[port]);
++	REG_WR(bp, vals->umac_addr[port], 0);
++
++	return true;
++}
++
+ static void bnx2x_prev_unload_close_mac(struct bnx2x *bp,
+ 					struct bnx2x_mac_vals *vals)
+ {
+@@ -10161,10 +10180,7 @@ static void bnx2x_prev_unload_close_mac(
+ 	u8 port = BP_PORT(bp);
+ 
+ 	/* reset addresses as they also mark which values were changed */
+-	vals->bmac_addr = 0;
+-	vals->umac_addr = 0;
+-	vals->xmac_addr = 0;
+-	vals->emac_addr = 0;
++	memset(vals, 0, sizeof(*vals));
+ 
+ 	reset_reg = REG_RD(bp, MISC_REG_RESET_REG_2);
+ 
+@@ -10213,15 +10229,11 @@ static void bnx2x_prev_unload_close_mac(
+ 			REG_WR(bp, vals->xmac_addr, 0);
+ 			mac_stopped = true;
+ 		}
+-		mask = MISC_REGISTERS_RESET_REG_2_UMAC0 << port;
+-		if (mask & reset_reg) {
+-			BNX2X_DEV_INFO("Disable umac Rx\n");
+-			base_addr = BP_PORT(bp) ? GRCBASE_UMAC1 : GRCBASE_UMAC0;
+-			vals->umac_addr = base_addr + UMAC_REG_COMMAND_CONFIG;
+-			vals->umac_val = REG_RD(bp, vals->umac_addr);
+-			REG_WR(bp, vals->umac_addr, 0);
+-			mac_stopped = true;
+-		}
++
++		mac_stopped |= bnx2x_prev_unload_close_umac(bp, 0,
++							    reset_reg, vals);
++		mac_stopped |= bnx2x_prev_unload_close_umac(bp, 1,
++							    reset_reg, vals);
+ 	}
+ 
+ 	if (mac_stopped)
+@@ -10517,8 +10529,11 @@ static int bnx2x_prev_unload_common(stru
+ 		/* Close the MAC Rx to prevent BRB from filling up */
+ 		bnx2x_prev_unload_close_mac(bp, &mac_vals);
+ 
+-		/* close LLH filters towards the BRB */
++		/* close LLH filters for both ports towards the BRB */
++		bnx2x_set_rx_filter(&bp->link_params, 0);
++		bp->link_params.port ^= 1;
+ 		bnx2x_set_rx_filter(&bp->link_params, 0);
++		bp->link_params.port ^= 1;
+ 
+ 		/* Check if the UNDI driver was previously loaded */
+ 		if (bnx2x_prev_is_after_undi(bp)) {
+@@ -10565,8 +10580,10 @@ static int bnx2x_prev_unload_common(stru
+ 
+ 	if (mac_vals.xmac_addr)
+ 		REG_WR(bp, mac_vals.xmac_addr, mac_vals.xmac_val);
+-	if (mac_vals.umac_addr)
+-		REG_WR(bp, mac_vals.umac_addr, mac_vals.umac_val);
++	if (mac_vals.umac_addr[0])
++		REG_WR(bp, mac_vals.umac_addr[0], mac_vals.umac_val[0]);
++	if (mac_vals.umac_addr[1])
++		REG_WR(bp, mac_vals.umac_addr[1], mac_vals.umac_val[1]);
+ 	if (mac_vals.emac_addr)
+ 		REG_WR(bp, mac_vals.emac_addr, mac_vals.emac_val);
+ 	if (mac_vals.bmac_addr) {
