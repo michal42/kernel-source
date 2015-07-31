@@ -1,0 +1,51 @@
+From: Hariprasad Shenai <hariprasad@chelsio.com>
+Date: Wed, 25 Mar 2015 20:01:26 +0530
+Subject: [PATCH 213/230] cxgb4: Fix frame size warning for 32 bit arch
+Patch-mainline: v4.0-rc7
+Git-commit: dde93dfea53c72b07907d9e44a6e4b1545f6bdc4
+References: bsc#924378 FATE#318565 bsc#921338
+
+Fixes below warning by dynamically allocating memory
+
+All warnings:
+
+   drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c: In function
+   'cctrl_tbl_show':
+   >> drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c:689:1: warning: the
+   >> frame
+   >> size of 1028 bytes is larger than 1024 bytes [-Wframe-larger-than=]
+
+Reported-by: kbuild test robot <fengguang.wu@intel.com>
+Signed-off-by: Hariprasad Shenai <hariprasad@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
++++ b/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
+@@ -670,9 +670,13 @@ static int cctrl_tbl_show(struct seq_fil
+ 		"0.9375" };
+ 
+ 	int i;
+-	u16 incr[NMTUS][NCCTRL_WIN];
++	u16 (*incr)[NCCTRL_WIN];
+ 	struct adapter *adap = seq->private;
+ 
++	incr = kmalloc(sizeof(*incr) * NMTUS, GFP_KERNEL);
++	if (!incr)
++		return -ENOMEM;
++
+ 	t4_read_cong_tbl(adap, incr);
+ 
+ 	for (i = 0; i < NCCTRL_WIN; ++i) {
+@@ -685,6 +689,8 @@ static int cctrl_tbl_show(struct seq_fil
+ 			   adap->params.a_wnd[i],
+ 			   dec_fac[adap->params.b_wnd[i]]);
+ 	}
++
++	kfree(incr);
+ 	return 0;
+ }
+ 
