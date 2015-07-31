@@ -1,0 +1,140 @@
+From: Sathya Perla <sathya.perla@emulex.com>
+Date: Mon, 23 Feb 2015 04:20:10 -0500
+Subject: [PATCH 119/145] be2net: refactor function initalization sequence into
+ be_func_init()
+Patch-mainline: v4.1-rc1
+Git-commit: ca3de6b29d09585bdb7b5af2e12f815468120184
+References: bsc#921784 FATE#318561
+
+Function initialization sequence is executed in be_probe(), be_resume
+and be_eeh_resume(). Move this code to a new routine called be_func_init()
+to prevent code duplication.
+
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: Kalesh AP <kalesh.purayil@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be_cmds.c |    4 +
+ drivers/net/ethernet/emulex/benet/be_main.c |   76 +++++++++++-----------------
+ 2 files changed, 36 insertions(+), 44 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.c
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.c
+@@ -718,6 +718,10 @@ int be_fw_wait_ready(struct be_adapter *
+ 	}
+ 
+ 	do {
++		/* There's no means to poll POST state on BE2/3 VFs */
++		if (BEx_chip(adapter) && be_virtfn(adapter))
++			return 0;
++
+ 		stage = be_POST_stage_get(adapter);
+ 		if (stage == POST_STAGE_ARMFW_RDY)
+ 			return 0;
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -5164,6 +5164,35 @@ static inline char *nic_name(struct pci_
+ 	}
+ }
+ 
++/* Wait for the FW to be ready and perform the required initialization */
++static int be_func_init(struct be_adapter *adapter)
++{
++	int status;
++
++	status = be_fw_wait_ready(adapter);
++	if (status)
++		return status;
++
++	if (be_reset_required(adapter)) {
++		status = be_cmd_reset_function(adapter);
++		if (status)
++			return status;
++
++		/* Wait for interrupts to quiesce after an FLR */
++		msleep(100);
++	}
++
++	/* Tell FW we're ready to fire cmds */
++	status = be_cmd_fw_init(adapter);
++	if (status)
++		return status;
++
++	/* Allow interrupts for other ULPs running on NIC function */
++	be_intr_set(adapter, true);
++
++	return 0;
++}
++
+ static int be_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
+ {
+ 	struct be_adapter *adapter;
+@@ -5215,27 +5244,7 @@ static int be_probe(struct pci_dev *pdev
+ 	if (status)
+ 		goto unmap_bars;
+ 
+-	/* sync up with fw's ready state */
+-	if (be_physfn(adapter)) {
+-		status = be_fw_wait_ready(adapter);
+-		if (status)
+-			goto drv_cleanup;
+-	}
+-
+-	if (be_reset_required(adapter)) {
+-		status = be_cmd_reset_function(adapter);
+-		if (status)
+-			goto drv_cleanup;
+-
+-		/* Wait for interrupts to quiesce after an FLR */
+-		msleep(100);
+-	}
+-
+-	/* Allow interrupts for other ULPs running on NIC function */
+-	be_intr_set(adapter, true);
+-
+-	/* tell fw we're ready to fire cmds */
+-	status = be_cmd_fw_init(adapter);
++	status = be_func_init(adapter);
+ 	if (status)
+ 		goto drv_cleanup;
+ 
+@@ -5315,17 +5324,7 @@ static int be_resume(struct pci_dev *pde
+ 	pci_set_power_state(pdev, PCI_D0);
+ 	pci_restore_state(pdev);
+ 
+-	status = be_fw_wait_ready(adapter);
+-	if (status)
+-		return status;
+-
+-	status = be_cmd_reset_function(adapter);
+-	if (status)
+-		return status;
+-
+-	be_intr_set(adapter, true);
+-	/* tell fw we're ready to fire cmds */
+-	status = be_cmd_fw_init(adapter);
++	status = be_func_init(adapter);
+ 	if (status)
+ 		return status;
+ 
+@@ -5443,18 +5442,7 @@ static void be_eeh_resume(struct pci_dev
+ 
+ 	pci_save_state(pdev);
+ 
+-	status = be_cmd_reset_function(adapter);
+-	if (status)
+-		goto err;
+-
+-	/* On some BE3 FW versions, after a HW reset,
+-	 * interrupts will remain disabled for each function.
+-	 * So, explicitly enable interrupts
+-	 */
+-	be_intr_set(adapter, true);
+-
+-	/* tell fw we're ready to fire cmds */
+-	status = be_cmd_fw_init(adapter);
++	status = be_func_init(adapter);
+ 	if (status)
+ 		goto err;
+ 

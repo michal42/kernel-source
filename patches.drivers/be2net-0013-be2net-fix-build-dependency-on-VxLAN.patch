@@ -1,0 +1,105 @@
+From: Sathya Perla <sathya.perla@emulex.com>
+Date: Tue, 1 Apr 2014 12:33:59 +0530
+Subject: [PATCH 013/145] be2net: fix build dependency on VxLAN
+Patch-mainline: v3.15-rc1
+Git-commit: c5abe7c0a44ac2e8147543203de48b4aa0d4eaec
+References: bsc#921784 FATE#318561
+
+Introduce a CONFIG_BE2NET_VXLAN define to control be2net's build
+dependency on the VXLAN driver.
+
+Without this fix, the kernel build fails when VxLAN driver is
+selected to be built as a module while be2net is built-in.
+
+fixes: c9c47142 ("be2net: csum, tso and rss steering offload support for VxLAN")
+
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/Kconfig   |    8 ++++++++
+ drivers/net/ethernet/emulex/benet/be_main.c |   12 +++++++++++-
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/emulex/benet/Kconfig
++++ b/drivers/net/ethernet/emulex/benet/Kconfig
+@@ -4,3 +4,11 @@ config BE2NET
+ 	---help---
+ 	  This driver implements the NIC functionality for ServerEngines'
+ 	  10Gbps network adapter - BladeEngine.
++
++config BE2NET_VXLAN
++        bool "VXLAN offload support on be2net driver"
++        default y
++        depends on BE2NET && VXLAN && !(BE2NET=y && VXLAN=m)
++        ---help---
++	  Say Y here if you want to enable VXLAN offload support on
++	  be2net driver.
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -2868,8 +2868,11 @@ static int be_open(struct net_device *ne
+ 	netif_tx_start_all_queues(netdev);
+ 	be_roce_dev_open(adapter);
+ 
++#ifdef CONFIG_BE2NET_VXLAN
+ 	if (skyhawk_chip(adapter))
+ 		vxlan_get_rx_port(netdev);
++#endif
++
+ 	return 0;
+ err:
+ 	be_close(adapter->netdev);
+@@ -3025,6 +3028,7 @@ static void be_mac_clear(struct be_adapt
+ 	}
+ }
+ 
++#ifdef CONFIG_BE2NET_VXLAN
+ static void be_disable_vxlan_offloads(struct be_adapter *adapter)
+ {
+ 	if (adapter->flags & BE_FLAGS_VXLAN_OFFLOADS)
+@@ -3037,6 +3041,7 @@ static void be_disable_vxlan_offloads(st
+ 	adapter->flags &= ~BE_FLAGS_VXLAN_OFFLOADS;
+ 	adapter->vxlan_port = 0;
+ }
++#endif
+ 
+ static int be_clear(struct be_adapter *adapter)
+ {
+@@ -3045,8 +3050,9 @@ static int be_clear(struct be_adapter *a
+ 	if (sriov_enabled(adapter))
+ 		be_vf_clear(adapter);
+ 
++#ifdef CONFIG_BE2NET_VXLAN
+ 	be_disable_vxlan_offloads(adapter);
+-
++#endif
+ 	/* delete the primary mac along with the uc-mac list */
+ 	be_mac_clear(adapter);
+ 
+@@ -4181,6 +4187,7 @@ static int be_ndo_bridge_getlink(struct
+ 				       BRIDGE_MODE_VEPA : BRIDGE_MODE_VEB);
+ }
+ 
++#ifdef CONFIG_BE2NET_VXLAN
+ static void be_add_vxlan_port(struct net_device *netdev, sa_family_t sa_family,
+ 			      __be16 port)
+ {
+@@ -4239,6 +4246,7 @@ static void be_del_vxlan_port(struct net
+ 		 "Disabled VxLAN offloads for UDP port %d\n",
+ 		 be16_to_cpu(port));
+ }
++#endif
+ 
+ static const struct net_device_ops be_netdev_ops = {
+ 	.ndo_open		= be_open,
+@@ -4264,8 +4272,10 @@ static const struct net_device_ops be_ne
+ #ifdef CONFIG_NET_RX_BUSY_POLL
+ 	.ndo_busy_poll		= be_busy_poll,
+ #endif
++#ifdef CONFIG_BE2NET_VXLAN
+ 	.ndo_add_vxlan_port	= be_add_vxlan_port,
+ 	.ndo_del_vxlan_port	= be_del_vxlan_port,
++#endif
+ };
+ 
+ static void be_netdev_init(struct net_device *netdev)

@@ -1,0 +1,307 @@
+From: Venkata Duvvuru <VenkatKumar.Duvvuru@Emulex.Com>
+Date: Mon, 21 Apr 2014 15:38:00 +0530
+Subject: [PATCH 017/145] be2net: Support for configurable RSS hash key
+Patch-mainline: v3.16-rc1
+Git-commit: e25578777facd498480d3376752ad21a23375849
+References: bsc#921784 FATE#318561
+
+This be2net patch implements the get/set_rxfh() ethtool hooks.
+RSS_CONFIG device command is invoked to set hashkey and indirection table.
+It also uses an initial random value for RSS hash key instead of a
+hard-coded value as hard-coded values for a hash-key are usually
+considered a security risk.
+
+Signed-off-by: Venkat Duvvuru <VenkatKumar.Duvvuru@Emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be.h         |   12 ++-
+ drivers/net/ethernet/emulex/benet/be_cmds.c    |    7 -
+ drivers/net/ethernet/emulex/benet/be_cmds.h    |    2 
+ drivers/net/ethernet/emulex/benet/be_ethtool.c |   92 +++++++++++++++++++++----
+ drivers/net/ethernet/emulex/benet/be_main.c    |   31 +++++---
+ 5 files changed, 113 insertions(+), 31 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be.h
++++ b/drivers/net/ethernet/emulex/benet/be.h
+@@ -120,6 +120,9 @@ static inline char *nic_name(struct pci_
+ #define MAX_VFS			30 /* Max VFs supported by BE3 FW */
+ #define FW_VER_LEN		32
+ 
++#define	RSS_INDIR_TABLE_LEN	128
++#define RSS_HASH_KEY_LEN	40
++
+ struct be_dma_mem {
+ 	void *va;
+ 	dma_addr_t dma;
+@@ -409,6 +412,13 @@ struct be_resources {
+ 	u32 if_cap_flags;
+ };
+ 
++struct rss_info {
++	u64 rss_flags;
++	u8 rsstable[RSS_INDIR_TABLE_LEN];
++	u8 rss_queue[RSS_INDIR_TABLE_LEN];
++	u8 rss_hkey[RSS_HASH_KEY_LEN];
++};
++
+ struct be_adapter {
+ 	struct pci_dev *pdev;
+ 	struct net_device *netdev;
+@@ -507,7 +517,7 @@ struct be_adapter {
+ 	u32 msg_enable;
+ 	int be_get_temp_freq;
+ 	u8 pf_number;
+-	u64 rss_flags;
++	struct rss_info rss_info;
+ };
+ 
+ #define be_physfn(adapter)		(!adapter->virtfn)
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.c
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.c
+@@ -2016,13 +2016,10 @@ int be_cmd_reset_function(struct be_adap
+ }
+ 
+ int be_cmd_rss_config(struct be_adapter *adapter, u8 *rsstable,
+-			u32 rss_hash_opts, u16 table_size)
++			u32 rss_hash_opts, u16 table_size, u8 *rss_hkey)
+ {
+ 	struct be_mcc_wrb *wrb;
+ 	struct be_cmd_req_rss_config *req;
+-	u32 myhash[10] = {0x15d43fa5, 0x2534685a, 0x5f87693a, 0x5668494e,
+-			0x33cf6a53, 0x383334c6, 0x76ac4257, 0x59b242b2,
+-			0x3ea83c02, 0x4a110304};
+ 	int status;
+ 
+ 	if (!(be_if_cap_flags(adapter) & BE_IF_FLAGS_RSS))
+@@ -2045,7 +2042,7 @@ int be_cmd_rss_config(struct be_adapter
+ 		req->hdr.version = 1;
+ 
+ 	memcpy(req->cpu_table, rsstable, table_size);
+-	memcpy(req->hash, myhash, sizeof(myhash));
++	memcpy(req->hash, rss_hkey, RSS_HASH_KEY_LEN);
+ 	be_dws_cpu_to_le(req->hash, sizeof(req->hash));
+ 
+ 	status = be_mbox_notify_wait(adapter);
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.h
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.h
+@@ -2072,7 +2072,7 @@ int be_cmd_query_fw_cfg(struct be_adapte
+ 			u32 *function_mode, u32 *function_caps, u16 *asic_rev);
+ int be_cmd_reset_function(struct be_adapter *adapter);
+ int be_cmd_rss_config(struct be_adapter *adapter, u8 *rsstable,
+-		      u32 rss_hash_opts, u16 table_size);
++		      u32 rss_hash_opts, u16 table_size, u8 *rss_hkey);
+ int be_process_mcc(struct be_adapter *adapter);
+ int be_cmd_set_beacon_state(struct be_adapter *adapter, u8 port_num, u8 beacon,
+ 			    u8 status, u8 state);
+--- a/drivers/net/ethernet/emulex/benet/be_ethtool.c
++++ b/drivers/net/ethernet/emulex/benet/be_ethtool.c
+@@ -933,27 +933,27 @@ static u64 be_get_rss_hash_opts(struct b
+ 
+ 	switch (flow_type) {
+ 	case TCP_V4_FLOW:
+-		if (adapter->rss_flags & RSS_ENABLE_IPV4)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_IPV4)
+ 			data |= RXH_IP_DST | RXH_IP_SRC;
+-		if (adapter->rss_flags & RSS_ENABLE_TCP_IPV4)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_TCP_IPV4)
+ 			data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+ 		break;
+ 	case UDP_V4_FLOW:
+-		if (adapter->rss_flags & RSS_ENABLE_IPV4)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_IPV4)
+ 			data |= RXH_IP_DST | RXH_IP_SRC;
+-		if (adapter->rss_flags & RSS_ENABLE_UDP_IPV4)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_UDP_IPV4)
+ 			data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+ 		break;
+ 	case TCP_V6_FLOW:
+-		if (adapter->rss_flags & RSS_ENABLE_IPV6)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_IPV6)
+ 			data |= RXH_IP_DST | RXH_IP_SRC;
+-		if (adapter->rss_flags & RSS_ENABLE_TCP_IPV6)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_TCP_IPV6)
+ 			data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+ 		break;
+ 	case UDP_V6_FLOW:
+-		if (adapter->rss_flags & RSS_ENABLE_IPV6)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_IPV6)
+ 			data |= RXH_IP_DST | RXH_IP_SRC;
+-		if (adapter->rss_flags & RSS_ENABLE_UDP_IPV6)
++		if (adapter->rss_info.rss_flags & RSS_ENABLE_UDP_IPV6)
+ 			data |= RXH_L4_B_0_1 | RXH_L4_B_2_3;
+ 		break;
+ 	}
+@@ -992,7 +992,7 @@ static int be_set_rss_hash_opts(struct b
+ 	struct be_rx_obj *rxo;
+ 	int status = 0, i, j;
+ 	u8 rsstable[128];
+-	u32 rss_flags = adapter->rss_flags;
++	u32 rss_flags = adapter->rss_info.rss_flags;
+ 
+ 	if (cmd->data != L3_RSS_FLAGS &&
+ 	    cmd->data != (L3_RSS_FLAGS | L4_RSS_FLAGS))
+@@ -1039,7 +1039,7 @@ static int be_set_rss_hash_opts(struct b
+ 		return -EINVAL;
+ 	}
+ 
+-	if (rss_flags == adapter->rss_flags)
++	if (rss_flags == adapter->rss_info.rss_flags)
+ 		return status;
+ 
+ 	if (be_multi_rxq(adapter)) {
+@@ -1051,9 +1051,11 @@ static int be_set_rss_hash_opts(struct b
+ 			}
+ 		}
+ 	}
+-	status = be_cmd_rss_config(adapter, rsstable, rss_flags, 128);
++
++	status = be_cmd_rss_config(adapter, adapter->rss_info.rsstable,
++				   rss_flags, 128, adapter->rss_info.rss_hkey);
+ 	if (!status)
+-		adapter->rss_flags = rss_flags;
++		adapter->rss_info.rss_flags = rss_flags;
+ 
+ 	return status;
+ }
+@@ -1103,6 +1105,68 @@ static int be_set_channels(struct net_de
+ 	return be_update_queues(adapter);
+ }
+ 
++static u32 be_get_rxfh_indir_size(struct net_device *netdev)
++{
++	return RSS_INDIR_TABLE_LEN;
++}
++
++static u32 be_get_rxfh_key_size(struct net_device *netdev)
++{
++	return RSS_HASH_KEY_LEN;
++}
++
++static int be_get_rxfh(struct net_device *netdev, u32 *indir, u8 *hkey)
++{
++	struct be_adapter *adapter = netdev_priv(netdev);
++	int i;
++	struct rss_info *rss = &adapter->rss_info;
++
++	if (indir) {
++		for (i = 0; i < RSS_INDIR_TABLE_LEN; i++)
++			indir[i] = rss->rss_queue[i];
++	}
++
++	if (hkey)
++		memcpy(hkey, rss->rss_hkey, RSS_HASH_KEY_LEN);
++
++	return 0;
++}
++
++static int be_set_rxfh(struct net_device *netdev, u32 *indir, u8 *hkey)
++{
++	int rc = 0, i, j;
++	struct be_adapter *adapter = netdev_priv(netdev);
++	u8 rsstable[RSS_INDIR_TABLE_LEN];
++
++	if (indir) {
++		struct be_rx_obj *rxo;
++		for (i = 0; i < RSS_INDIR_TABLE_LEN; i++) {
++			j = indir[i];
++			rxo = &adapter->rx_obj[j];
++			rsstable[i] = rxo->rss_id;
++			adapter->rss_info.rss_queue[i] = j;
++		}
++	} else {
++		memcpy(rsstable, adapter->rss_info.rsstable,
++		       RSS_INDIR_TABLE_LEN);
++	}
++
++	if (!hkey)
++		hkey =  adapter->rss_info.rss_hkey;
++
++	rc = be_cmd_rss_config(adapter, rsstable,
++			adapter->rss_info.rss_flags,
++			RSS_INDIR_TABLE_LEN, hkey);
++	if (rc) {
++		adapter->rss_info.rss_flags = RSS_ENABLE_NONE;
++		return -EIO;
++	}
++	memcpy(adapter->rss_info.rss_hkey, hkey, RSS_HASH_KEY_LEN);
++	memcpy(adapter->rss_info.rsstable, rsstable,
++	       RSS_INDIR_TABLE_LEN);
++	return 0;
++}
++
+ const struct ethtool_ops be_ethtool_ops = {
+ 	.get_settings = be_get_settings,
+ 	.get_drvinfo = be_get_drvinfo,
+@@ -1129,6 +1193,10 @@ const struct ethtool_ops be_ethtool_ops
+ 	.self_test = be_self_test,
+ 	.get_rxnfc = be_get_rxnfc,
+ 	.set_rxnfc = be_set_rxnfc,
++	.get_rxfh_indir_size = be_get_rxfh_indir_size,
++	.get_rxfh_key_size = be_get_rxfh_key_size,
++	.get_rxfh = be_get_rxfh,
++	.set_rxfh = be_set_rxfh,
+ 	.get_channels = be_get_channels,
+ 	.set_channels = be_set_channels
+ };
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -2774,7 +2774,8 @@ static int be_rx_qs_create(struct be_ada
+ {
+ 	struct be_rx_obj *rxo;
+ 	int rc, i, j;
+-	u8 rsstable[128];
++	u8 rss_hkey[RSS_HASH_KEY_LEN];
++	struct rss_info *rss = &adapter->rss_info;
+ 
+ 	for_all_rx_queues(adapter, rxo, i) {
+ 		rc = be_queue_alloc(adapter, &rxo->q, RX_Q_LEN,
+@@ -2799,31 +2800,37 @@ static int be_rx_qs_create(struct be_ada
+ 	}
+ 
+ 	if (be_multi_rxq(adapter)) {
+-		for (j = 0; j < 128; j += adapter->num_rx_qs - 1) {
++		for (j = 0; j < RSS_INDIR_TABLE_LEN;
++			j += adapter->num_rx_qs - 1) {
+ 			for_all_rss_queues(adapter, rxo, i) {
+-				if ((j + i) >= 128)
++				if ((j + i) >= RSS_INDIR_TABLE_LEN)
+ 					break;
+-				rsstable[j + i] = rxo->rss_id;
++				rss->rsstable[j + i] = rxo->rss_id;
++				rss->rss_queue[j + i] = i;
+ 			}
+ 		}
+-		adapter->rss_flags = RSS_ENABLE_TCP_IPV4 | RSS_ENABLE_IPV4 |
+-					RSS_ENABLE_TCP_IPV6 | RSS_ENABLE_IPV6;
++		rss->rss_flags = RSS_ENABLE_TCP_IPV4 | RSS_ENABLE_IPV4 |
++			RSS_ENABLE_TCP_IPV6 | RSS_ENABLE_IPV6;
+ 
+ 		if (!BEx_chip(adapter))
+-			adapter->rss_flags |= RSS_ENABLE_UDP_IPV4 |
+-						RSS_ENABLE_UDP_IPV6;
++			rss->rss_flags |= RSS_ENABLE_UDP_IPV4 |
++				RSS_ENABLE_UDP_IPV6;
+ 	} else {
+ 		/* Disable RSS, if only default RX Q is created */
+-		adapter->rss_flags = RSS_ENABLE_NONE;
++		rss->rss_flags = RSS_ENABLE_NONE;
+ 	}
+ 
+-	rc = be_cmd_rss_config(adapter, rsstable, adapter->rss_flags,
+-			       128);
++	get_random_bytes(rss_hkey, RSS_HASH_KEY_LEN);
++	rc = be_cmd_rss_config(adapter, rss->rsstable,
++			       rss->rss_flags,
++			       128, rss_hkey);
+ 	if (rc) {
+-		adapter->rss_flags = RSS_ENABLE_NONE;
++		rss->rss_flags = RSS_ENABLE_NONE;
+ 		return rc;
+ 	}
+ 
++	memcpy(rss->rss_hkey, rss_hkey, RSS_HASH_KEY_LEN);
++
+ 	/* First time posting */
+ 	for_all_rx_queues(adapter, rxo, i)
+ 		be_post_rx_frags(rxo, GFP_KERNEL);

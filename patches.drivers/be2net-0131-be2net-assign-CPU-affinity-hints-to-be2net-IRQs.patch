@@ -1,0 +1,93 @@
+From: Padmanabh Ratnakar <padmanabh.ratnakar@emulex.com>
+Date: Thu, 26 Mar 2015 03:05:08 -0400
+Subject: [PATCH 131/145] be2net: assign CPU affinity hints to be2net IRQs
+Patch-mainline: v4.1-rc1
+Git-commit: d658d98aa55a0a6e1f3b818645b098bc3187777a
+References: bsc#921784 FATE#318561
+
+This patch provides hints to irqbalance to map be2net IRQs to
+specific CPU cores. cpumask_set_cpu_local_first() is used, which first
+maps IRQs to near NUMA cores; when those cores are exhausted, IRQs are
+mapped to far NUMA cores.
+
+Signed-off-by: Padmanabh Ratnakar <padmanabh.ratnakar@emulex.com>
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be.h      |    2 ++
+ drivers/net/ethernet/emulex/benet/be_main.c |   17 ++++++++++++++---
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be.h
++++ b/drivers/net/ethernet/emulex/benet/be.h
+@@ -30,6 +30,7 @@
+ #include <linux/firmware.h>
+ #include <linux/slab.h>
+ #include <linux/u64_stats_sync.h>
++#include <linux/cpumask.h>
+ 
+ #include "be_hw.h"
+ #include "be_roce.h"
+@@ -183,6 +184,7 @@ struct be_eq_obj {
+ 	u16 spurious_intr;
+ 	struct napi_struct napi;
+ 	struct be_adapter *adapter;
++	cpumask_var_t  affinity_mask;
+ 
+ #ifdef CONFIG_NET_RX_BUSY_POLL
+ #define BE_EQ_IDLE		0
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -2236,6 +2236,7 @@ static void be_evt_queues_destroy(struct
+ 			napi_hash_del(&eqo->napi);
+ 			netif_napi_del(&eqo->napi);
+ 		}
++		free_cpumask_var(eqo->affinity_mask);
+ 		be_queue_free(adapter, &eqo->q);
+ 	}
+ }
+@@ -2251,6 +2252,11 @@ static int be_evt_queues_create(struct b
+ 				    adapter->cfg_num_qs);
+ 
+ 	for_all_evt_queues(adapter, eqo, i) {
++		if (!zalloc_cpumask_var(&eqo->affinity_mask, GFP_KERNEL))
++			return -ENOMEM;
++		cpumask_set_cpu_local_first(i, dev_to_node(&adapter->pdev->dev),
++					    eqo->affinity_mask);
++
+ 		netif_napi_add(adapter->netdev, &eqo->napi, be_poll,
+ 			       BE_NAPI_WEIGHT);
+ 		napi_hash_add(&eqo->napi);
+@@ -2922,6 +2928,8 @@ static int be_msix_register(struct be_ad
+ 		status = request_irq(vec, be_msix, 0, eqo->desc, eqo);
+ 		if (status)
+ 			goto err_msix;
++
++		irq_set_affinity_hint(vec, eqo->affinity_mask);
+ 	}
+ 
+ 	return 0;
+@@ -2966,7 +2974,7 @@ static void be_irq_unregister(struct be_
+ {
+ 	struct net_device *netdev = adapter->netdev;
+ 	struct be_eq_obj *eqo;
+-	int i;
++	int i, vec;
+ 
+ 	if (!adapter->isr_registered)
+ 		return;
+@@ -2978,8 +2986,11 @@ static void be_irq_unregister(struct be_
+ 	}
+ 
+ 	/* MSIx */
+-	for_all_evt_queues(adapter, eqo, i)
+-		free_irq(be_msix_vec_get(adapter, eqo), eqo);
++	for_all_evt_queues(adapter, eqo, i) {
++		vec = be_msix_vec_get(adapter, eqo);
++		irq_set_affinity_hint(vec, NULL);
++		free_irq(vec, eqo);
++	}
+ 
+ done:
+ 	adapter->isr_registered = false;

@@ -1,0 +1,202 @@
+From: Sathya Perla <sathya.perla@emulex.com>
+Date: Fri, 6 Feb 2015 08:18:40 -0500
+Subject: [PATCH 108/145] be2net: remove duplicate code in be_cmd_rx_filter()
+Patch-mainline: v4.0-rc1
+Git-commit: ac34b74378a15b01d16ae84d616b405dd0948ecb
+References: bsc#921784 FATE#318561
+
+This patch passes BE_IF_FLAGS_XXX flags to be_cmd_rx_filter() routine
+instead of the IFF_XXX flags. Doing this gets rid of the code to convert
+the IFF_XXX flags to the BE_IF_FLAGS_XXX used by the FW cmd. The patch
+also removes code for setting if_flags_mask that was duplicated for each
+filter mode.
+
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: Kalesh AP <kalesh.purayil@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be_cmds.c |   54 +++++++++-------------------
+ drivers/net/ethernet/emulex/benet/be_cmds.h |    4 ++
+ drivers/net/ethernet/emulex/benet/be_main.c |   29 ++++++---------
+ 3 files changed, 36 insertions(+), 51 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.c
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.c
+@@ -1884,7 +1884,7 @@ err:
+ 	return status;
+ }
+ 
+-int be_cmd_rx_filter(struct be_adapter *adapter, u32 flags, u32 value)
++static int __be_cmd_rx_filter(struct be_adapter *adapter, u32 flags, u32 value)
+ {
+ 	struct be_mcc_wrb *wrb;
+ 	struct be_dma_mem *mem = &adapter->rx_filter;
+@@ -1904,31 +1904,13 @@ int be_cmd_rx_filter(struct be_adapter *
+ 			       wrb, mem);
+ 
+ 	req->if_id = cpu_to_le32(adapter->if_handle);
+-	if (flags & IFF_PROMISC) {
+-		req->if_flags_mask = cpu_to_le32(BE_IF_FLAGS_PROMISCUOUS |
+-						 BE_IF_FLAGS_VLAN_PROMISCUOUS |
+-						 BE_IF_FLAGS_MCAST_PROMISCUOUS);
+-		if (value == ON)
+-			req->if_flags =
+-				cpu_to_le32(BE_IF_FLAGS_PROMISCUOUS |
+-					    BE_IF_FLAGS_VLAN_PROMISCUOUS |
+-					    BE_IF_FLAGS_MCAST_PROMISCUOUS);
+-	} else if (flags & IFF_ALLMULTI) {
+-		req->if_flags_mask = cpu_to_le32(BE_IF_FLAGS_MCAST_PROMISCUOUS);
+-		req->if_flags =	cpu_to_le32(BE_IF_FLAGS_MCAST_PROMISCUOUS);
+-	} else if (flags & BE_FLAGS_VLAN_PROMISC) {
+-		req->if_flags_mask = cpu_to_le32(BE_IF_FLAGS_VLAN_PROMISCUOUS);
+-
+-		if (value == ON)
+-			req->if_flags =
+-				cpu_to_le32(BE_IF_FLAGS_VLAN_PROMISCUOUS);
+-	} else {
++	req->if_flags_mask = cpu_to_le32(flags);
++	req->if_flags = (value == ON) ? req->if_flags_mask : 0;
++
++	if (flags & BE_IF_FLAGS_MULTICAST) {
+ 		struct netdev_hw_addr *ha;
+ 		int i = 0;
+ 
+-		req->if_flags_mask = cpu_to_le32(BE_IF_FLAGS_MULTICAST);
+-		req->if_flags =	cpu_to_le32(BE_IF_FLAGS_MULTICAST);
+-
+ 		/* Reset mcast promisc mode if already set by setting mask
+ 		 * and not setting flags field
+ 		 */
+@@ -1940,24 +1922,26 @@ int be_cmd_rx_filter(struct be_adapter *
+ 			memcpy(req->mcast_mac[i++].byte, ha->addr, ETH_ALEN);
+ 	}
+ 
+-	if ((req->if_flags_mask & cpu_to_le32(be_if_cap_flags(adapter))) !=
+-	    req->if_flags_mask) {
+-		dev_warn(&adapter->pdev->dev,
+-			 "Cannot set rx filter flags 0x%x\n",
+-			 req->if_flags_mask);
+-		dev_warn(&adapter->pdev->dev,
+-			 "Interface is capable of 0x%x flags only\n",
+-			 be_if_cap_flags(adapter));
+-	}
+-	req->if_flags_mask &= cpu_to_le32(be_if_cap_flags(adapter));
+-
+ 	status = be_mcc_notify_wait(adapter);
+-
+ err:
+ 	spin_unlock_bh(&adapter->mcc_lock);
+ 	return status;
+ }
+ 
++int be_cmd_rx_filter(struct be_adapter *adapter, u32 flags, u32 value)
++{
++	struct device *dev = &adapter->pdev->dev;
++
++	if ((flags & be_if_cap_flags(adapter)) != flags) {
++		dev_warn(dev, "Cannot set rx filter flags 0x%x\n", flags);
++		dev_warn(dev, "Interface is capable of 0x%x flags only\n",
++			 be_if_cap_flags(adapter));
++	}
++	flags &= be_if_cap_flags(adapter);
++
++	return __be_cmd_rx_filter(adapter, flags, value);
++}
++
+ /* Uses synchrounous mcc */
+ int be_cmd_set_flow_control(struct be_adapter *adapter, u32 tx_fc, u32 rx_fc)
+ {
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.h
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.h
+@@ -586,6 +586,10 @@ enum be_if_flags {
+ 			 BE_IF_FLAGS_PASS_L3L4_ERRORS | BE_IF_FLAGS_MULTICAST |\
+ 			 BE_IF_FLAGS_UNTAGGED)
+ 
++#define BE_IF_FLAGS_ALL_PROMISCUOUS	(BE_IF_FLAGS_PROMISCUOUS | \
++					 BE_IF_FLAGS_VLAN_PROMISCUOUS |\
++					 BE_IF_FLAGS_MCAST_PROMISCUOUS)
++
+ /* An RX interface is an object with one or more MAC addresses and
+  * filtering capabilities. */
+ struct be_cmd_req_if_create {
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -1128,16 +1128,12 @@ static int be_vid_config(struct be_adapt
+ 				MCC_ADDL_STATUS_INSUFFICIENT_RESOURCES)
+ 			goto set_vlan_promisc;
+ 		dev_err(dev, "Setting HW VLAN filtering failed\n");
+-	} else {
+-		if (adapter->flags & BE_FLAGS_VLAN_PROMISC) {
+-			/* hw VLAN filtering re-enabled. */
+-			status = be_cmd_rx_filter(adapter,
+-						  BE_FLAGS_VLAN_PROMISC, OFF);
+-			if (!status) {
+-				dev_info(dev,
+-					 "Disabling VLAN Promiscuous mode\n");
+-				adapter->flags &= ~BE_FLAGS_VLAN_PROMISC;
+-			}
++	} else if (adapter->flags & BE_FLAGS_VLAN_PROMISC) {
++		status = be_cmd_rx_filter(adapter, BE_IF_FLAGS_VLAN_PROMISCUOUS,
++					  OFF);
++		if (!status) {
++			dev_info(dev, "Disabling VLAN Promiscuous mode\n");
++			adapter->flags &= ~BE_FLAGS_VLAN_PROMISC;
+ 		}
+ 	}
+ 
+@@ -1147,7 +1143,7 @@ set_vlan_promisc:
+ 	if (adapter->flags & BE_FLAGS_VLAN_PROMISC)
+ 		return 0;
+ 
+-	status = be_cmd_rx_filter(adapter, BE_FLAGS_VLAN_PROMISC, ON);
++	status = be_cmd_rx_filter(adapter, BE_IF_FLAGS_VLAN_PROMISCUOUS, ON);
+ 	if (!status) {
+ 		dev_info(dev, "Enable VLAN Promiscuous mode\n");
+ 		adapter->flags |= BE_FLAGS_VLAN_PROMISC;
+@@ -1199,7 +1195,7 @@ static void be_clear_promisc(struct be_a
+ 	adapter->promiscuous = false;
+ 	adapter->flags &= ~(BE_FLAGS_VLAN_PROMISC | BE_FLAGS_MCAST_PROMISC);
+ 
+-	be_cmd_rx_filter(adapter, IFF_PROMISC, OFF);
++	be_cmd_rx_filter(adapter, BE_IF_FLAGS_ALL_PROMISCUOUS, OFF);
+ }
+ 
+ static void be_set_rx_mode(struct net_device *netdev)
+@@ -1208,7 +1204,7 @@ static void be_set_rx_mode(struct net_de
+ 	int status;
+ 
+ 	if (netdev->flags & IFF_PROMISC) {
+-		be_cmd_rx_filter(adapter, IFF_PROMISC, ON);
++		be_cmd_rx_filter(adapter, BE_IF_FLAGS_ALL_PROMISCUOUS, ON);
+ 		adapter->promiscuous = true;
+ 		goto done;
+ 	}
+@@ -1235,7 +1231,8 @@ static void be_set_rx_mode(struct net_de
+ 		}
+ 
+ 		if (netdev_uc_count(netdev) > be_max_uc(adapter)) {
+-			be_cmd_rx_filter(adapter, IFF_PROMISC, ON);
++			be_cmd_rx_filter(adapter, BE_IF_FLAGS_ALL_PROMISCUOUS,
++					 ON);
+ 			adapter->promiscuous = true;
+ 			goto done;
+ 		}
+@@ -1248,7 +1245,7 @@ static void be_set_rx_mode(struct net_de
+ 		}
+ 	}
+ 
+-	status = be_cmd_rx_filter(adapter, IFF_MULTICAST, ON);
++	status = be_cmd_rx_filter(adapter, BE_IF_FLAGS_MULTICAST, ON);
+ 	if (!status) {
+ 		if (adapter->flags & BE_FLAGS_MCAST_PROMISC)
+ 			adapter->flags &= ~BE_FLAGS_MCAST_PROMISC;
+@@ -1262,7 +1259,7 @@ set_mcast_promisc:
+ 	/* Set to MCAST promisc mode if setting MULTICAST address fails
+ 	 * or if num configured exceeds what we support
+ 	 */
+-	status = be_cmd_rx_filter(adapter, IFF_ALLMULTI, ON);
++	status = be_cmd_rx_filter(adapter, BE_IF_FLAGS_MCAST_PROMISCUOUS, ON);
+ 	if (!status)
+ 		adapter->flags |= BE_FLAGS_MCAST_PROMISC;
+ done:

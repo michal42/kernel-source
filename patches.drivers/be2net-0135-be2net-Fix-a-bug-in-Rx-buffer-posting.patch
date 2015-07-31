@@ -1,0 +1,40 @@
+From: Ajit Khaparde <ajit.khaparde@emulex.com>
+Date: Wed, 8 Apr 2015 16:59:48 -0500
+Subject: [PATCH 135/145] be2net: Fix a bug in Rx buffer posting
+Patch-mainline: v4.1-rc1
+Git-commit: 69304cc986bdcd7a09df179aeda3736f7e1544a5
+References: bsc#921784 FATE#318561
+
+The numPosted field in the ERX Doorbell register is 8-bits wide.
+So the max buffers that we can post at a time is 255 and not 256
+which we are doing currently.
+
+Signed-off-by: Ajit Khaparde <ajit.khaparde@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be.h      |    1 +
+ drivers/net/ethernet/emulex/benet/be_main.c |    2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be.h
++++ b/drivers/net/ethernet/emulex/benet/be.h
+@@ -99,6 +99,7 @@
+ #define BE_NAPI_WEIGHT		64
+ #define MAX_RX_POST		BE_NAPI_WEIGHT /* Frags posted at a time */
+ #define RX_FRAGS_REFILL_WM	(RX_Q_LEN - MAX_RX_POST)
++#define MAX_NUM_POST_ERX_DB	255u
+ 
+ #define MAX_VFS			30 /* Max VFs supported by BE3 FW */
+ #define FW_VER_LEN		32
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -2025,7 +2025,7 @@ static void be_post_rx_frags(struct be_r
+ 		if (rxo->rx_post_starved)
+ 			rxo->rx_post_starved = false;
+ 		do {
+-			notify = min(256u, posted);
++			notify = min(MAX_NUM_POST_ERX_DB, posted);
+ 			be_rxq_notify(adapter, rxq->id, notify);
+ 			posted -= notify;
+ 		} while (posted);
