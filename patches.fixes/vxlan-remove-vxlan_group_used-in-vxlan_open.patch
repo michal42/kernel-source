@@ -1,0 +1,43 @@
+From: Gao feng <gaofeng@cn.fujitsu.com>
+Date: Tue, 10 Dec 2013 16:37:32 +0800
+Subject: vxlan: remove vxlan_group_used in vxlan_open
+Patch-mainline: v3.14-rc1
+Git-commit: 79d4a94fab0a9cc1b55db45a98277a68ff1febd8
+References: bsc#938963 FATE#319084
+
+In vxlan_open, vxlan_group_used always returns true,
+because the state of the vxlan deivces which we want
+to open has alreay been running. and it has already
+in vxlan_list.
+
+Since ip_mc_join_group takes care of the reference
+of struct ip_mc_list. removing vxlan_group_used here
+is safe.
+
+Signed-off-by: Gao feng <gaofeng@cn.fujitsu.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/vxlan.c |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2045,7 +2045,6 @@ static void vxlan_uninit(struct net_devi
+ /* Start ageing timer and join group when device is brought up */
+ static int vxlan_open(struct net_device *dev)
+ {
+-	struct vxlan_net *vn = net_generic(dev_net(dev), vxlan_net_id);
+ 	struct vxlan_dev *vxlan = netdev_priv(dev);
+ 	struct vxlan_sock *vs = vxlan->vn_sock;
+ 
+@@ -2053,8 +2052,7 @@ static int vxlan_open(struct net_device
+ 	if (!vs)
+ 		return -ENOTCONN;
+ 
+-	if (vxlan_addr_multicast(&vxlan->default_dst.remote_ip) &&
+-	    vxlan_group_used(vn, &vxlan->default_dst.remote_ip)) {
++	if (vxlan_addr_multicast(&vxlan->default_dst.remote_ip)) {
+ 		vxlan_sock_hold(vs);
+ 		dev_hold(dev);
+ 		queue_work(vxlan_wq, &vxlan->igmp_join);
