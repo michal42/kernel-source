@@ -1,0 +1,44 @@
+From: Anish Bhatt <anish@chelsio.com>
+Date: Tue, 18 Nov 2014 19:09:51 -0800
+Subject: [PATCH 120/230] cxgb4i : Don't block unload/cxgb4 unload when remote
+ closes TCP connection
+Patch-mainline: v3.18-rc6
+Git-commit: ee7255ada313a6db99be47ce174b0bfb8295a041
+References: bsc#924384 FATE#318570 bsc#921338
+
+cxgb4i was returning wrong error and not releasing module reference if remote
+end abruptly closed TCP connection. This prevents the cxgb4 network module from
+being unloaded, further affecting other network drivers dependent on cxgb4
+
+Sending to net as this affects all cxgb4 based network drivers.
+
+Signed-off-by: Anish Bhatt <anish@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/scsi/cxgbi/cxgb4i/cxgb4i.c |    2 ++
+ drivers/scsi/cxgbi/libcxgbi.c      |    2 +-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+--- a/drivers/scsi/cxgbi/cxgb4i/cxgb4i.c
++++ b/drivers/scsi/cxgbi/cxgb4i/cxgb4i.c
+@@ -830,6 +830,8 @@ static void do_act_open_rpl(struct cxgbi
+ 	if (status == CPL_ERR_RTX_NEG_ADVICE)
+ 		goto rel_skb;
+ 
++	module_put(THIS_MODULE);
++
+ 	if (status && status != CPL_ERR_TCAM_FULL &&
+ 	    status != CPL_ERR_CONN_EXIST &&
+ 	    status != CPL_ERR_ARP_MISS)
+--- a/drivers/scsi/cxgbi/libcxgbi.c
++++ b/drivers/scsi/cxgbi/libcxgbi.c
+@@ -786,7 +786,7 @@ static void cxgbi_inform_iscsi_conn_clos
+ 		read_lock_bh(&csk->callback_lock);
+ 		if (csk->user_data)
+ 			iscsi_conn_failure(csk->user_data,
+-					ISCSI_ERR_CONN_FAILED);
++					ISCSI_ERR_TCP_CONN_CLOSE);
+ 		read_unlock_bh(&csk->callback_lock);
+ 	}
+ }
