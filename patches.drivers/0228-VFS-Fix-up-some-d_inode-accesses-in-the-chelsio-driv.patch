@@ -1,0 +1,83 @@
+From: David Howells <dhowells@redhat.com>
+Date: Fri, 6 Mar 2015 14:24:37 +0000
+Subject: [PATCH 228/230] VFS: Fix up some ->d_inode accesses in the chelsio
+ driver
+Patch-mainline: v4.1-rc1
+Git-commit: c1d81b1cf937027d23f7e53cdd12328799028c6a
+References: bsc#924378 FATE#318565 bsc#921338
+
+Fix up some ->d_inode accesses in the chelsio driver.
+
+ (1) FILE_DATA() should just be replaced with file_inode().
+
+ (2) set_debugfs_file_size() should be removed and debugfs_create_file_size()
+     should be used to create the file.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+[ dchang: leave set_debugfs_file_size() for adapting to sle12sp1 ]
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c |   10 +++++-----
+ drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.h |    2 --
+ 2 files changed, 5 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
++++ b/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
+@@ -538,7 +538,7 @@ static ssize_t tp_la_write(struct file *
+ 	char s[32];
+ 	unsigned long val;
+ 	size_t size = min(sizeof(s) - 1, count);
+-	struct adapter *adap = FILE_DATA(file)->i_private;
++	struct adapter *adap = file_inode(file)->i_private;
+ 
+ 	if (copy_from_user(s, buf, size))
+ 		return -EFAULT;
+@@ -647,7 +647,7 @@ static int pm_stats_open(struct inode *i
+ static ssize_t pm_stats_clear(struct file *file, const char __user *buf,
+ 			      size_t count, loff_t *pos)
+ {
+-	struct adapter *adap = FILE_DATA(file)->i_private;
++	struct adapter *adap = file_inode(file)->i_private;
+ 
+ 	t4_write_reg(adap, PM_RX_STAT_CONFIG_A, 0);
+ 	t4_write_reg(adap, PM_TX_STAT_CONFIG_A, 0);
+@@ -1005,7 +1005,7 @@ static ssize_t mbox_write(struct file *f
+ 		   &data[7], &c) < 8 || c != '\n')
+ 		return -EINVAL;
+ 
+-	ino = FILE_DATA(file);
++	ino = file_inode(file);
+ 	mbox = (uintptr_t)ino->i_private & 7;
+ 	adap = ino->i_private - mbox;
+ 	addr = adap->regs + PF_REG(mbox, CIM_PF_MAILBOX_DATA_A);
+@@ -1034,7 +1034,7 @@ static ssize_t flash_read(struct file *f
+ 			  loff_t *ppos)
+ {
+ 	loff_t pos = *ppos;
+-	loff_t avail = FILE_DATA(file)->i_size;
++	loff_t avail = file_inode(file)->i_size;
+ 	struct adapter *adap = file->private_data;
+ 
+ 	if (pos < 0)
+@@ -1479,7 +1479,7 @@ static ssize_t rss_key_write(struct file
+ 	int i, j;
+ 	u32 key[10];
+ 	char s[100], *p;
+-	struct adapter *adap = FILE_DATA(file)->i_private;
++	struct adapter *adap = file_inode(file)->i_private;
+ 
+ 	if (count > sizeof(s) - 1)
+ 		return -EINVAL;
+--- a/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.h
++++ b/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.h
+@@ -37,8 +37,6 @@
+ 
+ #include <linux/export.h>
+ 
+-#define FILE_DATA(_file) ((_file)->f_path.dentry->d_inode)
+-
+ #define DEFINE_SIMPLE_DEBUGFS_FILE(name) \
+ static int name##_open(struct inode *inode, struct file *file) \
+ { \
