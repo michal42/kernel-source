@@ -1,0 +1,51 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Tue, 28 Apr 2015 11:34:21 +0200
+Subject: [PATCH 82/91] bnx2x: mark LRO as a fixed disabled feature if
+ disable_tpa is set
+Patch-mainline: v4.1-rc2
+Git-commit: d9b9e860cef1d904832bc6e92e444adfeabe49e9
+References: bsc#922056 FATE#318604
+
+If disable_tpa is set, remove NETIF_F_LRO from hw_features, so ethtool sees
+it as "off [fixed]".
+
+Note that setting the NETIF_F_LRO bit in dev->features in the 'else'
+branch is not needed, because the bit was already set by
+bnx2x_init_dev().
+
+Then the check for disable_tpa in in bnx2x_fix_features() becomes unnecessary.
+
+Signed-off-by: Michal Schmidt <mschmidt@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c  |    4 ----
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c |    2 +-
+ 2 files changed, 1 insertion(+), 5 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
+@@ -4833,10 +4833,6 @@ netdev_features_t bnx2x_fix_features(str
+ 		features &= ~NETIF_F_GRO;
+ 	}
+ 
+-	/* Note: do not disable SW GRO in kernel when HW GRO is off */
+-	if (bp->disable_tpa)
+-		features &= ~NETIF_F_LRO;
+-
+ 	return features;
+ }
+ 
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+@@ -12107,10 +12107,10 @@ static int bnx2x_init_bp(struct bnx2x *b
+ 	/* Set TPA flags */
+ 	if (bp->disable_tpa) {
+ 		bp->flags &= ~(TPA_ENABLE_FLAG | GRO_ENABLE_FLAG);
++		bp->dev->hw_features &= ~NETIF_F_LRO;
+ 		bp->dev->features &= ~NETIF_F_LRO;
+ 	} else {
+ 		bp->flags |= (TPA_ENABLE_FLAG | GRO_ENABLE_FLAG);
+-		bp->dev->features |= NETIF_F_LRO;
+ 	}
+ 
+ 	if (CHIP_IS_E1(bp))
