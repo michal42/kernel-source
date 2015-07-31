@@ -1,0 +1,74 @@
+From: Kalesh AP <kalesh.purayil@emulex.com>
+Date: Tue, 20 Jan 2015 03:51:44 -0500
+Subject: [PATCH 098/145] be2net: fix failure case in setting flow control
+Patch-mainline: v4.0-rc1
+Git-commit: 00d594c3da568647ccbae506da12d3186600b377
+References: bsc#921784 FATE#318561
+
+When the FW cmd to set flow control fails, the adapter state must simply
+reflect the old values.
+
+Signed-off-by: Kalesh AP <kalesh.purayil@emulex.com>
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be_ethtool.c |   14 ++++++++------
+ drivers/net/ethernet/emulex/benet/be_main.c    |   12 +++++++-----
+ 2 files changed, 15 insertions(+), 11 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be_ethtool.c
++++ b/drivers/net/ethernet/emulex/benet/be_ethtool.c
+@@ -707,15 +707,17 @@ be_set_pauseparam(struct net_device *net
+ 
+ 	if (ecmd->autoneg != adapter->phy.fc_autoneg)
+ 		return -EINVAL;
+-	adapter->tx_fc = ecmd->tx_pause;
+-	adapter->rx_fc = ecmd->rx_pause;
+ 
+-	status = be_cmd_set_flow_control(adapter,
+-					 adapter->tx_fc, adapter->rx_fc);
+-	if (status)
++	status = be_cmd_set_flow_control(adapter, ecmd->tx_pause,
++					 ecmd->rx_pause);
++	if (status) {
+ 		dev_warn(&adapter->pdev->dev, "Pause param set failed\n");
++		return be_cmd_status(status);
++	}
+ 
+-	return be_cmd_status(status);
++	adapter->tx_fc = ecmd->tx_pause;
++	adapter->rx_fc = ecmd->rx_pause;
++	return 0;
+ }
+ 
+ static int be_set_phys_id(struct net_device *netdev,
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -3648,7 +3648,6 @@ int be_update_queues(struct be_adapter *
+ static int be_setup(struct be_adapter *adapter)
+ {
+ 	struct device *dev = &adapter->pdev->dev;
+-	u32 tx_fc, rx_fc;
+ 	int status;
+ 
+ 	be_setup_init(adapter);
+@@ -3698,11 +3697,14 @@ static int be_setup(struct be_adapter *a
+ 
+ 	be_cmd_get_acpi_wol_cap(adapter);
+ 
+-	be_cmd_get_flow_control(adapter, &tx_fc, &rx_fc);
++	status = be_cmd_set_flow_control(adapter, adapter->tx_fc,
++					 adapter->rx_fc);
++	if (status)
++		be_cmd_get_flow_control(adapter, &adapter->tx_fc,
++					&adapter->rx_fc);
+ 
+-	if (rx_fc != adapter->rx_fc || tx_fc != adapter->tx_fc)
+-		be_cmd_set_flow_control(adapter, adapter->tx_fc,
+-					adapter->rx_fc);
++	dev_info(&adapter->pdev->dev, "HW Flow control - TX:%d RX:%d\n",
++		 adapter->tx_fc, adapter->rx_fc);
+ 
+ 	if (be_physfn(adapter))
+ 		be_cmd_set_logical_link_config(adapter,
