@@ -1,0 +1,42 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 27 Apr 2015 17:20:38 +0200
+Subject: [PATCH 81/91] bnx2x: really disable TPA if 'disable_tpa' option is
+ set
+Patch-mainline: v4.1-rc2
+Git-commit: 22a8f237c0551bae95ffcd2a7ff17d6f5fcce7e7
+References: bsc#922056 FATE#318604
+
+bnx2x's 'disable_tpa=1' module option is not respected properly and TPA
+(transparent packet aggregation) remains enabled. Even though the
+module option causes LRO to be disabled, TPA is enabled in GRO mode.
+
+Additionally, disabling GRO via ethtool then has no effect. One can
+still observe tpa_* statistics increase and large packets being received
+in tcpdump.
+
+The bug was an unintended consequence of commit aebf6244cd39 "bnx2x: Be
+more forgiving toward SW GRO".
+
+Fix it by following the bp->disable_tpa flag when initializing fp's.
+
+Signed-off-by: Michal Schmidt <mschmidt@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_cmn.c
+@@ -2485,8 +2485,10 @@ static void bnx2x_bz_fp(struct bnx2x *bp
+ 	else if (bp->flags & GRO_ENABLE_FLAG)
+ 		fp->mode = TPA_MODE_GRO;
+ 
+-	/* We don't want TPA on an FCoE L2 ring */
+-	if (IS_FCOE_FP(fp))
++	/* We don't want TPA if it's disabled in bp
++	 * or if this is an FCoE L2 ring.
++	 */
++	if (bp->disable_tpa || IS_FCOE_FP(fp))
+ 		fp->disable_tpa = 1;
+ }
+ 
