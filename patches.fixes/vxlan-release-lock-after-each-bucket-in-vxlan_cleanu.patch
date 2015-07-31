@@ -1,0 +1,42 @@
+From: Sorin Dumitru <sorin@returnze.ro>
+Date: Tue, 26 May 2015 10:42:04 +0300
+Subject: vxlan: release lock after each bucket in vxlan_cleanup
+Patch-mainline: v4.2-rc1
+Git-commit: 14e1d0fa97f821b42e8683500cf4ec817bb5d940
+References: bsc#938963 FATE#319084
+
+We're seeing some softlockups from this function when there
+are a lot fdb entries on a vxlan device. Taking the lock for
+each bucket instead of the whole table is enough to fix that.
+
+Signed-off-by: Sorin Dumitru <sdumitru@ixiacom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ drivers/net/vxlan.c |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2056,9 +2056,10 @@ static void vxlan_cleanup(unsigned long
+ 	if (!netif_running(vxlan->dev))
+ 		return;
+ 
+-	spin_lock_bh(&vxlan->hash_lock);
+ 	for (h = 0; h < FDB_HASH_SIZE; ++h) {
+ 		struct hlist_node *p, *n;
++
++		spin_lock_bh(&vxlan->hash_lock);
+ 		hlist_for_each_safe(p, n, &vxlan->fdb_head[h]) {
+ 			struct vxlan_fdb *f
+ 				= container_of(p, struct vxlan_fdb, hlist);
+@@ -2077,8 +2078,8 @@ static void vxlan_cleanup(unsigned long
+ 			} else if (time_before(timeout, next_timer))
+ 				next_timer = timeout;
+ 		}
++		spin_unlock_bh(&vxlan->hash_lock);
+ 	}
+-	spin_unlock_bh(&vxlan->hash_lock);
+ 
+ 	mod_timer(&vxlan->age_timer, next_timer);
+ }
