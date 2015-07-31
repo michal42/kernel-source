@@ -1,0 +1,44 @@
+From: Suresh Reddy <Suresh.Reddy@emulex.com>
+Date: Fri, 20 Mar 2015 06:28:24 -0400
+Subject: [PATCH 114/145] be2net: restrict MODIFY_EQ_DELAY cmd to a max of 8
+ EQs
+Patch-mainline: v4.0-rc6
+Git-commit: c8ba4ad0b59c511578f8f706aae711f01c990794
+References: bsc#921784 FATE#318561
+
+Issuing this cmd for more than 8 EQs does not have the intended effect
+even on BEx and Skyhawk-R.
+
+This patch fixes this by issuing this cmd for upto 8 EQs at a time.
+Signed-off-by: Suresh Reddy <Suresh.Reddy@emulex.com>
+
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be_cmds.c |   14 +++++---------
+ 1 file changed, 5 insertions(+), 9 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.c
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.c
+@@ -1900,15 +1900,11 @@ int be_cmd_modify_eqd(struct be_adapter
+ {
+ 	int num_eqs, i = 0;
+ 
+-	if (lancer_chip(adapter) && num > 8) {
+-		while (num) {
+-			num_eqs = min(num, 8);
+-			__be_cmd_modify_eqd(adapter, &set_eqd[i], num_eqs);
+-			i += num_eqs;
+-			num -= num_eqs;
+-		}
+-	} else {
+-		__be_cmd_modify_eqd(adapter, set_eqd, num);
++	while (num) {
++		num_eqs = min(num, 8);
++		__be_cmd_modify_eqd(adapter, &set_eqd[i], num_eqs);
++		i += num_eqs;
++		num -= num_eqs;
+ 	}
+ 
+ 	return 0;
