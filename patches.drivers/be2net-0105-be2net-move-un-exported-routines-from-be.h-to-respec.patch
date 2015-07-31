@@ -1,0 +1,430 @@
+From: Sathya Perla <sathya.perla@emulex.com>
+Date: Fri, 6 Feb 2015 08:18:35 -0500
+Subject: [PATCH 105/145] be2net: move un-exported routines from be.h to
+ respective src files
+Patch-mainline: v4.0-rc1
+Git-commit: f7062ee5e44a044da41cdae8370368314103a930
+References: bsc#921784 FATE#318561
+
+Routines that are called only inside one src file must remain in that
+file itself. Including them in a header file that is used for exporting
+routine/struct definitions, causes unnecessary compilation of other
+src files, when such a routine is modified.
+
+Signed-off-by: Sathya Perla <sathya.perla@emulex.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be.h      |  165 ----------------------------
+ drivers/net/ethernet/emulex/benet/be_cmds.c |   18 +++
+ drivers/net/ethernet/emulex/benet/be_main.c |  149 +++++++++++++++++++++++++
+ 3 files changed, 167 insertions(+), 165 deletions(-)
+
+--- a/drivers/net/ethernet/emulex/benet/be.h
++++ b/drivers/net/ethernet/emulex/benet/be.h
+@@ -59,26 +59,6 @@
+ #define OC_SUBSYS_DEVICE_ID3	0xE612
+ #define OC_SUBSYS_DEVICE_ID4	0xE652
+ 
+-static inline char *nic_name(struct pci_dev *pdev)
+-{
+-	switch (pdev->device) {
+-	case OC_DEVICE_ID1:
+-		return OC_NAME;
+-	case OC_DEVICE_ID2:
+-		return OC_NAME_BE;
+-	case OC_DEVICE_ID3:
+-	case OC_DEVICE_ID4:
+-		return OC_NAME_LANCER;
+-	case BE_DEVICE_ID2:
+-		return BE3_NAME;
+-	case OC_DEVICE_ID5:
+-	case OC_DEVICE_ID6:
+-		return OC_NAME_SH;
+-	default:
+-		return BE_NAME;
+-	}
+-}
+-
+ /* Number of bytes of an RX frame that are copied to skb->data */
+ #define BE_HDR_LEN		((u16) 64)
+ /* allocate extra space to allow tunneling decapsulation without head reallocation */
+@@ -732,19 +712,6 @@ static inline bool is_ipv4_pkt(struct sk
+ 	return skb->protocol == htons(ETH_P_IP) && ip_hdr(skb)->version == 4;
+ }
+ 
+-static inline void be_vf_eth_addr_generate(struct be_adapter *adapter, u8 *mac)
+-{
+-	u32 addr;
+-
+-	addr = jhash(adapter->netdev->dev_addr, ETH_ALEN, 0);
+-
+-	mac[5] = (u8)(addr & 0xFF);
+-	mac[4] = (u8)((addr >> 8) & 0xFF);
+-	mac[3] = (u8)((addr >> 16) & 0xFF);
+-	/* Use the OUI from the current MAC address */
+-	memcpy(mac, adapter->netdev->dev_addr, 3);
+-}
+-
+ static inline bool be_multi_rxq(const struct be_adapter *adapter)
+ {
+ 	return adapter->num_rx_qs > 1;
+@@ -767,129 +734,6 @@ static inline void  be_clear_all_error(s
+ 	adapter->fw_timeout = false;
+ }
+ 
+-static inline bool be_is_wol_excluded(struct be_adapter *adapter)
+-{
+-	struct pci_dev *pdev = adapter->pdev;
+-
+-	if (!be_physfn(adapter))
+-		return true;
+-
+-	switch (pdev->subsystem_device) {
+-	case OC_SUBSYS_DEVICE_ID1:
+-	case OC_SUBSYS_DEVICE_ID2:
+-	case OC_SUBSYS_DEVICE_ID3:
+-	case OC_SUBSYS_DEVICE_ID4:
+-		return true;
+-	default:
+-		return false;
+-	}
+-}
+-
+-static inline int qnq_async_evt_rcvd(struct be_adapter *adapter)
+-{
+-	return adapter->flags & BE_FLAGS_QNQ_ASYNC_EVT_RCVD;
+-}
+-
+-#ifdef CONFIG_NET_RX_BUSY_POLL
+-static inline bool be_lock_napi(struct be_eq_obj *eqo)
+-{
+-	bool status = true;
+-
+-	spin_lock(&eqo->lock); /* BH is already disabled */
+-	if (eqo->state & BE_EQ_LOCKED) {
+-		WARN_ON(eqo->state & BE_EQ_NAPI);
+-		eqo->state |= BE_EQ_NAPI_YIELD;
+-		status = false;
+-	} else {
+-		eqo->state = BE_EQ_NAPI;
+-	}
+-	spin_unlock(&eqo->lock);
+-	return status;
+-}
+-
+-static inline void be_unlock_napi(struct be_eq_obj *eqo)
+-{
+-	spin_lock(&eqo->lock); /* BH is already disabled */
+-
+-	WARN_ON(eqo->state & (BE_EQ_POLL | BE_EQ_NAPI_YIELD));
+-	eqo->state = BE_EQ_IDLE;
+-
+-	spin_unlock(&eqo->lock);
+-}
+-
+-static inline bool be_lock_busy_poll(struct be_eq_obj *eqo)
+-{
+-	bool status = true;
+-
+-	spin_lock_bh(&eqo->lock);
+-	if (eqo->state & BE_EQ_LOCKED) {
+-		eqo->state |= BE_EQ_POLL_YIELD;
+-		status = false;
+-	} else {
+-		eqo->state |= BE_EQ_POLL;
+-	}
+-	spin_unlock_bh(&eqo->lock);
+-	return status;
+-}
+-
+-static inline void be_unlock_busy_poll(struct be_eq_obj *eqo)
+-{
+-	spin_lock_bh(&eqo->lock);
+-
+-	WARN_ON(eqo->state & (BE_EQ_NAPI));
+-	eqo->state = BE_EQ_IDLE;
+-
+-	spin_unlock_bh(&eqo->lock);
+-}
+-
+-static inline void be_enable_busy_poll(struct be_eq_obj *eqo)
+-{
+-	spin_lock_init(&eqo->lock);
+-	eqo->state = BE_EQ_IDLE;
+-}
+-
+-static inline void be_disable_busy_poll(struct be_eq_obj *eqo)
+-{
+-	local_bh_disable();
+-
+-	/* It's enough to just acquire napi lock on the eqo to stop
+-	 * be_busy_poll() from processing any queueus.
+-	 */
+-	while (!be_lock_napi(eqo))
+-		mdelay(1);
+-
+-	local_bh_enable();
+-}
+-
+-#else /* CONFIG_NET_RX_BUSY_POLL */
+-
+-static inline bool be_lock_napi(struct be_eq_obj *eqo)
+-{
+-	return true;
+-}
+-
+-static inline void be_unlock_napi(struct be_eq_obj *eqo)
+-{
+-}
+-
+-static inline bool be_lock_busy_poll(struct be_eq_obj *eqo)
+-{
+-	return false;
+-}
+-
+-static inline void be_unlock_busy_poll(struct be_eq_obj *eqo)
+-{
+-}
+-
+-static inline void be_enable_busy_poll(struct be_eq_obj *eqo)
+-{
+-}
+-
+-static inline void be_disable_busy_poll(struct be_eq_obj *eqo)
+-{
+-}
+-#endif /* CONFIG_NET_RX_BUSY_POLL */
+-
+ void be_cq_notify(struct be_adapter *adapter, u16 qid, bool arm,
+ 		  u16 num_popped);
+ void be_link_status_update(struct be_adapter *adapter, u8 link_status);
+@@ -901,15 +745,6 @@ u32 be_get_fw_log_level(struct be_adapte
+ int be_update_queues(struct be_adapter *adapter);
+ int be_poll(struct napi_struct *napi, int budget);
+ 
+-static inline int fw_major_num(const char *fw_ver)
+-{
+-	int fw_major = 0;
+-
+-	sscanf(fw_ver, "%d.", &fw_major);
+-
+-	return fw_major;
+-}
+-
+ /*
+  * internal function to initialize-cleanup roce device.
+  */
+--- a/drivers/net/ethernet/emulex/benet/be_cmds.c
++++ b/drivers/net/ethernet/emulex/benet/be_cmds.c
+@@ -3239,6 +3239,24 @@ err:
+ 	return status;
+ }
+ 
++static bool be_is_wol_excluded(struct be_adapter *adapter)
++{
++	struct pci_dev *pdev = adapter->pdev;
++
++	if (!be_physfn(adapter))
++		return true;
++
++	switch (pdev->subsystem_device) {
++	case OC_SUBSYS_DEVICE_ID1:
++	case OC_SUBSYS_DEVICE_ID2:
++	case OC_SUBSYS_DEVICE_ID3:
++	case OC_SUBSYS_DEVICE_ID4:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ int be_cmd_get_acpi_wol_cap(struct be_adapter *adapter)
+ {
+ 	struct be_mcc_wrb *wrb;
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -863,6 +863,11 @@ dma_err:
+ 	return 0;
+ }
+ 
++static inline int qnq_async_evt_rcvd(struct be_adapter *adapter)
++{
++	return adapter->flags & BE_FLAGS_QNQ_ASYNC_EVT_RCVD;
++}
++
+ static struct sk_buff *be_insert_vlan_in_pkt(struct be_adapter *adapter,
+ 					     struct sk_buff *skb,
+ 					     bool *skip_hw_vlan)
+@@ -2507,6 +2512,106 @@ static void be_process_tx(struct be_adap
+ 	}
+ }
+ 
++#ifdef CONFIG_NET_RX_BUSY_POLL
++static inline bool be_lock_napi(struct be_eq_obj *eqo)
++{
++	bool status = true;
++
++	spin_lock(&eqo->lock); /* BH is already disabled */
++	if (eqo->state & BE_EQ_LOCKED) {
++		WARN_ON(eqo->state & BE_EQ_NAPI);
++		eqo->state |= BE_EQ_NAPI_YIELD;
++		status = false;
++	} else {
++		eqo->state = BE_EQ_NAPI;
++	}
++	spin_unlock(&eqo->lock);
++	return status;
++}
++
++static inline void be_unlock_napi(struct be_eq_obj *eqo)
++{
++	spin_lock(&eqo->lock); /* BH is already disabled */
++
++	WARN_ON(eqo->state & (BE_EQ_POLL | BE_EQ_NAPI_YIELD));
++	eqo->state = BE_EQ_IDLE;
++
++	spin_unlock(&eqo->lock);
++}
++
++static inline bool be_lock_busy_poll(struct be_eq_obj *eqo)
++{
++	bool status = true;
++
++	spin_lock_bh(&eqo->lock);
++	if (eqo->state & BE_EQ_LOCKED) {
++		eqo->state |= BE_EQ_POLL_YIELD;
++		status = false;
++	} else {
++		eqo->state |= BE_EQ_POLL;
++	}
++	spin_unlock_bh(&eqo->lock);
++	return status;
++}
++
++static inline void be_unlock_busy_poll(struct be_eq_obj *eqo)
++{
++	spin_lock_bh(&eqo->lock);
++
++	WARN_ON(eqo->state & (BE_EQ_NAPI));
++	eqo->state = BE_EQ_IDLE;
++
++	spin_unlock_bh(&eqo->lock);
++}
++
++static inline void be_enable_busy_poll(struct be_eq_obj *eqo)
++{
++	spin_lock_init(&eqo->lock);
++	eqo->state = BE_EQ_IDLE;
++}
++
++static inline void be_disable_busy_poll(struct be_eq_obj *eqo)
++{
++	local_bh_disable();
++
++	/* It's enough to just acquire napi lock on the eqo to stop
++	 * be_busy_poll() from processing any queueus.
++	 */
++	while (!be_lock_napi(eqo))
++		mdelay(1);
++
++	local_bh_enable();
++}
++
++#else /* CONFIG_NET_RX_BUSY_POLL */
++
++static inline bool be_lock_napi(struct be_eq_obj *eqo)
++{
++	return true;
++}
++
++static inline void be_unlock_napi(struct be_eq_obj *eqo)
++{
++}
++
++static inline bool be_lock_busy_poll(struct be_eq_obj *eqo)
++{
++	return false;
++}
++
++static inline void be_unlock_busy_poll(struct be_eq_obj *eqo)
++{
++}
++
++static inline void be_enable_busy_poll(struct be_eq_obj *eqo)
++{
++}
++
++static inline void be_disable_busy_poll(struct be_eq_obj *eqo)
++{
++}
++#endif /* CONFIG_NET_RX_BUSY_POLL */
++
+ int be_poll(struct napi_struct *napi, int budget)
+ {
+ 	struct be_eq_obj *eqo = container_of(napi, struct be_eq_obj, napi);
+@@ -3001,6 +3106,19 @@ static int be_setup_wol(struct be_adapte
+ 	return status;
+ }
+ 
++static void be_vf_eth_addr_generate(struct be_adapter *adapter, u8 *mac)
++{
++	u32 addr;
++
++	addr = jhash(adapter->netdev->dev_addr, ETH_ALEN, 0);
++
++	mac[5] = (u8)(addr & 0xFF);
++	mac[4] = (u8)((addr >> 8) & 0xFF);
++	mac[3] = (u8)((addr >> 16) & 0xFF);
++	/* Use the OUI from the current MAC address */
++	memcpy(mac, adapter->netdev->dev_addr, 3);
++}
++
+ /*
+  * Generate a seed MAC address from the PF MAC Address using jhash.
+  * MAC Address for VFs are assigned incrementally starting from the seed.
+@@ -3645,6 +3763,17 @@ int be_update_queues(struct be_adapter *
+ 	return status;
+ }
+ 
++static inline int fw_major_num(const char *fw_ver)
++{
++	int fw_major = 0, i;
++
++	i = sscanf(fw_ver, "%d.", &fw_major);
++	if (i != 1)
++		return 0;
++
++	return fw_major;
++}
++
+ static int be_setup(struct be_adapter *adapter)
+ {
+ 	struct device *dev = &adapter->pdev->dev;
+@@ -4884,6 +5013,26 @@ static inline char *func_name(struct be_
+ 	return be_physfn(adapter) ? "PF" : "VF";
+ }
+ 
++static inline char *nic_name(struct pci_dev *pdev)
++{
++	switch (pdev->device) {
++	case OC_DEVICE_ID1:
++		return OC_NAME;
++	case OC_DEVICE_ID2:
++		return OC_NAME_BE;
++	case OC_DEVICE_ID3:
++	case OC_DEVICE_ID4:
++		return OC_NAME_LANCER;
++	case BE_DEVICE_ID2:
++		return BE3_NAME;
++	case OC_DEVICE_ID5:
++	case OC_DEVICE_ID6:
++		return OC_NAME_SH;
++	default:
++		return BE_NAME;
++	}
++}
++
+ static int be_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
+ {
+ 	int status = 0;
