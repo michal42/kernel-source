@@ -1,0 +1,37 @@
+From: Or Gerlitz <ogerlitz@mellanox.com>
+Date: Wed, 29 Jan 2014 18:08:59 +0200
+Subject: net/ipv4: Use non-atomic allocation of udp offloads structure
+ instance
+Patch-mainline: v3.14-rc3
+Git-commit: b5aaab12b2b4bc4acab7384c17a87f3406e5047d
+References: bsc#938963 FATE#319084
+
+Since udp_add_offload() can be called from non-sleepable context e.g
+under this call tree from the vxlan driver use case:
+
+  vxlan_socket_create() <-- holds the spinlock
+  -> vxlan_notify_add_rx_port()
+     -> udp_add_offload()  <-- schedules
+
+we should allocate the udp_offloads structure in atomic manner.
+
+Fixes: b582ef0 ('net: Add GRO support for UDP encapsulating protocols')
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ net/ipv4/udp_offload.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/net/ipv4/udp_offload.c
++++ b/net/ipv4/udp_offload.c
+@@ -101,7 +101,7 @@ out:
+ int udp_add_offload(struct udp_offload *uo)
+ {
+ 	struct udp_offload_priv __rcu **head = &udp_offload_base;
+-	struct udp_offload_priv *new_offload = kzalloc(sizeof(*new_offload), GFP_KERNEL);
++	struct udp_offload_priv *new_offload = kzalloc(sizeof(*new_offload), GFP_ATOMIC);
+ 
+ 	if (!new_offload)
+ 		return -ENOMEM;

@@ -1,0 +1,89 @@
+From: Hannes Frederic Sowa <hannes@stressinduktion.org>
+Date: Wed, 23 Oct 2013 20:06:00 +0200
+Subject: net: initialize hashrnd in flow_dissector with net_get_random_once
+Patch-mainline: v3.13-rc1
+Git-commit: 66415cf8a1b99d101317f5aa08574b1ec8832672
+References: bsc#938963 FATE#319084
+
+We also can defer the initialization of hashrnd in flow_dissector
+to its first use. Since net_get_random_once is irq safe now we don't
+have to audit the call paths if one of this functions get called by an
+interrupt handler.
+
+Cc: David S. Miller <davem@davemloft.net>
+Cc: Eric Dumazet <edumazet@google.com>
+Signed-off-by: Hannes Frederic Sowa <hannes@stressinduktion.org>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Benjamin Poirier <bpoirier@suse.com>
+---
+ net/core/flow_dissector.c |   34 +++++++++++++++++++++-------------
+ 1 file changed, 21 insertions(+), 13 deletions(-)
+
+--- a/net/core/flow_dissector.c
++++ b/net/core/flow_dissector.c
+@@ -198,6 +198,22 @@ ipv6:
+ EXPORT_SYMBOL(skb_flow_dissect);
+ 
+ static u32 hashrnd __read_mostly;
++static __always_inline void __flow_hash_secret_init(void)
++{
++	net_get_random_once(&hashrnd, sizeof(hashrnd));
++}
++
++static __always_inline u32 __flow_hash_3words(u32 a, u32 b, u32 c)
++{
++	__flow_hash_secret_init();
++	return jhash_3words(a, b, c, hashrnd);
++}
++
++static __always_inline u32 __flow_hash_1word(u32 a)
++{
++	__flow_hash_secret_init();
++	return jhash_1word(a, hashrnd);
++}
+ 
+ /*
+  * __skb_get_rxhash: calculate a flow hash based on src/dst addresses
+@@ -224,9 +240,9 @@ void __skb_get_rxhash(struct sk_buff *sk
+ 		swap(keys.port16[0], keys.port16[1]);
+ 	}
+ 
+-	hash = jhash_3words((__force u32)keys.dst,
+-			    (__force u32)keys.src,
+-			    (__force u32)keys.ports, hashrnd);
++	hash = __flow_hash_3words((__force u32)keys.dst,
++				  (__force u32)keys.src,
++				  (__force u32)keys.ports);
+ 	if (!hash)
+ 		hash = 1;
+ 
+@@ -262,7 +278,7 @@ u16 __skb_tx_hash(const struct net_devic
+ 		hash = skb->sk->sk_hash;
+ 	else
+ 		hash = (__force u16) skb->protocol;
+-	hash = jhash_1word(hash, hashrnd);
++	hash = __flow_hash_1word(hash);
+ 
+ 	return (u16) (((u64) hash * qcount) >> 32) + qoffset;
+ }
+@@ -354,7 +370,7 @@ static inline int get_xps_queue(struct n
+ 				else
+ 					hash = (__force u16) skb->protocol ^
+ 					    skb->rxhash;
+-				hash = jhash_1word(hash, hashrnd);
++				hash = __flow_hash_1word(hash);
+ 				queue_index = map->queues[
+ 				    ((u64)hash * map->len) >> 32];
+ 			}
+@@ -412,11 +428,3 @@ struct netdev_queue *netdev_pick_tx(stru
+ 	skb_set_queue_mapping(skb, queue_index);
+ 	return netdev_get_tx_queue(dev, queue_index);
+ }
+-
+-static int __init initialize_hashrnd(void)
+-{
+-	get_random_bytes(&hashrnd, sizeof(hashrnd));
+-	return 0;
+-}
+-
+-late_initcall_sync(initialize_hashrnd);
