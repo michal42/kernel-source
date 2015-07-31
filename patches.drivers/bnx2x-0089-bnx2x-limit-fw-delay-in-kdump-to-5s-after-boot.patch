@@ -1,0 +1,41 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Thu, 7 May 2015 20:37:10 +0200
+Subject: [PATCH 89/91] bnx2x: limit fw delay in kdump to 5s after boot
+Patch-mainline: v4.1-rc4
+Git-commit: cd9c39977754d9602b5783a44f4af09530a58254
+References: bsc#922056 FATE#318604
+
+Commit 12a8541d5c82 "bnx2x: Delay during kdump load" added a 5 seconds
+delay to bnx2x's probe function in the kdump case to let the firmware
+realize the old driver is gone.
+
+The problem with the delay is that it is per-device, so if you have
+several bnx2x NICs in NPAR mode, the delays can accumulate to minutes.
+
+Fix it by adjusting the delay so that we do not wait more than
+necessary, i.e. no more delaying after 5 seconds of kernel boot time.
+
+Signed-off-by: Michal Schmidt <mschmidt@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+--- a/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
++++ b/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+@@ -13364,8 +13364,13 @@ static int bnx2x_init_one(struct pci_dev
+ 	/* Management FW 'remembers' living interfaces. Allow it some time
+ 	 * to forget previously living interfaces, allowing a proper re-load.
+ 	 */
+-	if (is_kdump_kernel())
+-		msleep(5000);
++	if (is_kdump_kernel()) {
++		ktime_t now = ktime_get_boottime();
++		ktime_t fw_ready_time = ktime_set(5, 0);
++
++		if (ktime_before(now, fw_ready_time))
++			msleep(ktime_ms_delta(fw_ready_time, now));
++	}
+ 
+ 	/* An estimated maximum supported CoS number according to the chip
+ 	 * version.
