@@ -1,0 +1,61 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Sun, 9 Mar 2014 17:36:02 -0700
+Subject: tcp: timestamp SYN+DATA messages
+Patch-mainline: v3.15-rc1
+Git-commit: 431a91242d8d7876d33ab91b1f3ccdcd56b14f66
+References: bsc#937086
+
+All skb in socket write queue should be properly timestamped.
+
+In case of FastOpen, we special case the SYN+DATA 'message' as we
+queue in socket wrote queue the two fallback skbs:
+
+1) SYN message by itself.
+2) DATA segment by itself.
+
+We should make sure these skbs have proper timestamps.
+
+Add a WARN_ON_ONCE() to eventually catch future violations.
+
+Fixes: 740b0f1841f6 ("tcp: switch rtt estimations to usec resolution")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Neal Cardwell <ncardwell@google.com>
+Cc: Yuchung Cheng <ycheng@google.com>
+Acked-by: Neal Cardwell <ncardwell@google.com>
+Acked-by: Yuchung Cheng <ycheng@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/ipv4/tcp_input.c  | 1 +
+ net/ipv4/tcp_output.c | 2 ++
+ 2 files changed, 3 insertions(+)
+
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 08d2e28f7209..d8135ec35e4d 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -3018,6 +3018,7 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
+ 			flag |= FLAG_RETRANS_DATA_ACKED;
+ 		} else {
+ 			last_ackt = skb->skb_mstamp;
++			WARN_ON_ONCE(last_ackt.v64 == 0);
+ 			if (!first_ackt.v64)
+ 				first_ackt = last_ackt;
+ 
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 5c277c09ef04..a9498f1b2e5f 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2982,6 +2982,8 @@ static int tcp_send_syn_data(struct sock *sk, struct sk_buff *syn)
+ 
+ 	err = tcp_transmit_skb(sk, syn_data, 1, sk->sk_allocation);
+ 
++	syn->skb_mstamp = syn_data->skb_mstamp;
++
+ 	/* Now full SYN+DATA was cloned and sent (or not),
+ 	 * remove the SYN from the original skb (syn_data)
+ 	 * we keep in write queue in case of a retransmit, as we
+-- 
+2.4.7
+
