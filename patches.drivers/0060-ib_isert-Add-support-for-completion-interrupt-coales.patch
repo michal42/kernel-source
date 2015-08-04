@@ -39,15 +39,15 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  #include <rdma/ib_verbs.h>
  #include <rdma/rdma_cm.h>
  #include <target/target_core_base.h>
-@@ -536,6 +537,7 @@ isert_connect_request(struct rdma_cm_id
+@@ -538,6 +539,7 @@ isert_connect_request(struct rdma_cm_id
  	init_completion(&isert_conn->conn_wait_comp_err);
  	kref_init(&isert_conn->conn_kref);
  	mutex_init(&isert_conn->conn_mutex);
 +	mutex_init(&isert_conn->conn_comp_mutex);
  	spin_lock_init(&isert_conn->conn_lock);
  	INIT_LIST_HEAD(&isert_conn->conn_frwr_pool);
- 
-@@ -953,14 +955,32 @@ isert_init_tx_hdrs(struct isert_conn *is
+ 	INIT_WORK(&isert_conn->release_work, isert_release_work);
+@@ -974,14 +976,32 @@ isert_init_tx_hdrs(struct isert_conn *is
  }
  
  static void
@@ -83,7 +83,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  }
  
  static int
-@@ -1726,8 +1746,8 @@ isert_response_completion(struct iser_tx
+@@ -1747,8 +1767,8 @@ isert_response_completion(struct iser_tx
  }
  
  static void
@@ -94,7 +94,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  {
  	struct ib_device *ib_dev = isert_conn->conn_cm_id->device;
  	struct isert_cmd *isert_cmd = tx_desc->isert_cmd;
-@@ -1768,7 +1788,25 @@ isert_send_completion(struct iser_tx_des
+@@ -1789,7 +1809,25 @@ isert_send_completion(struct iser_tx_des
  }
  
  static void
@@ -121,7 +121,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  {
  	struct ib_device *ib_dev = isert_conn->conn_cm_id->device;
  	struct isert_cmd *isert_cmd = tx_desc->isert_cmd;
-@@ -1947,7 +1985,7 @@ isert_put_response(struct iscsi_conn *co
+@@ -1968,7 +2006,7 @@ isert_put_response(struct iscsi_conn *co
  		isert_cmd->tx_desc.num_sge = 2;
  	}
  
@@ -130,7 +130,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	pr_debug("Posting SCSI Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1967,7 +2005,7 @@ isert_put_nopin(struct iscsi_cmd *cmd, s
+@@ -1988,7 +2026,7 @@ isert_put_nopin(struct iscsi_cmd *cmd, s
  			       &isert_cmd->tx_desc.iscsi_header,
  			       nopout_response);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -139,7 +139,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	pr_debug("Posting NOPIN Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -1985,7 +2023,7 @@ isert_put_logout_rsp(struct iscsi_cmd *c
+@@ -2006,7 +2044,7 @@ isert_put_logout_rsp(struct iscsi_cmd *c
  	iscsit_build_logout_rsp(cmd, conn, (struct iscsi_logout_rsp *)
  				&isert_cmd->tx_desc.iscsi_header);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -148,7 +148,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	pr_debug("Posting Logout Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -2003,7 +2041,7 @@ isert_put_tm_rsp(struct iscsi_cmd *cmd,
+@@ -2024,7 +2062,7 @@ isert_put_tm_rsp(struct iscsi_cmd *cmd,
  	iscsit_build_task_mgt_rsp(cmd, conn, (struct iscsi_tm_rsp *)
  				  &isert_cmd->tx_desc.iscsi_header);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
@@ -157,7 +157,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	pr_debug("Posting Task Management Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -2035,7 +2073,7 @@ isert_put_reject(struct iscsi_cmd *cmd,
+@@ -2056,7 +2094,7 @@ isert_put_reject(struct iscsi_cmd *cmd,
  	tx_dsg->lkey	= isert_conn->conn_mr->lkey;
  	isert_cmd->tx_desc.num_sge = 2;
  
@@ -166,7 +166,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	pr_debug("Posting Reject IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -2075,7 +2113,7 @@ isert_put_text_rsp(struct iscsi_cmd *cmd
+@@ -2096,7 +2134,7 @@ isert_put_text_rsp(struct iscsi_cmd *cmd
  		tx_dsg->lkey	= isert_conn->conn_mr->lkey;
  		isert_cmd->tx_desc.num_sge = 2;
  	}
@@ -175,7 +175,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	pr_debug("Posting Text Response IB_WR_SEND >>>>>>>>>>>>>>>>>>>>>>\n");
  
-@@ -2469,7 +2507,8 @@ isert_put_datain(struct iscsi_conn *conn
+@@ -2490,7 +2528,8 @@ isert_put_datain(struct iscsi_conn *conn
  	iscsit_build_rsp_pdu(cmd, conn, true, (struct iscsi_scsi_rsp *)
  			     &isert_cmd->tx_desc.iscsi_header);
  	isert_init_tx_hdrs(isert_conn, &isert_cmd->tx_desc);
