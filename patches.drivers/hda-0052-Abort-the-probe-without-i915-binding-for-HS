@@ -1,0 +1,65 @@
+From 535115b5ff51c702a9a22feb918707c2fe1fbd17 Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Fri, 12 Jun 2015 07:53:58 +0200
+Subject: [PATCH] ALSA: hda - Abort the probe without i915 binding for HSW/BDW
+Git-commit: 535115b5ff51c702a9a22feb918707c2fe1fbd17
+Patch-mainline: 4.1-rc8
+References: bsc#936556
+
+The previous patch tried to continue the probe if i915 binding fails.
+For for simplicity reason, we haven't implemented abort even for
+controller chips that are dedicated for HDMI/DP on HSW and BDW.
+However, Mengdong suggested that this can be dangerous; BIOS may
+disable gfx power well although the PCI entry for HD-audio is left,
+and this may result in the unexpected behavior, kernel errors, etc.
+
+For avoiding this situation, abort the probe at i915 binding failure
+only for HSW/BDW chips selectively.  For other chips, it still
+continues.
+
+Fixes: bf06848bdbe5 ('ALSA: hda - Continue probing even if i915 binding fails')
+Reported-by: Mengdong Lin <mengdong.lin@intel.com>
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ sound/pci/hda/hda_intel.c |   15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+--- a/sound/pci/hda/hda_intel.c
++++ b/sound/pci/hda/hda_intel.c
+@@ -655,6 +655,11 @@ enum {
+ #define use_vga_switcheroo(chip)	0
+ #endif
+ 
++#define CONTROLLER_IN_GPU(pci) (((pci)->device == 0x0a0c) || \
++                                       ((pci)->device == 0x0c0c) || \
++                                       ((pci)->device == 0x0d0c) || \
++                                       ((pci)->device == 0x160c))
++
+ static char *driver_short_names[] = {
+ 	[AZX_DRIVER_ICH] = "HDA Intel",
+ 	[AZX_DRIVER_PCH] = "HDA Intel PCH",
+@@ -3985,6 +3990,13 @@ static int azx_probe_continue(struct azx
+ #ifdef CONFIG_SND_HDA_I915
+ 		err = hda_i915_init();
+ 		if (err < 0) {
++			/* if the controller is bound only with HDMI/DP
++			 * (for HSW and BDW), we need to abort the probe;
++			 * for other chips, still continue probing as other
++			 * codecs can be on the same link.
++			 */
++			if (!CONTROLLER_IN_GPU(pci))
++				goto skip_i915;
+ 			snd_printk(KERN_ERR SFX "Error request power-well from i915\n");
+ 			goto out_free;
+ 		}
+@@ -3996,6 +4008,9 @@ static int azx_probe_continue(struct azx
+ #endif
+ 	}
+ 
++#ifdef CONFIG_SND_HDA_I915
++ skip_i915:
++#endif
+ 	err = azx_first_init(chip);
+ 	if (err < 0)
+ 		goto out_free;
