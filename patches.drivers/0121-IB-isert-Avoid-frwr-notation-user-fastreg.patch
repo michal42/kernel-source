@@ -32,7 +32,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  static int
  isert_rdma_post_recvl(struct isert_conn *isert_conn);
  static int
-@@ -247,11 +247,11 @@ isert_create_device_ib_res(struct isert_
+@@ -249,11 +249,11 @@ isert_create_device_ib_res(struct isert_
  
  	/* asign function handlers */
  	if (dev_attr->device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS) {
@@ -48,7 +48,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  		device->reg_rdma_mem = isert_map_rdma;
  		device->unreg_rdma_mem = isert_unmap_cmd;
  	}
-@@ -259,9 +259,10 @@ isert_create_device_ib_res(struct isert_
+@@ -261,9 +261,10 @@ isert_create_device_ib_res(struct isert_
  	device->cqs_used = min_t(int, num_online_cpus(),
  				 device->ib_device->num_comp_vectors);
  	device->cqs_used = min(ISERT_MAX_CQ, device->cqs_used);
@@ -61,7 +61,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	device->cq_desc = kzalloc(sizeof(struct isert_cq_desc) *
  				device->cqs_used, GFP_KERNEL);
  	if (!device->cq_desc) {
-@@ -399,18 +400,18 @@ isert_device_find_by_ib_dev(struct rdma_
+@@ -401,18 +402,18 @@ isert_device_find_by_ib_dev(struct rdma_
  }
  
  static void
@@ -84,7 +84,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  		list_del(&fr_desc->list);
  		ib_free_fast_reg_page_list(fr_desc->data_frpl);
  		ib_dereg_mr(fr_desc->data_mr);
-@@ -418,13 +419,13 @@ isert_conn_free_frwr_pool(struct isert_c
+@@ -420,13 +421,13 @@ isert_conn_free_frwr_pool(struct isert_c
  		++i;
  	}
  
@@ -101,7 +101,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  {
  	struct fast_reg_descriptor *fr_desc;
  	struct isert_device *device = isert_conn->conn_device;
-@@ -438,7 +439,7 @@ isert_conn_create_frwr_pool(struct isert
+@@ -440,7 +441,7 @@ isert_conn_create_frwr_pool(struct isert
  	tag_num = max_t(u32, ISCSIT_MIN_TAGS, se_nacl->queue_depth);
  	tag_num = (tag_num * 2) + ISCSIT_EXTRA_TAGS;
  
@@ -110,7 +110,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	for (i = 0; i < tag_num; i++) {
  		fr_desc = kzalloc(sizeof(*fr_desc), GFP_KERNEL);
  		if (!fr_desc) {
-@@ -470,17 +471,17 @@ isert_conn_create_frwr_pool(struct isert
+@@ -472,17 +473,17 @@ isert_conn_create_frwr_pool(struct isert
  			 fr_desc, fr_desc->data_frpl->page_list);
  
  		fr_desc->valid = true;
@@ -133,16 +133,16 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	return ret;
  }
  
-@@ -520,7 +521,7 @@ isert_connect_request(struct rdma_cm_id
+@@ -522,7 +523,7 @@ isert_connect_request(struct rdma_cm_id
  	mutex_init(&isert_conn->conn_mutex);
  	mutex_init(&isert_conn->conn_comp_mutex);
  	spin_lock_init(&isert_conn->conn_lock);
 -	INIT_LIST_HEAD(&isert_conn->conn_frwr_pool);
 +	INIT_LIST_HEAD(&isert_conn->conn_fr_pool);
+ 	INIT_WORK(&isert_conn->release_work, isert_release_work);
  
  	isert_conn->conn_cm_id = cma_id;
- 	isert_conn->responder_resources = event->param.conn.responder_resources;
-@@ -640,8 +641,8 @@ isert_connect_release(struct isert_conn
+@@ -643,8 +644,8 @@ isert_connect_release(struct isert_conn
  
  	pr_debug("Entering isert_connect_release(): >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
  
@@ -152,8 +152,8 @@ Acked-by: Hannes Reinecke <hare@suse.de>
 +		isert_conn_free_fastreg_pool(isert_conn);
  
  	isert_free_rx_descriptors(isert_conn);
- 	rdma_destroy_id(isert_conn->conn_cm_id);
-@@ -1050,11 +1051,11 @@ isert_put_login_tx(struct iscsi_conn *co
+ 	if (isert_conn->conn_cm_id)
+@@ -1071,11 +1072,11 @@ isert_put_login_tx(struct iscsi_conn *co
  	}
  	if (!login->login_failed) {
  		if (login->login_complete) {
@@ -169,7 +169,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  					return ret;
  				}
  			}
-@@ -1526,25 +1527,25 @@ isert_unmap_cmd(struct isert_cmd *isert_
+@@ -1547,25 +1548,25 @@ isert_unmap_cmd(struct isert_cmd *isert_
  }
  
  static void
@@ -200,7 +200,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  		ib_dma_unmap_sg(ib_dev, wr->sge, wr->num_sge,
  				(wr->iser_ib_op == ISER_IB_RDMA_WRITE) ?
  				DMA_TO_DEVICE : DMA_FROM_DEVICE);
-@@ -2380,8 +2381,8 @@ isert_fast_reg_mr(struct fast_reg_descri
+@@ -2401,8 +2402,8 @@ isert_fast_reg_mr(struct fast_reg_descri
  }
  
  static int
@@ -211,7 +211,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  {
  	struct se_cmd *se_cmd = &cmd->se_cmd;
  	struct isert_cmd *isert_cmd = iscsit_priv_cmd(cmd);
-@@ -2459,7 +2460,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *c
+@@ -2480,7 +2481,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *c
  		wr->fr_desc = NULL;
  	} else {
  		spin_lock_irqsave(&isert_conn->conn_lock, flags);
@@ -220,7 +220,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  					   struct fast_reg_descriptor, list);
  		list_del(&fr_desc->list);
  		spin_unlock_irqrestore(&isert_conn->conn_lock, flags);
-@@ -2468,7 +2469,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *c
+@@ -2489,7 +2490,7 @@ isert_reg_rdma_frwr(struct iscsi_conn *c
  		ret = isert_fast_reg_mr(fr_desc, isert_cmd, isert_conn,
  				  ib_sge, offset, data_len);
  		if (ret) {
