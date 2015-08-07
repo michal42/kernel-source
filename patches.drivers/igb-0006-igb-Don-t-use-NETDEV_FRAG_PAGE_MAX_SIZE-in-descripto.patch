@@ -1,0 +1,47 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Wed, 6 May 2015 21:11:45 -0700
+Subject: [PATCH 6/8] igb: Don't use NETDEV_FRAG_PAGE_MAX_SIZE in descriptor
+ calculation
+Patch-mainline: v4.2-rc1
+Git-commit: 2ee52ad4962b32797bac33fa29ec8159e64c4ee3
+References: bsc#922836 Fate#318523
+
+This change updates igb so that it will correctly perform the descriptor
+count calculation.  Previously it was taking NETDEV_FRAG_PAGE_MAX_SIZE
+into account with isn't really correct since a different value is used to
+determine the size of the pages used for TCP.  That is actually determined
+by SKB_FRAG_PAGE_ORDER.
+
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/igb/igb_main.c |   11 +++--------
+ 1 file changed, 3 insertions(+), 8 deletions(-)
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -4971,6 +4971,7 @@ netdev_tx_t igb_xmit_frame_ring(struct s
+ 	struct igb_tx_buffer *first;
+ 	int tso;
+ 	u32 tx_flags = 0;
++	unsigned short f;
+ 	u16 count = TXD_USE_COUNT(skb_headlen(skb));
+ 	__be16 protocol = vlan_get_protocol(skb);
+ 	u8 hdr_len = 0;
+@@ -4981,14 +4982,8 @@ netdev_tx_t igb_xmit_frame_ring(struct s
+ 	 *       + 1 desc for context descriptor,
+ 	 * otherwise try next time
+ 	 */
+-	if (NETDEV_FRAG_PAGE_MAX_SIZE > IGB_MAX_DATA_PER_TXD) {
+-		unsigned short f;
+-
+-		for (f = 0; f < skb_shinfo(skb)->nr_frags; f++)
+-			count += TXD_USE_COUNT(skb_shinfo(skb)->frags[f].size);
+-	} else {
+-		count += skb_shinfo(skb)->nr_frags;
+-	}
++	for (f = 0; f < skb_shinfo(skb)->nr_frags; f++)
++		count += TXD_USE_COUNT(skb_shinfo(skb)->frags[f].size);
+ 
+ 	if (igb_maybe_stop_tx(tx_ring, count + 3)) {
+ 		/* this is a hard error */
