@@ -1,0 +1,41 @@
+From: Todd Fujinaka <todd.fujinaka@intel.com>
+Date: Fri, 20 Mar 2015 17:41:53 -0700
+Subject: [PATCH 2/8] igb: use netif_carrier_off earlier when bringing if down
+Patch-mainline: v4.1-rc1
+Git-commit: f28ea083a3d21abec434f429f1375b3639b234c4
+References: bsc#922836 Fate#318523
+
+Use netif_carrier_off() first, since that will prevent the stack from
+queuing more packets to this IF. This operation is fast, and should
+behave much nicer when trying to bring down an interface under load.
+
+Reported-by: Eliezer Tamir <eliezer.tamir@linux.intel.com>
+Signed-off-by: Todd Fujinaka <todd.fujinaka@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/igb/igb_main.c |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -1776,6 +1776,7 @@ void igb_down(struct igb_adapter *adapte
+ 	wr32(E1000_RCTL, rctl & ~E1000_RCTL_EN);
+ 	/* flush and sleep below */
+ 
++	netif_carrier_off(netdev);
+ 	netif_tx_stop_all_queues(netdev);
+ 
+ 	/* disable transmits in the hardware */
+@@ -1797,12 +1798,9 @@ void igb_down(struct igb_adapter *adapte
+ 		}
+ 	}
+ 
+-
+ 	del_timer_sync(&adapter->watchdog_timer);
+ 	del_timer_sync(&adapter->phy_info_timer);
+ 
+-	netif_carrier_off(netdev);
+-
+ 	/* record the stats before reset*/
+ 	spin_lock(&adapter->stats64_lock);
+ 	igb_update_stats(adapter, &adapter->stats64);
