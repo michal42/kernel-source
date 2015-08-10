@@ -1,0 +1,41 @@
+From: Alexander Duyck <alexander.h.duyck@intel.com>
+Date: Tue, 30 Sep 2014 22:49:22 +0000
+Subject: [PATCH 38/97] fm10k: Correctly set the number of Tx queues
+Patch-mainline: v3.18-rc1
+Git-commit: c9d49940849ff2f11f3646bc8eb1f23ed60b505d
+References: bsc#922855 FATE#318530
+
+The number of Tx queues was not being updated due to some issues when
+generating the patches.  This change makes sure to add the lines necessary
+to update the number of Tx queues correctly.
+
+Signed-off-by: Alexander Duyck <alexander.h.duyck@intel.com>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_netdev.c |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_netdev.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_netdev.c
+@@ -546,6 +546,10 @@ int fm10k_open(struct net_device *netdev
+ 	fm10k_request_glort_range(interface);
+ 
+ 	/* Notify the stack of the actual queue counts */
++	err = netif_set_real_num_tx_queues(netdev,
++					   interface->num_tx_queues);
++	if (err)
++		goto err_set_queues;
+ 
+ 	err = netif_set_real_num_rx_queues(netdev,
+ 					   interface->num_rx_queues);
+@@ -601,7 +605,7 @@ int fm10k_close(struct net_device *netde
+ static netdev_tx_t fm10k_xmit_frame(struct sk_buff *skb, struct net_device *dev)
+ {
+ 	struct fm10k_intfc *interface = netdev_priv(dev);
+-	unsigned int r_idx = 0;
++	unsigned int r_idx = skb->queue_mapping;
+ 	int err;
+ 
+ 	if ((skb->protocol ==  htons(ETH_P_8021Q)) &&
