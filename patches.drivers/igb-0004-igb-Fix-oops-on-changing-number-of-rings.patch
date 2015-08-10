@@ -1,0 +1,37 @@
+From: Toshiaki Makita <makita.toshiaki@lab.ntt.co.jp>
+Date: Mon, 13 Apr 2015 18:15:10 +0900
+Subject: [PATCH 4/8] igb: Fix oops on changing number of rings
+Patch-mainline: v4.1-rc4
+Git-commit: c0a06ee185f2b785c7bd44c4fb6fcae80f7d1a54
+References: bsc#922836 Fate#318523
+
+When changing the number of rings by ethtool -L, q_vectors are reused,
+which causes oops because of uninitialized pointers.
+
+- When an rx is reused as a tx, q_vector->rx.ring is not set to NULL, which
+  misleads igb_poll() to determine that it has an rx ring although it
+  actually points to the tx ring.
+- When a tx is reused as an rx, q_vector->rx.ring->skb
+  (q_vector->ring[0].skb) has a value that was used as tx_stats before.
+
+Fix these problems by zeroing it out on reuseing it.
+
+Fixes: 02ef6e1d0b00 ("igb: Fix queue allocation method to accommodate changing during runtime")
+Signed-off-by: Toshiaki Makita <makita.toshiaki@lab.ntt.co.jp>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/igb/igb_main.c |    2 ++
+ 1 file changed, 2 insertions(+)
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -1207,6 +1207,8 @@ static int igb_alloc_q_vector(struct igb
+ 	q_vector = adapter->q_vector[v_idx];
+ 	if (!q_vector)
+ 		q_vector = kzalloc(size, GFP_KERNEL);
++	else
++		memset(q_vector, 0, size);
+ 	if (!q_vector)
+ 		return -ENOMEM;
+ 

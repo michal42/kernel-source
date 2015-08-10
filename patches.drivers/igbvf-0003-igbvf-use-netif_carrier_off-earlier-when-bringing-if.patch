@@ -1,0 +1,38 @@
+From: Todd Fujinaka <todd.fujinaka@intel.com>
+Date: Fri, 20 Mar 2015 17:41:54 -0700
+Subject: [PATCH 3/3] igbvf: use netif_carrier_off earlier when bringing if
+ down
+Patch-mainline: v4.1-rc1
+Git-commit: 784401bfc0b22b5521492047884e8d834de4dfab
+References: bsc#922842 Fate#318524
+
+Use netif_carrier_off() first, since that will prevent the stack from
+queuing more packets to this IF. This operation is fast, and should
+behave much nicer when trying to bring down an interface under load.
+
+Reported-by: Eliezer Tamir <eliezer.tamir@linux.intel.com>
+Signed-off-by: Todd Fujinaka <todd.fujinaka@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/igbvf/netdev.c |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+--- a/drivers/net/ethernet/intel/igbvf/netdev.c
++++ b/drivers/net/ethernet/intel/igbvf/netdev.c
+@@ -1519,6 +1519,7 @@ void igbvf_down(struct igbvf_adapter *ad
+ 	rxdctl = er32(RXDCTL(0));
+ 	ew32(RXDCTL(0), rxdctl & ~E1000_RXDCTL_QUEUE_ENABLE);
+ 
++	netif_carrier_off(netdev);
+ 	netif_stop_queue(netdev);
+ 
+ 	/* disable transmits in the hardware */
+@@ -1535,8 +1536,6 @@ void igbvf_down(struct igbvf_adapter *ad
+ 
+ 	del_timer_sync(&adapter->watchdog_timer);
+ 
+-	netif_carrier_off(netdev);
+-
+ 	/* record the stats before reset*/
+ 	igbvf_update_stats(adapter);
+ 
