@@ -1,0 +1,33 @@
+From: Joe Stringer <joestringer@nicira.com>
+Date: Fri, 14 Nov 2014 07:47:40 +0000
+Subject: [PATCH 50/97] fm10k: Check tunnel header length in encap offload
+Patch-mainline: v4.0-rc1
+Git-commit: b66b6d9f6dbe0655a570fb2a2482cceac5f1a9bc
+References: bsc#922855 FATE#318530
+
+fm10k supports up to 184 bytes of inner+outer headers. Add an initial
+check to fail encap offload if these are too large.
+
+Signed-off-by: Joe Stringer <joestringer@nicira.com>
+Tested-by: Krishneil Singh <Krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_main.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_main.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_main.c
+@@ -727,6 +727,12 @@ static __be16 fm10k_tx_encap_offload(str
+ 	struct ethhdr *eth_hdr;
+ 	u8 l4_hdr = 0;
+ 
++/* fm10k supports 184 octets of outer+inner headers. Minus 20 for inner L4. */
++#define FM10K_MAX_ENCAP_TRANSPORT_OFFSET	164
++	if (skb_inner_transport_header(skb) - skb_mac_header(skb) >
++	    FM10K_MAX_ENCAP_TRANSPORT_OFFSET)
++		return 0;
++
+ 	switch (vlan_get_protocol(skb)) {
+ 	case htons(ETH_P_IP):
+ 		l4_hdr = ip_hdr(skb)->protocol;
