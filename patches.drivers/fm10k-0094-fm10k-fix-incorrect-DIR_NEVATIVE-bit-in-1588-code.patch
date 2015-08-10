@@ -1,0 +1,44 @@
+From: Jacob Keller <jacob.e.keller@intel.com>
+Date: Wed, 3 Jun 2015 16:31:10 -0700
+Subject: [PATCH 94/97] fm10k: fix incorrect DIR_NEVATIVE bit in 1588 code
+Patch-mainline: v4.2-rc1
+Git-commit: 646725a7c9cbdefd8df4ae7b3217a992ad64a4cd
+References: bsc#922855 FATE#318530
+
+The SYSTIME_CFG.Adjust Direction bit is actually supposed to indicate
+that the adjustment is positive. Fix the code to align correctly with
+hardware and documentation.
+
+Signed-off-by: Jacob Keller <jacob.e.keller@intel.com>
+Tested-by: Krishneil Singh <Krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_pf.c   |    4 ++--
+ drivers/net/ethernet/intel/fm10k/fm10k_type.h |    2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_pf.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_pf.c
+@@ -1792,8 +1792,8 @@ static s32 fm10k_adjust_systime_pf(struc
+ 	if (systime_adjust > FM10K_SW_SYSTIME_ADJUST_MASK)
+ 		return FM10K_ERR_PARAM;
+ 
+-	if (ppb < 0)
+-		systime_adjust |= FM10K_SW_SYSTIME_ADJUST_DIR_NEGATIVE;
++	if (ppb > 0)
++		systime_adjust |= FM10K_SW_SYSTIME_ADJUST_DIR_POSITIVE;
+ 
+ 	fm10k_write_sw_reg(hw, FM10K_SW_SYSTIME_ADJUST, (u32)systime_adjust);
+ 
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_type.h
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_type.h
+@@ -366,7 +366,7 @@ struct fm10k_hw;
+ /* Registers contained in BAR 4 for Switch management */
+ #define FM10K_SW_SYSTIME_ADJUST	0x0224D
+ #define FM10K_SW_SYSTIME_ADJUST_MASK		0x3FFFFFFF
+-#define FM10K_SW_SYSTIME_ADJUST_DIR_NEGATIVE	0x80000000
++#define FM10K_SW_SYSTIME_ADJUST_DIR_POSITIVE	0x80000000
+ #define FM10K_SW_SYSTIME_PULSE(_n)	((_n) + 0x02252)
+ 
+ enum fm10k_int_source {
