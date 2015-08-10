@@ -1,0 +1,64 @@
+From: Jacob Keller <jacob.e.keller@intel.com>
+Date: Tue, 16 Jun 2015 13:41:43 -0700
+Subject: [PATCH 90/97] fm10k: use dma_set_mask_and_coherent in fm10k_probe
+Patch-mainline: v4.2-rc1
+Git-commit: c04ae58e2b6d836325914e7b4aa25f43da1be3df
+References: bsc#922855 FATE#318530
+
+This patch cleans up the use of dma_get_required_mask and uses the
+simpler dma_set_mask_and_coherent function instead of doing these as
+separate steps.
+
+I removed the dma_get_required_mask call because based on some minimal
+testing it appears that either (a) we're not doing the right thing with
+the call or (b) we don't need it anyways. If the value returned is
+<48bits, we'll end up trying with 48 bits anyways. If it's over 48bits,
+fm10k can't support that anyways, and we should try 48bits. If 48bits
+fails, we'll fallback to 32bits. This cleans up some very funky code.
+
+Signed-off-by: Jacob Keller <jacob.e.keller@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_pci.c |   24 ++++++------------------
+ 1 file changed, 6 insertions(+), 18 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_pci.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_pci.c
+@@ -1742,30 +1742,18 @@ static int fm10k_probe(struct pci_dev *p
+ 	struct fm10k_intfc *interface;
+ 	struct fm10k_hw *hw;
+ 	int err;
+-	u64 dma_mask;
+ 
+ 	err = pci_enable_device_mem(pdev);
+ 	if (err)
+ 		return err;
+ 
+-	/* By default fm10k only supports a 48 bit DMA mask */
+-	dma_mask = DMA_BIT_MASK(48) | dma_get_required_mask(&pdev->dev);
+-
+-	if ((dma_mask <= DMA_BIT_MASK(32)) ||
+-	    dma_set_mask_and_coherent(&pdev->dev, dma_mask)) {
+-		dma_mask &= DMA_BIT_MASK(32);
+-
++	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(48));
++	if (err)
+ 		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+-		err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
+-		if (err) {
+-			err = dma_set_coherent_mask(&pdev->dev,
+-						    DMA_BIT_MASK(32));
+-			if (err) {
+-				dev_err(&pdev->dev,
+-					"No usable DMA configuration, aborting\n");
+-				goto err_dma;
+-			}
+-		}
++	if (err) {
++		dev_err(&pdev->dev,
++			"DMA configuration failed: %d\n", err);
++		goto err_dma;
+ 	}
+ 
+ 	err = pci_request_selected_regions(pdev,
