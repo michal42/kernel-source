@@ -1,0 +1,81 @@
+From: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Date: Fri, 3 Apr 2015 13:26:59 -0700
+Subject: [PATCH 63/97] fm10k: use hw->mac.max_queues for stats
+Patch-mainline: v4.1-rc1
+Git-commit: c0e61781a8cb1c5d1b092a4d9776dbefe799444e
+References: bsc#922855 FATE#318530
+
+Even though it shouldn't strictly matter, don't count queue stats higher
+than the max_queues value stored for this mac. This ensures that we
+don't attempt to check queues which don't belong to use in VFs. This
+shouldn't be a visible change, as the VFs should see zero for queues
+which don't belong to them.
+
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: Jacob Keller <jacob.e.keller@intel.com>
+Acked-by: Matthew Vick <matthew.vick@intel.com>
+Tested-by: Krishneil Singh <krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_ethtool.c |   18 +++++++++++-------
+ drivers/net/ethernet/intel/fm10k/fm10k_pci.c     |    2 +-
+ 2 files changed, 12 insertions(+), 8 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_ethtool.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_ethtool.c
+@@ -98,12 +98,11 @@ static const struct fm10k_stats fm10k_gs
+ 
+ #define FM10K_GLOBAL_STATS_LEN ARRAY_SIZE(fm10k_gstrings_stats)
+ 
+-#define FM10K_QUEUE_STATS_LEN \
+-	  (MAX_QUEUES * 2 * (sizeof(struct fm10k_queue_stats) / sizeof(u64)))
++#define FM10K_QUEUE_STATS_LEN(_n) \
++	( (_n) * 2 * (sizeof(struct fm10k_queue_stats) / sizeof(u64)))
+ 
+-#define FM10K_STATS_LEN (FM10K_GLOBAL_STATS_LEN + \
+-			 FM10K_NETDEV_STATS_LEN + \
+-			 FM10K_QUEUE_STATS_LEN)
++#define FM10K_STATIC_STATS_LEN (FM10K_GLOBAL_STATS_LEN + \
++				FM10K_NETDEV_STATS_LEN)
+ 
+ static const char fm10k_gstrings_test[][ETH_GSTRING_LEN] = {
+ 	"Mailbox test (on/offline)"
+@@ -155,11 +154,16 @@ static void fm10k_get_strings(struct net
+ 
+ static int fm10k_get_sset_count(struct net_device *dev, int sset)
+ {
++	struct fm10k_intfc *interface = netdev_priv(dev);
++	struct fm10k_hw *hw = &interface->hw;
++	int stats_len = FM10K_STATIC_STATS_LEN;
++
+ 	switch (sset) {
+ 	case ETH_SS_TEST:
+ 		return FM10K_TEST_LEN;
+ 	case ETH_SS_STATS:
+-		return FM10K_STATS_LEN;
++		stats_len += FM10K_QUEUE_STATS_LEN(hw->mac.max_queues);
++		return stats_len;
+ 	default:
+ 		return -EOPNOTSUPP;
+ 	}
+@@ -369,7 +373,7 @@ static void fm10k_get_drvinfo(struct net
+ 	strncpy(info->bus_info, pci_name(interface->pdev),
+ 		sizeof(info->bus_info) - 1);
+ 
+-	info->n_stats = FM10K_STATS_LEN;
++	info->n_stats = fm10k_get_sset_count(dev, ETH_SS_STATS);
+ 
+ 	info->regdump_len = fm10k_get_regs_len(dev);
+ }
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_pci.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_pci.c
+@@ -361,7 +361,7 @@ void fm10k_update_stats(struct fm10k_int
+ 
+ 	hw->mac.ops.update_hw_stats(hw, &interface->stats);
+ 
+-	for (i = 0; i < FM10K_MAX_QUEUES_PF; i++) {
++	for (i = 0; i < hw->mac.max_queues; i++) {
+ 		struct fm10k_hw_stats_q *q = &interface->stats.q[i];
+ 
+ 		tx_bytes_nic += q->tx_bytes.count;
