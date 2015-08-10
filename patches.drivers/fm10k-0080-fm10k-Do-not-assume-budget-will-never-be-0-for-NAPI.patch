@@ -1,0 +1,39 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Fri, 1 May 2015 10:34:38 -0700
+Subject: [PATCH 80/97] fm10k: Do not assume budget will never be 0 for NAPI
+Patch-mainline: v4.1-rc4
+Git-commit: 59486329b46f31532ab032014fbaae72e9f190c3
+References: bsc#922855 FATE#318530
+
+The netpoll path will call napi->poll with a budget of 0 in order to clean
+the Tx rings only.  This change updates the fm10k driver so that it will
+correctly support that instead of cleaning 1 Rx frame if a budget of 0 is
+received.
+
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_main.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_main.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_main.c
+@@ -610,7 +610,7 @@ static bool fm10k_clean_rx_irq(struct fm
+ 	unsigned int total_bytes = 0, total_packets = 0;
+ 	u16 cleaned_count = fm10k_desc_unused(rx_ring);
+ 
+-	do {
++	while (likely(total_packets < budget)) {
+ 		union fm10k_rx_desc *rx_desc;
+ 
+ 		/* return some buffers to hardware, one at a time is too slow */
+@@ -659,7 +659,7 @@ static bool fm10k_clean_rx_irq(struct fm
+ 
+ 		/* update budget accounting */
+ 		total_packets++;
+-	} while (likely(total_packets < budget));
++	}
+ 
+ 	/* place incomplete frames back on ring for completion */
+ 	rx_ring->skb = skb;
