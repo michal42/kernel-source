@@ -1,0 +1,61 @@
+From: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Date: Fri, 3 Apr 2015 13:27:09 -0700
+Subject: [PATCH 73/97] fm10k: start service timer on probe
+Patch-mainline: v4.1-rc1
+Git-commit: 54b3c9cfad6bf0488a031171805c52346f4efa3d
+References: bsc#922855 FATE#318530
+
+Since the service task handles varying work that doesn't all require the
+interface to be up, launch the service timer immediately. This ensures
+that we continually check the mailbox, as well as handle other tasks
+while the device is down.
+
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: Jacob Keller <jacob.e.keller@intel.com>
+Acked-by: Matthew Vick <matthew.vick@intel.com>
+Tested-by: Krishneil Singh <krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_pci.c |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_pci.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_pci.c
+@@ -1512,7 +1512,7 @@ void fm10k_up(struct fm10k_intfc *interf
+ 	/* enable transmits */
+ 	netif_tx_start_all_queues(interface->netdev);
+ 
+-	/* kick off the service timer */
++	/* kick off the service timer now */
+ 	hw->mac.get_host_state = 1;
+ 	mod_timer(&interface->service_timer, jiffies);
+ }
+@@ -1552,8 +1552,6 @@ void fm10k_down(struct fm10k_intfc *inte
+ 	/* disable polling routines */
+ 	fm10k_napi_disable_all(interface);
+ 
+-	del_timer_sync(&interface->service_timer);
+-
+ 	/* capture stats one last time before stopping interface */
+ 	fm10k_update_stats(interface);
+ 
+@@ -1679,6 +1677,9 @@ static int fm10k_sw_init(struct fm10k_in
+ 		    (unsigned long)interface);
+ 	INIT_WORK(&interface->service_task, fm10k_service_task);
+ 
++	/* kick off service timer now, even when interface is down */
++	mod_timer(&interface->service_timer, (HZ * 2) + jiffies);
++
+ 	/* Intitialize timestamp data */
+ 	fm10k_ts_init(interface);
+ 
+@@ -1895,6 +1896,8 @@ static void fm10k_remove(struct pci_dev
+ 	struct fm10k_intfc *interface = pci_get_drvdata(pdev);
+ 	struct net_device *netdev = interface->netdev;
+ 
++	del_timer_sync(&interface->service_timer);
++
+ 	set_bit(__FM10K_SERVICE_DISABLE, &interface->state);
+ 	cancel_work_sync(&interface->service_task);
+ 
