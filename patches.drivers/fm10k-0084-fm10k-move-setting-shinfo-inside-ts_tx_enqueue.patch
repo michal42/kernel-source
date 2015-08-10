@@ -1,0 +1,41 @@
+From: Jacob Keller <jacob.e.keller@intel.com>
+Date: Wed, 3 Jun 2015 16:31:00 -0700
+Subject: [PATCH 84/97] fm10k: move setting shinfo inside ts_tx_enqueue
+Patch-mainline: v4.2-rc1
+Git-commit: e075996ebd14dcd3d1a45172316141fe26d891fa
+References: bsc#922855 FATE#318530
+
+This patch simplifies the code flow for setting the IN_PROGRESS bit of
+the shinfo for an skb we will be timestamping.
+
+Reported-by: Eric Dumazet <eric.dumazet@gmail.com>
+Signed-off-by: Jacob Keller <jacob.e.keller@intel.com>
+Tested-by: Krishneil Singh <Krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_ptp.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_ptp.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_ptp.c
+@@ -71,16 +71,16 @@ void fm10k_ts_tx_enqueue(struct fm10k_in
+ 	 * if none are present then insert skb in tail of list
+ 	 */
+ 	skb = fm10k_ts_tx_skb(interface, FM10K_CB(clone)->fi.w.dglort);
+-	if (!skb)
++	if (!skb) {
++		skb_shinfo(clone)->tx_flags |= SKBTX_IN_PROGRESS;
+ 		__skb_queue_tail(list, clone);
++	}
+ 
+ 	spin_unlock_irqrestore(&list->lock, flags);
+ 
+ 	/* if list is already has one then we just free the clone */
+ 	if (skb)
+ 		kfree_skb(skb);
+-	else
+-		skb_shinfo(clone)->tx_flags |= SKBTX_IN_PROGRESS;
+ }
+ 
+ void fm10k_ts_tx_hwtstamp(struct fm10k_intfc *interface, __le16 dglort,
