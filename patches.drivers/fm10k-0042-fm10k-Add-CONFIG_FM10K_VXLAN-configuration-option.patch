@@ -1,0 +1,66 @@
+From: Andy Zhou <azhou@nicira.com>
+Date: Sat, 4 Oct 2014 06:19:11 +0000
+Subject: [PATCH 42/97] fm10k: Add CONFIG_FM10K_VXLAN configuration option
+Patch-mainline: v3.18-rc1
+Git-commit: f6b03c10a1b3f2c98ed23813997cdebef8aabeba
+References: bsc#922855 FATE#318530
+
+Compiling with CONFIG_FM10K=y and VXLAN=m resulting in linking error:
+
+   drivers/built-in.o: In function `fm10k_open':
+   (.text+0x1f9d7a): undefined reference to `vxlan_get_rx_port'
+   make: *** [vmlinux] Error 1
+
+The fix follows the same strategy as I40E.
+
+Signed-off-by: Andy Zhou <azhou@nicira.com>
+Acked-by: Alexander Duyck <alexander.h.duyck@intel.com>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/Kconfig              |   11 +++++++++++
+ drivers/net/ethernet/intel/fm10k/fm10k_netdev.c |    6 +++---
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/intel/Kconfig
++++ b/drivers/net/ethernet/intel/Kconfig
+@@ -319,4 +319,15 @@ config FM10K
+ 	  To compile this driver as a module, choose M here. The module
+ 	  will be called fm10k.  MSI-X interrupt support is required
+ 
++config FM10K_VXLAN
++	bool "Virtual eXtensible Local Area Network Support"
++	default n
++	depends on FM10K && VXLAN && !(FM10K=y && VXLAN=m)
++	---help---
++	  This allows one to create VXLAN virtual interfaces that provide
++	  Layer 2 Networks over Layer 3 Networks. VXLAN is often used
++	  to tunnel virtual network infrastructure in virtualized environments.
++	  Say Y here if you want to use Virtual eXtensible Local Area Network
++	  (VXLAN) in the driver.
++
+ endif # NET_VENDOR_INTEL
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_netdev.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_netdev.c
+@@ -20,9 +20,9 @@
+ 
+ #include "fm10k.h"
+ #include <linux/vmalloc.h>
+-#if IS_ENABLED(CONFIG_VXLAN)
++#if IS_ENABLED(CONFIG_FM10K_VXLAN)
+ #include <net/vxlan.h>
+-#endif /* CONFIG_VXLAN */
++#endif /* CONFIG_FM10K_VXLAN */
+ 
+ /**
+  * fm10k_setup_tx_resources - allocate Tx resources (Descriptors)
+@@ -556,7 +556,7 @@ int fm10k_open(struct net_device *netdev
+ 	if (err)
+ 		goto err_set_queues;
+ 
+-#if IS_ENABLED(CONFIG_VXLAN)
++#if IS_ENABLED(CONFIG_FM10K_VXLAN)
+ 	/* update VXLAN port configuration */
+ 	vxlan_get_rx_port(netdev);
+ 
