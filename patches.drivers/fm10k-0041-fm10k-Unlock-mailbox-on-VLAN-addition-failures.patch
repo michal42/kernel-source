@@ -1,0 +1,49 @@
+From: Matthew Vick <matthew.vick@intel.com>
+Date: Fri, 3 Oct 2014 00:43:35 +0000
+Subject: [PATCH 41/97] fm10k: Unlock mailbox on VLAN addition failures
+Patch-mainline: v3.18-rc1
+Git-commit: 13cb2dad45cc8c8e350abc84de38449b89629c3c
+References: bsc#922855 FATE#318530
+
+After grabbing the mailbox lock and detecting an error, the lock must be
+released before the error code can be returned.
+
+Signed-off-by: Matthew Vick <matthew.vick@intel.com>
+Tested-by: Aaron Brown <aaron.f.brown@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_netdev.c |    7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_netdev.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_netdev.c
+@@ -785,14 +785,14 @@ static int fm10k_update_vid(struct net_d
+ 	if (!(netdev->flags & IFF_PROMISC)) {
+ 		err = hw->mac.ops.update_vlan(hw, vid, 0, set);
+ 		if (err)
+-			return err;
++			goto err_out;
+ 	}
+ 
+ 	/* update our base MAC address */
+ 	err = hw->mac.ops.update_uc_addr(hw, interface->glort, hw->mac.addr,
+ 					 vid, set, 0);
+ 	if (err)
+-		return err;
++		goto err_out;
+ 
+ 	/* set vid prior to syncing/unsyncing the VLAN */
+ 	interface->vid = vid + (set ? VLAN_N_VID : 0);
+@@ -801,9 +801,10 @@ static int fm10k_update_vid(struct net_d
+ 	__dev_uc_unsync(netdev, fm10k_uc_vlan_unsync);
+ 	__dev_mc_unsync(netdev, fm10k_mc_vlan_unsync);
+ 
++err_out:
+ 	fm10k_mbx_unlock(interface);
+ 
+-	return 0;
++	return err;
+ }
+ 
+ static int fm10k_vlan_rx_add_vid(struct net_device *netdev,
