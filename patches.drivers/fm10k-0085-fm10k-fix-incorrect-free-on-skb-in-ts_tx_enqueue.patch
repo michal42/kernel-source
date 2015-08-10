@@ -1,0 +1,38 @@
+From: Jacob Keller <jacob.e.keller@intel.com>
+Date: Wed, 3 Jun 2015 16:31:01 -0700
+Subject: [PATCH 85/97] fm10k: fix incorrect free on skb in ts_tx_enqueue
+Patch-mainline: v4.2-rc1
+Git-commit: c23544b196e72716244108fb173f2965e9eafd1a
+References: bsc#922855 FATE#318530
+
+This patch resolves a bug in the ts_tx_enqueue code responsible for a
+NULL pointer dereference and invalid access of the skb list. We
+incorrectly freed the actual skb we found instead of our copy. Thus the
+skb queue is essentially invalidated. Resolve this by freeing our clone
+in the cases where we did not add it to the queue. This also avoids the
+skb memory leak caused by failure to free the clone.
+
+[  589.719320] BUG: unable to handle kernel NULL pointer dereference at           (null)
+[  589.722344] IP: [<ffffffffa0310e60>] fm10k_ts_tx_subtask+0xb0/0x160 [fm10k]
+[  589.723796] PGD 0
+[  589.725228] Oops: 0000 [#1] SMP
+
+Signed-off-by: Jacob Keller <jacob.e.keller@intel.com>
+Tested-by: Krishneil Singh <Krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_ptp.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_ptp.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_ptp.c
+@@ -80,7 +80,7 @@ void fm10k_ts_tx_enqueue(struct fm10k_in
+ 
+ 	/* if list is already has one then we just free the clone */
+ 	if (skb)
+-		kfree_skb(skb);
++		dev_kfree_skb(clone);
+ }
+ 
+ void fm10k_ts_tx_hwtstamp(struct fm10k_intfc *interface, __le16 dglort,
