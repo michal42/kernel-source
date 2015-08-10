@@ -1,0 +1,37 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Fri, 10 Oct 2014 04:48:14 -0700
+Subject: [PATCH 39/97] fm10k: fix race accessing page->_count
+Patch-mainline: v3.18-rc1
+Git-commit: 42b0270b40e2ad692ef59e28233202ee6f293e1e
+References: bsc#922855 FATE#318530
+
+This is illegal to use atomic_set(&page->_count, 2) even if we 'own'
+the page. Other entities in the kernel need to use get_page_unless_zero()
+to get a reference to the page before testing page properties, so we could
+loose a refcount increment.
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Acked-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/fm10k/fm10k_main.c |    7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/ethernet/intel/fm10k/fm10k_main.c
++++ b/drivers/net/ethernet/intel/fm10k/fm10k_main.c
+@@ -219,11 +219,10 @@ static bool fm10k_can_reuse_rx_page(stru
+ 	/* flip page offset to other buffer */
+ 	rx_buffer->page_offset ^= FM10K_RX_BUFSZ;
+ 
+-	/* since we are the only owner of the page and we need to
+-	 * increment it, just set the value to 2 in order to avoid
+-	 * an unnecessary locked operation
++	/* Even if we own the page, we are not allowed to use atomic_set()
++	 * This would break get_page_unless_zero() users.
+ 	 */
+-	atomic_set(&page->_count, 2);
++	atomic_inc(&page->_count);
+ #else
+ 	/* move offset up to the next cache line */
+ 	rx_buffer->page_offset += truesize;
