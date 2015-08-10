@@ -1,0 +1,45 @@
+From: Thomas Falcon <tlfalcon@linux.vnet.ibm.com>
+Subject: ibmveth: change rx buffer default allocation for CMO
+Git-commit: cd7c7ec3687986c71b48848637066d4460c92b95
+Patch-mainline: v4.2-rc1
+References: FATE#319109,bsc#936186
+
+ ibmveth: change rx buffer default allocation for CMO
+
+This patch enables 64k rx buffer pools by default.  If Cooperative
+Memory Overcommitment (CMO) is enabled, the number of 64k buffers
+is reduced to save memory.
+
+Cc: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: Thomas Falcon <tlfalcon@linux.vnet.ibm.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Torsten Duwe <duwe@suse.de>
+
+diff --git a/drivers/net/ethernet/ibm/ibmveth.c b/drivers/net/ethernet/ibm/ibmveth.c
+index 1813476..0956ab9 100644
+--- a/drivers/net/ethernet/ibm/ibmveth.c
++++ b/drivers/net/ethernet/ibm/ibmveth.c
+@@ -1424,6 +1424,9 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
+ 
+ 	memcpy(netdev->dev_addr, mac_addr_p, ETH_ALEN);
+ 
++	if (firmware_has_feature(FW_FEATURE_CMO))
++		memcpy(pool_count, pool_count_cmo, sizeof(pool_count));
++
+ 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+ 		struct kobject *kobj = &adapter->rx_buff_pool[i].kobj;
+ 		int error;
+diff --git a/drivers/net/ethernet/ibm/ibmveth.h b/drivers/net/ethernet/ibm/ibmveth.h
+index 1f37499..0dc664b 100644
+--- a/drivers/net/ethernet/ibm/ibmveth.h
++++ b/drivers/net/ethernet/ibm/ibmveth.h
+@@ -104,7 +104,8 @@ static inline long h_illan_attributes(unsigned long unit_address,
+ 
+ static int pool_size[] = { 512, 1024 * 2, 1024 * 16, 1024 * 32, 1024 * 64 };
+ static int pool_count[] = { 256, 512, 256, 256, 256 };
+-static int pool_active[] = { 1, 1, 0, 0, 0};
++static int pool_count_cmo[] = { 256, 512, 256, 256, 64 };
++static int pool_active[] = { 1, 1, 0, 0, 1};
+ 
+ #define IBM_VETH_INVALID_MAP ((u16)0xffff)
+ 
