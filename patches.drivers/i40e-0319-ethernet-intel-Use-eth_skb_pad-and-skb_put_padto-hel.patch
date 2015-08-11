@@ -1,0 +1,41 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Wed, 3 Dec 2014 08:17:39 -0800
+Subject: [PATCH 319/497] ethernet/intel: Use eth_skb_pad and skb_put_padto
+ helpers
+Patch-mainline: v3.19-rc1
+Git-commit: a94d9e224e3c48f57559183582c6410e7acf1d8b (partial)
+References: bsc#922844 FATE#318525
+
+Update the Intel Ethernet drivers to use eth_skb_pad() and skb_put_padto
+instead of doing their own implementations of the function.
+
+Also this cleans up two other spots where skb_pad was called but the length
+and tail pointers were being manipulated directly instead of just having
+the padding length added via __skb_put.
+
+Cc: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Acked-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/i40e/i40e_txrx.c |    8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/intel/i40e/i40e_txrx.c
++++ b/drivers/net/ethernet/intel/i40e/i40e_txrx.c
+@@ -2397,12 +2397,8 @@ netdev_tx_t i40e_lan_xmit_frame(struct s
+ 	/* hardware can't handle really short frames, hardware padding works
+ 	 * beyond this point
+ 	 */
+-	if (unlikely(skb->len < I40E_MIN_TX_LEN)) {
+-		if (skb_pad(skb, I40E_MIN_TX_LEN - skb->len))
+-			return NETDEV_TX_OK;
+-		skb->len = I40E_MIN_TX_LEN;
+-		skb_set_tail_pointer(skb, I40E_MIN_TX_LEN);
+-	}
++	if (skb_put_padto(skb, I40E_MIN_TX_LEN))
++		return NETDEV_TX_OK;
+ 
+ 	return i40e_xmit_frame_ring(skb, tx_ring);
+ }
