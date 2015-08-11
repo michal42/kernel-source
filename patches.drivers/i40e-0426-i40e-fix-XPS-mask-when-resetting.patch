@@ -1,0 +1,55 @@
+From: Jesse Brandeburg <jesse.brandeburg@intel.com>
+Date: Thu, 26 Feb 2015 16:13:22 +0000
+Subject: [PATCH 426/497] i40e: fix XPS mask when resetting
+Patch-mainline: v4.1-rc1
+Git-commit: 9a660eeae2779cea72ef306b721273a0e951e7d7
+References: bsc#922844 FATE#318525
+
+During resets (possibly caused by a Tx hang) the driver would
+accidentally clear the XPS mask for all queues back to 0.
+
+This caused higher CPU utilization and had some other performance impacts
+for transmit tests.
+
+Change-ID: I95f112432c9e643a153eaa31cd28cdcbfdd01831
+Signed-off-by: Jesse Brandeburg <jesse.brandeburg@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/i40e/i40e_main.c |   22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+--- a/drivers/net/ethernet/intel/i40e/i40e_main.c
++++ b/drivers/net/ethernet/intel/i40e/i40e_main.c
+@@ -2399,20 +2399,20 @@ static void i40e_config_xps_tx_ring(stru
+ 	struct i40e_vsi *vsi = ring->vsi;
+ 	cpumask_var_t mask;
+ 
+-	if (ring->q_vector && ring->netdev) {
+-		/* Single TC mode enable XPS */
+-		if (vsi->tc_config.numtc <= 1 &&
+-		    !test_and_set_bit(__I40E_TX_XPS_INIT_DONE, &ring->state)) {
++	if (!ring->q_vector || !ring->netdev)
++		return;
++
++	/* Single TC mode enable XPS */
++	if (vsi->tc_config.numtc <= 1) {
++		if (!test_and_set_bit(__I40E_TX_XPS_INIT_DONE, &ring->state))
+ 			netif_set_xps_queue(ring->netdev,
+ 					    &ring->q_vector->affinity_mask,
+ 					    ring->queue_index);
+-		} else if (alloc_cpumask_var(&mask, GFP_KERNEL)) {
+-			/* Disable XPS to allow selection based on TC */
+-			bitmap_zero(cpumask_bits(mask), nr_cpumask_bits);
+-			netif_set_xps_queue(ring->netdev, mask,
+-					    ring->queue_index);
+-			free_cpumask_var(mask);
+-		}
++	} else if (alloc_cpumask_var(&mask, GFP_KERNEL)) {
++		/* Disable XPS to allow selection based on TC */
++		bitmap_zero(cpumask_bits(mask), nr_cpumask_bits);
++		netif_set_xps_queue(ring->netdev, mask, ring->queue_index);
++		free_cpumask_var(mask);
+ 	}
+ }
+ 
