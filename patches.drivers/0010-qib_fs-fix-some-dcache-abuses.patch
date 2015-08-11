@@ -1,0 +1,60 @@
+From: Al Viro <viro@zeniv.linux.org.uk>
+Date: Wed, 13 Nov 2013 07:52:33 -0500
+Subject: qib_fs: fix (some) dcache abuses
+Patch-mainline: v3.13-rc1
+Git-commit: 441a9d0e1e827e6433e3487145fbb0c5513301e2
+References: bsc#923158,FATE#318519
+
+* lookup_one_len() really wants i_mutex held on directory.
+* leaks galore - just mount ipathfs, then
+cd /sys/bus/pci/drivers/qib_ib; echo *:*:*.* >unbind
+on a box with that card present and try to umount ipathfs...
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/hw/qib/qib_fs.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/infiniband/hw/qib/qib_fs.c b/drivers/infiniband/hw/qib/qib_fs.c
+index f247fc6e..c61e2a9 100644
+--- a/drivers/infiniband/hw/qib/qib_fs.c
++++ b/drivers/infiniband/hw/qib/qib_fs.c
+@@ -456,13 +456,13 @@ static int remove_file(struct dentry *parent, char *name)
+ 
+ 	spin_lock(&tmp->d_lock);
+ 	if (!(d_unhashed(tmp) && tmp->d_inode)) {
+-		dget_dlock(tmp);
+ 		__d_drop(tmp);
+ 		spin_unlock(&tmp->d_lock);
+ 		simple_unlink(parent->d_inode, tmp);
+ 	} else {
+ 		spin_unlock(&tmp->d_lock);
+ 	}
++	dput(tmp);
+ 
+ 	ret = 0;
+ bail:
+@@ -491,6 +491,7 @@ static int remove_device_files(struct super_block *sb,
+ 		goto bail;
+ 	}
+ 
++	mutex_lock(&dir->d_inode->i_mutex);
+ 	remove_file(dir, "counters");
+ 	remove_file(dir, "counter_names");
+ 	remove_file(dir, "portcounter_names");
+@@ -505,8 +506,10 @@ static int remove_device_files(struct super_block *sb,
+ 		}
+ 	}
+ 	remove_file(dir, "flash");
+-	d_delete(dir);
++	mutex_unlock(&dir->d_inode->i_mutex);
+ 	ret = simple_rmdir(root->d_inode, dir);
++	d_delete(dir);
++	dput(dir);
+ 
+ bail:
+ 	mutex_unlock(&root->d_inode->i_mutex);
+-- 
+1.8.5.2
+
