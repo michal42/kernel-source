@@ -21,12 +21,12 @@ Reviewed-by: Christoph Hellwig <hch@lst.de>
 Signed-off-by: James Bottomley <JBottomley@Odin.com>
 Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
 ---
- drivers/scsi/megaraid/megaraid_sas_base.c |  228 +++++++++++++++++-------------
- 1 file changed, 133 insertions(+), 95 deletions(-)
+ drivers/scsi/megaraid/megaraid_sas_base.c |  281 ++++++++++++++----------------
+ 1 file changed, 135 insertions(+), 146 deletions(-)
 
 --- a/drivers/scsi/megaraid/megaraid_sas_base.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_base.c
-@@ -4442,6 +4442,107 @@ fail_alloc_cmds:
+@@ -4442,6 +4442,107 @@ megasas_init_adapter_mfi(struct megasas_
  	return 1;
  }
  
@@ -188,7 +188,72 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  fail_ready_state:
  	kfree(instance->ctrl_info);
  	instance->ctrl_info = NULL;
-@@ -5449,16 +5563,7 @@ retry_irq_register:
+@@ -5145,7 +5259,7 @@ megasas_set_dma_mask(struct pci_dev *pde
+ static int megasas_probe_one(struct pci_dev *pdev,
+ 			     const struct pci_device_id *id)
+ {
+-	int rval, pos, i, j, cpu;
++	int rval, pos;
+ 	struct Scsi_Host *host;
+ 	struct megasas_instance *instance;
+ 	u16 control = 0;
+@@ -5354,55 +5468,6 @@ static int megasas_probe_one(struct pci_
+ 		}
+ 	}
+ 
+-retry_irq_register:
+-	/*
+-	 * Register IRQ
+-	 */
+-	if (instance->msix_vectors) {
+-		cpu = cpumask_first(cpu_online_mask);
+-		for (i = 0; i < instance->msix_vectors; i++) {
+-			instance->irq_context[i].instance = instance;
+-			instance->irq_context[i].MSIxIndex = i;
+-			if (request_irq(instance->msixentry[i].vector,
+-					instance->instancet->service_isr, 0,
+-					"megasas",
+-					&instance->irq_context[i])) {
+-				dev_info(&pdev->dev, "Failed to register IRQ "
+-					 "for vector %d.\n", i);
+-				for (j = 0; j < i; j++) {
+-					if (smp_affinity_enable)
+-						irq_set_affinity_hint(
+-							instance->msixentry[j].vector, NULL);
+-					free_irq(
+-						instance->msixentry[j].vector,
+-						&instance->irq_context[j]);
+-				}
+-				/* Retry irq register for IO_APIC */
+-				instance->msix_vectors = 0;
+-				goto retry_irq_register;
+-			}
+-			if (smp_affinity_enable) {
+-				if (irq_set_affinity_hint(instance->msixentry[i].vector,
+-					get_cpu_mask(cpu)))
+-					dev_err(&instance->pdev->dev,
+-						"Error setting affinity hint "
+-						"for cpu %d\n", cpu);
+-				cpu = cpumask_next(cpu, cpu_online_mask);
+-			}
+-		}
+-	} else {
+-		instance->irq_context[0].instance = instance;
+-		instance->irq_context[0].MSIxIndex = 0;
+-		if (request_irq(pdev->irq, instance->instancet->service_isr,
+-				IRQF_SHARED, "megasas",
+-				&instance->irq_context[0])) {
+-			dev_err(&pdev->dev, "Failed to register IRQ\n");
+-			goto fail_irq;
+-		}
+-	}
+-
+-	instance->instancet->enable_intr(instance);
+-
+ 	/*
+ 	 * Store instance in PCI softstate
+ 	 */
+@@ -5449,17 +5514,8 @@ static int megasas_probe_one(struct pci_
  	megasas_mgmt_info.max_index--;
  
  	instance->instancet->disable_intr(instance);
@@ -202,11 +267,13 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
 -		}
 -	else
 -		free_irq(instance->pdev->irq, &instance->irq_context[0]);
+-fail_irq:
 +	megasas_destroy_irqs(instance);
- fail_irq:
++
  	if ((instance->pdev->device == PCI_DEVICE_ID_LSI_FUSION) ||
  	    (instance->pdev->device == PCI_DEVICE_ID_LSI_PLASMA) ||
-@@ -5467,9 +5572,9 @@ fail_irq:
+ 	    (instance->pdev->device == PCI_DEVICE_ID_LSI_INVADER) ||
+@@ -5467,9 +5523,9 @@ static int megasas_probe_one(struct pci_
  		megasas_release_fusion(instance);
  	else
  		megasas_release_mfi(instance);
@@ -217,7 +284,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
        fail_alloc_dma_buf:
  	if (instance->evt_detail)
  		pci_free_consistent(pdev, sizeof(struct megasas_evt_detail),
-@@ -5597,7 +5702,6 @@ megasas_suspend(struct pci_dev *pdev, pm
+@@ -5597,7 +5653,6 @@ megasas_suspend(struct pci_dev *pdev, pm
  {
  	struct Scsi_Host *host;
  	struct megasas_instance *instance;
@@ -225,7 +292,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  
  	instance = pci_get_drvdata(pdev);
  	host = instance->host;
-@@ -5622,16 +5726,8 @@ megasas_suspend(struct pci_dev *pdev, pm
+@@ -5622,16 +5677,8 @@ megasas_suspend(struct pci_dev *pdev, pm
  	pci_set_drvdata(instance->pdev, instance);
  	instance->instancet->disable_intr(instance);
  
@@ -244,7 +311,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  	if (instance->msix_vectors)
  		pci_disable_msix(instance->pdev);
  
-@@ -5650,7 +5746,7 @@ megasas_suspend(struct pci_dev *pdev, pm
+@@ -5650,7 +5697,7 @@ megasas_suspend(struct pci_dev *pdev, pm
  static int
  megasas_resume(struct pci_dev *pdev)
  {
@@ -253,7 +320,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  	struct Scsi_Host *host;
  	struct megasas_instance *instance;
  
-@@ -5720,50 +5816,10 @@ megasas_resume(struct pci_dev *pdev)
+@@ -5720,50 +5767,10 @@ megasas_resume(struct pci_dev *pdev)
  	tasklet_init(&instance->isr_tasklet, instance->instancet->tasklet,
  		     (unsigned long)instance);
  
@@ -308,7 +375,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  
  	/* Re-launch SR-IOV heartbeat timer */
  	if (instance->requestorId) {
-@@ -5787,7 +5843,6 @@ megasas_resume(struct pci_dev *pdev)
+@@ -5787,7 +5794,6 @@ megasas_resume(struct pci_dev *pdev)
  
  	return 0;
  
@@ -316,7 +383,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  fail_init_mfi:
  	if (instance->evt_detail)
  		pci_free_consistent(pdev, sizeof(struct megasas_evt_detail),
-@@ -5868,16 +5923,8 @@ static void megasas_detach_one(struct pc
+@@ -5868,16 +5874,8 @@ static void megasas_detach_one(struct pc
  
  	instance->instancet->disable_intr(instance);
  
@@ -335,7 +402,7 @@ Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
  	if (instance->msix_vectors)
  		pci_disable_msix(instance->pdev);
  
-@@ -5951,23 +5998,14 @@ static void megasas_detach_one(struct pc
+@@ -5951,23 +5949,14 @@ static void megasas_detach_one(struct pc
   */
  static void megasas_shutdown(struct pci_dev *pdev)
  {
