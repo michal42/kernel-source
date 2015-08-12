@@ -1,0 +1,52 @@
+From: Shannon Nelson <shannon.nelson@intel.com>
+Date: Thu, 13 Nov 2014 08:23:22 +0000
+Subject: [PATCH 156/227] i40e: check for AQ timeout in aq_rc decode
+Patch-mainline: v3.19-rc1
+Git-commit: bf848f328cf5b531245e09a7a069b6d8979d31c1 (partial)
+References: bsc#922853 FATE#318529
+
+Decoding the AQ return code is great except when the AQ send timed out
+and there's no return code set.  This changes the handy decoder
+interface to help catch and properly report the condition as a useful
+errno rather than returning a misleading '0'.
+
+Change-ID: I07a1f94f921606da49ffac7837bcdc37cd8222eb
+Signed-off-by: Shannon Nelson <shannon.nelson@intel.com>
+Acked-by: Jesse Brandeburg <jesse.brandeburg@intel.com>
+Tested-by: Jim Young <jamesx.m.young@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/i40evf/i40e_adminq.h |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/intel/i40evf/i40e_adminq.h
++++ b/drivers/net/ethernet/intel/i40evf/i40e_adminq.h
+@@ -28,6 +28,7 @@
+ #define _I40E_ADMINQ_H_
+ 
+ #include "i40e_osdep.h"
++#include "i40e_status.h"
+ #include "i40e_adminq_cmd.h"
+ 
+ #define I40E_ADMINQ_DESC(R, i)   \
+@@ -108,7 +109,7 @@ struct i40e_adminq_info {
+  * i40e_aq_rc_to_posix - convert errors to user-land codes
+  * aq_rc: AdminQ error code to convert
+  **/
+-static inline int i40e_aq_rc_to_posix(u16 aq_rc)
++static inline int i40e_aq_rc_to_posix(u32 aq_ret, u16 aq_rc)
+ {
+ 	int aq_to_posix[] = {
+ 		0,           /* I40E_AQ_RC_OK */
+@@ -136,6 +137,10 @@ static inline int i40e_aq_rc_to_posix(u1
+ 		-EFBIG,      /* I40E_AQ_RC_EFBIG */
+ 	};
+ 
++	/* aq_rc is invalid if AQ timed out */
++	if (aq_ret == I40E_ERR_ADMIN_QUEUE_TIMEOUT)
++		return -EAGAIN;
++
+ 	if (aq_rc >= ARRAY_SIZE(aq_to_posix))
+ 		return -ERANGE;
+ 	return aq_to_posix[aq_rc];
