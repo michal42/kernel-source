@@ -1,0 +1,57 @@
+From: Shannon Nelson <shannon.nelson@intel.com>
+Date: Thu, 13 Nov 2014 08:23:14 +0000
+Subject: [PATCH 152/227] i40e: let firmware catch the NVM busy error
+Patch-mainline: v3.19-rc1
+Git-commit: bf06f7a9bafde62fa77e3fce4040355dfbceb894 (partial)
+References: bsc#922853 FATE#318529
+
+The NVM update operations take time finish asynchronously, and follow-on
+update requests need to wait for the current one to finish.  Early
+firmware didn't handle this well, so the code had to track the busy state.
+The released firmware handles the busy state correctly, returning
+I40E_AQ_RC_EBUSY if an update is still in progress, so the code no longer
+needs to track this.
+
+Change-ID: I6e6b4adc26d6dcc5fd7adfee5763423858a7d921
+Signed-off-by: Shannon Nelson <shannon.nelson@intel.com>
+Acked-by: Greg Rose <gregory.v.rose@intel.com>
+Tested-by: Jim Young <jamesx.m.young@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/intel/i40evf/i40e_adminq.c |    6 ------
+ drivers/net/ethernet/intel/i40evf/i40e_adminq.h |    1 -
+ 2 files changed, 7 deletions(-)
+
+--- a/drivers/net/ethernet/intel/i40evf/i40e_adminq.c
++++ b/drivers/net/ethernet/intel/i40evf/i40e_adminq.c
+@@ -836,9 +836,6 @@ i40e_status i40evf_asq_send_command(stru
+ 		hw->aq.asq_last_status = (enum i40e_admin_queue_err)retval;
+ 	}
+ 
+-	if (i40e_is_nvm_update_op(desc))
+-		hw->aq.nvm_busy = true;
+-
+ 	i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE,
+ 		   "AQTX: desc and buffer writeback:\n");
+ 	i40evf_debug_aq(hw, I40E_DEBUG_AQ_COMMAND, (void *)desc, buff,
+@@ -931,9 +928,6 @@ i40e_status i40evf_clean_arq_element(str
+ 		memcpy(e->msg_buf, hw->aq.arq.r.arq_bi[desc_idx].va,
+ 		       e->msg_len);
+ 
+-	if (i40e_is_nvm_update_op(&e->desc))
+-		hw->aq.nvm_busy = false;
+-
+ 	i40e_debug(hw, I40E_DEBUG_AQ_MESSAGE, "AQRX: desc and buffer:\n");
+ 	i40evf_debug_aq(hw, I40E_DEBUG_AQ_COMMAND, (void *)desc, e->msg_buf,
+ 			hw->aq.arq_buf_size);
+--- a/drivers/net/ethernet/intel/i40evf/i40e_adminq.h
++++ b/drivers/net/ethernet/intel/i40evf/i40e_adminq.h
+@@ -94,7 +94,6 @@ struct i40e_adminq_info {
+ 	u16 fw_min_ver;                 /* firmware minor version */
+ 	u16 api_maj_ver;                /* api major version */
+ 	u16 api_min_ver;                /* api minor version */
+-	bool nvm_busy;
+ 	bool nvm_release_on_done;
+ 
+ 	struct mutex asq_mutex; /* Send queue lock */
