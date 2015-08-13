@@ -1,0 +1,62 @@
+From 25e96cdb8c8cb9d9c3d97502cc3f8b81c32ac058 Mon Sep 17 00:00:00 2001
+From: Josh Durgin <josh.durgin@inktank.com>
+Date: Fri, 4 Apr 2014 12:06:32 -0700
+Subject: [PATCH 164/213] rbd: read image size for discard check safely
+References: fate#318918
+Git-commit: 3c5df89367761d09d76454a2c4301a73bf2d46ce
+Patch-mainline: v3.18-rc1
+
+In rbd_img_request_fill() the image size is only checked to determine
+whether we can truncate an object instead of zeroing it for discard
+requests. Take rbd_dev->header_rwsem while reading the image size, and
+move this read into the discard check, so that non-discard ops don't
+need to take the semaphore in this function.
+
+Signed-off-by: Josh Durgin <josh.durgin@inktank.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 8317b9d..1481b59 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -2375,7 +2375,6 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
+ 		(int)type, data_desc);
+ 
+ 	img_offset = img_request->offset;
+-	img_end = rbd_dev->header.image_size;
+ 	resid = img_request->length;
+ 	rbd_assert(resid > 0);
+ 
+@@ -2439,13 +2438,20 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
+ 			if (!offset && (length == object_size)
+ 				&& (!img_request_layered_test(img_request) ||
+ 					(rbd_dev->parent_overlap <=
+-						obj_request->img_offset)))
++						obj_request->img_offset))) {
+ 				opcode = CEPH_OSD_OP_DELETE;
+-			else if ((offset + length == object_size) ||
+-				(obj_request->img_offset + length == img_end))
++			} else if ((offset + length == object_size)) {
+ 				opcode = CEPH_OSD_OP_TRUNCATE;
+-			else
+-				opcode = CEPH_OSD_OP_ZERO;
++			} else {
++				down_read(&rbd_dev->header_rwsem);
++				img_end = rbd_dev->header.image_size;
++				up_read(&rbd_dev->header_rwsem);
++
++				if (obj_request->img_offset + length == img_end)
++					opcode = CEPH_OSD_OP_TRUNCATE;
++				else
++					opcode = CEPH_OSD_OP_ZERO;
++			}
+ 		} else if (img_request_write_test(img_request)) {
+ 			op_type = OBJ_OP_WRITE;
+ 			opcode = CEPH_OSD_OP_WRITE;
+-- 
+2.1.4
+

@@ -1,0 +1,77 @@
+From 735b941aee6e34d385d91ccab37fe4a4eed40f80 Mon Sep 17 00:00:00 2001
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 11 Nov 2014 16:30:55 +0800
+Subject: [PATCH 186/213] libceph: require cephx message signature by default
+References: fate#318918
+Git-commit: a3fc98005c9c6e4649d26bee0935a7048a95c9e6
+Patch-mainline: v3.19-rc1
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Reviewed-by: Ilya Dryomov <idryomov@redhat.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ include/linux/ceph/libceph.h |  1 +
+ net/ceph/ceph_common.c       | 13 +++++++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/include/linux/ceph/libceph.h b/include/linux/ceph/libceph.h
+index d293f7e..8b11a79 100644
+--- a/include/linux/ceph/libceph.h
++++ b/include/linux/ceph/libceph.h
+@@ -29,6 +29,7 @@
+ #define CEPH_OPT_NOSHARE          (1<<1) /* don't share client with other sbs */
+ #define CEPH_OPT_MYIP             (1<<2) /* specified my ip */
+ #define CEPH_OPT_NOCRC            (1<<3) /* no data crc on writes */
++#define CEPH_OPT_NOMSGAUTH	  (1<<4) /* not require cephx message signature */
+ 
+ #define CEPH_OPT_DEFAULT   (0)
+ 
+diff --git a/net/ceph/ceph_common.c b/net/ceph/ceph_common.c
+index d361a274..5d5ab67 100644
+--- a/net/ceph/ceph_common.c
++++ b/net/ceph/ceph_common.c
+@@ -237,6 +237,8 @@ enum {
+ 	Opt_noshare,
+ 	Opt_crc,
+ 	Opt_nocrc,
++	Opt_cephx_require_signatures,
++	Opt_nocephx_require_signatures,
+ };
+ 
+ static match_table_t opt_tokens = {
+@@ -255,6 +257,8 @@ static match_table_t opt_tokens = {
+ 	{Opt_noshare, "noshare"},
+ 	{Opt_crc, "crc"},
+ 	{Opt_nocrc, "nocrc"},
++	{Opt_cephx_require_signatures, "cephx_require_signatures"},
++	{Opt_nocephx_require_signatures, "nocephx_require_signatures"},
+ 	{-1, NULL}
+ };
+ 
+@@ -453,6 +457,12 @@ ceph_parse_options(char *options, const char *dev_name,
+ 		case Opt_nocrc:
+ 			opt->flags |= CEPH_OPT_NOCRC;
+ 			break;
++		case Opt_cephx_require_signatures:
++			opt->flags &= ~CEPH_OPT_NOMSGAUTH;
++			break;
++		case Opt_nocephx_require_signatures:
++			opt->flags |= CEPH_OPT_NOMSGAUTH;
++			break;
+ 
+ 		default:
+ 			BUG_ON(token);
+@@ -496,6 +506,9 @@ struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private,
+ 	init_waitqueue_head(&client->auth_wq);
+ 	client->auth_err = 0;
+ 
++	if (!ceph_test_opt(client, NOMSGAUTH))
++		required_features |= CEPH_FEATURE_MSG_AUTH;
++
+ 	client->extra_mon_dispatch = NULL;
+ 	client->supported_features = CEPH_FEATURES_SUPPORTED_DEFAULT |
+ 		supported_features;
+-- 
+2.1.4
+

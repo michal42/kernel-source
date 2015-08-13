@@ -1,0 +1,69 @@
+From 6d08ca76129569783894eef950b2847ec4bc621d Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Thu, 10 Apr 2014 18:09:41 +0400
+Subject: [PATCH 110/213] libceph: fix non-default values check in
+ apply_primary_affinity()
+References: fate#318918
+Git-commit: 92b2e75158f6b8316b5a567c73dcf5b3d8f6bbce
+Patch-mainline: v3.15-rc5
+
+osd_primary_affinity array is indexed into incorrectly when checking
+for non-default primary-affinity values.  This nullifies the impact of
+the rest of the apply_primary_affinity() and results in misdirected
+requests.
+
+                if (osds[i] != CRUSH_ITEM_NONE &&
+                    osdmap->osd_primary_affinity[i] !=
+                                                ^^^
+                                        CEPH_OSD_DEFAULT_PRIMARY_AFFINITY) {
+
+For a pool with size 2, this always ends up checking osd0 and osd1
+primary_affinity values, instead of the values that correspond to the
+osds in question.  E.g., given a [2,3] up set and a [max,max,0,max]
+primary affinity vector, requests are still sent to osd2, because both
+osd0 and osd1 happen to have max primary_affinity values and therefore
+we return from apply_primary_affinity() early on the premise that all
+osds in the given set have max (default) values.  Fix it.
+
+Fixes: http://tracker.ceph.com/issues/7954
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osdmap.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/net/ceph/osdmap.c b/net/ceph/osdmap.c
+index e632b5a..8b8a5a2 100644
+--- a/net/ceph/osdmap.c
++++ b/net/ceph/osdmap.c
+@@ -1548,8 +1548,10 @@ static void apply_primary_affinity(struct ceph_osdmap *osdmap, u32 pps,
+ 		return;
+ 
+ 	for (i = 0; i < len; i++) {
+-		if (osds[i] != CRUSH_ITEM_NONE &&
+-		    osdmap->osd_primary_affinity[i] !=
++		int osd = osds[i];
++
++		if (osd != CRUSH_ITEM_NONE &&
++		    osdmap->osd_primary_affinity[osd] !=
+ 					CEPH_OSD_DEFAULT_PRIMARY_AFFINITY) {
+ 			break;
+ 		}
+@@ -1563,10 +1565,9 @@ static void apply_primary_affinity(struct ceph_osdmap *osdmap, u32 pps,
+ 	 * osd's pgs get rejected as primary.
+ 	 */
+ 	for (i = 0; i < len; i++) {
+-		int osd;
++		int osd = osds[i];
+ 		u32 aff;
+ 
+-		osd = osds[i];
+ 		if (osd == CRUSH_ITEM_NONE)
+ 			continue;
+ 
+-- 
+2.1.4
+

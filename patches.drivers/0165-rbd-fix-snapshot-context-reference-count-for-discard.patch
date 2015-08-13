@@ -1,0 +1,37 @@
+From 64328f85ef42dae92a15a1834b8fbb4f0d6d1db6 Mon Sep 17 00:00:00 2001
+From: Josh Durgin <josh.durgin@inktank.com>
+Date: Fri, 4 Apr 2014 17:47:52 -0700
+Subject: [PATCH 165/213] rbd: fix snapshot context reference count for
+ discards
+References: fate#318918
+Git-commit: bef95455a44e2533fcea376740bb1a5cbd71269f
+Patch-mainline: v3.18-rc1
+
+Discards take a reference to the snapshot context of an image when
+they are created.  This reference needs to be cleaned up when the
+request is done just as it is for regular writes.
+
+Signed-off-by: Josh Durgin <josh.durgin@inktank.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 1481b59..c2f9989 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -2208,7 +2208,8 @@ static void rbd_img_request_destroy(struct kref *kref)
+ 		rbd_dev_parent_put(img_request->rbd_dev);
+ 	}
+ 
+-	if (img_request_write_test(img_request))
++	if (img_request_write_test(img_request) ||
++		img_request_discard_test(img_request))
+ 		ceph_put_snap_context(img_request->snapc);
+ 
+ 	kmem_cache_free(rbd_img_request_cache, img_request);
+-- 
+2.1.4
+

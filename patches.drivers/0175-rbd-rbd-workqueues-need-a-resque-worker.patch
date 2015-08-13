@@ -1,0 +1,38 @@
+From 8e858506ee5ac0f298f2b6227268aa6e8279c27d Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <idryomov@redhat.com>
+Date: Fri, 10 Oct 2014 18:36:07 +0400
+Subject: [PATCH 175/213] rbd: rbd workqueues need a resque worker
+References: fate#318918
+Git-commit: 792c3a914910bd34302c5345578f85cfcb5e2c01
+Patch-mainline: v3.18-rc1
+
+Need to use WQ_MEM_RECLAIM for our workqueues to prevent I/O lockups
+under memory pressure - we sit on the memory reclaim path.
+
+Cc: stable@vger.kernel.org # 3.17, needs backporting for 3.16
+Signed-off-by: Ilya Dryomov <idryomov@redhat.com>
+Tested-by: Micha Krause <micha@krausam.de>
+Reviewed-by: Sage Weil <sage@redhat.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index dbe15be..41b4118 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -5292,7 +5292,8 @@ static int rbd_dev_device_setup(struct rbd_device *rbd_dev)
+ 	set_capacity(rbd_dev->disk, rbd_dev->mapping.size / SECTOR_SIZE);
+ 	set_disk_ro(rbd_dev->disk, rbd_dev->mapping.read_only);
+ 
+-	rbd_dev->rq_wq = alloc_workqueue("%s", 0, 0, rbd_dev->disk->disk_name);
++	rbd_dev->rq_wq = alloc_workqueue("%s", WQ_MEM_RECLAIM, 0,
++					 rbd_dev->disk->disk_name);
+ 	if (!rbd_dev->rq_wq) {
+ 		ret = -ENOMEM;
+ 		goto err_out_mapping;
+-- 
+2.1.4
+

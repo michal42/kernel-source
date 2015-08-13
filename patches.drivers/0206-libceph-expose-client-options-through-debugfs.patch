@@ -1,0 +1,93 @@
+From c3de7ff4560f36a721f4307e75d6fe3f75195585 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Wed, 25 Mar 2015 21:07:41 +0300
+Subject: [PATCH 206/213] libceph: expose client options through debugfs
+References: fate#318918
+Git-commit: 5cf7bd30120ead3db43ef9074be38018d9acf22f
+Patch-mainline: v4.1-rc1
+
+Add a client_options attribute for showing libceph options.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ include/linux/ceph/libceph.h |  1 +
+ net/ceph/debugfs.c           | 24 ++++++++++++++++++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/include/linux/ceph/libceph.h b/include/linux/ceph/libceph.h
+index 303be6e..30f92ce 100644
+--- a/include/linux/ceph/libceph.h
++++ b/include/linux/ceph/libceph.h
+@@ -135,6 +135,7 @@ struct ceph_client {
+ 	struct dentry *debugfs_dir;
+ 	struct dentry *debugfs_monmap;
+ 	struct dentry *debugfs_osdmap;
++	struct dentry *debugfs_options;
+ #endif
+ };
+ 
+diff --git a/net/ceph/debugfs.c b/net/ceph/debugfs.c
+index 14d9995..593dc2e 100644
+--- a/net/ceph/debugfs.c
++++ b/net/ceph/debugfs.c
+@@ -22,6 +22,7 @@
+  *      .../monmap      - current monmap
+  *      .../osdc        - active osd requests
+  *      .../monc        - mon client state
++ *      .../client_options - libceph-only (i.e. not rbd or cephfs) options
+  *      .../dentry_lru  - dump contents of dentry lru
+  *      .../caps        - expose cap (reservation) stats
+  *      .../bdi         - symlink to ../../bdi/something
+@@ -177,10 +178,24 @@ static int osdc_show(struct seq_file *s, void *pp)
+ 	return 0;
+ }
+ 
++static int client_options_show(struct seq_file *s, void *p)
++{
++	struct ceph_client *client = s->private;
++	int ret;
++
++	ret = ceph_print_client_options(s, client);
++	if (ret)
++		return ret;
++
++	seq_putc(s, '\n');
++	return 0;
++}
++
+ CEPH_DEFINE_SHOW_FUNC(monmap_show)
+ CEPH_DEFINE_SHOW_FUNC(osdmap_show)
+ CEPH_DEFINE_SHOW_FUNC(monc_show)
+ CEPH_DEFINE_SHOW_FUNC(osdc_show)
++CEPH_DEFINE_SHOW_FUNC(client_options_show)
+ 
+ int ceph_debugfs_init(void)
+ {
+@@ -242,6 +257,14 @@ int ceph_debugfs_client_init(struct ceph_client *client)
+ 	if (!client->debugfs_osdmap)
+ 		goto out;
+ 
++	client->debugfs_options = debugfs_create_file("client_options",
++					0600,
++					client->debugfs_dir,
++					client,
++					&client_options_show_fops);
++	if (!client->debugfs_options)
++		goto out;
++
+ 	return 0;
+ 
+ out:
+@@ -252,6 +275,7 @@ out:
+ void ceph_debugfs_client_cleanup(struct ceph_client *client)
+ {
+ 	dout("ceph_debugfs_client_cleanup %p\n", client);
++	debugfs_remove(client->debugfs_options);
+ 	debugfs_remove(client->debugfs_osdmap);
+ 	debugfs_remove(client->debugfs_monmap);
+ 	debugfs_remove(client->osdc.debugfs_file);
+-- 
+2.1.4
+

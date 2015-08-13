@@ -1,0 +1,80 @@
+From 619d8f85d50a2d284ccfb5d03803a6fc6d2b2faf Mon Sep 17 00:00:00 2001
+From: Mike Christie <michaelc@cs.wisc.edu>
+Date: Thu, 16 Oct 2014 01:50:19 -0500
+Subject: [PATCH 177/213] libceph: use memalloc flags for net IO
+References: fate#318918
+Git-commit: 89baaa570ab0b476db09408d209578cfed700e9f
+Patch-mainline: v3.18-rc4
+
+This patch has ceph's lib code use the memalloc flags.
+
+If the VM layer needs to write data out to free up memory to handle new
+allocation requests, the block layer must be able to make forward progress.
+To handle that requirement we use structs like mempools to reserve memory for
+objects like bios and requests.
+
+The problem is when we send/receive block layer requests over the network
+layer, net skb allocations can fail and the system can lock up.
+To solve this, the memalloc related flags were added. NBD, iSCSI
+and NFS uses these flags to tell the network/vm layer that it should
+use memory reserves to fullfill allcation requests for structs like
+skbs.
+
+I am running ceph in a bunch of VMs in my laptop, so this patch was
+not tested very harshly.
+
+Signed-off-by: Mike Christie <michaelc@cs.wisc.edu>
+Reviewed-by: Ilya Dryomov <idryomov@redhat.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/messenger.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/net/ceph/messenger.c b/net/ceph/messenger.c
+index e7d60d4..642bbc6 100644
+--- a/net/ceph/messenger.c
++++ b/net/ceph/messenger.c
+@@ -484,7 +484,7 @@ static int ceph_tcp_connect(struct ceph_connection *con)
+ 			       IPPROTO_TCP, &sock);
+ 	if (ret)
+ 		return ret;
+-	sock->sk->sk_allocation = GFP_NOFS;
++	sock->sk->sk_allocation = GFP_NOFS | __GFP_MEMALLOC;
+ 
+ #ifdef CONFIG_LOCKDEP
+ 	lockdep_set_class(&sock->sk->sk_lock, &socket_class);
+@@ -509,6 +509,9 @@ static int ceph_tcp_connect(struct ceph_connection *con)
+ 
+ 		return ret;
+ 	}
++
++	sk_set_memalloc(sock->sk);
++
+ 	con->sock = sock;
+ 	return 0;
+ }
+@@ -2774,8 +2777,11 @@ static void con_work(struct work_struct *work)
+ {
+ 	struct ceph_connection *con = container_of(work, struct ceph_connection,
+ 						   work.work);
++	unsigned long pflags = current->flags;
+ 	bool fault;
+ 
++	current->flags |= PF_MEMALLOC;
++
+ 	mutex_lock(&con->mutex);
+ 	while (true) {
+ 		int ret;
+@@ -2829,6 +2835,8 @@ static void con_work(struct work_struct *work)
+ 		con_fault_finish(con);
+ 
+ 	con->ops->put(con);
++
++	tsk_restore_flags(current, pflags, PF_MEMALLOC);
+ }
+ 
+ /*
+-- 
+2.1.4
+

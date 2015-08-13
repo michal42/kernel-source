@@ -1,0 +1,100 @@
+From d60e6afd9da9f0192681ff5f78f23140ac358348 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Tue, 13 May 2014 11:19:27 +0400
+Subject: [PATCH 117/213] rbd: make sure we have latest osdmap on 'rbd map'
+References: fate#318918
+Git-commit: 30ba1f020221991cf239d905c82984958f29bdfe
+Patch-mainline: v3.16-rc1
+
+Given an existing idle mapping (img1), mapping an image (img2) in
+a newly created pool (pool2) fails:
+
+    $ ceph osd pool create pool1 8 8
+    $ rbd create --size 1000 pool1/img1
+    $ sudo rbd map pool1/img1
+    $ ceph osd pool create pool2 8 8
+    $ rbd create --size 1000 pool2/img2
+    $ sudo rbd map pool2/img2
+    rbd: sysfs write failed
+    rbd: map failed: (2) No such file or directory
+
+This is because client instances are shared by default and we don't
+request an osdmap update when bumping a ref on an existing client.  The
+fix is to use the mon_get_version request to see if the osdmap we have
+is the latest, and block until the requested update is received if it's
+not.
+
+Fixes: http://tracker.ceph.com/issues/8184
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 36 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 33 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 4421e8b..af8245d 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -4753,6 +4753,38 @@ out_err:
+ }
+ 
+ /*
++ * Return pool id (>= 0) or a negative error code.
++ */
++static int rbd_add_get_pool_id(struct rbd_client *rbdc, const char *pool_name)
++{
++	u64 newest_epoch;
++	unsigned long timeout = rbdc->client->options->mount_timeout * HZ;
++	int tries = 0;
++	int ret;
++
++again:
++	ret = ceph_pg_poolid_by_name(rbdc->client->osdc.osdmap, pool_name);
++	if (ret == -ENOENT && tries++ < 1) {
++		ret = ceph_monc_do_get_version(&rbdc->client->monc, "osdmap",
++					       &newest_epoch);
++		if (ret < 0)
++			return ret;
++
++		if (rbdc->client->osdc.osdmap->epoch < newest_epoch) {
++			ceph_monc_request_next_osdmap(&rbdc->client->monc);
++			(void) ceph_monc_wait_osdmap(&rbdc->client->monc,
++						     newest_epoch, timeout);
++			goto again;
++		} else {
++			/* the osdmap we have is new enough */
++			return -ENOENT;
++		}
++	}
++
++	return ret;
++}
++
++/*
+  * An rbd format 2 image has a unique identifier, distinct from the
+  * name given to it by the user.  Internally, that identifier is
+  * what's used to specify the names of objects related to the image.
+@@ -5120,7 +5152,6 @@ static ssize_t do_rbd_add(struct bus_type *bus,
+ 	struct rbd_options *rbd_opts = NULL;
+ 	struct rbd_spec *spec = NULL;
+ 	struct rbd_client *rbdc;
+-	struct ceph_osd_client *osdc;
+ 	bool read_only;
+ 	int rc = -ENOMEM;
+ 
+@@ -5142,8 +5173,7 @@ static ssize_t do_rbd_add(struct bus_type *bus,
+ 	}
+ 
+ 	/* pick the pool */
+-	osdc = &rbdc->client->osdc;
+-	rc = ceph_pg_poolid_by_name(osdc->osdmap, spec->pool_name);
++	rc = rbd_add_get_pool_id(rbdc, spec->pool_name);
+ 	if (rc < 0)
+ 		goto err_out_client;
+ 	spec->pool_id = (u64)rc;
+-- 
+2.1.4
+
