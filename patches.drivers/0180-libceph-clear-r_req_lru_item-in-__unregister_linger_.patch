@@ -1,0 +1,41 @@
+From 5286d3d12b4798b1afef2da878bc44600acc15c0 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <idryomov@redhat.com>
+Date: Wed, 5 Nov 2014 15:45:58 +0300
+Subject: [PATCH 180/213] libceph: clear r_req_lru_item in
+ __unregister_linger_request()
+References: fate#318918
+Git-commit: ba9d114ec5578e6e99a4dfa37ff8ae688040fd64
+Patch-mainline: v3.18-rc5
+
+kick_requests() can put linger requests on the notarget list.  This
+means we need to clear the much-overloaded req->r_req_lru_item in
+__unregister_linger_request() as well, or we get an assertion failure
+in ceph_osdc_release_request() - !list_empty(&req->r_req_lru_item).
+
+AFAICT the assumption was that registered linger requests cannot be on
+any of req->r_req_lru_item lists, but that's clearly not the case.
+
+Signed-off-by: Ilya Dryomov <idryomov@redhat.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osd_client.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/ceph/osd_client.c b/net/ceph/osd_client.c
+index e242f96..46309ae 100644
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -1263,6 +1263,8 @@ static void __unregister_linger_request(struct ceph_osd_client *osdc,
+ 		if (list_empty(&req->r_osd_item))
+ 			req->r_osd = NULL;
+ 	}
++
++	list_del_init(&req->r_req_lru_item); /* can be on notarget */
+ 	ceph_osdc_put_request(req);
+ }
+ 
+-- 
+2.1.4
+

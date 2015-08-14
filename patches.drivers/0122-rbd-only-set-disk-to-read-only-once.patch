@@ -1,0 +1,45 @@
+From 7698803b3e7fc76fce2a0c20daed49ae18d934f9 Mon Sep 17 00:00:00 2001
+From: Josh Durgin <josh.durgin@inktank.com>
+Date: Mon, 30 Sep 2013 20:10:04 -0700
+Subject: [PATCH 122/213] rbd: only set disk to read-only once
+References: fate#318918
+Git-commit: 22001f619f29ddf66582d834223dcff4c0b74595
+Patch-mainline: v3.16-rc1
+
+rbd_open(), called every time the device is opened, calls
+set_device_ro().  There's no reason to set the device read-only or
+read-write every time it is opened. Just do this once during device
+setup, using set_disk_ro() instead because the struct block_device
+isn't available to us there.
+
+Signed-off-by: Josh Durgin <josh.durgin@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 3fe55d0..07704a7 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -525,7 +525,6 @@ static int rbd_open(struct block_device *bdev, fmode_t mode)
+ 		return -ENOENT;
+ 
+ 	(void) get_device(&rbd_dev->dev);
+-	set_device_ro(bdev, rbd_dev->mapping.read_only);
+ 
+ 	return 0;
+ }
+@@ -5118,6 +5117,7 @@ static int rbd_dev_device_setup(struct rbd_device *rbd_dev)
+ 	if (ret)
+ 		goto err_out_disk;
+ 	set_capacity(rbd_dev->disk, rbd_dev->mapping.size / SECTOR_SIZE);
++	set_disk_ro(rbd_dev->disk, rbd_dev->mapping.read_only);
+ 
+ 	ret = rbd_bus_add_dev(rbd_dev);
+ 	if (ret)
+-- 
+2.1.4
+

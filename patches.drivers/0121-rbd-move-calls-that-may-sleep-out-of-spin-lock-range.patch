@@ -1,0 +1,94 @@
+From 7f2b9f3dd1f5375ba7d7cb301c18bb07e7d04324 Mon Sep 17 00:00:00 2001
+From: Josh Durgin <josh.durgin@inktank.com>
+Date: Mon, 30 Sep 2013 17:09:54 -0700
+Subject: [PATCH 121/213] rbd: move calls that may sleep out of spin lock range
+References: fate#318918
+Git-commit: 77f33c03739697d01c2e730e4c2610424059ceaf
+Patch-mainline: v3.16-rc1
+
+get_user() and set_disk_ro() may allocate memory, leading to a
+potential deadlock if theye are called while a spin lock is held.
+
+Move the acquisition and release of rbd_dev->lock from rbd_ioctl()
+into rbd_ioctl_set_ro(), so it can occur between get_user() and
+set_disk_ro().
+
+Signed-off-by: Josh Durgin <josh.durgin@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 29 ++++++++++++++++++-----------
+ 1 file changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 740052e..3fe55d0 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -545,9 +545,12 @@ static void rbd_release(struct gendisk *disk, fmode_t mode)
+ 
+ static int rbd_ioctl_set_ro(struct rbd_device *rbd_dev, unsigned long arg)
+ {
++	int ret = 0;
+ 	int val;
+ 	bool ro;
++	bool ro_changed = false;
+ 
++	/* get_user() may sleep, so call it before taking rbd_dev->lock */
+ 	if (get_user(val, (int __user *)(arg)))
+ 		return -EFAULT;
+ 
+@@ -556,12 +559,25 @@ static int rbd_ioctl_set_ro(struct rbd_device *rbd_dev, unsigned long arg)
+ 	if (rbd_dev->spec->snap_id != CEPH_NOSNAP && !ro)
+ 		return -EROFS;
+ 
++	spin_lock_irq(&rbd_dev->lock);
++	/* prevent others open this device */
++	if (rbd_dev->open_count > 1) {
++		ret = -EBUSY;
++		goto out;
++	}
++
+ 	if (rbd_dev->mapping.read_only != ro) {
+ 		rbd_dev->mapping.read_only = ro;
+-		set_disk_ro(rbd_dev->disk, ro ? 1 : 0);
++		ro_changed = true;
+ 	}
+ 
+-	return 0;
++out:
++	spin_unlock_irq(&rbd_dev->lock);
++	/* set_disk_ro() may sleep, so call it after releasing rbd_dev->lock */
++	if (ret == 0 && ro_changed)
++		set_disk_ro(rbd_dev->disk, ro ? 1 : 0);
++
++	return ret;
+ }
+ 
+ static int rbd_ioctl(struct block_device *bdev, fmode_t mode,
+@@ -570,13 +586,6 @@ static int rbd_ioctl(struct block_device *bdev, fmode_t mode,
+ 	struct rbd_device *rbd_dev = bdev->bd_disk->private_data;
+ 	int ret = 0;
+ 
+-	spin_lock_irq(&rbd_dev->lock);
+-	/* prevent others open this device */
+-	if (rbd_dev->open_count > 1) {
+-		ret = -EBUSY;
+-		goto out;
+-	}
+-
+ 	switch (cmd) {
+ 	case BLKROSET:
+ 		ret = rbd_ioctl_set_ro(rbd_dev, arg);
+@@ -585,8 +594,6 @@ static int rbd_ioctl(struct block_device *bdev, fmode_t mode,
+ 		ret = -ENOTTY;
+ 	}
+ 
+-out:
+-	spin_unlock_irq(&rbd_dev->lock);
+ 	return ret;
+ }
+ 
+-- 
+2.1.4
+

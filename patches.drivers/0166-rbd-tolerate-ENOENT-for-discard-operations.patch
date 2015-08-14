@@ -1,0 +1,36 @@
+From 49eaf1ebe2e072da8c2778d6d8f60504ec67c728 Mon Sep 17 00:00:00 2001
+From: Josh Durgin <josh.durgin@inktank.com>
+Date: Mon, 7 Apr 2014 16:54:10 -0700
+Subject: [PATCH 166/213] rbd: tolerate -ENOENT for discard operations
+References: fate#318918
+Git-commit: d0265de7c358d71a494dcd1ee28206b32754bb0f
+Patch-mainline: v3.18-rc1
+
+Discard may try to delete an object from a non-layered image that does not exist.
+If this occurs, the image already has no data in that range, so change the
+result to success.
+
+Signed-off-by: Josh Durgin <josh.durgin@inktank.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index c2f9989..a513efc 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -1811,6 +1811,9 @@ static void rbd_osd_discard_callback(struct rbd_obj_request *obj_request)
+ 	 * it to our originally-requested length.
+ 	 */
+ 	obj_request->xferred = obj_request->length;
++	/* discarding a non-existent object is not a problem */
++	if (obj_request->result == -ENOENT)
++		obj_request->result = 0;
+ 	obj_request_done_set(obj_request);
+ }
+ 
+-- 
+2.1.4
+

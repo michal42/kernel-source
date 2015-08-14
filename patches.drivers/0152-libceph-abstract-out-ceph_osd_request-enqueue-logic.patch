@@ -1,0 +1,63 @@
+From aaca4a22aea8a05213e11a528c724ff9cf412638 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Tue, 2 Sep 2014 13:40:33 +0400
+Subject: [PATCH 152/213] libceph: abstract out ceph_osd_request enqueue logic
+References: fate#318918
+Git-commit: f671b581f1dac61354186b7373af5f97fe420584
+Patch-mainline: v3.18-rc1
+
+Introduce __enqueue_request() and switch to it.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osd_client.c | 24 +++++++++++++++++-------
+ 1 file changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/net/ceph/osd_client.c b/net/ceph/osd_client.c
+index 89349de..20ada90 100644
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -1355,6 +1355,22 @@ static int __calc_request_pg(struct ceph_osdmap *osdmap,
+ 				   &req->r_target_oid, pg_out);
+ }
+ 
++static void __enqueue_request(struct ceph_osd_request *req)
++{
++	struct ceph_osd_client *osdc = req->r_osdc;
++
++	dout("%s %p tid %llu to osd%d\n", __func__, req, req->r_tid,
++	     req->r_osd ? req->r_osd->o_osd : -1);
++
++	if (req->r_osd) {
++		__remove_osd_from_lru(req->r_osd);
++		list_add_tail(&req->r_osd_item, &req->r_osd->o_requests);
++		list_move_tail(&req->r_req_lru_item, &osdc->req_unsent);
++	} else {
++		list_move_tail(&req->r_req_lru_item, &osdc->req_notarget);
++	}
++}
++
+ /*
+  * Pick an osd (the first 'up' osd in the pg), allocate the osd struct
+  * (as needed), and set the request r_osd appropriately.  If there is
+@@ -1432,13 +1448,7 @@ static int __map_request(struct ceph_osd_client *osdc,
+ 			      &osdc->osdmap->osd_addr[o]);
+ 	}
+ 
+-	if (req->r_osd) {
+-		__remove_osd_from_lru(req->r_osd);
+-		list_add_tail(&req->r_osd_item, &req->r_osd->o_requests);
+-		list_move_tail(&req->r_req_lru_item, &osdc->req_unsent);
+-	} else {
+-		list_move_tail(&req->r_req_lru_item, &osdc->req_notarget);
+-	}
++	__enqueue_request(req);
+ 	err = 1;   /* osd or pg changed */
+ 
+ out:
+-- 
+2.1.4
+

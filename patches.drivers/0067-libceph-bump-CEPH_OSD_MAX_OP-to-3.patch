@@ -1,0 +1,52 @@
+From 8ca6541659da4979bbec1f98d8cc20cab62fe7c4 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Tue, 25 Feb 2014 16:22:27 +0200
+Subject: [PATCH 067/213] libceph: bump CEPH_OSD_MAX_OP to 3
+References: fate#318918
+Git-commit: 7cc69d42e6950404587bef9489a5ed6f9f6bab4e
+Patch-mainline: v3.15-rc5
+
+Our longest osd request now contains 3 ops: copyup+hint+write.
+
+Also, CEPH_OSD_MAX_OP value in a BUG_ON in rbd_osd_req_callback() was
+hard-coded to 2.  Fix it, and switch to rbd_assert while at it.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c             | 2 +-
+ include/linux/ceph/osd_client.h | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index b88afa1..e8b12d1 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -1713,7 +1713,7 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req,
+ 	if (osd_req->r_result < 0)
+ 		obj_request->result = osd_req->r_result;
+ 
+-	BUG_ON(osd_req->r_num_ops > 2);
++	rbd_assert(osd_req->r_num_ops <= CEPH_OSD_MAX_OP);
+ 
+ 	/*
+ 	 * We support a 64-bit length, but ultimately it has to be
+diff --git a/include/linux/ceph/osd_client.h b/include/linux/ceph/osd_client.h
+index c42d1ad..94ec696 100644
+--- a/include/linux/ceph/osd_client.h
++++ b/include/linux/ceph/osd_client.h
+@@ -43,7 +43,7 @@ struct ceph_osd {
+ };
+ 
+ 
+-#define CEPH_OSD_MAX_OP	2
++#define CEPH_OSD_MAX_OP	3
+ 
+ enum ceph_osd_data_type {
+ 	CEPH_OSD_DATA_TYPE_NONE = 0,
+-- 
+2.1.4
+
