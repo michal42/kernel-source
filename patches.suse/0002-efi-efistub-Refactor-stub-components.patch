@@ -1,0 +1,56 @@
+From bd669475d14e3279a7f96ed917a82df5da6ad52d Mon Sep 17 00:00:00 2001
+From: Ard Biesheuvel <ard.biesheuvel@linaro.org>
+Date: Wed, 2 Jul 2014 14:54:42 +0200
+Subject: [PATCH] efi: efistub: Refactor stub components
+
+Git-commit: bd669475d14e3279a7f96ed917a82df5da6ad52d (partial)
+Patch-mainline: v3.17-rc1
+References: fate#316350
+
+In order to move from the #include "../../../xxxxx.c" anti-pattern used
+by both the x86 and arm64 versions of the stub to a static library
+linked into either the kernel proper (arm64) or a separate boot
+executable (x86), there is some prepatory work required.
+
+This patch does the following:
+- move forward declarations of functions shared between the arch
+  specific and the generic parts of the stub to include/linux/efi.h
+- move forward declarations of functions shared between various .c files
+  of the generic stub code to a new local header file called "efistub.h"
+- add #includes to all .c files which were formerly relying on the
+  #includor to include the correct header files
+- remove all static modifiers from functions which will need to be
+  externally visible once we move to a static library
+
+Joey Lee:
+ - Only take efi_printk() parts for hibernation signature verification.
+
+Signed-off-by: Ard Biesheuvel <ard.biesheuvel@linaro.org>
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+
+---
+ drivers/firmware/efi/efi-stub-helper.c |    2 +-
+ include/linux/efi.h                    |    2 ++
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+--- a/drivers/firmware/efi/efi-stub-helper.c
++++ b/drivers/firmware/efi/efi-stub-helper.c
+@@ -28,7 +28,7 @@ static void efi_char16_printk(efi_system
+ 	efi_call_phys2(out->output_string, out, str);
+ }
+ 
+-static void efi_printk(efi_system_table_t *sys_table_arg, char *str)
++void efi_printk(efi_system_table_t *sys_table_arg, char *str)
+ {
+ 	char *s8;
+ 
+--- a/include/linux/efi.h
++++ b/include/linux/efi.h
+@@ -937,4 +937,6 @@ static inline int efi_runtime_map_copy(v
+ 
+ #endif
+ 
++void efi_printk(efi_system_table_t *sys_table_arg, char *str);
++
+ #endif /* _LINUX_EFI_H */
