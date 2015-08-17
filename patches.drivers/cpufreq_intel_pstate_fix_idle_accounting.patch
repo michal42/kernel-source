@@ -1,0 +1,85 @@
+From: Dirk Brandewie <dirk.j.brandewie@intel.com>
+Subject: intel_pstate: add sample time scaling
+References: bnc#924722, bnc#916543
+Patch-Mainline: yes
+Git-commit: c4ee841f602e5eef8eab673295c49c5b49d7732b
+
+By trenn: This is only part of the bug fix. Idle accounting is much better
+and the cpufreq subsystem lowers frequency much faster or at all. But
+certification tests still sometimes fail, because it takes too long
+to lower frequency compared to SLE11.
+
+Official Changelog:    
+The PID assumes that samples are of equal time, which for a deferable
+timers this is not true when the system goes idle.  This causes the
+PID to take a long time to converge to the min P state and depending
+on the pattern of the idle load can make the P state appear stuck.
+    
+The hold-off value of three sample times before using the scaling is
+to give a grace period for applications that have high performance
+requirements and spend a lot of time idle,  The poster child for this
+behavior is the ffmpeg benchmark in the Phoronix test suite.
+    
+Cc: 3.14+ <stable@vger.kernel.org> # 3.14+
+Signed-off-by: Dirk Brandewie <dirk.j.brandewie@intel.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Signed-off-by: Thomas Renninger <trenn@suse.de>
+
+---
+ drivers/cpufreq/intel_pstate.c |   21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+--- a/drivers/cpufreq/intel_pstate.c
++++ b/drivers/cpufreq/intel_pstate.c
+@@ -59,6 +59,7 @@ struct sample {
+ 	u64 aperf;
+ 	u64 mperf;
+ 	int freq;
++	ktime_t time;
+ };
+ 
+ struct pstate_data {
+@@ -99,6 +100,7 @@ struct cpudata {
+ 
+ 	int min_pstate_count;
+ 
++	ktime_t last_sample_time;
+ 	u64	prev_aperf;
+ 	u64	prev_mperf;
+ 	int	sample_ptr;
+@@ -610,6 +612,8 @@ static inline void intel_pstate_sample(s
+ 	rdmsrl(MSR_IA32_APERF, aperf);
+ 	rdmsrl(MSR_IA32_MPERF, mperf);
+ 	cpu->sample_ptr = (cpu->sample_ptr + 1) % SAMPLE_COUNT;
++	cpu->last_sample_time = cpu->samples[cpu->sample_ptr].time;
++	cpu->samples[cpu->sample_ptr].time = ktime_get();
+ 	cpu->samples[cpu->sample_ptr].aperf = aperf;
+ 	cpu->samples[cpu->sample_ptr].mperf = mperf;
+ 	cpu->samples[cpu->sample_ptr].aperf -= cpu->prev_aperf;
+@@ -632,12 +636,25 @@ static inline void intel_pstate_set_samp
+ 
+ static inline int32_t intel_pstate_get_scaled_busy(struct cpudata *cpu)
+ {
+-	int32_t core_busy, max_pstate, current_pstate;
++	int32_t core_busy, max_pstate, current_pstate, sample_ratio;
++	u32 duration_us;
++	u32 sample_time;
+ 
+ 	core_busy = cpu->samples[cpu->sample_ptr].core_pct_busy;
+ 	max_pstate = int_tofp(cpu->pstate.max_pstate);
+ 	current_pstate = int_tofp(cpu->pstate.current_pstate);
+-	return mul_fp(core_busy, div_fp(max_pstate, current_pstate));
++ 	core_busy = mul_fp(core_busy, div_fp(max_pstate, current_pstate));
++
++	sample_time = (pid_params.sample_rate_ms  * USEC_PER_MSEC);
++	duration_us = (u32) ktime_us_delta(cpu->samples[cpu->sample_ptr].time,
++					cpu->last_sample_time);
++	if (duration_us > sample_time * 3) {
++		sample_ratio = div_fp(int_tofp(sample_time),
++				int_tofp(duration_us));
++		core_busy = mul_fp(core_busy, sample_ratio);
++	}
++
++ 	return core_busy;
+ }
+ 
+ static inline void intel_pstate_adjust_busy_pstate(struct cpudata *cpu)
