@@ -36,9 +36,9 @@ Signed-off-by: Lee, Chun-Yi <jlee@suse.com>
  include/uapi/linux/suspend_ioctls.h       |    3 +-
  kernel/power/Kconfig                      |    1 
  kernel/power/hibernate.c                  |    2 +
- kernel/power/user.c                       |   10 +++++++
+ kernel/power/user.c                       |   11 ++++++++
  kernel/reboot.c                           |    3 ++
- 12 files changed, 101 insertions(+), 4 deletions(-)
+ 12 files changed, 102 insertions(+), 4 deletions(-)
  create mode 100644 drivers/firmware/efi/efi-hibernate_keys.c
 
 --- a/arch/x86/boot/compressed/eboot.c
@@ -238,18 +238,26 @@ Signed-off-by: Lee, Chun-Yi <jlee@suse.com>
  	help
 --- a/kernel/power/hibernate.c
 +++ b/kernel/power/hibernate.c
-@@ -645,6 +645,8 @@ int hibernate(void)
+@@ -643,6 +643,8 @@ int hibernate(void)
  {
  	int error;
  
 +	set_hibernation_key_regen_flag = false;
 +
- 	if (secure_modules()) {
- 		return -EPERM;
- 	}
+ 	lock_system_sleep();
+ 	/* The snapshot device should not be opened while we're running */
+ 	if (!atomic_add_unless(&snapshot_device_available, -1, 0)) {
 --- a/kernel/power/user.c
 +++ b/kernel/power/user.c
-@@ -34,6 +34,9 @@
+@@ -25,6 +25,7 @@
+ #include <linux/cpu.h>
+ #include <linux/freezer.h>
+ #include <linux/module.h>
++#include <linux/efi.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -33,6 +34,9 @@
  
  #define SNAPSHOT_MINOR	231
  
@@ -259,7 +267,7 @@ Signed-off-by: Lee, Chun-Yi <jlee@suse.com>
  static struct snapshot_data {
  	struct snapshot_handle handle;
  	int swap;
-@@ -340,6 +343,8 @@ static long snapshot_ioctl(struct file *
+@@ -339,6 +343,8 @@ static long snapshot_ioctl(struct file *
  			error = -EPERM;
  			break;
  		}
@@ -268,7 +276,7 @@ Signed-off-by: Lee, Chun-Yi <jlee@suse.com>
  		/*
  		 * Tasks are frozen and the notifiers have been called with
  		 * PM_HIBERNATION_PREPARE
-@@ -353,6 +358,7 @@ static long snapshot_ioctl(struct file *
+@@ -352,6 +358,7 @@ static long snapshot_ioctl(struct file *
  		break;
  
  	case SNAPSHOT_POWER_OFF:
@@ -276,7 +284,7 @@ Signed-off-by: Lee, Chun-Yi <jlee@suse.com>
  		if (data->platform_support)
  			error = hibernation_platform_enter();
  		break;
-@@ -388,6 +394,10 @@ static long snapshot_ioctl(struct file *
+@@ -387,6 +394,10 @@ static long snapshot_ioctl(struct file *
  		}
  		break;
  
