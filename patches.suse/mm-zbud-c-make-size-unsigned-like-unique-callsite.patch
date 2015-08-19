@@ -1,0 +1,51 @@
+From: Fabian Frederick <fabf@skynet.be>
+Date: Wed, 4 Jun 2014 16:11:07 -0700
+Subject: mm/zbud.c: make size unsigned like unique callsite
+Git-commit: 50417c55562c03e6746b13aee650c2bbb048fea3
+Patch-mainline: v3.16-rc1
+References: VM Functionality, fate#318829
+
+zbud_alloc is only called by zswap_frontswap_store with unsigned int len.
+Change function parameter + update >= 0 check.
+
+Signed-off-by: Fabian Frederick <fabf@skynet.be>
+Acked-by: Seth Jennings <sjennings@variantweb.net>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+---
+ include/linux/zbud.h |    2 +-
+ mm/zbud.c            |    4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+--- a/include/linux/zbud.h
++++ b/include/linux/zbud.h
+@@ -11,7 +11,7 @@ struct zbud_ops {
+ 
+ struct zbud_pool *zbud_create_pool(gfp_t gfp, struct zbud_ops *ops);
+ void zbud_destroy_pool(struct zbud_pool *pool);
+-int zbud_alloc(struct zbud_pool *pool, int size, gfp_t gfp,
++int zbud_alloc(struct zbud_pool *pool, unsigned int size, gfp_t gfp,
+ 	unsigned long *handle);
+ void zbud_free(struct zbud_pool *pool, unsigned long handle);
+ int zbud_reclaim_page(struct zbud_pool *pool, unsigned int retries);
+--- a/mm/zbud.c
++++ b/mm/zbud.c
+@@ -247,7 +247,7 @@ void zbud_destroy_pool(struct zbud_pool
+  * gfp arguments are invalid or -ENOMEM if the pool was unable to allocate
+  * a new page.
+  */
+-int zbud_alloc(struct zbud_pool *pool, int size, gfp_t gfp,
++int zbud_alloc(struct zbud_pool *pool, unsigned int size, gfp_t gfp,
+ 			unsigned long *handle)
+ {
+ 	int chunks, i, freechunks;
+@@ -255,7 +255,7 @@ int zbud_alloc(struct zbud_pool *pool, i
+ 	enum buddy bud;
+ 	struct page *page;
+ 
+-	if (size <= 0 || gfp & __GFP_HIGHMEM)
++	if (!size || (gfp & __GFP_HIGHMEM))
+ 		return -EINVAL;
+ 	if (size > PAGE_SIZE - ZHDR_SIZE_ALIGNED - CHUNK_SIZE)
+ 		return -ENOSPC;

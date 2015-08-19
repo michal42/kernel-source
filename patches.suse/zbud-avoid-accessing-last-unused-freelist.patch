@@ -1,0 +1,63 @@
+From: Chao Yu <chao2.yu@samsung.com>
+Date: Thu, 9 Oct 2014 15:30:04 -0700
+Subject: zbud: avoid accessing last unused freelist
+Git-commit: f203c3b33f0891da98ae3dcf829851c48473ed60
+Patch-mainline: v3.18-rc1
+References: VM Functionality, fate#318829
+
+For now, there are NCHUNKS of 64 freelists in zbud_pool, the last
+unbuddied[63] freelist linked with all zbud pages which have free chunks
+of 63.  Calculating according to context of num_free_chunks(), our max
+chunk number of unbuddied zbud page is 62, so none of zbud pages will be
+added/removed in last freelist, but still we will try to find an unbuddied
+zbud page in the last unused freelist, it is unneeded.
+
+This patch redefines NCHUNKS to 63 as free chunk number in one zbud page,
+hence we can decrease size of zpool and avoid accessing the last unused
+freelist whenever failing to allocate zbud from freelist in zbud_alloc.
+
+Signed-off-by: Chao Yu <chao2.yu@samsung.com>
+Cc: Seth Jennings <sjennings@variantweb.net>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+---
+ mm/zbud.c |   13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+--- a/mm/zbud.c
++++ b/mm/zbud.c
+@@ -59,15 +59,17 @@
+  * NCHUNKS_ORDER determines the internal allocation granularity, effectively
+  * adjusting internal fragmentation.  It also determines the number of
+  * freelists maintained in each pool. NCHUNKS_ORDER of 6 means that the
+- * allocation granularity will be in chunks of size PAGE_SIZE/64, and there
+- * will be 64 freelists per pool.
++ * allocation granularity will be in chunks of size PAGE_SIZE/64. As one chunk
++ * in allocated page is occupied by zbud header, NCHUNKS will be calculated to
++ * 63 which shows the max number of free chunks in zbud page, also there will be
++ * 63 freelists per pool.
+  */
+ #define NCHUNKS_ORDER	6
+ 
+ #define CHUNK_SHIFT	(PAGE_SHIFT - NCHUNKS_ORDER)
+ #define CHUNK_SIZE	(1 << CHUNK_SHIFT)
+-#define NCHUNKS		(PAGE_SIZE >> CHUNK_SHIFT)
+ #define ZHDR_SIZE_ALIGNED CHUNK_SIZE
++#define NCHUNKS		((PAGE_SIZE - ZHDR_SIZE_ALIGNED) >> CHUNK_SHIFT)
+ 
+ /**
+  * struct zbud_pool - stores metadata for each zbud pool
+@@ -182,10 +184,9 @@ static int num_free_chunks(struct zbud_h
+ {
+ 	/*
+ 	 * Rather than branch for different situations, just use the fact that
+-	 * free buddies have a length of zero to simplify everything. -1 at the
+-	 * end for the zbud header.
++	 * free buddies have a length of zero to simplify everything.
+ 	 */
+-	return NCHUNKS - zhdr->first_chunks - zhdr->last_chunks - 1;
++	return NCHUNKS - zhdr->first_chunks - zhdr->last_chunks;
+ }
+ 
+ /*****************
