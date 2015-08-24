@@ -1,0 +1,45 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct mm_context_t
+Patch-mainline: never, kabi
+
+In 3.12.47, commit 7b4da3ef125460dd2e1f81571f8850c2c3635106 (x86/ldt:
+Make modify_ldt synchronous), upstream commit
+37868fe113ff2ba814b3b4eb12df214df555f8dc added one member to struct
+mm_context_t and removed two. It indeed changed the layout of that
+structure.
+
+Add back one member to make the layout the same and protect the change
+the usual way, by #ifdef __GENKSYMS__.
+
+We can do this, because mm_context_t is arch-specific and should not
+be touched directly. Furthermore, the only inline using this structure
+explicitly is switch_mm(). But switch_mm() uses unexported symbols
+__tracepoint_tlb_flush and cpu_tlbstate), so cannot be inlined to any
+KMP.
+
+On the load_LDT*() removal: nobody should use that directly. Even if
+anybody was using those functions, they are inlined and will still
+work. We can resurrect the functions if it turns out somebody really
+needs them. Again, nobody should.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/x86/include/asm/mmu.h |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/arch/x86/include/asm/mmu.h
++++ b/arch/x86/include/asm/mmu.h
+@@ -9,7 +9,13 @@
+  * we put the segment information here.
+  */
+ typedef struct {
++#ifdef __GENKSYMS__
++	void *ldt;
++	int size;
++#else
+ 	struct ldt_struct *ldt;
++	int unused_size;
++#endif
+ 
+ #ifdef CONFIG_X86_64
+ 	/* True if mm supports a task running in 32 bit compatibility mode. */

@@ -12,24 +12,23 @@ This will dramatically slow down modify_ldt in multithreaded
 programs, but there shouldn't be any multithreaded programs that
 care about modify_ldt's performance in the first place.
 
-Boris:
+[js] Replaced by the upstream (stable-3.12) version.
+     This ought to be replaced by the port of 3.12.47 in the end, but
+     I leave this up to the xen maintainers, as that is not so
+     straightforward (the nmi patch, in particular).
 
-Revert the part from the upstream change:
-
-typedef struct {
-        void *ldt;
-        int size;
-	...
-} mm_context_t;
-
-in order to keep the kABI checker quiet. This requires to do a compiler
-barrier when fetching ->ldt and ->size to avoid inconsistent LDTs when
-calling LLDT.
-
-Cc: stable@vger.kernel.org
 Signed-off-by: Andy Lutomirski <luto@kernel.org>
 Acked-by: Borislav Petkov <bp@suse.de>
 Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.patch" by xen-port-patches.py
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+
+---
+ arch/x86/include/mach-xen/asm/desc.h        |   15 -
+ arch/x86/include/mach-xen/asm/mmu_context.h |   56 +++++
+ arch/x86/kernel/cpu/common-xen.c            |    4 
+ arch/x86/kernel/ldt-xen.c                   |  280 +++++++++++++++-------------
+ arch/x86/kernel/process_64-xen.c            |    4 
+ 5 files changed, 210 insertions(+), 149 deletions(-)
 
 --- a/arch/x86/include/mach-xen/asm/desc.h
 +++ b/arch/x86/include/mach-xen/asm/desc.h
@@ -57,7 +56,7 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
  	return (unsigned)(desc->base0 | ((desc->base1) << 16) | ((desc->base2) << 24));
 --- a/arch/x86/include/mach-xen/asm/mmu_context.h
 +++ b/arch/x86/include/mach-xen/asm/mmu_context.h
-@@ -21,6 +21,61 @@ static inline void xen_activate_mm(struc
+@@ -21,6 +21,50 @@ static inline void xen_activate_mm(struc
  }
  
  /*
@@ -77,21 +76,10 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 +
 +static inline void load_mm_ldt(struct mm_struct *mm)
 +{
-+	int ldt_size;
-+	void *ldt;
++	struct ldt_struct *ldt;
 +
 +	/* lockless_dereference synchronizes with smp_store_release */
-+	ldt_size = mm->context.size;
 +	ldt = lockless_dereference(mm->context.ldt);
-+
-+	/*
-+	 * Prevent races between two threads sharing an address space, one doing
-+	 * load_mm_ldt() in switch_mm() and the other updating context.ldt and
-+	 * context.size. X86 is strongly ordered but the compiler might do some
-+	 * reordering, thus use an smp_rmb() at the end which evaluates to a
-+	 * compiler barrier except on PPRO where an actual LFENCE is generated.
-+	 */
-+	smp_rmb();
 +
 +	/*
 +	 * Any change to mm->context.ldt is followed by an IPI to all
@@ -108,7 +96,7 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 +	 */
 +
 +	if (unlikely(ldt))
-+		set_ldt(ldt, ldt_size);
++		set_ldt(ldt->entries, ldt->size);
 +	else
 +		clear_LDT();
 +
@@ -119,28 +107,25 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
   * Used for LDT copy/destruction.
   */
  int init_new_context(struct task_struct *tsk, struct mm_struct *mm);
-@@ -107,10 +162,17 @@ static inline void switch_mm(struct mm_s
+@@ -107,10 +151,14 @@ static inline void switch_mm(struct mm_s
  
  		/* Load the LDT, if the LDT is different: */
  		if (unlikely(prev->context.ldt != next->context.ldt)) {
 -			/* load_LDT_nolock(&next->context) */
 +			/* load_mm_ldt(next) */
-+			unsigned int ldt_size;
-+			void *ldt;
++			struct ldt_struct *ldt;
 +
 +			/* lockless_dereference synchronizes with smp_store_release */
-+			ldt_size = next->context.size;
 +			ldt = lockless_dereference(next->context.ldt);
-+			smp_rmb();
  			op->cmd = MMUEXT_SET_LDT;
 -			op->arg1.linear_addr = (unsigned long)next->context.ldt;
 -			op->arg2.nr_ents     = next->context.size;
-+			op->arg1.linear_addr = (unsigned long)ldt;
-+			op->arg2.nr_ents     = ldt_size;
++			op->arg1.linear_addr = (unsigned long)ldt->entries;
++			op->arg2.nr_ents     = ldt->size;
  			op++;
  		}
  
-@@ -139,7 +201,7 @@ static inline void switch_mm(struct mm_s
+@@ -139,7 +187,7 @@ static inline void switch_mm(struct mm_s
  			 */
  			load_cr3(next->pgd);
  			xen_new_user_pt(__pa(__user_pgd(next->pgd)));
@@ -179,25 +164,28 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
  #include <linux/vmalloc.h>
  #include <linux/uaccess.h>
  
-@@ -20,85 +21,85 @@
+@@ -20,85 +21,94 @@
  #include <asm/mmu_context.h>
  #include <asm/syscalls.h>
  
 -#ifdef CONFIG_SMP
++/* context.lock is held for us, so we don't need any locking. */
  static void flush_ldt(void *current_mm)
  {
 -	if (current->active_mm == current_mm)
 -		load_LDT(&current->active_mm->context);
-+	if (current->active_mm == current_mm) {
-+		/* context.lock is held for us, so we don't need any locking. */
-+		mm_context_t *pc = &current->active_mm->context;
-+		set_ldt(pc->ldt, pc->size);
-+	}
++	mm_context_t *pc;
++
++	if (current->active_mm != current_mm)
++		return;
++
++	pc = &current->active_mm->context;
++	set_ldt(pc->ldt->entries, pc->ldt->size);
  }
 -#endif
  
 -static int alloc_ldt(mm_context_t *pc, int mincount, int reload)
-+/* The caller must call finalize_ldt_struct on the result. */
++/* The caller must call finalize_ldt_struct on the result. LDT starts zeroed. */
 +static struct ldt_struct *alloc_ldt_struct(int size)
  {
 -	void *oldldt, *newldt;
@@ -222,21 +210,24 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 +	BUILD_BUG_ON(LDT_ENTRY_SIZE != sizeof(struct desc_struct));
 +	alloc_size = size * LDT_ENTRY_SIZE;
 +
++	/*
++	 * Xen is very picky: it requires a page-aligned LDT that has no
++	 * trailing nonzero bytes in any page that contains LDT descriptors.
++	 * Keep it simple: zero the whole allocation and never allocate less
++	 * than PAGE_SIZE.
++	 */
 +	if (alloc_size > PAGE_SIZE)
-+		new_ldt->entries = vmalloc(alloc_size);
++		new_ldt->entries = vzalloc(alloc_size);
  	else
 -		newldt = (void *)__get_free_page(GFP_KERNEL);
-+		new_ldt->entries = (void *)__get_free_page(GFP_KERNEL);
++		new_ldt->entries = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 
+-	if (!newldt)
+-		return -ENOMEM;
 +	if (!new_ldt->entries) {
 +		kfree(new_ldt);
 +		return NULL;
 +	}
- 
--	if (!newldt)
--		return -ENOMEM;
-+	new_ldt->size = size;
-+	return new_ldt;
-+}
  
 -	if (oldsize)
 -		memcpy(newldt, pc->ldt, oldsize * LDT_ENTRY_SIZE);
@@ -252,6 +243,10 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 -	wmb();
 -	pc->size = mincount;
 -	wmb();
++	new_ldt->size = size;
++	return new_ldt;
++}
++
 +/* After calling this, the LDT is immutable. */
 +static void finalize_ldt_struct(struct ldt_struct *ldt)
 +{
@@ -259,18 +254,17 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 +			    XENFEAT_writable_descriptor_tables);
 +}
 +
++/* context.lock is held */
 +static void install_ldt(struct mm_struct *current_mm,
 +			struct ldt_struct *ldt)
 +{
-+	/* context.lock is held */
 +	preempt_disable();
 +
 +	/* Synchronizes with lockless_dereference in load_mm_ldt. */
-+	current_mm->context.size = ldt->size;
-+	smp_store_release(&current_mm->context.ldt, ldt->entries);
++	smp_store_release(&current_mm->context.ldt, ldt);
 +
 +	/* Activate for this CPU. */
-+	flush_ldt(current->mm);
++	flush_ldt(current_mm);
  
 -	if (reload) {
 -#ifdef CONFIG_SMP
@@ -301,34 +295,37 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 -			put_page(virt_to_page(oldldt));
 -	}
 -	return 0;
-+	preempt_enable();
- }
- 
+-}
+-
 -static inline int copy_ldt(mm_context_t *new, mm_context_t *old)
-+static void free_ldt_struct(void *ldt, int ldt_size)
- {
+-{
 -	int err = alloc_ldt(new, old->size, 0);
-+	if (unlikely(ldt)) {
-+		int alloc_size = ldt_size * LDT_ENTRY_SIZE;
- 
+-
 -	if (err < 0)
 -		return err;
 -	memcpy(new->ldt, old->ldt, old->size * LDT_ENTRY_SIZE);
 -	make_pages_readonly(new->ldt,
 -			    (new->size * LDT_ENTRY_SIZE) / PAGE_SIZE,
--			    XENFEAT_writable_descriptor_tables);
++	preempt_enable();
++}
++
++static void free_ldt_struct(struct ldt_struct *ldt)
++{
++	if (likely(!ldt))
++		return;
++
++	make_pages_writable(ldt->entries, PFN_DOWN(ldt->size * LDT_ENTRY_SIZE),
+ 			    XENFEAT_writable_descriptor_tables);
 -	return 0;
-+		make_pages_writable(ldt, PFN_DOWN(alloc_size),
-+				    XENFEAT_writable_descriptor_tables);
-+		if (alloc_size > PAGE_SIZE)
-+			vfree(ldt);
-+		else
-+			put_page(virt_to_page(ldt));
-+	}
++	if (ldt->size * LDT_ENTRY_SIZE > PAGE_SIZE)
++		vfree(ldt->entries);
++	else
++		kfree(ldt->entries);
++	kfree(ldt);
  }
  
  /*
-@@ -107,19 +108,42 @@ static inline int copy_ldt(mm_context_t 
+@@ -107,19 +117,35 @@ static inline int copy_ldt(mm_context_t
   */
  int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
  {
@@ -353,31 +350,24 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 +	if (!old_mm->context.ldt)
 +		goto out_unlock;
 +
-+	new_ldt = alloc_ldt_struct(old_mm->context.size);
++	new_ldt = alloc_ldt_struct(old_mm->context.ldt->size);
 +	if (!new_ldt) {
 +		retval = -ENOMEM;
 +		goto out_unlock;
  	}
 +
-+	memcpy(new_ldt->entries, old_mm->context.ldt, new_ldt->size * LDT_ENTRY_SIZE);
++	memcpy(new_ldt->entries, old_mm->context.ldt->entries,
++	       new_ldt->size * LDT_ENTRY_SIZE);
 +	finalize_ldt_struct(new_ldt);
 +
-+	mm->context.ldt  = new_ldt->entries;
-+	mm->context.size = new_ldt->size;
-+
-+	/*
-+	 * This is different from upstream - we use new_ldt only up to here and
-+	 * and copy its contents into mm->context members.
-+	 * Free it here.
-+	 */
-+	kfree(new_ldt);
++	mm->context.ldt = new_ldt;
 +
 +out_unlock:
 +	mutex_unlock(&old_mm->context.lock);
  	return retval;
  }
  
-@@ -130,53 +154,47 @@ int init_new_context(struct task_struct 
+@@ -130,53 +156,47 @@ int init_new_context(struct task_struct
   */
  void destroy_context(struct mm_struct *mm)
  {
@@ -394,7 +384,7 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 -			put_page(virt_to_page(mm->context.ldt));
 -		mm->context.size = 0;
 -	}
-+	free_ldt_struct(mm->context.ldt, mm->context.size);
++	free_ldt_struct(mm->context.ldt);
 +	mm->context.ldt = NULL;
  }
  
@@ -418,7 +408,8 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
  		bytecount = LDT_ENTRY_SIZE * LDT_ENTRIES;
  
 -	mutex_lock(&mm->context.lock);
- 	size = mm->context.size * LDT_ENTRY_SIZE;
+-	size = mm->context.size * LDT_ENTRY_SIZE;
++	size = mm->context.ldt->size * LDT_ENTRY_SIZE;
  	if (size > bytecount)
  		size = bytecount;
  
@@ -428,17 +419,18 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 -	mutex_unlock(&mm->context.lock);
 -	if (err < 0)
 -		goto error_return;
-+	if (copy_to_user(ptr, mm->context.ldt, size)) {
++	if (copy_to_user(ptr, mm->context.ldt->entries, size)) {
 +		retval = -EFAULT;
 +		goto out_unlock;
 +	}
 +
  	if (size != bytecount) {
 -		/* zero-fill the rest */
-+		/* Zero-fill the rest and pretend we read bytecount bytes. */
- 		if (clear_user(ptr + size, bytecount - size) != 0) {
+-		if (clear_user(ptr + size, bytecount - size) != 0) {
 -			err = -EFAULT;
 -			goto error_return;
++		/* Zero-fill the rest and pretend we read bytecount bytes. */
++		if (clear_user(ptr + size, bytecount - size)) {
 +			retval = -EFAULT;
 +			goto out_unlock;
  		}
@@ -454,17 +446,16 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
  }
  
  static int read_default_ldt(void __user *ptr, unsigned long bytecount)
-@@ -200,6 +218,9 @@ static int write_ldt(void __user *ptr, u
+@@ -200,6 +220,8 @@ static int write_ldt(void __user *ptr, u
  	struct desc_struct ldt;
  	int error;
  	struct user_desc ldt_info;
 +	int oldsize, newsize;
-+	struct ldt_struct *new_ldt;
-+	void *old_ldt;
++	struct ldt_struct *new_ldt, *old_ldt;
  
  	error = -EINVAL;
  	if (bytecount != sizeof(ldt_info))
-@@ -218,34 +239,50 @@ static int write_ldt(void __user *ptr, u
+@@ -218,34 +240,40 @@ static int write_ldt(void __user *ptr, u
  			goto out;
  	}
  
@@ -481,7 +472,7 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 -		if (oldmode || LDT_empty(&ldt_info)) {
 -			memset(&ldt, 0, sizeof(ldt));
 -			goto install;
-+	if ((oldmode && ldt_info.base_addr == 0 && ldt_info.limit == 0) ||
++	if ((oldmode && !ldt_info.base_addr && !ldt_info.limit) ||
 +	    LDT_empty(&ldt_info)) {
 +		/* The user wants to clear the entry. */
 +		memset(&ldt, 0, sizeof(ldt));
@@ -501,7 +492,7 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 +	mutex_lock(&mm->context.lock);
 +
 +	old_ldt = mm->context.ldt;
-+	oldsize = old_ldt ? mm->context.size : 0;
++	oldsize = old_ldt ? old_ldt->size : 0;
 +	newsize = max((int)(ldt_info.entry_number + 1), oldsize);
 +
 +	error = -ENOMEM;
@@ -518,29 +509,19 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
 -install:
 -	error = write_ldt_entry(mm->context.ldt, ldt_info.entry_number, &ldt);
 +	if (old_ldt)
-+		memcpy(new_ldt->entries, old_ldt, oldsize * LDT_ENTRY_SIZE);
-+
-+	memset(new_ldt->entries + oldsize, 0,
-+	       (newsize - oldsize) * LDT_ENTRY_SIZE);
-+
++		memcpy(new_ldt->entries, old_ldt->entries, oldsize * LDT_ENTRY_SIZE);
 +	new_ldt->entries[ldt_info.entry_number] = ldt;
 +	finalize_ldt_struct(new_ldt);
 +
 +	install_ldt(mm, new_ldt);
-+	free_ldt_struct(old_ldt, oldsize);
-+
-+	/*
-+	 * Container new_ldt is not needed anymore, free it.
-+	 */
-+	kfree(new_ldt);
-+
++	free_ldt_struct(old_ldt);
 +	error = 0;
  
  out_unlock:
  	mutex_unlock(&mm->context.lock);
 --- a/arch/x86/kernel/process_64-xen.c
 +++ b/arch/x86/kernel/process_64-xen.c
-@@ -131,7 +131,7 @@ EXPORT_SYMBOL(xen_load_gs_index);
+@@ -131,11 +131,11 @@ EXPORT_SYMBOL(xen_load_gs_index);
  void release_thread(struct task_struct *dead_task)
  {
  	if (dead_task->mm) {
@@ -549,3 +530,8 @@ Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.
  			pr_warn("WARNING: dead process %s still has LDT? <%p/%d>\n",
  				dead_task->comm,
  				dead_task->mm->context.ldt,
+-				dead_task->mm->context.size);
++				dead_task->mm->context.ldt->size);
+ 			BUG();
+ 		}
+ 	}
