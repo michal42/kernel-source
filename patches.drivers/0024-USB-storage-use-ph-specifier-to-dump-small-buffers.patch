@@ -1,0 +1,67 @@
+From b999e81e6c2081774cad3c4fdb27e1e1d2cc6566 Mon Sep 17 00:00:00 2001
+From: Andy Shevchenko <andriy.shevchenko@linux.intel.com>
+Date: Fri, 5 Sep 2014 17:56:25 +0300
+Subject: [PATCH 24/27] USB: storage: use %*ph specifier to dump small buffers
+References: bnc#934942
+Git-Commit: 7adce46784a0992eb7276416798db6746ba8f667
+Patch-Mainline: v3.18
+
+Instead of dereference each byte let's use %*ph specifier in the printk()
+calls.
+
+Signed-off-by: Andy Shevchenko <andriy.shevchenko@linux.intel.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/usb/storage/alauda.c | 11 ++++-------
+ drivers/usb/storage/sddr09.c |  3 +--
+ 2 files changed, 5 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/usb/storage/alauda.c b/drivers/usb/storage/alauda.c
+index 6636a58..62c2d9d 100644
+--- a/drivers/usb/storage/alauda.c
++++ b/drivers/usb/storage/alauda.c
+@@ -415,14 +415,11 @@ static int alauda_init_media(struct us_data *us)
+ 	if (alauda_get_media_signature(us, data) != USB_STOR_XFER_GOOD)
+ 		return USB_STOR_TRANSPORT_ERROR;
+ 
+-	usb_stor_dbg(us, "Media signature: %02X %02X %02X %02X\n",
+-		     data[0], data[1], data[2], data[3]);
++	usb_stor_dbg(us, "Media signature: %4ph\n", data);
+ 	media_info = alauda_card_find_id(data[1]);
+ 	if (media_info == NULL) {
+-		printk(KERN_WARNING
+-			"alauda_init_media: Unrecognised media signature: "
+-			"%02X %02X %02X %02X\n",
+-			data[0], data[1], data[2], data[3]);
++		pr_warn("alauda_init_media: Unrecognised media signature: %4ph\n",
++			data);
+ 		return USB_STOR_TRANSPORT_ERROR;
+ 	}
+ 
+@@ -513,7 +510,7 @@ static int alauda_check_status2(struct us_data *us)
+ 	if (rc != USB_STOR_XFER_GOOD)
+ 		return rc;
+ 
+-	usb_stor_dbg(us, "%02X %02X %02X\n", data[0], data[1], data[2]);
++	usb_stor_dbg(us, "%3ph\n", data);
+ 	if (data[0] & ALAUDA_STATUS_ERROR)
+ 		return USB_STOR_XFER_ERROR;
+ 
+diff --git a/drivers/usb/storage/sddr09.c b/drivers/usb/storage/sddr09.c
+index 073a2c3..aa16f8b 100644
+--- a/drivers/usb/storage/sddr09.c
++++ b/drivers/usb/storage/sddr09.c
+@@ -1155,8 +1155,7 @@ sddr09_get_cardinfo(struct us_data *us, unsigned char flags) {
+ 		return NULL;
+ 	}
+ 
+-	sprintf(blurbtxt, "sddr09: Found Flash card, ID = %02X %02X %02X %02X",
+-		deviceID[0], deviceID[1], deviceID[2], deviceID[3]);
++	sprintf(blurbtxt, "sddr09: Found Flash card, ID = %4ph", deviceID);
+ 
+ 	/* Byte 0 is the manufacturer */
+ 	sprintf(blurbtxt + strlen(blurbtxt),
+-- 
+2.1.4
+

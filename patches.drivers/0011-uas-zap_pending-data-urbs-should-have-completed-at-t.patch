@@ -1,0 +1,54 @@
+From 8a2e908800cbd092000b1b8add68d0be3f701ef2 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 13 Sep 2014 12:26:37 +0200
+Subject: [PATCH 11/27] uas: zap_pending: data urbs should have completed at
+ this time
+References: bnc#934942
+Git-Commit: 9c15c5738b5219fdc273e8923b2c1a9d5e8ce3b3
+Patch-Mainline: v3.18
+
+The data urbs are all killed before calling zap_pending, and their completion
+handler should have cleared their inflight flag.
+
+Do not 0 the data inflight flags, and add a check for try_complete succeeding,
+as it should always succeed when called from zap_pending.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/usb/storage/uas.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index ebf9226..769c696 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -146,6 +146,7 @@ static void uas_zap_pending(struct uas_dev_info *devinfo, int result)
+ 	struct uas_cmd_info *cmdinfo;
+ 	struct uas_cmd_info *temp;
+ 	unsigned long flags;
++	int err;
+ 
+ 	spin_lock_irqsave(&devinfo->lock, flags);
+ 	list_for_each_entry_safe(cmdinfo, temp, &devinfo->dead_list, list) {
+@@ -153,12 +154,11 @@ static void uas_zap_pending(struct uas_dev_info *devinfo, int result)
+ 		struct scsi_cmnd *cmnd = container_of(scp, struct scsi_cmnd,
+ 						      SCp);
+ 		uas_log_cmd_state(cmnd, __func__);
+-		/* all urbs are killed, clear inflight bits */
+-		cmdinfo->state &= ~(COMMAND_INFLIGHT |
+-				    DATA_IN_URB_INFLIGHT |
+-				    DATA_OUT_URB_INFLIGHT);
++		/* Sense urbs were killed, clear COMMAND_INFLIGHT manually */
++		cmdinfo->state &= ~COMMAND_INFLIGHT;
+ 		cmnd->result = result << 16;
+-		uas_try_complete(cmnd, __func__);
++		err = uas_try_complete(cmnd, __func__);
++		WARN_ON(err != 0);
+ 	}
+ 	spin_unlock_irqrestore(&devinfo->lock, flags);
+ }
+-- 
+2.1.4
+

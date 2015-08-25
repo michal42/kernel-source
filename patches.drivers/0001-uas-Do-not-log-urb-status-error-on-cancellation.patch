@@ -1,0 +1,48 @@
+From 18c0c5742ab808ce454ca05d47aeff72bca8767d Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 13 Sep 2014 12:26:44 +0200
+Subject: [PATCH 01/27] uas: Do not log urb status error on cancellation
+Git-Commit: 51b361737bcec832ea07650e27f93098e44c834b
+Patch-Mainline: v3.18
+References: bnc#934942
+
+Check for both type of cancellation codes for sense and data urbs.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+
+Conflicts:
+	drivers/usb/storage/uas.c
+---
+ drivers/usb/storage/uas.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index ce87f88..e855688 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -326,10 +326,7 @@ static void uas_stat_cmplt(struct urb *urb)
+ 	u16 tag;
+ 
+ 	if (urb->status) {
+-		if (urb->status == -ENOENT) {
+-			dev_err(&urb->dev->dev, "stat urb: killed, stream %d\n",
+-				urb->stream_id);
+-		} else {
++		if (urb->status != -ENOENT && urb->status != -ECONNRESET) {
+ 			dev_err(&urb->dev->dev, "stat urb: status %d\n",
+ 				urb->status);
+ 		}
+@@ -424,7 +421,7 @@ static void uas_data_cmplt(struct urb *urb)
+ 	if (sdb == NULL) {
+ 		WARN_ON_ONCE(1);
+ 	} else if (urb->status) {
+-		if (urb->status != -ECONNRESET) {
++		if (urb->status != -ECONNRESET && urb->status != -ECONNRESET) {
+ 			uas_log_cmd_state(cmnd, __func__);
+ 			scmd_printk(KERN_ERR, cmnd,
+ 				"data cmplt err %d stream %d\n",
+-- 
+2.1.4
+

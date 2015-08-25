@@ -1,0 +1,50 @@
+From 5828326459a3b72208753312edacf6463b539294 Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 13 Sep 2014 12:26:39 +0200
+Subject: [PATCH 13/27] uas: Remove cmnd reference from the cmd urb
+References: bnc#934942
+Git-Commit: b6823c51fcd82e993275f5403e120279232ecaec
+Patch-Mainline: v3.18
+
+It is not strictly necessary for the cmd urb to have a reference to the
+cmnd, and without this reference it becomes easier to drop all references to
+a cmnd on an abort.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/usb/storage/uas.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index 6dcefdc..8934961 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -425,12 +425,9 @@ out:
+ 
+ static void uas_cmd_cmplt(struct urb *urb)
+ {
+-	struct scsi_cmnd *cmnd = urb->context;
++	if (urb->status)
++		dev_err(&urb->dev->dev, "cmd cmplt err %d\n", urb->status);
+ 
+-	if (urb->status) {
+-		uas_log_cmd_state(cmnd, __func__);
+-		scmd_printk(KERN_ERR, cmnd, "cmd cmplt err %d\n", urb->status);
+-	}
+ 	usb_free_urb(urb);
+ }
+ 
+@@ -508,7 +505,7 @@ static struct urb *uas_alloc_cmd_urb(struct uas_dev_info *devinfo, gfp_t gfp,
+ 	memcpy(iu->cdb, cmnd->cmnd, cmnd->cmd_len);
+ 
+ 	usb_fill_bulk_urb(urb, udev, devinfo->cmd_pipe, iu, sizeof(*iu) + len,
+-							uas_cmd_cmplt, cmnd);
++							uas_cmd_cmplt, NULL);
+ 	urb->transfer_flags |= URB_FREE_BUFFER;
+  out:
+ 	return urb;
+-- 
+2.1.4
+

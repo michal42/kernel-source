@@ -1,0 +1,53 @@
+From 7c97bed2fde28a181c133b9f4021702bf691ffff Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Sat, 13 Sep 2014 12:26:33 +0200
+Subject: [PATCH 06/27] uas: Check against unexpected completions
+References: bnc#934942
+Git-Commit: d89da03acec19b39506f3ef32e09134b50b4adb9
+Patch-Mainline: v3.18
+
+The status urb should not complete before the command has been submitted, nor
+should we get a second status urb for the same tag after a IU_ID_STATUS.
+
+Data urbs should not complete before the command has been submitted, but may
+complete after the IU_ID_STATUS.
+
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/usb/storage/uas.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/usb/storage/uas.c b/drivers/usb/storage/uas.c
+index 242eeda..549d3c7 100644
+--- a/drivers/usb/storage/uas.c
++++ b/drivers/usb/storage/uas.c
+@@ -368,6 +368,12 @@ static void uas_stat_cmplt(struct urb *urb)
+ 
+ 	cmnd = devinfo->cmnd[idx];
+ 	cmdinfo = (void *)&cmnd->SCp;
++
++	if (!(cmdinfo->state & COMMAND_INFLIGHT)) {
++		scmd_printk(KERN_ERR, cmnd, "unexpected status cmplt\n");
++		goto out;
++	}
++
+ 	switch (iu->iu_id) {
+ 	case IU_ID_STATUS:
+ 		if (urb->actual_length < 16)
+@@ -433,6 +439,12 @@ static void uas_data_cmplt(struct urb *urb)
+ 	if (devinfo->resetting)
+ 		goto out;
+ 
++	/* Data urbs should not complete before the cmd urb is submitted */
++	if (cmdinfo->state & SUBMIT_CMD_URB) {
++		scmd_printk(KERN_ERR, cmnd, "unexpected data cmplt\n");
++		goto out;
++	}
++
+ 	if (urb->status) {
+ 		if (urb->status != -ECONNRESET && urb->status != -ENOENT) {
+ 			uas_log_cmd_state(cmnd, __func__);
+-- 
+2.1.4
