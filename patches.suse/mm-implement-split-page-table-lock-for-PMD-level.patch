@@ -49,17 +49,15 @@ Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- include/linux/mm.h       | 32 ++++++++++++++++++++++++++++++++
- include/linux/mm_types.h |  7 ++++++-
- kernel/fork.c            |  4 ++--
- mm/Kconfig               |  3 +++
+ include/linux/mm.h       |   32 ++++++++++++++++++++++++++++++++
+ include/linux/mm_types.h |    7 ++++++-
+ kernel/fork.c            |    4 ++--
+ mm/Kconfig               |    3 +++
  4 files changed, 43 insertions(+), 3 deletions(-)
 
-diff --git a/include/linux/mm.h b/include/linux/mm.h
-index 008a1ca..2ad4591 100644
 --- a/include/linux/mm.h
 +++ b/include/linux/mm.h
-@@ -1381,13 +1381,45 @@ static inline void pgtable_page_dtor(struct page *page)
+@@ -1414,13 +1414,45 @@ static inline void pgtable_page_dtor(str
  	((unlikely(pmd_none(*(pmd))) && __pte_alloc_kernel(pmd, address))? \
  		NULL: pte_offset_kernel(pmd, address))
  
@@ -105,8 +103,6 @@ index 008a1ca..2ad4591 100644
  static inline spinlock_t *pmd_lock(struct mm_struct *mm, pmd_t *pmd)
  {
  	spinlock_t *ptl = pmd_lockptr(mm, pmd);
-diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
-index 566df57..9342610 100644
 --- a/include/linux/mm_types.h
 +++ b/include/linux/mm_types.h
 @@ -24,6 +24,8 @@
@@ -118,17 +114,17 @@ index 566df57..9342610 100644
  
  /*
   * Each physical page in the system has a struct page associated with
-@@ -63,6 +65,9 @@ struct page {
- 						 * this page is only used to
- 						 * free other pages.
+@@ -60,6 +62,9 @@ struct page {
+ 						 * page_is_pfmemalloc(page) instead
  						 */
+ #endif
 +#if defined(CONFIG_TRANSPARENT_HUGEPAGE) && USE_SPLIT_PMD_PTLOCKS
 +		pgtable_t pmd_huge_pte; /* protected by page->ptl */
 +#endif
  		};
  
  		union {
-@@ -406,7 +411,7 @@ struct mm_struct {
+@@ -404,7 +409,7 @@ struct mm_struct {
  #ifdef CONFIG_MMU_NOTIFIER
  	struct mmu_notifier_mm *mmu_notifier_mm;
  #endif
@@ -137,11 +133,9 @@ index 566df57..9342610 100644
  	pgtable_t pmd_huge_pte; /* protected by page_table_lock */
  #endif
  #ifdef CONFIG_CPUMASK_OFFSTACK
-diff --git a/kernel/fork.c b/kernel/fork.c
-index eeaea11..3d6a747 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
-@@ -560,7 +560,7 @@ static void check_mm(struct mm_struct *mm)
+@@ -564,7 +564,7 @@ static void check_mm(struct mm_struct *m
  					  "mm:%p idx:%d val:%ld\n", mm, i, x);
  	}
  
@@ -150,7 +144,7 @@ index eeaea11..3d6a747 100644
  	VM_BUG_ON(mm->pmd_huge_pte);
  #endif
  }
-@@ -814,7 +814,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
+@@ -818,7 +818,7 @@ struct mm_struct *dup_mm(struct task_str
  	memcpy(mm, oldmm, sizeof(*mm));
  	mm_init_cpumask(mm);
  
@@ -159,8 +153,6 @@ index eeaea11..3d6a747 100644
  	mm->pmd_huge_pte = NULL;
  #endif
  	if (!mm_init(mm, tsk))
-diff --git a/mm/Kconfig b/mm/Kconfig
-index 8856919..83b11a0 100644
 --- a/mm/Kconfig
 +++ b/mm/Kconfig
 @@ -215,6 +215,9 @@ config SPLIT_PTLOCK_CPUS
