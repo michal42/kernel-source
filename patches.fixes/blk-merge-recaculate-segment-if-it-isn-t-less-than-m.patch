@@ -1,0 +1,51 @@
+From: Ming Lei <tom.leiming@gmail.com>
+Date: Wed, 22 Oct 2014 08:30:30 +0800
+Subject: blk-merge: recaculate segment if it isn't less than max segments
+References: bnc#934430
+Patch-Mainline: v3.19
+Git-commit: 76d8137a31139f0d69ecc4177497ad6b8d4f016c
+
+The problem is introduced by commit 764f612c6c3c231b(blk-merge:
+don't compute bi_phys_segments from bi_vcnt for cloned bio),
+and merge is needed if number of current segment isn't less than
+max segments.
+
+Strictly speaking, bio->bi_vcnt shouldn't be used here since
+it may not be accurate in cases of both cloned bio or bio cloned
+from, but bio_segments() is a bit expensive, and bi_vcnt is still
+the biggest number, so the approach should work.
+
+Signed-off-by: Ming Lei <tom.leiming@gmail.com>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ block/blk-merge.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/block/blk-merge.c b/block/blk-merge.c
+index 98e2e23..40f0fb6 100644
+--- a/block/blk-merge.c
++++ b/block/blk-merge.c
+@@ -97,16 +97,17 @@ void blk_recount_segments(struct request_queue *q, struct bio *bio)
+ {
+ 	bool no_sg_merge = !!test_bit(QUEUE_FLAG_NO_SG_MERGE,
+ 			&q->queue_flags);
++	bool merge_not_need = bio->bi_vcnt < queue_max_segments(q);
+ 
+ 	if (no_sg_merge && !bio_flagged(bio, BIO_CLONED) &&
+-			bio->bi_vcnt < queue_max_segments(q))
++			merge_not_need)
+ 		bio->bi_phys_segments = bio->bi_vcnt;
+ 	else {
+ 		struct bio *nxt = bio->bi_next;
+ 
+ 		bio->bi_next = NULL;
+ 		bio->bi_phys_segments = __blk_recalc_rq_segments(q, bio,
+-				no_sg_merge);
++				no_sg_merge && merge_not_need);
+ 		bio->bi_next = nxt;
+ 	}
+ 
+-- 
+1.8.5.6
+
