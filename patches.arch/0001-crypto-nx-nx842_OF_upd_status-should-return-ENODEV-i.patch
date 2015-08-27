@@ -1,0 +1,47 @@
+From fa9a9a084a2153095d0433188be232b0127ab23c Mon Sep 17 00:00:00 2001
+From: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date: Thu, 2 Jul 2015 15:38:48 -0700
+Subject: [PATCH] crypto: nx - nx842_OF_upd_status should return ENODEV if
+ device is not 'okay'
+References: bsc#942476
+Patch-mainline: not yet
+Git-commit: cryptodev-2.6.git
+
+The current documention mentions explicitly that EINVAL should be
+returned if the device is not available, but nx842_OF_upd_status()
+always returns 0. However, nx842_probe() specifically checks for
+non-ENODEV returns from nx842_of_upd() (which in turn calls
+nx842_OF_upd_status()) and emits an extra error in that case. It seems
+like the proper return code of a disabled device is ENODEV.
+
+Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/crypto/nx/nx-842-pseries.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/crypto/nx/nx-842-pseries.c b/drivers/crypto/nx/nx-842-pseries.c
+index 3040a60..819c23c 100644
+--- a/drivers/crypto/nx/nx-842-pseries.c
++++ b/drivers/crypto/nx/nx-842-pseries.c
+@@ -556,7 +556,7 @@ static int nx842_OF_set_defaults(struct nx842_devdata *devdata)
+  *
+  * Returns:
+  *  0 - Device is available
+- *  -EINVAL - Device is not available
++ *  -ENODEV - Device is not available
+  */
+ static int nx842_OF_upd_status(struct nx842_devdata *devdata,
+ 					struct property *prop) {
+@@ -569,6 +569,7 @@ static int nx842_OF_upd_status(struct nx842_devdata *devdata,
+ 		dev_info(devdata->dev, "%s: status '%s' is not 'okay'\n",
+ 				__func__, status);
+ 		devdata->status = UNAVAILABLE;
++		ret = -ENODEV;
+ 	}
+ 
+ 	return ret;
+-- 
+1.8.3.1
+
