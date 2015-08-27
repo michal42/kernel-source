@@ -1,0 +1,89 @@
+From 2b93f7ee0836d1dbcfcf8560dd2a34cd51b3ff21 Mon Sep 17 00:00:00 2001
+From: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date: Mon, 6 Jul 2015 10:06:21 -0700
+Subject: [PATCH] crypto: nx - reduce chattiness of platform drivers
+References: bsc#942476
+Patch-mainline: not yet
+Git-commit: cryptodev-2.6.git
+
+While we never would successfully load on the wrong machine type, there
+is extra output by default regardless of machine type.
+
+For instance, on a PowerVM LPAR, we see the following:
+
+nx_compress_powernv: loading
+nx_compress_powernv: no coprocessors found
+
+even though those coprocessors could never be found.
+
+Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Cc: Dan Streetman <ddstreet@us.ibm.com>
+Cc: Herbert Xu <herbert@gondor.apana.org.au>
+Cc: "David S. Miller" <davem@davemloft.net>
+Cc: linux-crypto@vger.kernel.org
+Cc: linuxppc-dev@lists.ozlabs.org
+Acked-by: Michael Ellerman <mpe@ellerman.id.au>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+---
+ drivers/crypto/nx/nx-842-powernv.c |   10 +---------
+ drivers/crypto/nx/nx-842-pseries.c |    3 ---
+ 2 files changed, 1 insertion(+), 12 deletions(-)
+
+--- a/drivers/crypto/nx/nx-842-powernv.c
++++ b/drivers/crypto/nx/nx-842-powernv.c
+@@ -594,15 +594,11 @@ static __init int nx842_powernv_init(voi
+ 	BUILD_BUG_ON(DDE_BUFFER_ALIGN % DDE_BUFFER_SIZE_MULT);
+ 	BUILD_BUG_ON(DDE_BUFFER_SIZE_MULT % DDE_BUFFER_LAST_MULT);
+ 
+-	pr_info("loading\n");
+-
+ 	for_each_compatible_node(dn, NULL, "ibm,power-nx")
+ 		nx842_powernv_probe(dn);
+ 
+-	if (!nx842_ct) {
+-		pr_err("no coprocessors found\n");
++	if (!nx842_ct)
+ 		return -ENODEV;
+-	}
+ 
+ 	if (!nx842_platform_driver_set(&nx842_powernv_driver)) {
+ 		struct nx842_coproc *coproc, *n;
+@@ -615,8 +611,6 @@ static __init int nx842_powernv_init(voi
+ 		return -EEXIST;
+ 	}
+ 
+-	pr_info("loaded\n");
+-
+ 	return 0;
+ }
+ module_init(nx842_powernv_init);
+@@ -631,7 +625,5 @@ static void __exit nx842_powernv_exit(vo
+ 		list_del(&coproc->list);
+ 		kfree(coproc);
+ 	}
+-
+-	pr_info("unloaded\n");
+ }
+ module_exit(nx842_powernv_exit);
+--- a/drivers/crypto/nx/nx-842-pseries.c
++++ b/drivers/crypto/nx/nx-842-pseries.c
+@@ -1105,8 +1105,6 @@ static int __init nx842_pseries_init(voi
+ 	struct nx842_devdata *new_devdata;
+ 	int ret;
+ 
+-	pr_info("Registering IBM Power 842 compression driver\n");
+-
+ 	if (!of_find_compatible_node(NULL, NULL, "ibm,compression"))
+ 		return -ENODEV;
+ 
+@@ -1143,7 +1141,6 @@ static void __exit nx842_pseries_exit(vo
+ 	struct nx842_devdata *old_devdata;
+ 	unsigned long flags;
+ 
+-	pr_info("Exiting IBM Power 842 compression driver\n");
+ 	nx842_platform_driver_unset(&nx842_pseries_driver);
+ 	spin_lock_irqsave(&devdata_mutex, flags);
+ 	old_devdata = rcu_dereference_check(devdata,

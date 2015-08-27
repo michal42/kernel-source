@@ -1,0 +1,43 @@
+From 7abd75bf7ac6d04e0389472cf2cd3a8bf53e4894 Mon Sep 17 00:00:00 2001
+From: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Date: Thu, 2 Jul 2015 15:40:09 -0700
+Subject: [PATCH] crypto: nx - do not emit extra output if status is disabled
+References: bsc#942476
+Patch-mainline: not yet
+Git-commit: cryptodev-2.6.git
+
+If the device-tree indicates the nx-842 device's status is 'disabled',
+we emit two messages:
+
+nx_compress_pseries ibm,compression-v1: nx842_OF_upd_status: status 'disabled' is not 'okay'.
+nx_compress_pseries ibm,compression-v1: nx842_OF_upd: device disabled
+
+Given that 'disabled' is a valid state, and we are going to emit that
+the device is disabled, only print out a non-'okay' status if it is not
+'disabled'.
+
+Signed-off-by: Nishanth Aravamudan <nacc@linux.vnet.ibm.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+---
+ drivers/crypto/nx/nx-842-pseries.c |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/drivers/crypto/nx/nx-842-pseries.c
++++ b/drivers/crypto/nx/nx-842-pseries.c
+@@ -566,8 +566,14 @@ static int nx842_OF_upd_status(struct nx
+ 	if (!strncmp(status, "okay", (size_t)prop->length)) {
+ 		devdata->status = AVAILABLE;
+ 	} else {
+-		dev_info(devdata->dev, "%s: status '%s' is not 'okay'\n",
++		/*
++		 * Caller will log that the device is disabled, so only
++		 * output if there is an unexpected status.
++		 */
++		if (strncmp(status, "disabled", (size_t)prop->length)) {
++			dev_info(devdata->dev, "%s: status '%s' is not 'okay'\n",
+ 				__func__, status);
++		}
+ 		devdata->status = UNAVAILABLE;
+ 		ret = -ENODEV;
+ 	}
