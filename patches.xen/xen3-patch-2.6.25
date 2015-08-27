@@ -7765,7 +7765,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	    && !mm->context.has_foreign_mappings)
  		mm_unpin(mm);
  }
-@@ -258,285 +291,1146 @@ void arch_exit_mmap(struct mm_struct *mm
+@@ -258,285 +291,1154 @@ void arch_exit_mmap(struct mm_struct *mm
  static void _pte_free(struct page *page, unsigned int order)
  {
  	BUG_ON(order);
@@ -9041,14 +9041,18 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +{
 +	pte_t *pte;
 +	unsigned int level;
++	int rc;
 +
 +	pte = lookup_address(va, &level);
 +	BUG_ON(!pte || level != PG_LEVEL_4K);
-+	if (HYPERVISOR_update_va_mapping(va, pte_wrprotect(*pte), 0))
-+		BUG();
-+	if (in_secondary_range(va)) {
++	rc = HYPERVISOR_update_va_mapping(va, pte_wrprotect(*pte), 0);
++	if (!in_secondary_range(va))
++		BUG_ON(rc);
++	else {
 +		unsigned long pfn = pte_pfn(*pte);
 +
++		if (rc) /* fallback */
++			xen_l1_entry_update(pte, pte_wrprotect(*pte));
 +#ifdef CONFIG_HIGHMEM
 +		if (pfn >= highstart_pfn)
 +			kmap_flush_unused(); /* flush stale writable kmaps */
@@ -9062,14 +9066,18 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +{
 +	pte_t *pte;
 +	unsigned int level;
++	int rc;
 +
 +	pte = lookup_address(va, &level);
 +	BUG_ON(!pte || level != PG_LEVEL_4K);
-+	if (HYPERVISOR_update_va_mapping(va, pte_mkwrite(*pte), 0))
-+		BUG();
-+	if (in_secondary_range(va)) {
++	rc = HYPERVISOR_update_va_mapping(va, pte_mkwrite(*pte), 0);
++	if (!in_secondary_range(va))
++		BUG_ON(rc);
++	else {
 +		unsigned long pfn = pte_pfn(*pte);
 +
++		if (rc) /* fallback */
++			xen_l1_entry_update(pte, pte_mkwrite(*pte));
 +#ifdef CONFIG_HIGHMEM
 +		if (pfn < highstart_pfn)
 +#endif
