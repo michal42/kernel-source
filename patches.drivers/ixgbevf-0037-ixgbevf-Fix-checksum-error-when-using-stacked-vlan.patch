@@ -1,0 +1,42 @@
+From: Toshiaki Makita <makita.toshiaki@lab.ntt.co.jp>
+Date: Thu, 29 Jan 2015 20:37:10 +0900
+Subject: [PATCH 37/50] ixgbevf: Fix checksum error when using stacked vlan
+Patch-mainline: v3.19
+Git-commit: 10e4fb333c9ad72491f80bed018f8007e17060d1
+References: bsc#922835 FATE#318522
+
+When a skb has multiple vlans and it is CHECKSUM_PARTIAL,
+ixgbevf_tx_csum() fails to get the network protocol and checksum related
+descriptor fields are not configured correctly because skb->protocol
+doesn't show the L3 protocol in this case.
+
+Use first->protocol instead of skb->protocol to get the proper network
+protocol.
+
+Signed-off-by: Toshiaki Makita <makita.toshiaki@lab.ntt.co.jp>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
++++ b/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
+@@ -3104,7 +3104,7 @@ static int ixgbevf_tso(struct ixgbevf_ri
+ 	/* ADV DTYP TUCMD MKRLOC/ISCSIHEDLEN */
+ 	type_tucmd = IXGBE_ADVTXD_TUCMD_L4T_TCP;
+ 
+-	if (skb->protocol == htons(ETH_P_IP)) {
++	if (first->protocol == htons(ETH_P_IP)) {
+ 		struct iphdr *iph = ip_hdr(skb);
+ 		iph->tot_len = 0;
+ 		iph->check = 0;
+@@ -3161,7 +3161,7 @@ static void ixgbevf_tx_csum(struct ixgbe
+ 
+ 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+ 		u8 l4_hdr = 0;
+-		switch (skb->protocol) {
++		switch (first->protocol) {
+ 		case htons(ETH_P_IP):
+ 			vlan_macip_lens |= skb_network_header_len(skb);
+ 			type_tucmd |= IXGBE_ADVTXD_TUCMD_IPV4;
