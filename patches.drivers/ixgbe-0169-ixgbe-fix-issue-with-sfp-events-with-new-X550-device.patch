@@ -1,0 +1,85 @@
+From: Don Skidmore <donald.c.skidmore@intel.com>
+Date: Tue, 9 Jun 2015 16:59:04 -0700
+Subject: [PATCH 169/177] ixgbe: fix issue with sfp events with new X550
+ devices
+Patch-mainline: v4.2-rc1
+Git-commit: 45788d2af9280e7d80dc51b51c0d7641d3ae6998
+References: bsc#922833 FATE#318521
+
+Add checks for systems that don't have SFP's to avoid incorrectly
+acting on interrupts that are falsely interpreted as SFP events.
+We do this by updating the ixgbe_is_sfp to be aware of the
+new X550 devices.  This also includes a modified check generating
+the EICR mask to be more forward-looking.
+
+Signed-off-by: Don Skidmore <donald.c.skidmore@intel.com>
+Tested-by: Krishneil Singh <krishneil.k.singh@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbe/ixgbe_main.c |   47 +++++++++++---------------
+ 1 file changed, 21 insertions(+), 26 deletions(-)
+
+--- a/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
++++ b/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
+@@ -2423,6 +2423,27 @@ static void ixgbe_check_overtemp_event(s
+ 	e_crit(drv, "%s\n", ixgbe_overheat_msg);
+ }
+ 
++static inline bool ixgbe_is_sfp(struct ixgbe_hw *hw)
++{
++	switch (hw->mac.type) {
++	case ixgbe_mac_82598EB:
++		if (hw->phy.type == ixgbe_phy_nl)
++			return true;
++		return false;
++	case ixgbe_mac_82599EB:
++	case ixgbe_mac_X550EM_x:
++		switch (hw->mac.ops.get_media_type(hw)) {
++		case ixgbe_media_type_fiber:
++		case ixgbe_media_type_fiber_qsfp:
++			return true;
++		default:
++			return false;
++		}
++	default:
++		return false;
++	}
++}
++
+ static void ixgbe_check_sfp_event(struct ixgbe_adapter *adapter, u32 eicr)
+ {
+ 	struct ixgbe_hw *hw = &adapter->hw;
+@@ -4630,32 +4651,6 @@ static void ixgbe_configure(struct ixgbe
+ 	ixgbe_configure_dfwd(adapter);
+ }
+ 
+-static inline bool ixgbe_is_sfp(struct ixgbe_hw *hw)
+-{
+-	switch (hw->phy.type) {
+-	case ixgbe_phy_sfp_avago:
+-	case ixgbe_phy_sfp_ftl:
+-	case ixgbe_phy_sfp_intel:
+-	case ixgbe_phy_sfp_unknown:
+-	case ixgbe_phy_sfp_passive_tyco:
+-	case ixgbe_phy_sfp_passive_unknown:
+-	case ixgbe_phy_sfp_active_unknown:
+-	case ixgbe_phy_sfp_ftl_active:
+-	case ixgbe_phy_qsfp_passive_unknown:
+-	case ixgbe_phy_qsfp_active_unknown:
+-	case ixgbe_phy_qsfp_intel:
+-	case ixgbe_phy_qsfp_unknown:
+-	/* ixgbe_phy_none is set when no SFP module is present */
+-	case ixgbe_phy_none:
+-		return true;
+-	case ixgbe_phy_nl:
+-		if (hw->mac.type == ixgbe_mac_82598EB)
+-			return true;
+-	default:
+-		return false;
+-	}
+-}
+-
+ /**
+  * ixgbe_sfp_link_config - set up SFP+ link
+  * @adapter: pointer to private adapter struct
