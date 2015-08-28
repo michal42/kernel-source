@@ -1,0 +1,82 @@
+From: "Eric W. Biederman" <ebiederm@xmission.com>
+Date: Thu, 13 Mar 2014 21:26:42 -0700
+Subject: [PATCH 019/177] net: Replace u64_stats_fetch_begin_bh to
+ u64_stats_fetch_begin_irq
+Patch-mainline: v3.15-rc1
+Git-commit: 57a7744e09867ebcfa0ccf1d6d529caa7728d552 (partial)
+References: bsc#922833 FATE#318521
+
+Replace the bh safe variant with the hard irq safe variant.
+
+We need a hard irq safe variant to deal with netpoll transmitting
+packets from hard irq context, and we need it in most if not all of
+the places using the bh safe variant.
+
+Except on 32bit uni-processor the code is exactly the same so don't
+bother with a bh variant, just have a hard irq safe variant that
+everyone can use.
+
+Signed-off-by: "Eric W. Biederman" <ebiederm@xmission.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbe/ixgbe_ethtool.c |    8 ++++----
+ drivers/net/ethernet/intel/ixgbe/ixgbe_main.c    |    8 ++++----
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+--- a/drivers/net/ethernet/intel/ixgbe/ixgbe_ethtool.c
++++ b/drivers/net/ethernet/intel/ixgbe/ixgbe_ethtool.c
+@@ -1121,10 +1121,10 @@ static void ixgbe_get_ethtool_stats(stru
+ 		}
+ 
+ 		do {
+-			start = u64_stats_fetch_begin_bh(&ring->syncp);
++			start = u64_stats_fetch_begin_irq(&ring->syncp);
+ 			data[i]   = ring->stats.packets;
+ 			data[i+1] = ring->stats.bytes;
+-		} while (u64_stats_fetch_retry_bh(&ring->syncp, start));
++		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
+ 		i += 2;
+ #ifdef BP_EXTENDED_STATS
+ 		data[i] = ring->stats.yields;
+@@ -1149,10 +1149,10 @@ static void ixgbe_get_ethtool_stats(stru
+ 		}
+ 
+ 		do {
+-			start = u64_stats_fetch_begin_bh(&ring->syncp);
++			start = u64_stats_fetch_begin_irq(&ring->syncp);
+ 			data[i]   = ring->stats.packets;
+ 			data[i+1] = ring->stats.bytes;
+-		} while (u64_stats_fetch_retry_bh(&ring->syncp, start));
++		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
+ 		i += 2;
+ #ifdef BP_EXTENDED_STATS
+ 		data[i] = ring->stats.yields;
+--- a/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
++++ b/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
+@@ -7295,10 +7295,10 @@ static struct rtnl_link_stats64 *ixgbe_g
+ 
+ 		if (ring) {
+ 			do {
+-				start = u64_stats_fetch_begin_bh(&ring->syncp);
++				start = u64_stats_fetch_begin_irq(&ring->syncp);
+ 				packets = ring->stats.packets;
+ 				bytes   = ring->stats.bytes;
+-			} while (u64_stats_fetch_retry_bh(&ring->syncp, start));
++			} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
+ 			stats->rx_packets += packets;
+ 			stats->rx_bytes   += bytes;
+ 		}
+@@ -7311,10 +7311,10 @@ static struct rtnl_link_stats64 *ixgbe_g
+ 
+ 		if (ring) {
+ 			do {
+-				start = u64_stats_fetch_begin_bh(&ring->syncp);
++				start = u64_stats_fetch_begin_irq(&ring->syncp);
+ 				packets = ring->stats.packets;
+ 				bytes   = ring->stats.bytes;
+-			} while (u64_stats_fetch_retry_bh(&ring->syncp, start));
++			} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
+ 			stats->tx_packets += packets;
+ 			stats->tx_bytes   += bytes;
+ 		}
