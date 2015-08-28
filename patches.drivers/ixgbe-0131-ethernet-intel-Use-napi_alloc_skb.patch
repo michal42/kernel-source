@@ -1,0 +1,36 @@
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Tue, 9 Dec 2014 19:40:56 -0800
+Subject: [PATCH 131/177] ethernet/intel: Use napi_alloc_skb
+Patch-mainline: v3.19-rc1
+Git-commit: 67fd893ee07db94bcef6c7537f8569b49ff124d4 (partial)
+References: bsc#922833 FATE#318521
+
+This change replaces calls to netdev_alloc_skb_ip_align with
+napi_alloc_skb.  The advantage of napi_alloc_skb is currently the fact that
+the page allocation doesn't make use of any irq disable calls.
+
+There are few spots where I couldn't replace the calls as the buffer
+allocation routine is called as a part of init which is outside of the
+softirq context.
+
+Cc: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbe/ixgbe_main.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
++++ b/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
+@@ -1913,8 +1913,8 @@ static struct sk_buff *ixgbe_fetch_rx_bu
+ #endif
+ 
+ 		/* allocate a skb to store the frags */
+-		skb = netdev_alloc_skb_ip_align(rx_ring->netdev,
+-						IXGBE_RX_HDR_SIZE);
++		skb = napi_alloc_skb(&rx_ring->q_vector->napi,
++				     IXGBE_RX_HDR_SIZE);
+ 		if (unlikely(!skb)) {
+ 			rx_ring->rx_stats.alloc_rx_buff_failed++;
+ 			return NULL;
