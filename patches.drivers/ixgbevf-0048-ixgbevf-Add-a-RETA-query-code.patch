@@ -1,0 +1,177 @@
+From: Vlad Zolotarov <vladz@cloudius-systems.com>
+Date: Mon, 30 Mar 2015 21:35:26 +0300
+Subject: [PATCH 48/50] ixgbevf: Add a RETA query code
+Patch-mainline: v4.1-rc1
+Git-commit: 94cf66f87064b8e4b24412f042b98e7cba4ebce2
+References: bsc#922835 FATE#318522
+
+We will currently support only 82599 and x540 devices. Support for other
+devices will be added later.
+
+   - Added a new API version support.
+   - Added the query implementation in the ixgbevf.
+
+Signed-off-by: Vlad Zolotarov <vladz@cloudius-systems.com>
+Tested-by: Phil Schmitt <phillip.j.schmitt@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbevf/ixgbevf.h      |    1 
+ drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c |    5 +
+ drivers/net/ethernet/intel/ixgbevf/mbx.h          |    4 +
+ drivers/net/ethernet/intel/ixgbevf/vf.c           |   70 ++++++++++++++++++++++
+ drivers/net/ethernet/intel/ixgbevf/vf.h           |    1 
+ 5 files changed, 80 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/intel/ixgbevf/ixgbevf.h
++++ b/drivers/net/ethernet/intel/ixgbevf/ixgbevf.h
+@@ -145,6 +145,7 @@ struct ixgbevf_ring {
+ #define MAX_RX_QUEUES IXGBE_VF_MAX_RX_QUEUES
+ #define MAX_TX_QUEUES IXGBE_VF_MAX_TX_QUEUES
+ #define IXGBEVF_MAX_RSS_QUEUES	2
++#define IXGBEVF_82599_RETA_SIZE	128
+ 
+ #define IXGBEVF_DEFAULT_TXD	1024
+ #define IXGBEVF_DEFAULT_RXD	512
+--- a/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
++++ b/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
+@@ -2035,7 +2035,8 @@ static void ixgbevf_init_last_counter_st
+ static void ixgbevf_negotiate_api(struct ixgbevf_adapter *adapter)
+ {
+ 	struct ixgbe_hw *hw = &adapter->hw;
+-	int api[] = { ixgbe_mbox_api_11,
++	int api[] = { ixgbe_mbox_api_12,
++		      ixgbe_mbox_api_11,
+ 		      ixgbe_mbox_api_10,
+ 		      ixgbe_mbox_api_unknown };
+ 	int err = 0, idx = 0;
+@@ -2337,6 +2338,7 @@ static void ixgbevf_set_num_queues(struc
+ 
+ 		switch (hw->api_version) {
+ 		case ixgbe_mbox_api_11:
++		case ixgbe_mbox_api_12:
+ 			adapter->num_rx_queues = rss;
+ 			adapter->num_tx_queues = rss;
+ 		default:
+@@ -3717,6 +3719,7 @@ static int ixgbevf_change_mtu(struct net
+ 
+ 	switch (adapter->hw.api_version) {
+ 	case ixgbe_mbox_api_11:
++	case ixgbe_mbox_api_12:
+ 		max_possible_frame = IXGBE_MAX_JUMBO_FRAME_SIZE;
+ 		break;
+ 	default:
+--- a/drivers/net/ethernet/intel/ixgbevf/mbx.h
++++ b/drivers/net/ethernet/intel/ixgbevf/mbx.h
+@@ -83,6 +83,7 @@ enum ixgbe_pfvf_api_rev {
+ 	ixgbe_mbox_api_10,	/* API version 1.0, linux/freebsd VF driver */
+ 	ixgbe_mbox_api_20,	/* API version 2.0, solaris Phase1 VF driver */
+ 	ixgbe_mbox_api_11,	/* API version 1.1, linux/freebsd VF driver */
++	ixgbe_mbox_api_12,	/* API version 1.2, linux/freebsd VF driver */
+ 	/* This value should always be last */
+ 	ixgbe_mbox_api_unknown,	/* indicates that API version is not known */
+ };
+@@ -107,6 +108,9 @@ enum ixgbe_pfvf_api_rev {
+ #define IXGBE_VF_TRANS_VLAN	3 /* Indication of port VLAN */
+ #define IXGBE_VF_DEF_QUEUE	4 /* Default queue offset */
+ 
++/* mailbox API, version 1.2 VF requests */
++#define IXGBE_VF_GET_RETA	0x0a	/* VF request for RETA */
++
+ /* length of permanent address message returned from PF */
+ #define IXGBE_VF_PERMADDR_MSG_LEN	4
+ /* word in permanent address message with the current multicast type */
+--- a/drivers/net/ethernet/intel/ixgbevf/vf.c
++++ b/drivers/net/ethernet/intel/ixgbevf/vf.c
+@@ -257,6 +257,75 @@ static s32 ixgbevf_set_uc_addr_vf(struct
+ }
+ 
+ /**
++ * ixgbevf_get_reta_locked - get the RSS redirection table (RETA) contents.
++ * @adapter: pointer to the port handle
++ * @reta: buffer to fill with RETA contents.
++ * @num_rx_queues: Number of Rx queues configured for this port
++ *
++ * The "reta" buffer should be big enough to contain 32 registers.
++ *
++ * Returns: 0 on success.
++ *          if API doesn't support this operation - (-EOPNOTSUPP).
++ */
++int ixgbevf_get_reta_locked(struct ixgbe_hw *hw, u32 *reta, int num_rx_queues)
++{
++	int err, i, j;
++	u32 msgbuf[IXGBE_VFMAILBOX_SIZE];
++	u32 *hw_reta = &msgbuf[1];
++	u32 mask = 0;
++
++	/* We have to use a mailbox for 82599 and x540 devices only.
++	 * For these devices RETA has 128 entries.
++	 * Also these VFs support up to 4 RSS queues. Therefore PF will compress
++	 * 16 RETA entries in each DWORD giving 2 bits to each entry.
++	 */
++	int dwords = IXGBEVF_82599_RETA_SIZE / 16;
++
++	/* We support the RSS querying for 82599 and x540 devices only.
++	 * Thus return an error if API doesn't support RETA querying or querying
++	 * is not supported for this device type.
++	 */
++	if (hw->api_version != ixgbe_mbox_api_12 ||
++	    hw->mac.type >= ixgbe_mac_X550_vf)
++		return -EOPNOTSUPP;
++
++	msgbuf[0] = IXGBE_VF_GET_RETA;
++
++	err = hw->mbx.ops.write_posted(hw, msgbuf, 1);
++
++	if (err)
++		return err;
++
++	err = hw->mbx.ops.read_posted(hw, msgbuf, dwords + 1);
++
++	if (err)
++		return err;
++
++	msgbuf[0] &= ~IXGBE_VT_MSGTYPE_CTS;
++
++	/* If the operation has been refused by a PF return -EPERM */
++	if (msgbuf[0] == (IXGBE_VF_GET_RETA | IXGBE_VT_MSGTYPE_NACK))
++		return -EPERM;
++
++	/* If we didn't get an ACK there must have been
++	 * some sort of mailbox error so we should treat it
++	 * as such.
++	 */
++	if (msgbuf[0] != (IXGBE_VF_GET_RETA | IXGBE_VT_MSGTYPE_ACK))
++		return IXGBE_ERR_MBX;
++
++	/* ixgbevf doesn't support more than 2 queues at the moment */
++	if (num_rx_queues > 1)
++		mask = 0x1;
++
++	for (i = 0; i < dwords; i++)
++		for (j = 0; j < 16; j++)
++			reta[i * 16 + j] = (hw_reta[i] >> (2 * j)) & mask;
++
++	return 0;
++}
++
++/**
+  *  ixgbevf_set_rar_vf - set device MAC address
+  *  @hw: pointer to hardware structure
+  *  @index: Receive address register to write
+@@ -545,6 +614,7 @@ int ixgbevf_get_queues(struct ixgbe_hw *
+ 	/* do nothing if API doesn't support ixgbevf_get_queues */
+ 	switch (hw->api_version) {
+ 	case ixgbe_mbox_api_11:
++	case ixgbe_mbox_api_12:
+ 		break;
+ 	default:
+ 		return 0;
+--- a/drivers/net/ethernet/intel/ixgbevf/vf.h
++++ b/drivers/net/ethernet/intel/ixgbevf/vf.h
+@@ -210,4 +210,5 @@ void ixgbevf_rlpml_set_vf(struct ixgbe_h
+ int ixgbevf_negotiate_api_version(struct ixgbe_hw *hw, int api);
+ int ixgbevf_get_queues(struct ixgbe_hw *hw, unsigned int *num_tcs,
+ 		       unsigned int *default_tc);
++int ixgbevf_get_reta_locked(struct ixgbe_hw *hw, u32 *reta, int num_rx_queues);
+ #endif /* __IXGBE_VF_H__ */
