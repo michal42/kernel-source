@@ -1,0 +1,56 @@
+From: Emil Tantilov <emil.s.tantilov@intel.com>
+Date: Sat, 8 Nov 2014 01:39:51 +0000
+Subject: [PATCH 33/50] ixgbevf: compare total_rx_packets and budget in
+ ixgbevf_clean_rx_irq
+Patch-mainline: v3.19-rc1
+Git-commit: 6622402a72580afee68e961e37020894dedbecb6
+References: bsc#922835 FATE#318522
+
+total_rx_packets is the number of packets we had cleaned, and budget is
+the total number of packets that we could clean per poll. Instead of
+altering both of these values we can save ourselves one write to memory by
+just comparing total_rx_packets to the budget and as long as we are less
+than budget we continue cleaning.
+
+Also change the do{}while logic to while{} in order to avoid processing
+packets when budget is 0.
+
+CC: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: Emil Tantilov <emil.s.tantilov@intel.com>
+Tested-by: Phil Schmitt <phillip.j.schmitt@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c |    7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
++++ b/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
+@@ -809,7 +809,7 @@ static int ixgbevf_clean_rx_irq(struct i
+ 	u16 cleaned_count = ixgbevf_desc_unused(rx_ring);
+ 	struct sk_buff *skb = rx_ring->skb;
+ 
+-	do {
++	while (likely(total_rx_packets < budget)) {
+ 		union ixgbe_adv_rx_desc *rx_desc;
+ 
+ 		/* return some buffers to hardware, one at a time is too slow */
+@@ -850,7 +850,6 @@ static int ixgbevf_clean_rx_irq(struct i
+ 
+ 		/* probably a little skewed due to removing CRC */
+ 		total_rx_bytes += skb->len;
+-		total_rx_packets++;
+ 
+ 		/* Workaround hardware that can't do proper VEPA multicast
+ 		 * source pruning.
+@@ -872,8 +871,8 @@ static int ixgbevf_clean_rx_irq(struct i
+ 		skb = NULL;
+ 
+ 		/* update budget accounting */
+-		budget--;
+-	} while (likely(budget));
++		total_rx_packets++;
++	}
+ 
+ 	/* place incomplete frames back on ring for completion */
+ 	rx_ring->skb = skb;
