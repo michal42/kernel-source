@@ -487,7 +487,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
-@@ -169,7 +169,6 @@ void delete_from_page_cache(struct page
+@@ -173,7 +173,6 @@ void delete_from_page_cache(struct page
  	spin_lock_irq(&mapping->tree_lock);
  	__delete_from_page_cache(page);
  	spin_unlock_irq(&mapping->tree_lock);
@@ -495,7 +495,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  	if (freepage)
  		freepage(page);
-@@ -437,8 +436,7 @@ int replace_page_cache_page(struct page
+@@ -446,8 +445,7 @@ int replace_page_cache_page(struct page
  		if (PageSwapBacked(new))
  			__inc_zone_page_state(new, NR_SHMEM);
  		spin_unlock_irq(&mapping->tree_lock);
@@ -1721,7 +1721,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	unlock_page(page);
  out:
  	return rc;
-@@ -1770,7 +1764,6 @@ int migrate_misplaced_transhuge_page(str
+@@ -1744,7 +1738,6 @@ int migrate_misplaced_transhuge_page(str
  	pg_data_t *pgdat = NODE_DATA(node);
  	int isolated = 0;
  	struct page *new_page = NULL;
@@ -1729,7 +1729,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	int page_lru = page_is_file_cache(page);
  	unsigned long mmun_start = address & HPAGE_PMD_MASK;
  	unsigned long mmun_end = mmun_start + HPAGE_PMD_SIZE;
-@@ -1836,15 +1829,6 @@ fail_putback:
+@@ -1810,15 +1803,6 @@ fail_putback:
  		goto out_unlock;
  	}
  
@@ -1745,7 +1745,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	orig_entry = *pmd;
  	entry = mk_pmd(new_page, vma->vm_page_prot);
  	entry = pmd_mkhuge(entry);
-@@ -1872,14 +1856,10 @@ fail_putback:
+@@ -1846,14 +1830,10 @@ fail_putback:
  		goto fail_putback;
  	}
  
@@ -1764,7 +1764,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
 --- a/mm/rmap.c
 +++ b/mm/rmap.c
-@@ -1209,7 +1209,6 @@ void page_remove_rmap(struct page *page)
+@@ -1311,7 +1311,6 @@ void page_remove_rmap(struct page *page)
  	if (unlikely(PageHuge(page)))
  		goto out;
  	if (anon) {
@@ -1995,7 +1995,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	}
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
-@@ -571,9 +571,10 @@ static int __remove_mapping(struct addre
+@@ -570,9 +570,10 @@ static int __remove_mapping(struct addre
  
  	if (PageSwapCache(page)) {
  		swp_entry_t swap = { .val = page_private(page) };
@@ -2007,7 +2007,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	} else {
  		void (*freepage)(struct page *);
  
-@@ -581,7 +582,6 @@ static int __remove_mapping(struct addre
+@@ -580,7 +581,6 @@ static int __remove_mapping(struct addre
  
  		__delete_from_page_cache(page);
  		spin_unlock_irq(&mapping->tree_lock);
@@ -2015,15 +2015,15 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  		if (freepage != NULL)
  			freepage(page);
-@@ -1088,6 +1088,7 @@ static unsigned long shrink_page_list(st
+@@ -1094,6 +1094,7 @@ free_it:
  		/* See release_pages on why this clear may be necessary */
  		__ClearPageWaiters(page);
- free_it:
+ 
 +		mem_cgroup_uncharge(page);
  		nr_reclaimed++;
  
  		/*
-@@ -1117,13 +1118,14 @@ keep:
+@@ -1123,13 +1124,14 @@ keep:
  		list_add(&page->lru, &ret_pages);
  		VM_BUG_ON(PageLRU(page) || PageUnevictable(page));
  	}
@@ -2039,7 +2039,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	*ret_nr_dirty += nr_dirty;
  	*ret_nr_congested += nr_congested;
  	*ret_nr_unqueued_dirty += nr_unqueued_dirty;
-@@ -1422,6 +1424,8 @@ putback_inactive_pages(struct lruvec *lr
+@@ -1429,6 +1431,8 @@ putback_inactive_pages(struct lruvec *lr
  			__ClearPageWaiters(page);
  			del_page_from_lru_list(page, lruvec, lru);
  
@@ -2048,7 +2048,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  			if (unlikely(PageCompound(page))) {
  				spin_unlock_irq(&zone->lru_lock);
  				(*get_compound_page_dtor(page))(page);
-@@ -1631,6 +1635,8 @@ static void move_active_pages_to_lru(str
+@@ -1638,6 +1642,8 @@ static void move_active_pages_to_lru(str
  			__ClearPageWaiters(page);
  			del_page_from_lru_list(page, lruvec, lru);
  
