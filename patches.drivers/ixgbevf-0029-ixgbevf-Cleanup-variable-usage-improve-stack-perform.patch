@@ -1,0 +1,87 @@
+From: Emil Tantilov <emil.s.tantilov@intel.com>
+Date: Sat, 8 Nov 2014 01:39:30 +0000
+Subject: [PATCH 29/50] ixgbevf: Cleanup variable usage, improve stack
+ performance
+Patch-mainline: v3.19-rc1
+Git-commit: b97fe3b1aff8195e689b6b07fa5c00e372d2426f
+References: bsc#922835 FATE#318522
+
+This change is meant to help cleanup the usage of temporary variables
+within the Rx hot-path by removing unnecessary variables and reducing
+the scope of variables that do not need to exist outside the main loop.
+
+CC: Alexander Duyck <alexander.h.duyck@redhat.com>
+Signed-off-by: Emil Tantilov <emil.s.tantilov@intel.com>
+Tested-by: Phil Schmitt <phillip.j.schmitt@intel.com>
+Signed-off-by: Jeff Kirsher <jeffrey.t.kirsher@intel.com>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c |   20 +++++++++++---------
+ 1 file changed, 11 insertions(+), 9 deletions(-)
+
+--- a/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
++++ b/drivers/net/ethernet/intel/ixgbevf/ixgbevf_main.c
+@@ -517,26 +517,28 @@ static int ixgbevf_clean_rx_irq(struct i
+ 				struct ixgbevf_ring *rx_ring,
+ 				int budget)
+ {
+-	union ixgbe_adv_rx_desc *rx_desc, *next_rxd;
+-	struct ixgbevf_rx_buffer *rx_buffer_info, *next_buffer;
+-	struct sk_buff *skb;
++	union ixgbe_adv_rx_desc *rx_desc;
+ 	unsigned int i;
+ 	unsigned int total_rx_bytes = 0, total_rx_packets = 0;
+ 	u16 cleaned_count = ixgbevf_desc_unused(rx_ring);
+ 
+ 	i = rx_ring->next_to_clean;
+ 	rx_desc = IXGBEVF_RX_DESC(rx_ring, i);
+-	rx_buffer_info = &rx_ring->rx_buffer_info[i];
+ 
+ 	while (ixgbevf_test_staterr(rx_desc, IXGBE_RXD_STAT_DD)) {
++		union ixgbe_adv_rx_desc *next_rxd;
++		struct ixgbevf_rx_buffer *rx_buffer_info;
++		struct sk_buff *skb;
++
+ 		if (!budget)
+ 			break;
+ 		budget--;
+ 
+ 		rmb(); /* read descriptor and rx_buffer_info after status DD */
+ 
++		rx_buffer_info = &rx_ring->rx_buffer_info[i];
+ 		skb = rx_buffer_info->skb;
+-		prefetch(skb->data - NET_IP_ALIGN);
++		prefetch(skb->data);
+ 		rx_buffer_info->skb = NULL;
+ 
+ 		dma_unmap_single(rx_ring->dev, rx_buffer_info->dma,
+@@ -545,18 +547,17 @@ static int ixgbevf_clean_rx_irq(struct i
+ 		rx_buffer_info->dma = 0;
+ 		skb_put(skb, le16_to_cpu(rx_desc->wb.upper.length));
+ 
++		cleaned_count++;
++
+ 		i++;
+ 		if (i == rx_ring->count)
+ 			i = 0;
+ 
+ 		next_rxd = IXGBEVF_RX_DESC(rx_ring, i);
+ 		prefetch(next_rxd);
+-		cleaned_count++;
+-
+-		next_buffer = &rx_ring->rx_buffer_info[i];
+ 
+ 		if (!(ixgbevf_test_staterr(rx_desc, IXGBE_RXD_STAT_EOP))) {
+-			skb->next = next_buffer->skb;
++			skb->next = rx_ring->rx_buffer_info[i].skb;
+ 			IXGBE_CB(skb->next)->prev = skb;
+ 			rx_ring->rx_stats.non_eop_descs++;
+ 			goto next_desc;
+@@ -609,6 +610,7 @@ next_desc:
+ 		/* use prefetched values */
+ 		rx_desc = next_rxd;
+ 		rx_buffer_info = &rx_ring->rx_buffer_info[i];
++		rx_desc = IXGBEVF_RX_DESC(rx_ring, i);
+ 	}
+ 
+ 	rx_ring->next_to_clean = i;
