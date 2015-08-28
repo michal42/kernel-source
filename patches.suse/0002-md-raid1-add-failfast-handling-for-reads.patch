@@ -24,9 +24,9 @@ resync/recovery with remaining devices.
 
 Signed-off-by: NeilBrown <neilb@suse.de>
 ---
- drivers/md/raid1.c |   67 ++++++++++++++++++++++++++++++++++++++++++-----------
+ drivers/md/raid1.c |   65 +++++++++++++++++++++++++++++++++++++++++++----------
  drivers/md/raid1.h |    2 +
- 2 files changed, 56 insertions(+), 13 deletions(-)
+ 2 files changed, 55 insertions(+), 12 deletions(-)
 
 --- a/drivers/md/raid1.c
 +++ b/drivers/md/raid1.c
@@ -61,7 +61,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  
  	if (conf->mddev->recovery_cp < MaxSector &&
  	    (this_sector + sectors >= conf->next_resync))
-@@ -602,6 +610,10 @@ static int read_balance(struct r1conf *c
+@@ -603,6 +611,10 @@ static int read_balance(struct r1conf *c
  		} else
  			best_good_sectors = sectors;
  
@@ -72,7 +72,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		nonrot = blk_queue_nonrot(bdev_get_queue(rdev->bdev));
  		has_nonrot_disk |= nonrot;
  		pending = atomic_read(&rdev->nr_pending);
-@@ -641,7 +653,8 @@ static int read_balance(struct r1conf *c
+@@ -642,7 +654,8 @@ static int read_balance(struct r1conf *c
  			break;
  		}
  		/* If device is idle, use it */
@@ -82,7 +82,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  			best_disk = disk;
  			break;
  		}
-@@ -667,7 +680,7 @@ static int read_balance(struct r1conf *c
+@@ -668,7 +681,7 @@ static int read_balance(struct r1conf *c
  	 * mixed ratation/non-rotational disks depending on workload.
  	 */
  	if (best_disk == -1) {
@@ -91,7 +91,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  			best_disk = best_pending_disk;
  		else
  			best_disk = best_dist_disk;
-@@ -1115,6 +1128,9 @@ read_again:
+@@ -1116,6 +1129,9 @@ read_again:
  		read_bio->bi_bdev = mirror->rdev->bdev;
  		read_bio->bi_end_io = raid1_end_read_request;
  		read_bio->bi_rw = READ | do_sync;
@@ -101,15 +101,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		read_bio->bi_private = r1_bio;
  
  		if (max_sectors < r1_bio->sectors) {
-@@ -1381,6 +1397,7 @@ static void error(struct mddev *mddev, s
- {
- 	char b[BDEVNAME_SIZE];
- 	struct r1conf *conf = mddev->private;
-+	unsigned long flags;
- 
- 	/*
- 	 * If it is not operational, then we have already marked it as dead
-@@ -1388,6 +1405,7 @@ static void error(struct mddev *mddev, s
+@@ -1390,6 +1406,7 @@ static void error(struct mddev *mddev, s
  	 * next level up know.
  	 * else mark the drive as failed
  	 */
@@ -117,7 +109,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  	if (test_bit(In_sync, &rdev->flags)
  	    && (conf->raid_disks - mddev->degraded) == 1) {
  		/*
-@@ -1397,21 +1415,20 @@ static void error(struct mddev *mddev, s
+@@ -1399,20 +1416,20 @@ static void error(struct mddev *mddev, s
  		 * it is very likely to fail.
  		 */
  		conf->recovery_disabled = mddev->recovery_disabled;
@@ -125,14 +117,13 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		return;
  	}
  	set_bit(Blocked, &rdev->flags);
+-	spin_lock_irqsave(&conf->device_lock, flags);
  	if (test_and_clear_bit(In_sync, &rdev->flags)) {
--		unsigned long flags;
--		spin_lock_irqsave(&conf->device_lock, flags);
  		mddev->degraded++;
  		set_bit(Faulty, &rdev->flags);
--		spin_unlock_irqrestore(&conf->device_lock, flags);
  	} else
  		set_bit(Faulty, &rdev->flags);
+-	spin_unlock_irqrestore(&conf->device_lock, flags);
  	/*
  	 * if recovery is running, make sure it aborts.
  	 */
@@ -141,7 +132,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  	set_bit(MD_CHANGE_DEVS, &mddev->flags);
  	printk(KERN_ALERT
  	       "md/raid1:%s: Disk failure on %s, disabling device.\n"
-@@ -1742,12 +1759,24 @@ static int fix_sync_read_error(struct r1
+@@ -1745,12 +1762,24 @@ static int fix_sync_read_error(struct r1
  	sector_t sect = r1_bio->sector;
  	int sectors = r1_bio->sectors;
  	int idx = 0;
@@ -167,7 +158,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		int start;
  
  		if (s > (PAGE_SIZE>>9))
-@@ -2229,16 +2258,20 @@ static void handle_read_error(struct r1c
+@@ -2232,16 +2261,20 @@ static void handle_read_error(struct r1c
  	 * This is all done synchronously while the array is
  	 * frozen
  	 */
@@ -191,7 +182,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  	bdevname(bio->bi_bdev, b);
  read_more:
  	disk = read_balance(conf, r1_bio, &max_sectors);
-@@ -2246,15 +2279,14 @@ read_more:
+@@ -2249,15 +2282,14 @@ read_more:
  		printk(KERN_ALERT "md/raid1:%s: %s: unrecoverable I/O"
  		       " read error for block %llu\n",
  		       mdname(mddev), b, (unsigned long long)r1_bio->sector);
@@ -210,7 +201,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		r1_bio->read_disk = disk;
  		bio = bio_clone_mddev(r1_bio->master_bio, GFP_NOIO, mddev);
  		md_trim_bio(bio, r1_bio->sector - bio->bi_sector, max_sectors);
-@@ -2270,6 +2302,9 @@ read_more:
+@@ -2273,6 +2305,9 @@ read_more:
  		bio->bi_bdev = rdev->bdev;
  		bio->bi_end_io = raid1_end_read_request;
  		bio->bi_rw = READ | do_sync;
@@ -220,7 +211,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		bio->bi_private = r1_bio;
  		if (max_sectors < r1_bio->sectors) {
  			/* Drat - have to split this up more */
-@@ -2520,6 +2555,8 @@ static sector_t sync_request(struct mdde
+@@ -2523,6 +2558,8 @@ static sector_t sync_request(struct mdde
  			bio->bi_sector = sector_nr + rdev->data_offset;
  			bio->bi_bdev = rdev->bdev;
  			bio->bi_private = r1_bio;
@@ -229,7 +220,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  		}
  	}
  	rcu_read_unlock();
-@@ -2641,6 +2678,8 @@ static sector_t sync_request(struct mdde
+@@ -2644,6 +2681,8 @@ static sector_t sync_request(struct mdde
  			if (bio->bi_end_io == end_sync_read) {
  				read_targets--;
  				md_sync_acct(bio->bi_bdev, nr_sectors);
@@ -238,7 +229,7 @@ Signed-off-by: NeilBrown <neilb@suse.de>
  				generic_make_request(bio);
  			}
  		}
-@@ -2648,6 +2687,8 @@ static sector_t sync_request(struct mdde
+@@ -2651,6 +2690,8 @@ static sector_t sync_request(struct mdde
  		atomic_set(&r1_bio->remaining, 1);
  		bio = r1_bio->bios[r1_bio->read_disk];
  		md_sync_acct(bio->bi_bdev, nr_sectors);
