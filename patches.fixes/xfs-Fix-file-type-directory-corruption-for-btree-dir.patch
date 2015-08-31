@@ -1,0 +1,58 @@
+From: Jan Kara <jack@suse.com>
+Date: Fri, 21 Aug 2015 19:27:07 +0200
+Subject: [PATCH] xfs: Fix file type directory corruption for btree directories
+References: bsc#941305
+Patch-mainline: v4.3-rc1
+Git-commit: 037542345a82aaaa228ec280fe6ddff1568d169f
+Git-repo: git.kernel.org/pub/scm/linux/kernel/git/dgc/linux-xfs.git
+
+Users have occasionally reported that file type for some directory
+entries is wrong. This mostly happened after updating libraries some
+libraries. After some debugging the problem was traced down to
+xfs_dir2_node_replace(). The function uses args->filetype as a file type
+to store in the replaced directory entry however it also calls
+xfs_da3_node_lookup_int() which will store file type of the current
+directory entry in args->filetype. Thus we fail to change file type of a
+directory entry to a proper type.
+
+Fix the problem by storing new file type in a local variable before
+calling xfs_da3_node_lookup_int().
+
+Reported-by: Giacomo Comes <comes@naic.edu>
+Signed-off-by: Jan Kara <jack@suse.com>
+---
+ fs/xfs/xfs_dir2_node.c |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/fs/xfs/xfs_dir2_node.c
++++ b/fs/xfs/xfs_dir2_node.c
+@@ -2178,6 +2178,7 @@ xfs_dir2_node_replace(
+ 	int			error;		/* error return value */
+ 	int			i;		/* btree level */
+ 	xfs_ino_t		inum;		/* new inode number */
++	int			ftype;		/* new file type */
+ 	xfs_dir2_leaf_t		*leaf;		/* leaf structure */
+ 	xfs_dir2_leaf_entry_t	*lep;		/* leaf entry being changed */
+ 	int			rval;		/* internal return value */
+@@ -2193,7 +2194,12 @@ xfs_dir2_node_replace(
+ 	state->mp = args->dp->i_mount;
+ 	state->blocksize = state->mp->m_dirblksize;
+ 	state->node_ents = state->mp->m_dir_node_ents;
++	/*
++	 * We have to save new inode number and ftype since
++	 * xfs_da3_node_lookup_int() is going to overwrite them
++	 */
+ 	inum = args->inumber;
++	ftype = args->filetype;
+ 	/*
+ 	 * Lookup the entry to change in the btree.
+ 	 */
+@@ -2230,7 +2236,7 @@ xfs_dir2_node_replace(
+ 		 * Fill in the new inode number and log the entry.
+ 		 */
+ 		dep->inumber = cpu_to_be64(inum);
+-		xfs_dir3_dirent_put_ftype(state->mp, dep, args->filetype);
++		xfs_dir3_dirent_put_ftype(state->mp, dep, ftype);
+ 		xfs_dir2_data_log_entry(args->trans, state->extrablk.bp, dep);
+ 		rval = 0;
+ 	}
