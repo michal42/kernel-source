@@ -1,0 +1,59 @@
+From: Stephen Cameron <stephenmcameron@gmail.com>
+Date: Fri, 23 Jan 2015 16:44:30 -0600
+Subject: hpsa: do not use a void pointer for scsi_cmd field of struct
+ CommandList
+Git-commit: 7fa3030c655b7479940487b01a20f7332cf68c00
+Patch-mainline: v4.0-rc1
+References: bsc#942743
+
+There's no reason for it to be a void *, it should be a struct scsi_cmnd *
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c     |    6 +++---
+ drivers/scsi/hpsa_cmd.h |    2 +-
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -1777,7 +1777,7 @@ static void complete_scsi_command(struct
+ 	unsigned long sense_data_size;
+ 
+ 	ei = cp->err_info;
+-	cmd = (struct scsi_cmnd *) cp->scsi_cmd;
++	cmd = cp->scsi_cmd;
+ 	h = cp->h;
+ 	dev = cmd->device->hostdata;
+ 
+@@ -4490,7 +4490,7 @@ static int hpsa_send_reset_as_abort_ioac
+ 	unsigned char *psa = &phys_scsi3addr[0];
+ 
+ 	/* Get a pointer to the hpsa logical device. */
+-	scmd = (struct scsi_cmnd *) abort->scsi_cmd;
++	scmd = abort->scsi_cmd;
+ 	dev = (struct hpsa_scsi_dev_t *)(scmd->device->hostdata);
+ 	if (dev == NULL) {
+ 		dev_warn(&h->pdev->dev,
+@@ -4628,7 +4628,7 @@ static int hpsa_eh_abort_handler(struct
+ 	}
+ 	hpsa_get_tag(h, abort, &taglower, &tagupper);
+ 	ml += sprintf(msg+ml, "Tag:0x%08x:%08x ", tagupper, taglower);
+-	as  = (struct scsi_cmnd *) abort->scsi_cmd;
++	as  = abort->scsi_cmd;
+ 	if (as != NULL)
+ 		ml += sprintf(msg+ml, "Command:0x%x SN:0x%lx ",
+ 			as->cmnd[0], as->serial_number);
+--- a/drivers/scsi/hpsa_cmd.h
++++ b/drivers/scsi/hpsa_cmd.h
+@@ -408,7 +408,7 @@ struct CommandList {
+ 	long			   cmdindex;
+ 	struct completion *waiting;
+ 	struct work_struct work;
+-	void   *scsi_cmd;
++	struct scsi_cmnd *scsi_cmd;
+ 
+ 	/*
+ 	 * For commands using either of the two "ioaccel" paths to
