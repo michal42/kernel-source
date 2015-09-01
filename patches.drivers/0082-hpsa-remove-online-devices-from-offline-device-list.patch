@@ -1,0 +1,36 @@
+From: "Stephen M. Cameron" <scameron@beardog.cce.hp.com>
+Date: Thu, 3 Jul 2014 10:17:58 -0500
+Subject: hpsa: remove online devices from offline device list
+Git-commit: d1fea47c36c13df5fc7e5a379ed5c4d2059de583
+Patch-mainline: v3.17-rc1
+References: bsc#942743
+
+When devices come on line, they should be removed from the list of
+offline devices that are monitored.
+
+Signed-off-by: Stephen M. Cameron <scameron@beardog.cce.hp.com>
+Reviewed-by: Scott Teel <scott.teel@hp.com>
+Reviewed-by: Joe Handzik <joseph.t.handzik@hp.com>
+Reviewed by: Mike MIller <michael.miller@canonical.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -6928,8 +6928,12 @@ static int hpsa_offline_devices_ready(st
+ 		d = list_entry(this, struct offline_device_entry,
+ 				offline_list);
+ 		spin_unlock_irqrestore(&h->offline_device_lock, flags);
+-		if (!hpsa_volume_offline(h, d->scsi3addr))
++		if (!hpsa_volume_offline(h, d->scsi3addr)) {
++			spin_lock_irqsave(&h->offline_device_lock, flags);
++			list_del(&d->offline_list);
++			spin_unlock_irqrestore(&h->offline_device_lock, flags);
+ 			return 1;
++		}
+ 		spin_lock_irqsave(&h->offline_device_lock, flags);
+ 	}
+ 	spin_unlock_irqrestore(&h->offline_device_lock, flags);
