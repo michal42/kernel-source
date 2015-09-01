@@ -1,0 +1,77 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Thu, 23 Apr 2015 09:32:54 -0500
+Subject: hpsa: print accurate SSD Smart Path Enabled status
+Git-commit: a473d86cc9f5a4d4ac758d86bd526c8dce1f7906
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+offload_enabled changes are deferred until after the
+added/updated prints occur, so the values are incorrect.
+
+defer printing SSD Smart Path Enabled status information until the
+information is correct
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Reviewed-by: Kevin Barnett <kevin.barnett@pmcs.com>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Reviewed-by: Hannes Reinecke <hare@Suse.de>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -1072,12 +1072,12 @@ lun_assigned:
+ 
+ 	h->dev[n] = device;
+ 	h->ndevices++;
+-	device->offload_to_be_enabled = device->offload_enabled;
+-	device->offload_enabled = 0;
+ 	added[*nadded] = device;
+ 	(*nadded)++;
+ 	hpsa_show_dev_msg(KERN_INFO, h, device,
+ 		device->expose_state & HPSA_SCSI_ADD ? "added" : "masked");
++	device->offload_to_be_enabled = device->offload_enabled;
++	device->offload_enabled = 0;
+ 	return 0;
+ }
+ 
+@@ -1085,6 +1085,7 @@ lun_assigned:
+ static void hpsa_scsi_update_entry(struct ctlr_info *h, int hostno,
+ 	int entry, struct hpsa_scsi_dev_t *new_entry)
+ {
++	int offload_enabled;
+ 	/* assumes h->devlock is held */
+ 	BUG_ON(entry < 0 || entry >= HPSA_MAX_DEVICES);
+ 
+@@ -1117,7 +1118,10 @@ static void hpsa_scsi_update_entry(struc
+ 	if (!new_entry->offload_enabled)
+ 		h->dev[entry]->offload_enabled = 0;
+ 
++	offload_enabled = h->dev[entry]->offload_enabled;
++	h->dev[entry]->offload_enabled = h->dev[entry]->offload_to_be_enabled;
+ 	hpsa_show_dev_msg(KERN_INFO, h, h->dev[entry], "updated");
++	h->dev[entry]->offload_enabled = offload_enabled;
+ }
+ 
+ /* Replace an entry from h->dev[] array. */
+@@ -1140,12 +1144,12 @@ static void hpsa_scsi_replace_entry(stru
+ 		new_entry->lun = h->dev[entry]->lun;
+ 	}
+ 
+-	new_entry->offload_to_be_enabled = new_entry->offload_enabled;
+-	new_entry->offload_enabled = 0;
+ 	h->dev[entry] = new_entry;
+ 	added[*nadded] = new_entry;
+ 	(*nadded)++;
+ 	hpsa_show_dev_msg(KERN_INFO, h, new_entry, "replaced");
++	new_entry->offload_to_be_enabled = new_entry->offload_enabled;
++	new_entry->offload_enabled = 0;
+ }
+ 
+ /* Remove an entry from h->dev[] array. */
