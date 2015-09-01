@@ -1,0 +1,42 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Thu, 23 Apr 2015 09:34:37 -0500
+Subject: hpsa: skip free_irq calls if irqs are not allocated
+Git-commit: d498757c5efd41d0add8eb733c6c7e491b51ac8c
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+If try_soft_reset fails to re-allocate irqs, the error exit
+starts with free_irq calls, which generate kernel WARN
+messages since they were already freed a few lines earlier.
+
+Jump to the next exit label to skip the free_irq calls.
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Reviewed-by: Kevin Barnett <kevin.barnett@pmcs.com>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Reviewed-by: Hannes Reinecke <hare@Suse.de>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -7782,7 +7782,12 @@ reinit_after_soft_reset:
+ 		if (rc) {
+ 			dev_warn(&h->pdev->dev,
+ 				"Failed to request_irq after soft reset.\n");
+-			goto clean4;
++			/*
++			 * clean4 starts with free_irqs, but that was just
++			 * done. Then, request_irqs_failed, so there is
++			 * nothing to free. So, goto the next label.
++			 */
++			goto clean3;
+ 		}
+ 
+ 		rc = hpsa_kdump_soft_reset(h);
