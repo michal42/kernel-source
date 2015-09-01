@@ -1,0 +1,60 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Fri, 14 Nov 2014 17:27:24 -0600
+Subject: hpsa: always call pci_set_master after pci_enable_device
+Git-commit: 4fa604e13bb2a6ef6e89224c80d96af385f533c3
+Patch-mainline: v3.19-rc1
+References: bsc#942743
+
+If the kernel is booted with the reset_device parameter, which
+is done for kdump, then the driver needs to call pci_set_master
+after pci_enable_device to reenable bus mastering (since
+the preceding pci_disable_device call disables bus mastering).
+
+Also, place that after pci_request_regions both in the
+kdump code and the normal pci_init code.
+
+Remove the comment summarizing what pci_set_master
+does, with the incomplete commentary on the impact of
+pci_disable_device.
+
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Don Brace <don.brace@pmcs.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |    8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -6393,15 +6393,15 @@ static int hpsa_pci_init(struct ctlr_inf
+ 		return err;
+ 	}
+ 
+-	/* Enable bus mastering (pci_disable_device may disable this) */
+-	pci_set_master(h->pdev);
+-
+ 	err = pci_request_regions(h->pdev, HPSA);
+ 	if (err) {
+ 		dev_err(&h->pdev->dev,
+ 			"cannot obtain PCI resources, aborting\n");
+ 		return err;
+ 	}
++
++	pci_set_master(h->pdev);
++
+ 	hpsa_interrupt_mode(h);
+ 	err = hpsa_pci_find_memory_BAR(h->pdev, &h->paddr);
+ 	if (err)
+@@ -6482,8 +6482,10 @@ static int hpsa_init_reset_devices(struc
+ 		dev_warn(&pdev->dev, "failed to enable device.\n");
+ 		return -ENODEV;
+ 	}
++
+ 	pci_set_master(pdev);
+ 
++
+ 	vaddr = pci_ioremap_bar(pdev, 0);
+ 	if (vaddr == NULL) {
+ 		rc = -ENOMEM;
