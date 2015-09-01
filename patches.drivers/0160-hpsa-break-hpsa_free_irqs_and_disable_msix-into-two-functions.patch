@@ -1,0 +1,101 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Thu, 23 Apr 2015 09:33:12 -0500
+Subject: hpsa: break hpsa_free_irqs_and_disable_msix into two functions
+Git-commit: cc64c817a8e044f911b2bf36170c49a6dbf776c8
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+replace calls to hpsa_free_irqs_and_disable_msix with
+hpsa_free_irqs and hpsa_disable_interrupt_mode
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Reviewed-by: Kevin Barnett <kevin.barnett@pmcs.com>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Reviewed-by: Hannes Reinecke <hare@Suse.de>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   35 ++++++++++++++++++-----------------
+ 1 file changed, 18 insertions(+), 17 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -6378,10 +6378,20 @@ static int find_PCI_BAR_index(struct pci
+ 	return -1;
+ }
+ 
++static void hpsa_disable_interrupt_mode(struct ctlr_info *h)
++{
++	if (h->msix_vector) {
++		if (h->pdev->msix_enabled)
++			pci_disable_msix(h->pdev);
++	} else if (h->msi_vector) {
++		if (h->pdev->msi_enabled)
++			pci_disable_msi(h->pdev);
++	}
++}
++
+ /* If MSI/MSI-X is supported by the kernel we will try to enable it on
+  * controllers that are capable. If not, we use legacy INTx mode.
+  */
+-
+ static void hpsa_interrupt_mode(struct ctlr_info *h)
+ {
+ #ifdef CONFIG_PCI_MSI
+@@ -7016,23 +7026,9 @@ static int hpsa_kdump_soft_reset(struct
+ 	return 0;
+ }
+ 
+-static void hpsa_free_irqs_and_disable_msix(struct ctlr_info *h)
+-{
+-	hpsa_free_irqs(h);
+-#ifdef CONFIG_PCI_MSI
+-	if (h->msix_vector) {
+-		if (h->pdev->msix_enabled)
+-			pci_disable_msix(h->pdev);
+-	} else if (h->msi_vector) {
+-		if (h->pdev->msi_enabled)
+-			pci_disable_msi(h->pdev);
+-	}
+-#endif /* CONFIG_PCI_MSI */
+-}
+-
+ static void hpsa_undo_allocations_after_kdump_soft_reset(struct ctlr_info *h)
+ {
+-	hpsa_free_irqs_and_disable_msix(h);
++	hpsa_free_irqs(h);
+ 	hpsa_free_sg_chain_blocks(h);
+ 	hpsa_free_cmd_pool(h);
+ 	kfree(h->ioaccel1_blockFetchTable);
+@@ -7045,6 +7041,7 @@ static void hpsa_undo_allocations_after_
+ 		iounmap(h->transtable);
+ 	if (h->cfgtable)
+ 		iounmap(h->cfgtable);
++	hpsa_disable_interrupt_mode(h);
+ 	pci_disable_device(h->pdev);
+ 	pci_release_regions(h->pdev);
+ 	kfree(h);
+@@ -7538,7 +7535,8 @@ static void hpsa_shutdown(struct pci_dev
+ 	 */
+ 	hpsa_flush_cache(h);
+ 	h->access.set_intr_mask(h, HPSA_INTR_OFF);
+-	hpsa_free_irqs_and_disable_msix(h);
++	hpsa_free_irqs(h);
++	hpsa_disable_interrupt_mode(h);		/* pci_init 2 */
+ }
+ 
+ static void hpsa_free_device_info(struct ctlr_info *h)
+@@ -7569,7 +7567,10 @@ static void hpsa_remove_one(struct pci_d
+ 	destroy_workqueue(h->rescan_ctlr_wq);
+ 	destroy_workqueue(h->resubmit_wq);
+ 	hpsa_unregister_scsi(h);	/* unhook from SCSI subsystem */
++
++	/* includes hpsa_free_irqs and hpsa_disable_interrupt_mode */
+ 	hpsa_shutdown(pdev);
++
+ 	iounmap(h->vaddr);
+ 	iounmap(h->transtable);
+ 	iounmap(h->cfgtable);
