@@ -1,0 +1,43 @@
+From eeb03a6eaa02e9171f91e385c52a69b159fc6117 Mon Sep 17 00:00:00 2001
+From: Madhusudanan Kandasamy <kmadhu@linux.vnet.ibm.com>
+Date: Thu, 10 Jul 2014 20:45:13 +0530
+Subject: [PATCH] powerpc: Fail remap_4k_pfn() if PFN doesn't fit inside PTE
+Git-commit: eeb03a6eaa02e9171f91e385c52a69b159fc6117
+Reference: bsc#943957
+Patch-mainline: v3.17
+
+remap_4k_pfn() silently truncates upper bits of input 4K PFN
+if it cannot be contained in PTE. This leads invalid memory mapping and could
+result in a system crash when the memory is accessed. This patch fails
+remap_4k_pfn() and returns -EINVAL if the input 4K PFN cannot be contained in
+PTE.
+
+V3 : Added parentheses to protect 'pfn' and entire macro as suggested by Brian.
+V2 : Rewritten to avoid helper function as suggested by Stephen Rothwell.
+
+Signed-off-by: Madhusudanan Kandasamy <kmadhu@linux.vnet.ibm.com>
+Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Acked-by: Dinar Valeev <dvaleev@suse.com>
+
+---
+ arch/powerpc/include/asm/pte-hash64-64k.h | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/arch/powerpc/include/asm/pte-hash64-64k.h b/arch/powerpc/include/asm/pte-hash64-64k.h
+index d836d94..b6d2d42 100644
+--- a/arch/powerpc/include/asm/pte-hash64-64k.h
++++ b/arch/powerpc/include/asm/pte-hash64-64k.h
+@@ -75,7 +75,8 @@
+ 	(((pte) & _PAGE_COMBO)? MMU_PAGE_4K: MMU_PAGE_64K)
+ 
+ #define remap_4k_pfn(vma, addr, pfn, prot)				\
+-	remap_pfn_range((vma), (addr), (pfn), PAGE_SIZE,		\
+-			__pgprot(pgprot_val((prot)) | _PAGE_4K_PFN))
++	(WARN_ON(((pfn) >= (1UL << (64 - PTE_RPN_SHIFT)))) ? -EINVAL :	\
++		remap_pfn_range((vma), (addr), (pfn), PAGE_SIZE,	\
++			__pgprot(pgprot_val((prot)) | _PAGE_4K_PFN)))
+ 
+ #endif	/* __ASSEMBLY__ */
+-- 
+2.1.4
+
