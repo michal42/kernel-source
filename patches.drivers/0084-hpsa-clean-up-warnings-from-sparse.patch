@@ -1,0 +1,164 @@
+From: Don Brace <don.brace@pmcs.com>
+Date: Fri, 14 Nov 2014 17:26:27 -0600
+Subject: hpsa: Clean up warnings from sparse.
+Git-commit: 42a916415de106606a4fc479a4340b9ad178fb57
+Patch-mainline: v3.19-rc1
+References: bsc#942743
+
+Clean up issues reported when running sparse.
+
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Webb Scales <webb.scales@hp.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   28 +++++++++++++++-------------
+ drivers/scsi/hpsa.h |    6 +++---
+ 2 files changed, 18 insertions(+), 16 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -48,6 +48,7 @@
+ #include <linux/bitmap.h>
+ #include <linux/atomic.h>
+ #include <linux/jiffies.h>
++#include <linux/percpu-defs.h>
+ #include <asm/div64.h>
+ #include "hpsa_cmd.h"
+ #include "hpsa.h"
+@@ -204,11 +205,11 @@ static int number_of_controllers;
+ 
+ static irqreturn_t do_hpsa_intr_intx(int irq, void *dev_id);
+ static irqreturn_t do_hpsa_intr_msi(int irq, void *dev_id);
+-static int hpsa_ioctl(struct scsi_device *dev, int cmd, void *arg);
++static int hpsa_ioctl(struct scsi_device *dev, int cmd, void __user *arg);
+ static void start_io(struct ctlr_info *h);
+ 
+ #ifdef CONFIG_COMPAT
+-static int hpsa_compat_ioctl(struct scsi_device *dev, int cmd, void *arg);
++static int hpsa_compat_ioctl(struct scsi_device *dev, int cmd, void __user *arg);
+ #endif
+ 
+ static void cmd_free(struct ctlr_info *h, struct CommandList *c);
+@@ -2965,8 +2966,8 @@ static int hpsa_gather_lun_info(struct c
+ 	return 0;
+ }
+ 
+-u8 *figure_lunaddrbytes(struct ctlr_info *h, int raid_ctlr_position, int i,
+-	int nphysicals, int nlogicals,
++static u8 *figure_lunaddrbytes(struct ctlr_info *h, int raid_ctlr_position,
++	int i, int nphysicals, int nlogicals,
+ 	void *physdev_list, struct ReportLUNdata *logdev_list,
+ 	int physical_mode)
+ {
+@@ -4451,7 +4452,7 @@ static struct CommandList *hpsa_find_cmd
+ 	struct CommandList *c = NULL;	/* ptr into cmpQ */
+ 
+ 	if (!find)
+-		return 0;
++		return NULL;
+ 	spin_lock_irqsave(&h->lock, flags);
+ 	list_for_each_entry(c, queue_head, list) {
+ 		if (c->scsi_cmd == NULL) /* e.g.: passthru ioctl */
+@@ -4828,7 +4829,8 @@ static void cmd_special_free(struct ctlr
+ 
+ #ifdef CONFIG_COMPAT
+ 
+-static int hpsa_ioctl32_passthru(struct scsi_device *dev, int cmd, void *arg)
++static int hpsa_ioctl32_passthru(struct scsi_device *dev, int cmd,
++	void __user *arg)
+ {
+ 	IOCTL32_Command_struct __user *arg32 =
+ 	    (IOCTL32_Command_struct __user *) arg;
+@@ -4853,7 +4855,7 @@ static int hpsa_ioctl32_passthru(struct
+ 	if (err)
+ 		return -EFAULT;
+ 
+-	err = hpsa_ioctl(dev, CCISS_PASSTHRU, (void *)p);
++	err = hpsa_ioctl(dev, CCISS_PASSTHRU, p);
+ 	if (err)
+ 		return err;
+ 	err |= copy_in_user(&arg32->error_info, &p->error_info,
+@@ -4864,7 +4866,7 @@ static int hpsa_ioctl32_passthru(struct
+ }
+ 
+ static int hpsa_ioctl32_big_passthru(struct scsi_device *dev,
+-	int cmd, void *arg)
++	int cmd, void __user *arg)
+ {
+ 	BIG_IOCTL32_Command_struct __user *arg32 =
+ 	    (BIG_IOCTL32_Command_struct __user *) arg;
+@@ -4891,7 +4893,7 @@ static int hpsa_ioctl32_big_passthru(str
+ 	if (err)
+ 		return -EFAULT;
+ 
+-	err = hpsa_ioctl(dev, CCISS_BIG_PASSTHRU, (void *)p);
++	err = hpsa_ioctl(dev, CCISS_BIG_PASSTHRU, p);
+ 	if (err)
+ 		return err;
+ 	err |= copy_in_user(&arg32->error_info, &p->error_info,
+@@ -4901,7 +4903,7 @@ static int hpsa_ioctl32_big_passthru(str
+ 	return err;
+ }
+ 
+-static int hpsa_compat_ioctl(struct scsi_device *dev, int cmd, void *arg)
++static int hpsa_compat_ioctl(struct scsi_device *dev, int cmd, void __user *arg)
+ {
+ 	switch (cmd) {
+ 	case CCISS_GETPCIINFO:
+@@ -5249,7 +5251,7 @@ static void decrement_passthru_count(str
+ /*
+  * ioctl
+  */
+-static int hpsa_ioctl(struct scsi_device *dev, int cmd, void *arg)
++static int hpsa_ioctl(struct scsi_device *dev, int cmd, void __user *arg)
+ {
+ 	struct ctlr_info *h;
+ 	void __user *argp = (void __user *)arg;
+@@ -5856,7 +5858,7 @@ static int hpsa_message(struct pci_dev *
+ #define hpsa_noop(p) hpsa_message(p, 3, 0)
+ 
+ static int hpsa_controller_hard_reset(struct pci_dev *pdev,
+-	void * __iomem vaddr, u32 use_doorbell)
++	void __iomem *vaddr, u32 use_doorbell)
+ {
+ 	u16 pmcsr;
+ 	int pos;
+@@ -6094,7 +6096,7 @@ unmap_vaddr:
+  *   the io functions.
+  *   This is for debug only.
+  */
+-static void print_cfg_table(struct device *dev, struct CfgTable *tb)
++static void print_cfg_table(struct device *dev, struct CfgTable __iomem *tb)
+ {
+ #ifdef HPSA_DEBUG
+ 	int i;
+--- a/drivers/scsi/hpsa.h
++++ b/drivers/scsi/hpsa.h
+@@ -166,7 +166,7 @@ struct ctlr_info {
+ 	 */
+ 	u32 trans_support;
+ 	u32 trans_offset;
+-	struct TransTable_struct *transtable;
++	struct TransTable_struct __iomem *transtable;
+ 	unsigned long transMethod;
+ 
+ 	/* cap concurrent passthrus at some reasonable maximum */
+@@ -185,7 +185,7 @@ struct ctlr_info {
+ 	u32 *blockFetchTable;
+ 	u32 *ioaccel1_blockFetchTable;
+ 	u32 *ioaccel2_blockFetchTable;
+-	u32 *ioaccel2_bft2_regs;
++	u32 __iomem *ioaccel2_bft2_regs;
+ 	unsigned char *hba_inquiry_data;
+ 	u32 driver_support;
+ 	u32 fw_support;
+@@ -196,7 +196,7 @@ struct ctlr_info {
+ 	u64 last_heartbeat_timestamp;
+ 	u32 heartbeat_sample_interval;
+ 	atomic_t firmware_flash_in_progress;
+-	u32 lockup_detected;
++	u32 __percpu lockup_detected;
+ 	struct delayed_work monitor_ctlr_work;
+ 	int remove_in_progress;
+ 	u32 fifo_recently_full;
