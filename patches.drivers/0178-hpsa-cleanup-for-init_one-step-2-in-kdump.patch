@@ -1,0 +1,44 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Thu, 23 Apr 2015 09:34:43 -0500
+Subject: hpsa: cleanup for init_one step 2 in kdump
+Git-commit: 9ecd953aa8b07819af0f1f561f52cb4bd43e8735
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+In hpsa_undo_allocations_after_kdump_soft_reset,
+the things allocated in hpsa_init_one step 2 -
+h->resubmit_wq and h->lockup_detected  need to
+be freed, in the right order.
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Reviewed-by: Kevin Barnett <kevin.barnett@pmcs.com>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Reviewed-by: Hannes Reinecke <hare@Suse.de>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -7398,6 +7398,16 @@ static void hpsa_undo_allocations_after_
+ 	hpsa_free_cmd_pool(h);			/* init_one 5 */
+ 	hpsa_free_irqs(h);			/* init_one 4 */
+ 	hpsa_free_pci_init(h);			/* init_one 3 */
++	free_percpu(h->lockup_detected);	/* init_one 2 */
++	h->lockup_detected = NULL;		/* init_one 2 */
++	if (h->resubmit_wq) {
++		destroy_workqueue(h->resubmit_wq);	/* init_one 1 */
++		h->resubmit_wq = NULL;
++	}
++	if (h->rescan_ctlr_wq) {
++		destroy_workqueue(h->rescan_ctlr_wq);
++		h->rescan_ctlr_wq = NULL;
++	}
+ 	kfree(h);				/* init_one 1 */
+ }
+ 
