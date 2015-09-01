@@ -1,0 +1,87 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Thu, 2 Apr 2015 15:25:54 +0200
+Subject: hpsa: dont meddle with hw which isn't ours (cciss)
+Git-commit: 6b6c1cd7da65225d61107bbe87495450cc0c5b11
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+The hpsa driver touches the hardware before checking the pci-id table.
+This way, especially in kdump, it may confuse the proper driver (cciss).
+
+Signed-off-by: Tomas Henzl <thenzl@redhat.com>
+Acked-by: Don Brace <Don.Brace@pmcs.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -5757,7 +5757,7 @@ static int controller_reset_failed(struc
+ /* This does a hard reset of the controller using PCI power management
+  * states or the using the doorbell register.
+  */
+-static int hpsa_kdump_hard_reset_controller(struct pci_dev *pdev)
++static int hpsa_kdump_hard_reset_controller(struct pci_dev *pdev, u32 board_id)
+ {
+ 	u64 cfg_offset;
+ 	u32 cfg_base_addr;
+@@ -5768,7 +5768,6 @@ static int hpsa_kdump_hard_reset_control
+ 	int rc;
+ 	struct CfgTable __iomem *cfgtable;
+ 	u32 use_doorbell;
+-	u32 board_id;
+ 	u16 command_register;
+ 
+ 	/* For controllers as old as the P600, this is very nearly
+@@ -5784,11 +5783,6 @@ static int hpsa_kdump_hard_reset_control
+ 	 * using the doorbell register.
+ 	 */
+ 
+-	rc = hpsa_lookup_board_id(pdev, &board_id);
+-	if (rc < 0) {
+-		dev_warn(&pdev->dev, "Board ID not found\n");
+-		return rc;
+-	}
+ 	if (!ctlr_is_resettable(board_id)) {
+ 		dev_warn(&pdev->dev, "Controller not resettable\n");
+ 		return -ENODEV;
+@@ -6377,7 +6371,7 @@ static void hpsa_hba_inquiry(struct ctlr
+ 	}
+ }
+ 
+-static int hpsa_init_reset_devices(struct pci_dev *pdev)
++static int hpsa_init_reset_devices(struct pci_dev *pdev, u32 board_id)
+ {
+ 	int rc, i;
+ 	void __iomem *vaddr;
+@@ -6414,7 +6408,7 @@ static int hpsa_init_reset_devices(struc
+ 	iounmap(vaddr);
+ 
+ 	/* Reset the controller with a PCI power-cycle or via doorbell */
+-	rc = hpsa_kdump_hard_reset_controller(pdev);
++	rc = hpsa_kdump_hard_reset_controller(pdev, board_id);
+ 
+ 	/* -ENOTSUPP here means we cannot reset the controller
+ 	 * but it's already (and still) up and running in
+@@ -6849,11 +6843,18 @@ static int hpsa_init_one(struct pci_dev
+ 	struct ctlr_info *h;
+ 	int try_soft_reset = 0;
+ 	unsigned long flags;
++	u32 board_id;
+ 
+ 	if (number_of_controllers == 0)
+ 		printk(KERN_INFO DRIVER_NAME "\n");
+ 
+-	rc = hpsa_init_reset_devices(pdev);
++	rc = hpsa_lookup_board_id(pdev, &board_id);
++	if (rc < 0) {
++		dev_warn(&pdev->dev, "Board ID not found\n");
++		return rc;
++	}
++
++	rc = hpsa_init_reset_devices(pdev, board_id);
+ 	if (rc) {
+ 		if (rc != -ENOTSUPP)
+ 			return rc;
