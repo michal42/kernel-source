@@ -1,0 +1,58 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Fri, 23 Jan 2015 16:42:06 -0600
+Subject: hpsa: propagate return value from board ID lookup
+Git-commit: 60f923b940246422c7da6fec5b0636822115e5ce
+Patch-mainline: v4.0-rc1
+References: bsc#942743
+
+If the board ID lookup function fails, return the return
+code rather than return -ENODEV.
+
+The only board ID failure reason right now is -ENODEV,
+so this just provides more informative prints in kdump
+and adapts to future changes.
+
+Tested with error injection while booting with
+	reset_devices
+on the kernel command line:
+[   62.804324]  injecting error in inj_hpsa_lookup_board_id: 1 11
+[   62.804423] hpsa 0000:04:00.0: Board ID not found
+
+(the pci probe layer does not print an additional
+message if -ENODEV is the reason)
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -5840,8 +5840,12 @@ static int hpsa_kdump_hard_reset_control
+ 	 */
+ 
+ 	rc = hpsa_lookup_board_id(pdev, &board_id);
+-	if (rc < 0 || !ctlr_is_resettable(board_id)) {
+-		dev_warn(&pdev->dev, "Not resetting device.\n");
++	if (rc < 0) {
++		dev_warn(&pdev->dev, "Board ID not found\n");
++		return rc;
++	}
++	if (!ctlr_is_resettable(board_id)) {
++		dev_warn(&pdev->dev, "Controller not resettable\n");
+ 		return -ENODEV;
+ 	}
+ 
+@@ -6330,7 +6334,7 @@ static int hpsa_pci_init(struct ctlr_inf
+ 
+ 	prod_index = hpsa_lookup_board_id(h->pdev, &h->board_id);
+ 	if (prod_index < 0)
+-		return -ENODEV;
++		return prod_index;
+ 	h->product_name = products[prod_index].product_name;
+ 	h->access = *(products[prod_index].access);
+ 
