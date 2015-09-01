@@ -1,0 +1,84 @@
+From: Joe Handzik <joseph.t.handzik@hp.com>
+Date: Thu, 23 Apr 2015 09:33:32 -0500
+Subject: hpsa: add more ioaccel2 error handling, including underrun statuses.
+Git-commit: c40820d511d4c9bfc8a64f5c920fa0782f5da673
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+improve ioaccel2 error handling, including better handling of
+underrun statuses
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Reviewed-by: Kevin Barnett <kevin.barnett@pmcs.com>
+Signed-off-by: Joe Handzik <joseph.t.handzik@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c     |   31 ++++++++++++++++++++++++++-----
+ drivers/scsi/hpsa_cmd.h |    6 ++++++
+ 2 files changed, 32 insertions(+), 5 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -1875,6 +1875,7 @@ static int handle_ioaccel_mode2_error(st
+ {
+ 	int data_len;
+ 	int retry = 0;
++	u32 ioaccel2_resid = 0;
+ 
+ 	switch (c2->error_data.serv_response) {
+ 	case IOACCEL2_SERV_RESPONSE_COMPLETE:
+@@ -1933,11 +1934,31 @@ static int handle_ioaccel_mode2_error(st
+ 		}
+ 		break;
+ 	case IOACCEL2_SERV_RESPONSE_FAILURE:
+-		/* don't expect to get here. */
+-		dev_warn(&h->pdev->dev,
+-			"unexpected delivery or target failure, status = 0x%02x\n",
+-			c2->error_data.status);
+-		retry = 1;
++		switch (c2->error_data.status) {
++		case IOACCEL2_STATUS_SR_IO_ERROR:
++		case IOACCEL2_STATUS_SR_IO_ABORTED:
++		case IOACCEL2_STATUS_SR_OVERRUN:
++			retry = 1;
++			break;
++		case IOACCEL2_STATUS_SR_UNDERRUN:
++			cmd->result = (DID_OK << 16);		/* host byte */
++			cmd->result |= (COMMAND_COMPLETE << 8);	/* msg byte */
++			ioaccel2_resid = get_unaligned_le32(
++						&c2->error_data.resid_cnt[0]);
++			scsi_set_resid(cmd, ioaccel2_resid);
++			break;
++		case IOACCEL2_STATUS_SR_NO_PATH_TO_DEVICE:
++		case IOACCEL2_STATUS_SR_INVALID_DEVICE:
++		case IOACCEL2_STATUS_SR_IOACCEL_DISABLED:
++			/* We will get an event from ctlr to trigger rescan */
++			retry = 1;
++			break;
++		default:
++			retry = 1;
++			dev_warn(&h->pdev->dev,
++				"unexpected delivery or target failure, status = 0x%02x\n",
++				c2->error_data.status);
++		}
+ 		break;
+ 	case IOACCEL2_SERV_RESPONSE_TMF_COMPLETE:
+ 		break;
+--- a/drivers/scsi/hpsa_cmd.h
++++ b/drivers/scsi/hpsa_cmd.h
+@@ -531,6 +531,12 @@ struct io_accel2_scsi_response {
+ #define IOACCEL2_STATUS_SR_TASK_COMP_SET_FULL	0x28
+ #define IOACCEL2_STATUS_SR_TASK_COMP_ABORTED	0x40
+ #define IOACCEL2_STATUS_SR_IOACCEL_DISABLED	0x0E
++#define IOACCEL2_STATUS_SR_IO_ERROR		0x01
++#define IOACCEL2_STATUS_SR_IO_ABORTED		0x02
++#define IOACCEL2_STATUS_SR_NO_PATH_TO_DEVICE	0x03
++#define IOACCEL2_STATUS_SR_INVALID_DEVICE	0x04
++#define IOACCEL2_STATUS_SR_UNDERRUN		0x51
++#define IOACCEL2_STATUS_SR_OVERRUN		0x75
+ 	u8 data_present;		/* low 2 bits */
+ #define IOACCEL2_NO_DATAPRESENT		0x000
+ #define IOACCEL2_RESPONSE_DATAPRESENT	0x001
