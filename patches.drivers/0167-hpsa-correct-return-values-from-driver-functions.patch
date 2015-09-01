@@ -1,0 +1,55 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Thu, 23 Apr 2015 09:33:43 -0500
+Subject: hpsa: correct return values from driver functions.
+Git-commit: 2dd02d742535fe0114f1957afe8685856bdfebac
+Patch-mainline: v4.2-rc1
+References: bsc#942743
+
+correct return codes for error conditions
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Reviewed-by: Kevin Barnett <kevin.barnett@pmcs.com>
+Reviewed-by: Tomas Henzl <thenzl@redhat.com>
+Reviewed-by: Hannes Reinecke <hare@Suse.de>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |   10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -2667,9 +2667,9 @@ static int hpsa_get_raid_map(struct ctlr
+ 	if (fill_cmd(c, HPSA_GET_RAID_MAP, h, &this_device->raid_map,
+ 			sizeof(this_device->raid_map), 0,
+ 			scsi3addr, TYPE_CMD)) {
+-		dev_warn(&h->pdev->dev, "Out of memory in hpsa_get_raid_map()\n");
+-		rc = -ENOMEM;
+-		goto out;
++		dev_warn(&h->pdev->dev, "hpsa_get_raid_map fill_cmd failed\n");
++		cmd_free(h, c);
++		return -1;
+ 	}
+ 	rc = hpsa_scsi_do_simple_cmd_with_retry(h, c,
+ 					PCI_DMA_FROMDEVICE, NO_TIMEOUT);
+@@ -5432,7 +5432,7 @@ static int hpsa_passthru_ioctl(struct ct
+ 	if (iocommand.buf_size > 0) {
+ 		buff = kmalloc(iocommand.buf_size, GFP_KERNEL);
+ 		if (buff == NULL)
+-			return -EFAULT;
++			return -ENOMEM;
+ 		if (iocommand.Request.Type.Direction & XFER_WRITE) {
+ 			/* Copy the data into the buffer we created */
+ 			if (copy_from_user(buff, iocommand.buf,
+@@ -7968,7 +7968,7 @@ static int hpsa_alloc_ioaccel1_cmd_and_b
+ 
+ clean_up:
+ 	hpsa_free_ioaccel1_cmd_and_bft(h);
+-	return 1;
++	return -ENOMEM;
+ }
+ 
+ /* Free ioaccel2 mode command blocks and block fetch table */
