@@ -1,0 +1,63 @@
+From: Robert Elliott <elliott@hp.com>
+Date: Fri, 23 Jan 2015 16:43:41 -0600
+Subject: hpsa: optimize cmd_alloc function by remembering last allocation
+Git-commit: 33811026a0a4208dd5725183d37fc92d5e88b0a2
+Patch-mainline: v4.0-rc1
+References: bsc#942743
+
+Empirically, this improves performance slightly (~2% max IOPS) by
+allowing cmd_alloc to remember where it left off searching for
+free commands between calls instead of always starting its search
+at command 0.
+
+Reviewed-by: Scott Teel <scott.teel@pmcs.com>
+Signed-off-by: Robert Elliott <elliott@hp.com>
+Signed-off-by: Don Brace <don.brace@pmcs.com>
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/hpsa.c |    7 +++++--
+ drivers/scsi/hpsa.h |    1 +
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+--- a/drivers/scsi/hpsa.c
++++ b/drivers/scsi/hpsa.c
+@@ -4674,9 +4674,10 @@ static struct CommandList *cmd_alloc(str
+ 	union u64bit temp64;
+ 	dma_addr_t cmd_dma_handle, err_dma_handle;
+ 	int refcount;
+-	unsigned long offset = 0;
++	unsigned long offset;
+ 
+-	/* There is some *extremely* small but non-zero chance that that
++	/*
++	 * There is some *extremely* small but non-zero chance that that
+ 	 * multiple threads could get in here, and one thread could
+ 	 * be scanning through the list of bits looking for a free
+ 	 * one, but the free ones are always behind him, and other
+@@ -4688,6 +4689,7 @@ static struct CommandList *cmd_alloc(str
+ 	 */
+ 
+ 	for (;;) {
++	offset = h->last_allocation; /* benignly racy */
+ 		i = find_next_zero_bit(h->cmd_pool_bits, h->nr_cmds, offset);
+ 		if (unlikely(i == h->nr_cmds)) {
+ 			offset = 0;
+@@ -4704,6 +4706,7 @@ static struct CommandList *cmd_alloc(str
+ 			h->cmd_pool_bits + (i / BITS_PER_LONG));
+ 		break; /* it's ours now. */
+ 	}
++	h->last_allocation = i; /* benignly racy */
+ 
+ 	/* Zero out all of commandlist except the last field, refcount */
+ 	memset(c, 0, offsetof(struct CommandList, refcount));
+--- a/drivers/scsi/hpsa.h
++++ b/drivers/scsi/hpsa.h
+@@ -133,6 +133,7 @@ struct ctlr_info {
+ 	int	interrupts_enabled;
+ 	int	major;
+ 	int 	max_commands;
++	int last_allocation;
+ 	atomic_t commands_outstanding;
+ 	int 	max_outstanding; /* Debug */
+ 	int	usage_count;  /* number of opens all all minor devices */
