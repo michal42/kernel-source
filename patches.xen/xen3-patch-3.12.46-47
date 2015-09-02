@@ -1,34 +1,9 @@
-From: Andy Lutomirski <luto@kernel.org>
-Date: Mon, 20 Jul 2015 14:32:54 -0700
-Subject: x86/ldt: Make modify_ldt synchronous
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: Linux 3.12.47
 Patch-mainline: Never, SUSE-Xen specific
-References: bsc#938706, CVE-2015-5157
 
-modify_ldt has questionable locking and does not synchronize
-threads.  Improve it: redesign the locking and synchronize all
-threads' LDTs using an IPI on all modifications.
-
-This will dramatically slow down modify_ldt in multithreaded
-programs, but there shouldn't be any multithreaded programs that
-care about modify_ldt's performance in the first place.
-
-[js] Replaced by the upstream (stable-3.12) version.
-     This ought to be replaced by the port of 3.12.47 in the end, but
-     I leave this up to the xen maintainers, as that is not so
-     straightforward (the nmi patch, in particular).
-
-Signed-off-by: Andy Lutomirski <luto@kernel.org>
-Acked-by: Borislav Petkov <bp@suse.de>
-Automatically created from "patches.arch/08-x86-ldt-make-modify_ldt-synchronous.patch" by xen-port-patches.py
 Signed-off-by: Jiri Slaby <jslaby@suse.cz>
-
----
- arch/x86/include/mach-xen/asm/desc.h        |   15 -
- arch/x86/include/mach-xen/asm/mmu_context.h |   56 +++++
- arch/x86/kernel/cpu/common-xen.c            |    4 
- arch/x86/kernel/ldt-xen.c                   |  280 +++++++++++++++-------------
- arch/x86/kernel/process_64-xen.c            |    4 
- 5 files changed, 210 insertions(+), 149 deletions(-)
+Automatically created from "patches.kernel.org/patch-3.12.46-47" by xen-port-patches.py
 
 --- a/arch/x86/include/mach-xen/asm/desc.h
 +++ b/arch/x86/include/mach-xen/asm/desc.h
@@ -107,25 +82,30 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
   * Used for LDT copy/destruction.
   */
  int init_new_context(struct task_struct *tsk, struct mm_struct *mm);
-@@ -107,10 +151,14 @@ static inline void switch_mm(struct mm_s
+@@ -107,10 +151,19 @@ static inline void switch_mm(struct mm_s
  
  		/* Load the LDT, if the LDT is different: */
  		if (unlikely(prev->context.ldt != next->context.ldt)) {
 -			/* load_LDT_nolock(&next->context) */
 +			/* load_mm_ldt(next) */
-+			struct ldt_struct *ldt;
++			const struct ldt_struct *ldt;
 +
 +			/* lockless_dereference synchronizes with smp_store_release */
 +			ldt = lockless_dereference(next->context.ldt);
  			op->cmd = MMUEXT_SET_LDT;
 -			op->arg1.linear_addr = (unsigned long)next->context.ldt;
 -			op->arg2.nr_ents     = next->context.size;
-+			op->arg1.linear_addr = (unsigned long)ldt->entries;
-+			op->arg2.nr_ents     = ldt->size;
++			if (unlikely(ldt)) {
++				op->arg1.linear_addr = (long)ldt->entries;
++				op->arg2.nr_ents     = ldt->size;
++			} else {
++				op->arg1.linear_addr = 0;
++				op->arg2.nr_ents     = 0;
++			}
  			op++;
  		}
  
-@@ -139,7 +187,7 @@ static inline void switch_mm(struct mm_s
+@@ -139,7 +192,7 @@ static inline void switch_mm(struct mm_s
  			 */
  			load_cr3(next->pgd);
  			xen_new_user_pt(__pa(__user_pgd(next->pgd)));
@@ -164,7 +144,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  #include <linux/vmalloc.h>
  #include <linux/uaccess.h>
  
-@@ -20,85 +21,94 @@
+@@ -20,85 +21,83 @@
  #include <asm/mmu_context.h>
  #include <asm/syscalls.h>
  
@@ -200,9 +180,13 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 -			(~(PAGE_SIZE / LDT_ENTRY_SIZE - 1));
 -	if (mincount * LDT_ENTRY_SIZE > PAGE_SIZE)
 -		newldt = vmalloc(mincount * LDT_ENTRY_SIZE);
+-	else
+-		newldt = (void *)__get_free_page(GFP_KERNEL);
 +	if (size > LDT_ENTRIES)
 +		return NULL;
-+
+ 
+-	if (!newldt)
+-		return -ENOMEM;
 +	new_ldt = kmalloc(sizeof(struct ldt_struct), GFP_KERNEL);
 +	if (!new_ldt)
 +		return NULL;
@@ -218,16 +202,8 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +	 */
 +	if (alloc_size > PAGE_SIZE)
 +		new_ldt->entries = vzalloc(alloc_size);
- 	else
--		newldt = (void *)__get_free_page(GFP_KERNEL);
-+		new_ldt->entries = kzalloc(PAGE_SIZE, GFP_KERNEL);
- 
--	if (!newldt)
--		return -ENOMEM;
-+	if (!new_ldt->entries) {
-+		kfree(new_ldt);
-+		return NULL;
-+	}
++	else
++		new_ldt->entries = (void *)__get_free_page(GFP_KERNEL|__GFP_ZERO);
  
 -	if (oldsize)
 -		memcpy(newldt, pc->ldt, oldsize * LDT_ENTRY_SIZE);
@@ -243,29 +219,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 -	wmb();
 -	pc->size = mincount;
 -	wmb();
-+	new_ldt->size = size;
-+	return new_ldt;
-+}
-+
-+/* After calling this, the LDT is immutable. */
-+static void finalize_ldt_struct(struct ldt_struct *ldt)
-+{
-+	make_pages_readonly(ldt->entries, PFN_DOWN(ldt->size * LDT_ENTRY_SIZE),
-+			    XENFEAT_writable_descriptor_tables);
-+}
-+
-+/* context.lock is held */
-+static void install_ldt(struct mm_struct *current_mm,
-+			struct ldt_struct *ldt)
-+{
-+	preempt_disable();
-+
-+	/* Synchronizes with lockless_dereference in load_mm_ldt. */
-+	smp_store_release(&current_mm->context.ldt, ldt);
-+
-+	/* Activate for this CPU. */
-+	flush_ldt(current_mm);
- 
+-
 -	if (reload) {
 -#ifdef CONFIG_SMP
 -		preempt_disable();
@@ -274,17 +228,16 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 -				    (mincount * LDT_ENTRY_SIZE) / PAGE_SIZE,
 -				    XENFEAT_writable_descriptor_tables);
 -		load_LDT(pc);
- #ifdef CONFIG_SMP
+-#ifdef CONFIG_SMP
 -		if (!cpumask_equal(mm_cpumask(current->mm),
 -				   cpumask_of(smp_processor_id())))
 -			smp_call_function(flush_ldt, current->mm, 1);
 -		preempt_enable();
-+	/* Synchronize with other CPUs. */
-+	if (!cpumask_equal(mm_cpumask(current_mm),
-+			   cpumask_of(smp_processor_id())))
-+		smp_call_function(flush_ldt, current_mm, 1);
- #endif
--	}
+-#endif
++	if (!new_ldt->entries) {
++		kfree(new_ldt);
++		return NULL;
+ 	}
 -	if (oldsize) {
 -		make_pages_writable(oldldt,
 -				    (oldsize * LDT_ENTRY_SIZE) / PAGE_SIZE,
@@ -295,18 +248,33 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 -			put_page(virt_to_page(oldldt));
 -	}
 -	return 0;
--}
--
++	new_ldt->size = size;
++	return new_ldt;
++}
++
++/* After calling this, the LDT is immutable. */
++static void finalize_ldt_struct(struct ldt_struct *ldt)
++{
++	make_pages_readonly(ldt->entries, PFN_DOWN(ldt->size * LDT_ENTRY_SIZE),
++			    XENFEAT_writable_descriptor_tables);
+ }
+ 
 -static inline int copy_ldt(mm_context_t *new, mm_context_t *old)
--{
++/* context.lock is held */
++static void install_ldt(struct mm_struct *current_mm,
++			struct ldt_struct *ldt)
+ {
 -	int err = alloc_ldt(new, old->size, 0);
--
++	/* Synchronizes with lockless_dereference in load_mm_ldt. */
++	smp_store_release(&current_mm->context.ldt, ldt);
+ 
 -	if (err < 0)
 -		return err;
 -	memcpy(new->ldt, old->ldt, old->size * LDT_ENTRY_SIZE);
 -	make_pages_readonly(new->ldt,
 -			    (new->size * LDT_ENTRY_SIZE) / PAGE_SIZE,
-+	preempt_enable();
++	/* Activate the LDT for all CPUs using current_mm. */
++	on_each_cpu_mask(mm_cpumask(current_mm), flush_ldt, current_mm, true);
 +}
 +
 +static void free_ldt_struct(struct ldt_struct *ldt)
@@ -320,12 +288,12 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 +	if (ldt->size * LDT_ENTRY_SIZE > PAGE_SIZE)
 +		vfree(ldt->entries);
 +	else
-+		kfree(ldt->entries);
++		put_page(virt_to_page(ldt->entries));
 +	kfree(ldt);
  }
  
  /*
-@@ -107,19 +117,35 @@ static inline int copy_ldt(mm_context_t
+@@ -107,19 +106,35 @@ static inline int copy_ldt(mm_context_t 
   */
  int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
  {
@@ -367,7 +335,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	return retval;
  }
  
-@@ -130,53 +156,47 @@ int init_new_context(struct task_struct
+@@ -130,53 +145,47 @@ int init_new_context(struct task_struct 
   */
  void destroy_context(struct mm_struct *mm)
  {
@@ -446,7 +414,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  }
  
  static int read_default_ldt(void __user *ptr, unsigned long bytecount)
-@@ -200,6 +220,8 @@ static int write_ldt(void __user *ptr, u
+@@ -200,6 +209,8 @@ static int write_ldt(void __user *ptr, u
  	struct desc_struct ldt;
  	int error;
  	struct user_desc ldt_info;
@@ -455,7 +423,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  
  	error = -EINVAL;
  	if (bytecount != sizeof(ldt_info))
-@@ -218,34 +240,40 @@ static int write_ldt(void __user *ptr, u
+@@ -218,34 +229,40 @@ static int write_ldt(void __user *ptr, u
  			goto out;
  	}
  
