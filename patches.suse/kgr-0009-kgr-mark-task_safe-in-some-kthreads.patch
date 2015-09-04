@@ -72,7 +72,7 @@ Cc: Tejun Heo <tj@kernel.org>
  			struct req *req = requests;
 --- a/drivers/char/ipmi/ipmi_si_intf.c
 +++ b/drivers/char/ipmi/ipmi_si_intf.c
-@@ -1004,6 +1004,8 @@ static int ipmi_thread(void *data)
+@@ -1012,6 +1012,8 @@ static int ipmi_thread(void *data)
  	while (!kthread_should_stop()) {
  		int busy_wait;
  
@@ -83,18 +83,18 @@ Cc: Tejun Heo <tj@kernel.org>
  
 --- a/drivers/scsi/scsi_error.c
 +++ b/drivers/scsi/scsi_error.c
-@@ -1905,6 +1905,8 @@ int scsi_error_handler(void *data)
+@@ -2180,6 +2180,8 @@ int scsi_error_handler(void *data)
  	 * disables signal delivery for the created thread.
  	 */
- 	while (!kthread_should_stop()) {
+ 	while (true) {
 +		kgr_task_safe(current);
 +
  		set_current_state(TASK_INTERRUPTIBLE);
- 		if ((shost->host_failed == 0 && shost->host_eh_scheduled == 0) ||
- 		    shost->host_failed != shost->host_busy) {
+ 		if (kthread_should_stop())
+ 			break;
 --- a/drivers/usb/core/hub.c
 +++ b/drivers/usb/core/hub.c
-@@ -4957,9 +4957,9 @@ static int hub_thread(void *__unused)
+@@ -5142,9 +5142,9 @@ static int hub_thread(void *__unused)
  
  	do {
  		hub_events();
@@ -151,7 +151,7 @@ Cc: Tejun Heo <tj@kernel.org>
  #include <linux/slab.h>
  #include <linux/spinlock.h>
  #include <linux/srcu.h>
-@@ -355,7 +356,9 @@ static int fsnotify_mark_destroy(void *i
+@@ -375,7 +376,9 @@ static int fsnotify_mark_destroy(void *i
  			fsnotify_put_mark(mark);
  		}
  
@@ -234,7 +234,7 @@ Cc: Tejun Heo <tj@kernel.org>
  				       &action->thread_flags)) {
 --- a/kernel/kthread.c
 +++ b/kernel/kthread.c
-@@ -111,6 +111,8 @@ bool kthread_freezable_should_stop(bool
+@@ -112,6 +112,8 @@ bool kthread_freezable_should_stop(bool
  {
  	bool frozen = false;
  
@@ -243,7 +243,7 @@ Cc: Tejun Heo <tj@kernel.org>
  	might_sleep();
  
  	if (unlikely(freezing(current)))
-@@ -479,6 +481,7 @@ int kthreadd(void *unused)
+@@ -484,6 +486,7 @@ int kthreadd(void *unused)
  		if (list_empty(&kthread_create_list))
  			schedule();
  		__set_current_state(TASK_RUNNING);
@@ -253,7 +253,7 @@ Cc: Tejun Heo <tj@kernel.org>
  		while (!list_empty(&kthread_create_list)) {
 --- a/kernel/rcutree.c
 +++ b/kernel/rcutree.c
-@@ -1471,9 +1471,10 @@ static int __noreturn rcu_gp_kthread(voi
+@@ -1487,9 +1487,10 @@ static int __noreturn rcu_gp_kthread(voi
  
  		/* Handle grace-period start. */
  		for (;;) {
@@ -266,7 +266,7 @@ Cc: Tejun Heo <tj@kernel.org>
  			if ((rsp->gp_flags & RCU_GP_FLAG_INIT) &&
  			    rcu_gp_init(rsp))
  				break;
-@@ -1495,6 +1496,7 @@ static int __noreturn rcu_gp_kthread(voi
+@@ -1511,6 +1512,7 @@ static int __noreturn rcu_gp_kthread(voi
  					(!ACCESS_ONCE(rnp->qsmask) &&
  					 !rcu_preempt_blocked_readers_cgp(rnp)),
  					j);
@@ -322,7 +322,7 @@ Cc: Tejun Heo <tj@kernel.org>
  		if (kthread_should_stop()) {
 --- a/kernel/workqueue.c
 +++ b/kernel/workqueue.c
-@@ -2381,6 +2381,7 @@ sleep:
+@@ -2367,6 +2367,7 @@ sleep:
  	__set_current_state(TASK_INTERRUPTIBLE);
  	spin_unlock_irq(&pool->lock);
  	schedule();
@@ -330,7 +330,7 @@ Cc: Tejun Heo <tj@kernel.org>
  	goto woke_up;
  }
  
-@@ -2422,6 +2423,8 @@ static int rescuer_thread(void *__rescue
+@@ -2408,6 +2409,8 @@ static int rescuer_thread(void *__rescue
  repeat:
  	set_current_state(TASK_INTERRUPTIBLE);
  
@@ -341,7 +341,7 @@ Cc: Tejun Heo <tj@kernel.org>
  	 * shouldn't have any work pending, but @wq->maydays may still have
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -2788,6 +2788,7 @@ static void khugepaged_do_scan(void)
+@@ -2784,6 +2784,7 @@ static void khugepaged_do_scan(void)
  			break;
  
  		cond_resched();
@@ -349,7 +349,7 @@ Cc: Tejun Heo <tj@kernel.org>
  
  		if (unlikely(kthread_should_stop() || freezing(current)))
  			break;
-@@ -2816,8 +2817,9 @@ static void khugepaged_wait_work(void)
+@@ -2812,8 +2813,9 @@ static void khugepaged_wait_work(void)
  		if (!khugepaged_scan_sleep_millisecs)
  			return;
  
@@ -377,7 +377,7 @@ Cc: Tejun Heo <tj@kernel.org>
  	return 0;
 --- a/net/bluetooth/rfcomm/core.c
 +++ b/net/bluetooth/rfcomm/core.c
-@@ -2042,6 +2042,8 @@ static int rfcomm_run(void *unused)
+@@ -2045,6 +2045,8 @@ static int rfcomm_run(void *unused)
  		if (kthread_should_stop())
  			break;
  
