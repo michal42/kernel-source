@@ -1,0 +1,84 @@
+From ff0aed7f90b34da9853379c9604b191f631b5833 Mon Sep 17 00:00:00 2001
+From: Alexander Duyck <alexander.h.duyck@redhat.com>
+Date: Wed, 13 May 2015 13:34:13 -0700
+Subject: [PATCH] net: Reserve skb headroom and set skb->dev even if using
+ __alloc_skb
+
+References: Network Performance
+Patch-mainline: v4.2
+Git-commit: a080e7bd0a8e56519d451eaea4ab05212d90e010
+
+When I had inlined __alloc_rx_skb into __netdev_alloc_skb and
+__napi_alloc_skb I had overlooked the fact that there was a return in the
+__alloc_rx_skb.  As a result we weren't reserving headroom or setting the
+skb->dev in certain cases.  This change corrects that by adding a couple of
+jump labels to jump to depending on __alloc_skb either succeeding or failing.
+
+Fixes: 9451980a6646 ("net: Use cached copy of pfmemalloc to avoid accessing page")
+Reported-by: Felipe Balbi <balbi@ti.com>
+Signed-off-by: Alexander Duyck <alexander.h.duyck@redhat.com>
+Tested-by: Kevin Hilman <khilman@linaro.org>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ net/core/skbuff.c | 20 ++++++++++++++++----
+ 1 file changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 5c5e31f35404..d713b1a46b0e 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -491,8 +491,12 @@ struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int len,
+ 	len += NET_SKB_PAD;
+ 
+ 	if ((len > SKB_WITH_OVERHEAD(PAGE_SIZE)) ||
+-	    (gfp_mask & (__GFP_WAIT | GFP_DMA)))
+-		return __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
++	    (gfp_mask & (__GFP_WAIT | GFP_DMA))) {
++		skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
++		if (!skb)
++			goto skb_fail;
++		goto skb_success;
++	}
+ 
+ 	len += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+ 	len = SKB_DATA_ALIGN(len);
+@@ -522,9 +526,11 @@ struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int len,
+ 		skb->pfmemalloc = 1;
+ 	skb->head_frag = 1;
+ 
++skb_success:
+ 	skb_reserve(skb, NET_SKB_PAD);
+ 	skb->dev = dev;
+ 
++skb_fail:
+ 	return skb;
+ }
+ EXPORT_SYMBOL(__netdev_alloc_skb);
+@@ -552,8 +558,12 @@ struct sk_buff *__napi_alloc_skb(struct napi_struct *napi, unsigned int len,
+ 	len += NET_SKB_PAD + NET_IP_ALIGN;
+ 
+ 	if ((len > SKB_WITH_OVERHEAD(PAGE_SIZE)) ||
+-	    (gfp_mask & (__GFP_WAIT | GFP_DMA)))
+-		return __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
++	    (gfp_mask & (__GFP_WAIT | GFP_DMA))) {
++		skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE);
++		if (!skb)
++			goto skb_fail;
++		goto skb_success;
++	}
+ 
+ 	len += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+ 	len = SKB_DATA_ALIGN(len);
+@@ -576,9 +586,11 @@ struct sk_buff *__napi_alloc_skb(struct napi_struct *napi, unsigned int len,
+ 		skb->pfmemalloc = 1;
+ 	skb->head_frag = 1;
+ 
++skb_success:
+ 	skb_reserve(skb, NET_SKB_PAD + NET_IP_ALIGN);
+ 	skb->dev = napi->dev;
+ 
++skb_fail:
+ 	return skb;
+ }
+ EXPORT_SYMBOL(__napi_alloc_skb);
