@@ -1,10 +1,10 @@
 Subject: support booting Xen from EFI
 From: jbeulich@novell.com
-Patch-mainline: n/a
+Patch-mainline: Never, SUSE-Xen specific
 References: fate#311376, fate#311529, bnc#578927, bnc#628554
 
---- sle12.orig/arch/x86/Kconfig	2013-10-29 10:24:24.000000000 +0100
-+++ sle12/arch/x86/Kconfig	2014-09-19 11:19:05.000000000 +0200
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
 @@ -1645,7 +1645,7 @@ config X86_SMAP
  
  config EFI
@@ -23,8 +23,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
         select RELOCATABLE
         ---help---
            This kernel feature allows a bzImage to be loaded directly
---- sle12.orig/arch/x86/include/mach-xen/asm/setup.h	2011-02-01 14:54:13.000000000 +0100
-+++ sle12/arch/x86/include/mach-xen/asm/setup.h	2011-07-04 12:32:43.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/setup.h
++++ b/arch/x86/include/mach-xen/asm/setup.h
 @@ -3,6 +3,12 @@
  void xen_start_kernel(void);
  void xen_arch_setup(void);
@@ -38,8 +38,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  #endif
  
  #include_next <asm/setup.h>
---- sle12.orig/arch/x86/kernel/rtc.c	2013-08-09 12:36:08.000000000 +0200
-+++ sle12/arch/x86/kernel/rtc.c	2013-08-12 17:57:09.000000000 +0200
+--- a/arch/x86/kernel/rtc.c
++++ b/arch/x86/kernel/rtc.c
 @@ -7,6 +7,7 @@
  #include <linux/bcd.h>
  #include <linux/export.h>
@@ -61,9 +61,9 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	/* Intel MID platforms don't have ioport rtc */
  	if (mrst_identify_cpu())
  		return -ENODEV;
---- sle12.orig/arch/x86/kernel/setup-xen.c	2014-01-23 14:20:08.000000000 +0100
-+++ sle12/arch/x86/kernel/setup-xen.c	2014-01-23 14:21:31.000000000 +0100
-@@ -1094,6 +1094,8 @@ void __init setup_arch(char **cmdline_p)
+--- a/arch/x86/kernel/setup-xen.c
++++ b/arch/x86/kernel/setup-xen.c
+@@ -1096,6 +1096,8 @@ void __init setup_arch(char **cmdline_p)
  		                      xen_start_info->console.dom0.info_size);
  		xen_start_info->console.domU.mfn = 0;
  		xen_start_info->console.domU.evtchn = 0;
@@ -72,8 +72,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	} else
  		screen_info.orig_video_isVGA = 0;
  	copy_edid();
---- sle12.orig/arch/x86/kernel/time-xen.c	2014-02-06 15:34:02.000000000 +0100
-+++ sle12/arch/x86/kernel/time-xen.c	2014-02-06 15:34:55.000000000 +0100
+--- a/arch/x86/kernel/time-xen.c
++++ b/arch/x86/kernel/time-xen.c
 @@ -19,6 +19,7 @@
  #include <linux/posix-timers.h>
  #include <linux/cpufreq.h>
@@ -92,16 +92,16 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	return mach_set_rtc_mmss(now);
  }
  
---- sle12.orig/arch/x86/platform/efi/Makefile	2015-02-18 14:48:09.000000000 +0100
-+++ sle12/arch/x86/platform/efi/Makefile	2014-01-09 12:16:04.000000000 +0100
+--- a/arch/x86/platform/efi/Makefile
++++ b/arch/x86/platform/efi/Makefile
 @@ -1,3 +1,5 @@
  obj-$(CONFIG_EFI) 		+= efi.o efi_$(BITS).o efi_stub_$(BITS).o
  obj-$(CONFIG_ACPI_BGRT) += efi-bgrt.o
  obj-$(CONFIG_EARLY_PRINTK_EFI)	+= early_printk.o
 +ccflags-$(CONFIG_XEN)		+= -fshort-wchar
 +disabled-obj-$(CONFIG_XEN)	:= efi_%$(BITS).o
---- /dev/null	1970-01-01 00:00:00.000000000 +0000
-+++ sle12/arch/x86/platform/efi/efi-xen.c	2014-10-24 08:36:48.000000000 +0200
+--- /dev/null
++++ b/arch/x86/platform/efi/efi-xen.c
 @@ -0,0 +1,618 @@
 +/*
 + * Common EFI (Extensible Firmware Interface) support functions
@@ -721,8 +721,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +	return EFI_SUCCESS;
 +}
 +EXPORT_SYMBOL_GPL(efi_query_variable_store);
---- sle12.orig/drivers/firmware/efi/efi.c	2015-02-18 14:48:09.000000000 +0100
-+++ sle12/drivers/firmware/efi/efi.c	2014-07-24 13:37:56.000000000 +0200
+--- a/drivers/firmware/efi/efi.c
++++ b/drivers/firmware/efi/efi.c
 @@ -201,6 +201,7 @@ subsys_initcall(efisubsys_init);
   */
  void __iomem *efi_lookup_mapped_addr(u64 phys_addr)
@@ -814,8 +814,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  }
  
  #ifdef CONFIG_EFI_VARS_MODULE
---- sle12.orig/drivers/rtc/Kconfig	2015-02-18 14:48:09.000000000 +0100
-+++ sle12/drivers/rtc/Kconfig	2013-08-12 16:20:21.000000000 +0200
+--- a/drivers/rtc/Kconfig
++++ b/drivers/rtc/Kconfig
 @@ -698,7 +698,7 @@ config RTC_DRV_DA9055
  
  config RTC_DRV_EFI
@@ -825,8 +825,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	help
  	  If you say yes here you will get support for the EFI
  	  Real Time Clock.
---- sle12.orig/drivers/rtc/rtc-cmos.c	2015-02-18 14:48:09.000000000 +0100
-+++ sle12/drivers/rtc/rtc-cmos.c	2014-02-27 14:23:32.000000000 +0100
+--- a/drivers/rtc/rtc-cmos.c
++++ b/drivers/rtc/rtc-cmos.c
 @@ -36,6 +36,7 @@
  #include <linux/platform_device.h>
  #include <linux/log2.h>
@@ -847,8 +847,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  #ifdef	CONFIG_PNP
  	retval = pnp_register_driver(&cmos_pnp_driver);
  	if (retval == 0)
---- sle12.orig/drivers/rtc/rtc-efi.c	2015-02-18 14:48:09.000000000 +0100
-+++ sle12/drivers/rtc/rtc-efi.c	2013-08-12 17:57:27.000000000 +0200
+--- a/drivers/rtc/rtc-efi.c
++++ b/drivers/rtc/rtc-efi.c
 @@ -235,3 +235,6 @@ module_platform_driver_probe(efi_rtc_dri
  MODULE_AUTHOR("dann frazier <dannf@hp.com>");
  MODULE_LICENSE("GPL");
@@ -856,8 +856,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
 +#ifdef CONFIG_XEN
 +MODULE_ALIAS("platform:rtc-efi");
 +#endif
---- sle12.orig/drivers/xen/console/console.c	2012-03-22 14:31:13.000000000 +0100
-+++ sle12/drivers/xen/console/console.c	2012-03-22 15:29:12.000000000 +0100
+--- a/drivers/xen/console/console.c
++++ b/drivers/xen/console/console.c
 @@ -313,6 +313,7 @@ void __init dom0_init_screen_info(const 
  		break;
  
@@ -877,8 +877,8 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  		if (size >= offsetof(struct dom0_vga_console_info,
  		                     u.vesa_lfb.gbl_caps)
  		            + sizeof(info->u.vesa_lfb.gbl_caps))
---- sle12.orig/include/linux/efi.h	2015-02-18 14:48:09.000000000 +0100
-+++ sle12/include/linux/efi.h	2014-03-19 14:23:31.000000000 +0100
+--- a/include/linux/efi.h
++++ b/include/linux/efi.h
 @@ -572,7 +572,9 @@ typedef struct {
   * All runtime access to EFI goes through this structure:
   */

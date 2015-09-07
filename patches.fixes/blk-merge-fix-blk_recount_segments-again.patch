@@ -1,0 +1,56 @@
+From: Ming Lei <tom.leiming@gmail.com>
+Date: Wed, 12 Nov 2014 00:15:41 +0800
+Subject: block: blk-merge: fix blk_recount_segments()
+References: bnc#934430
+Patch-Mainline: v3.19
+Git-commit: 7f60dcaaf91e911002007c7ae885ff6ef0f36c0d
+
+For cloned bio, bio->bi_vcnt can't be used at all, and we
+have resort to bio_segments() to figure out how many
+segment there are in the bio.
+
+Signed-off-by: Ming Lei <tom.leiming@gmail.com>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ block/blk-merge.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/block/blk-merge.c b/block/blk-merge.c
+index 40f0fb6..e0ec2e4 100644
+--- a/block/blk-merge.c
++++ b/block/blk-merge.c
+@@ -95,19 +95,22 @@ void blk_recalc_rq_segments(struct request *rq)
+ 
+ void blk_recount_segments(struct request_queue *q, struct bio *bio)
+ {
+-	bool no_sg_merge = !!test_bit(QUEUE_FLAG_NO_SG_MERGE,
+-			&q->queue_flags);
+-	bool merge_not_need = bio->bi_vcnt < queue_max_segments(q);
++	unsigned short seg_cnt;
++
++	/* estimate segment number by bi_vcnt for non-cloned bio */
++	if (bio_flagged(bio, BIO_CLONED))
++		seg_cnt = bio_segments(bio);
++	else
++		seg_cnt = bio->bi_vcnt;
+ 
+-	if (no_sg_merge && !bio_flagged(bio, BIO_CLONED) &&
+-			merge_not_need)
+-		bio->bi_phys_segments = bio->bi_vcnt;
++	if (test_bit(QUEUE_FLAG_NO_SG_MERGE, &q->queue_flags) &&
++			(seg_cnt < queue_max_segments(q)))
++		bio->bi_phys_segments = seg_cnt;
+ 	else {
+ 		struct bio *nxt = bio->bi_next;
+ 
+ 		bio->bi_next = NULL;
+-		bio->bi_phys_segments = __blk_recalc_rq_segments(q, bio,
+-				no_sg_merge && merge_not_need);
++		bio->bi_phys_segments = __blk_recalc_rq_segments(q, bio, false);
+ 		bio->bi_next = nxt;
+ 	}
+ 
+-- 
+1.8.5.6
+

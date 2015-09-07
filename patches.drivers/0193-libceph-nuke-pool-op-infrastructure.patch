@@ -1,0 +1,347 @@
+From cca21e044c31b28a037faac89487df28a4c4a983 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <idryomov@redhat.com>
+Date: Mon, 22 Dec 2014 19:14:26 +0300
+Subject: [PATCH 193/213] libceph: nuke pool op infrastructure
+References: fate#318918
+Git-commit: 7a6fdeb2b1e93548854063c46c9724458564c76b
+Patch-mainline: v4.0-rc1
+
+On Mon, Dec 22, 2014 at 5:35 PM, Sage Weil <sage@newdream.net> wrote:
+> On Mon, 22 Dec 2014, Ilya Dryomov wrote:
+>> Actually, pool op stuff has been unused for over two years - looks like
+>> it was added for rbd create_snap and that got ripped out in 2012.  It's
+>> unlikely we'd ever need to manage pools or snaps from the kernel client
+>> so I think it makes sense to nuke it.  Sage?
+>
+> Yep!
+
+Signed-off-by: Ilya Dryomov <idryomov@redhat.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ include/linux/ceph/ceph_fs.h    |  36 -----------
+ include/linux/ceph/mon_client.h |   9 +--
+ net/ceph/ceph_strings.c         |  14 -----
+ net/ceph/debugfs.c              |   2 -
+ net/ceph/mon_client.c           | 135 +---------------------------------------
+ 5 files changed, 4 insertions(+), 192 deletions(-)
+
+diff --git a/include/linux/ceph/ceph_fs.h b/include/linux/ceph/ceph_fs.h
+index 31a2dce..1246c34 100644
+--- a/include/linux/ceph/ceph_fs.h
++++ b/include/linux/ceph/ceph_fs.h
+@@ -135,17 +135,6 @@ enum {
+ };
+ 
+ 
+-/* pool operations */
+-enum {
+-  POOL_OP_CREATE			= 0x01,
+-  POOL_OP_DELETE			= 0x02,
+-  POOL_OP_AUID_CHANGE			= 0x03,
+-  POOL_OP_CREATE_SNAP			= 0x11,
+-  POOL_OP_DELETE_SNAP			= 0x12,
+-  POOL_OP_CREATE_UNMANAGED_SNAP		= 0x21,
+-  POOL_OP_DELETE_UNMANAGED_SNAP		= 0x22,
+-};
+-
+ struct ceph_mon_request_header {
+ 	__le64 have_version;
+ 	__le16 session_mon;
+@@ -168,31 +157,6 @@ struct ceph_mon_statfs_reply {
+ 	struct ceph_statfs st;
+ } __attribute__ ((packed));
+ 
+-const char *ceph_pool_op_name(int op);
+-
+-struct ceph_mon_poolop {
+-	struct ceph_mon_request_header monhdr;
+-	struct ceph_fsid fsid;
+-	__le32 pool;
+-	__le32 op;
+-	__le64 auid;
+-	__le64 snapid;
+-	__le32 name_len;
+-} __attribute__ ((packed));
+-
+-struct ceph_mon_poolop_reply {
+-	struct ceph_mon_request_header monhdr;
+-	struct ceph_fsid fsid;
+-	__le32 reply_code;
+-	__le32 epoch;
+-	char has_data;
+-	char data[0];
+-} __attribute__ ((packed));
+-
+-struct ceph_mon_unmanaged_snap {
+-	__le64 snapid;
+-} __attribute__ ((packed));
+-
+ struct ceph_osd_getmap {
+ 	struct ceph_mon_request_header monhdr;
+ 	struct ceph_fsid fsid;
+diff --git a/include/linux/ceph/mon_client.h b/include/linux/ceph/mon_client.h
+index deb47e4..81810dc 100644
+--- a/include/linux/ceph/mon_client.h
++++ b/include/linux/ceph/mon_client.h
+@@ -40,7 +40,7 @@ struct ceph_mon_request {
+ };
+ 
+ /*
+- * ceph_mon_generic_request is being used for the statfs, poolop and
++ * ceph_mon_generic_request is being used for the statfs and
+  * mon_get_version requests which are being done a bit differently
+  * because we need to get data back to the caller
+  */
+@@ -50,7 +50,6 @@ struct ceph_mon_generic_request {
+ 	struct rb_node node;
+ 	int result;
+ 	void *buf;
+-	int buf_len;
+ 	struct completion completion;
+ 	struct ceph_msg *request;  /* original request */
+ 	struct ceph_msg *reply;    /* and reply */
+@@ -117,10 +116,4 @@ extern int ceph_monc_open_session(struct ceph_mon_client *monc);
+ 
+ extern int ceph_monc_validate_auth(struct ceph_mon_client *monc);
+ 
+-extern int ceph_monc_create_snapid(struct ceph_mon_client *monc,
+-				   u32 pool, u64 *snapid);
+-
+-extern int ceph_monc_delete_snapid(struct ceph_mon_client *monc,
+-				   u32 pool, u64 snapid);
+-
+ #endif
+diff --git a/net/ceph/ceph_strings.c b/net/ceph/ceph_strings.c
+index 3056020..139a9cb 100644
+--- a/net/ceph/ceph_strings.c
++++ b/net/ceph/ceph_strings.c
+@@ -42,17 +42,3 @@ const char *ceph_osd_state_name(int s)
+ 		return "???";
+ 	}
+ }
+-
+-const char *ceph_pool_op_name(int op)
+-{
+-	switch (op) {
+-	case POOL_OP_CREATE: return "create";
+-	case POOL_OP_DELETE: return "delete";
+-	case POOL_OP_AUID_CHANGE: return "auid change";
+-	case POOL_OP_CREATE_SNAP: return "create snap";
+-	case POOL_OP_DELETE_SNAP: return "delete snap";
+-	case POOL_OP_CREATE_UNMANAGED_SNAP: return "create unmanaged snap";
+-	case POOL_OP_DELETE_UNMANAGED_SNAP: return "delete unmanaged snap";
+-	}
+-	return "???";
+-}
+diff --git a/net/ceph/debugfs.c b/net/ceph/debugfs.c
+index d2d5255..14d9995 100644
+--- a/net/ceph/debugfs.c
++++ b/net/ceph/debugfs.c
+@@ -127,8 +127,6 @@ static int monc_show(struct seq_file *s, void *p)
+ 		op = le16_to_cpu(req->request->hdr.type);
+ 		if (op == CEPH_MSG_STATFS)
+ 			seq_printf(s, "%llu statfs\n", req->tid);
+-		else if (op == CEPH_MSG_POOLOP)
+-			seq_printf(s, "%llu poolop\n", req->tid);
+ 		else if (op == CEPH_MSG_MON_GET_VERSION)
+ 			seq_printf(s, "%llu mon_get_version", req->tid);
+ 		else
+diff --git a/net/ceph/mon_client.c b/net/ceph/mon_client.c
+index f2148e2..02e105c 100644
+--- a/net/ceph/mon_client.c
++++ b/net/ceph/mon_client.c
+@@ -410,7 +410,7 @@ out_unlocked:
+ }
+ 
+ /*
+- * generic requests (e.g., statfs, poolop)
++ * generic requests (currently statfs, mon_get_version)
+  */
+ static struct ceph_mon_generic_request *__lookup_generic_req(
+ 	struct ceph_mon_client *monc, u64 tid)
+@@ -569,7 +569,7 @@ static void handle_statfs_reply(struct ceph_mon_client *monc,
+ 	return;
+ 
+ bad:
+-	pr_err("corrupt generic reply, tid %llu\n", tid);
++	pr_err("corrupt statfs reply, tid %llu\n", tid);
+ 	ceph_msg_dump(msg);
+ }
+ 
+@@ -588,7 +588,6 @@ int ceph_monc_do_statfs(struct ceph_mon_client *monc, struct ceph_statfs *buf)
+ 
+ 	kref_init(&req->kref);
+ 	req->buf = buf;
+-	req->buf_len = sizeof(*buf);
+ 	init_completion(&req->completion);
+ 
+ 	err = -ENOMEM;
+@@ -647,7 +646,7 @@ static void handle_get_version_reply(struct ceph_mon_client *monc,
+ 
+ 	return;
+ bad:
+-	pr_err("corrupt mon_get_version reply\n");
++	pr_err("corrupt mon_get_version reply, tid %llu\n", tid);
+ 	ceph_msg_dump(msg);
+ }
+ 
+@@ -670,7 +669,6 @@ int ceph_monc_do_get_version(struct ceph_mon_client *monc, const char *what,
+ 
+ 	kref_init(&req->kref);
+ 	req->buf = newest;
+-	req->buf_len = sizeof(*newest);
+ 	init_completion(&req->completion);
+ 
+ 	req->request = ceph_msg_new(CEPH_MSG_MON_GET_VERSION,
+@@ -707,128 +705,6 @@ out:
+ EXPORT_SYMBOL(ceph_monc_do_get_version);
+ 
+ /*
+- * pool ops
+- */
+-static int get_poolop_reply_buf(const char *src, size_t src_len,
+-				char *dst, size_t dst_len)
+-{
+-	u32 buf_len;
+-
+-	if (src_len != sizeof(u32) + dst_len)
+-		return -EINVAL;
+-
+-	buf_len = le32_to_cpu(*(__le32 *)src);
+-	if (buf_len != dst_len)
+-		return -EINVAL;
+-
+-	memcpy(dst, src + sizeof(u32), dst_len);
+-	return 0;
+-}
+-
+-static void handle_poolop_reply(struct ceph_mon_client *monc,
+-				struct ceph_msg *msg)
+-{
+-	struct ceph_mon_generic_request *req;
+-	struct ceph_mon_poolop_reply *reply = msg->front.iov_base;
+-	u64 tid = le64_to_cpu(msg->hdr.tid);
+-
+-	if (msg->front.iov_len < sizeof(*reply))
+-		goto bad;
+-	dout("handle_poolop_reply %p tid %llu\n", msg, tid);
+-
+-	mutex_lock(&monc->mutex);
+-	req = __lookup_generic_req(monc, tid);
+-	if (req) {
+-		if (req->buf_len &&
+-		    get_poolop_reply_buf(msg->front.iov_base + sizeof(*reply),
+-				     msg->front.iov_len - sizeof(*reply),
+-				     req->buf, req->buf_len) < 0) {
+-			mutex_unlock(&monc->mutex);
+-			goto bad;
+-		}
+-		req->result = le32_to_cpu(reply->reply_code);
+-		get_generic_request(req);
+-	}
+-	mutex_unlock(&monc->mutex);
+-	if (req) {
+-		complete(&req->completion);
+-		put_generic_request(req);
+-	}
+-	return;
+-
+-bad:
+-	pr_err("corrupt generic reply, tid %llu\n", tid);
+-	ceph_msg_dump(msg);
+-}
+-
+-/*
+- * Do a synchronous pool op.
+- */
+-static int do_poolop(struct ceph_mon_client *monc, u32 op,
+-			u32 pool, u64 snapid,
+-			char *buf, int len)
+-{
+-	struct ceph_mon_generic_request *req;
+-	struct ceph_mon_poolop *h;
+-	int err;
+-
+-	req = kzalloc(sizeof(*req), GFP_NOFS);
+-	if (!req)
+-		return -ENOMEM;
+-
+-	kref_init(&req->kref);
+-	req->buf = buf;
+-	req->buf_len = len;
+-	init_completion(&req->completion);
+-
+-	err = -ENOMEM;
+-	req->request = ceph_msg_new(CEPH_MSG_POOLOP, sizeof(*h), GFP_NOFS,
+-				    true);
+-	if (!req->request)
+-		goto out;
+-	req->reply = ceph_msg_new(CEPH_MSG_POOLOP_REPLY, 1024, GFP_NOFS,
+-				  true);
+-	if (!req->reply)
+-		goto out;
+-
+-	/* fill out request */
+-	req->request->hdr.version = cpu_to_le16(2);
+-	h = req->request->front.iov_base;
+-	h->monhdr.have_version = 0;
+-	h->monhdr.session_mon = cpu_to_le16(-1);
+-	h->monhdr.session_mon_tid = 0;
+-	h->fsid = monc->monmap->fsid;
+-	h->pool = cpu_to_le32(pool);
+-	h->op = cpu_to_le32(op);
+-	h->auid = 0;
+-	h->snapid = cpu_to_le64(snapid);
+-	h->name_len = 0;
+-
+-	err = do_generic_request(monc, req);
+-
+-out:
+-	kref_put(&req->kref, release_generic_request);
+-	return err;
+-}
+-
+-int ceph_monc_create_snapid(struct ceph_mon_client *monc,
+-			    u32 pool, u64 *snapid)
+-{
+-	return do_poolop(monc,  POOL_OP_CREATE_UNMANAGED_SNAP,
+-				   pool, 0, (char *)snapid, sizeof(*snapid));
+-
+-}
+-EXPORT_SYMBOL(ceph_monc_create_snapid);
+-
+-int ceph_monc_delete_snapid(struct ceph_mon_client *monc,
+-			    u32 pool, u64 snapid)
+-{
+-	return do_poolop(monc,  POOL_OP_CREATE_UNMANAGED_SNAP,
+-				   pool, snapid, NULL, 0);
+-
+-}
+-
+-/*
+  * Resend pending generic requests.
+  */
+ static void __resend_generic_request(struct ceph_mon_client *monc)
+@@ -1112,10 +988,6 @@ static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
+ 		handle_get_version_reply(monc, msg);
+ 		break;
+ 
+-	case CEPH_MSG_POOLOP_REPLY:
+-		handle_poolop_reply(monc, msg);
+-		break;
+-
+ 	case CEPH_MSG_MON_MAP:
+ 		ceph_monc_handle_map(monc, msg);
+ 		break;
+@@ -1154,7 +1026,6 @@ static struct ceph_msg *mon_alloc_msg(struct ceph_connection *con,
+ 	case CEPH_MSG_MON_SUBSCRIBE_ACK:
+ 		m = ceph_msg_get(monc->m_subscribe_ack);
+ 		break;
+-	case CEPH_MSG_POOLOP_REPLY:
+ 	case CEPH_MSG_STATFS_REPLY:
+ 		return get_generic_reply(con, hdr, skip);
+ 	case CEPH_MSG_AUTH_REPLY:
+-- 
+2.1.4
+

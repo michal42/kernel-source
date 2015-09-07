@@ -1,0 +1,53 @@
+From: NeilBrown <neilb@suse.de>
+Date: Fri, 13 Mar 2015 11:51:18 +1100
+Subject: [PATCH] md: fix problems with freeing private data after ->run
+ failure.
+Git-commit: 0c35bd4723e4a39ba2da4c13a22cb97986ee10c8
+Patch-mainline: v4.0
+References: bnc#912183
+
+If ->run() fails, it can either free the data structures it
+allocated, or leave that task to ->free() which will be called
+on failures.
+
+However: md.c calls ->free() even if ->private_data is NULL, which
+     causes problems in some personalities.
+  raid0.c frees the data, but doesn't clear ->private_data,
+     which will become a problem when we fix md.c
+
+So better fix both these issues at once.
+
+Reported-by: Richard W.M. Jones <rjones@redhat.com>
+Fixes: 5aa61f427e4979be733e4847b9199ff9cc48a47e
+Url: https://bugzilla.kernel.org/show_bug.cgi?id=94381
+Signed-off-by: NeilBrown <neilb@suse.de>
+Acked-by: NeilBrown <neilb@suse.de>
+
+---
+ drivers/md/md.c    |    3 ++-
+ drivers/md/raid0.c |    2 --
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -5211,7 +5211,8 @@ int md_run(struct mddev *mddev)
+ 	}
+ 	if (err) {
+ 		mddev_detach(mddev);
+-		pers->stop(mddev);
++		if (mddev->private)
++			pers->stop(mddev);
+ 		module_put(pers->owner);
+ 		bitmap_destroy(mddev);
+ 		return err;
+--- a/drivers/md/raid0.c
++++ b/drivers/md/raid0.c
+@@ -476,8 +476,6 @@ static int raid0_run(struct mddev *mddev
+ 	dump_zones(mddev);
+ 
+ 	ret = md_integrity_register(mddev);
+-	if (ret)
+-		raid0_stop(mddev);
+ 
+ 	return ret;
+ }

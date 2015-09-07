@@ -1,0 +1,39 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct iscsi_conn
+Patch-mainline: never, kabi
+
+In 3.12.46, commit fbd29aea83ac72093ebefb9e66e94b58431288d5
+(iscsi-target: Convert iscsi_thread_set usage to kthread.h), upstream
+commit 88dcd2dab5c23b1c9cfc396246d8f476c872f0ca added several members
+to struct iscsi_conn. It indeed changed the layout of that structure.
+
+The same problem happened in 3.12.47 when fixing the above commit by
+commit 59a2ae67bc4a64ba28f424148cc737d5a85fd3ba (iscsi-target: Fix
+iscsit_start_kthreads failure OOPs), upstream commit
+e54198657b65625085834847ab6271087323ffea.
+
+Since struct iscsi_conn is iscsi-internal only and defined likewise,
+we can protect the members the usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ drivers/target/iscsi/iscsi_target_core.h |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/drivers/target/iscsi/iscsi_target_core.h
++++ b/drivers/target/iscsi/iscsi_target_core.h
+@@ -601,12 +601,14 @@ struct iscsi_conn {
+ 	struct iscsi_session	*sess;
+ 	/* Pointer to thread_set in use for this conn's threads */
+ 	struct iscsi_thread_set	*thread_set;
++#ifndef __GENKSYMS__
+ 	int			bitmap_id;
+ 	int			rx_thread_active;
+ 	struct task_struct	*rx_thread;
+ 	struct completion	rx_login_comp;
+ 	int			tx_thread_active;
+ 	struct task_struct	*tx_thread;
++#endif
+ 	/* list_head for session connection list */
+ 	struct list_head	conn_list;
+ } ____cacheline_aligned;

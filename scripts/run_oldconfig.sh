@@ -110,6 +110,8 @@ mode=oldconfig
 option=
 value=
 silent=false
+check=false
+current=false
 until [ "$#" = "0" ] ; do
 	case "$1" in
 	y|-y|--yes)
@@ -154,6 +156,14 @@ until [ "$#" = "0" ] ; do
 		set_flavor="vanilla"
 		shift
 		;;
+	--check)
+		check=true
+		shift
+		;;
+	-c|--current)
+		current=true
+		shift
+		;;
 	-s|--silent)
 		silent=true
 		shift
@@ -175,6 +185,8 @@ possible options in this mode:
 	m|-m|--menuconfig  to run make menuconfig instead of oldconfig
 	--flavor <flavor>  to run only for configs of specified flavor
 	--vanilla          an alias for "--flavor vanilla"
+	--check            just check if configs are up to date
+	-c|--current       uset tmp/current for checks
 
 run it with one of the following options to modify all .config files listed
 in config.conf:
@@ -317,6 +329,17 @@ ask_reuse_config()
     done
 }
 
+filter_config()
+{
+    sed -e '/^# .* is not set$/p' -e '/^$\|^#/d' "$@" | sort
+}
+
+if $current; then
+	prefix=../../$prefix
+	cd tmp/current
+fi
+
+err=0
 for config in $config_files; do
     cpu_arch=${config%/*}
     flavor=${config#*/}
@@ -397,11 +420,33 @@ for config in $config_files; do
 	;;
     *)
 	_region_msg_ "working on $config"
-	make $MAKE_ARGS oldconfig
+        if $check; then
+            if ! make $MAKE_ARGS silentoldconfig </dev/null; then
+                echo "${config#$prefix} is out of date"
+                err=1
+                continue
+            fi
+        else
+            make $MAKE_ARGS oldconfig
+        fi
     esac
-    ask_reuse_config $config .config
-    if ! $silent; then
-        diff -U0 $config .config
+    if ! $check; then
+        ask_reuse_config $config .config
+        if ! $silent; then
+            diff -U0 $config .config
+        fi
+        cp .config $config
+        continue
     fi
-    cp .config $config
+    differences="$(
+        diff -bU0 <(filter_config "$config") <(filter_config .config) | \
+        grep '^[-+][^-+]'
+    )"
+    if echo "$differences" | grep -q '^+' ; then
+        echo "Changes in ${config#$prefix} after running make oldconfig:"
+        echo "$differences"
+        err=1
+    fi
 done
+
+exit $err

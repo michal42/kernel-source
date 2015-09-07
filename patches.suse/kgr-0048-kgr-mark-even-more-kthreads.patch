@@ -420,7 +420,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  			align = dev->copy_align;
 --- a/drivers/hv/hv_balloon.c
 +++ b/drivers/hv/hv_balloon.c
-@@ -1194,6 +1194,8 @@ static int dm_thread_func(void *dm_dev)
+@@ -1257,6 +1257,8 @@ static int dm_thread_func(void *dm_dev)
  	struct hv_dynmem_device *dm = dm_dev;
  
  	while (!kthread_should_stop()) {
@@ -525,7 +525,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  			break;
 --- a/drivers/md/md.c
 +++ b/drivers/md/md.c
-@@ -6892,9 +6892,9 @@ static int md_thread(void * arg)
+@@ -6931,9 +6931,9 @@ static int md_thread(void * arg)
  			flush_signals(current);
  
  		wait_event_interruptible_timeout
@@ -905,7 +905,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	chain = 0;
 --- a/drivers/s390/crypto/ap_bus.c
 +++ b/drivers/s390/crypto/ap_bus.c
-@@ -1845,6 +1845,7 @@ static int ap_poll_thread(void *data)
+@@ -1931,6 +1931,7 @@ static int ap_poll_thread(void *data)
  			schedule();
  			continue;
  		}
@@ -1534,21 +1534,20 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	}
 --- a/drivers/target/iscsi/iscsi_target.c
 +++ b/drivers/target/iscsi/iscsi_target.c
-@@ -3962,9 +3962,11 @@ restart:
+@@ -3945,8 +3945,10 @@ int iscsi_target_tx_thread(void *arg)
  		 */
  		iscsit_thread_check_cpumask(conn, current, 1);
  
 -		wait_event_interruptible(conn->queues_wq,
+-					 !iscsit_conn_all_queues_empty(conn));
 +		wait_event_interruptible(conn->queues_wq, ({
 +					 kgr_task_safe(current);
- 					 !iscsit_conn_all_queues_empty(conn) ||
--					 ts->status == ISCSI_THREAD_SET_RESET);
-+					 ts->status == ISCSI_THREAD_SET_RESET;
++					 !iscsit_conn_all_queues_empty(conn);
 +					 }));
  
- 		if ((ts->status == ISCSI_THREAD_SET_RESET) ||
- 		     signal_pending(current))
-@@ -4102,6 +4104,7 @@ restart:
+ 		if (signal_pending(current))
+ 			goto transport_err;
+@@ -4076,6 +4078,7 @@ int iscsi_target_rx_thread(void *arg)
  	}
  
  	while (!kthread_should_stop()) {
@@ -1558,7 +1557,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  		 * are scheduled to run on the same CPU.
 --- a/drivers/target/iscsi/iscsi_target_login.c
 +++ b/drivers/target/iscsi/iscsi_target_login.c
-@@ -1427,6 +1427,7 @@ int iscsi_target_login_thread(void *arg)
+@@ -1478,6 +1478,7 @@ int iscsi_target_login_thread(void *arg)
  	allow_signal(SIGINT);
  
  	while (1) {
@@ -1751,7 +1750,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  		 */
 --- a/fs/nilfs2/segment.c
 +++ b/fs/nilfs2/segment.c
-@@ -2465,6 +2465,7 @@ static int nilfs_segctor_thread(void *ar
+@@ -2487,6 +2487,7 @@ static int nilfs_segctor_thread(void *ar
  
  	spin_lock(&sci->sc_state_lock);
   loop:
@@ -2074,7 +2073,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  
 --- a/kernel/trace/ring_buffer.c
 +++ b/kernel/trace/ring_buffer.c
-@@ -4786,6 +4786,7 @@ static __init int rb_test(void *arg)
+@@ -4785,6 +4785,7 @@ static __init int rb_test(void *arg)
  	struct rb_test_data *data = arg;
  
  	while (!kthread_should_stop()) {
@@ -2082,7 +2081,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  		rb_write_something(data, false);
  		data->cnt++;
  
-@@ -4809,6 +4810,7 @@ static __init void rb_ipi(void *ignore)
+@@ -4808,6 +4809,7 @@ static __init void rb_ipi(void *ignore)
  static __init int rb_hammer_test(void *arg)
  {
  	while (!kthread_should_stop()) {
@@ -2185,7 +2184,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	}
 --- a/net/netfilter/ipvs/ip_vs_sync.c
 +++ b/net/netfilter/ipvs/ip_vs_sync.c
-@@ -1629,6 +1629,7 @@ static int sync_thread_master(void *data
+@@ -1632,6 +1632,7 @@ static int sync_thread_master(void *data
  		ipvs->master_mcast_ifn, ipvs->master_syncid, tinfo->id);
  
  	for (;;) {
@@ -2193,7 +2192,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  		sb = next_sync_buff(ipvs, ms);
  		if (unlikely(kthread_should_stop()))
  			break;
-@@ -1639,9 +1640,10 @@ static int sync_thread_master(void *data
+@@ -1642,9 +1643,10 @@ static int sync_thread_master(void *data
  		while (ip_vs_send_sync_msg(tinfo->sock, sb->mesg) < 0) {
  			int ret = 0;
  
@@ -2206,7 +2205,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  						   ret);
  			if (unlikely(kthread_should_stop()))
  				goto done;
-@@ -1683,9 +1685,10 @@ static int sync_thread_backup(void *data
+@@ -1686,9 +1688,10 @@ static int sync_thread_backup(void *data
  		ipvs->backup_mcast_ifn, ipvs->backup_syncid, tinfo->id);
  
  	while (!kthread_should_stop()) {
@@ -2231,7 +2230,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	trace_foo_bar("hello", cnt);
 --- a/sound/pci/emu10k1/emu10k1_main.c
 +++ b/sound/pci/emu10k1/emu10k1_main.c
-@@ -710,6 +710,7 @@ static int emu1010_firmware_thread(void
+@@ -715,6 +715,7 @@ static int emu1010_firmware_thread(void
  	int err;
  
  	for (;;) {

@@ -1,0 +1,69 @@
+From fec8c71c3d1daca34aedad32f3ba5758567c95da Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Fri, 20 Jun 2014 18:29:20 +0400
+Subject: [PATCH 129/213] libceph: unregister only registered linger requests
+References: fate#318918
+Git-commit: af59306455587143615517ade1ffce2e8f4fda48
+Patch-mainline: v3.17-rc1
+
+Linger requests that have not yet been registered should not be
+unregistered by __unregister_linger_request().  This messes up ref
+count and leads to use-after-free.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osd_client.c | 19 ++++++++++++++-----
+ 1 file changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/net/ceph/osd_client.c b/net/ceph/osd_client.c
+index 06921d6..bf48e58 100644
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -1257,7 +1257,9 @@ static void __cancel_request(struct ceph_osd_request *req)
+ static void __register_linger_request(struct ceph_osd_client *osdc,
+ 				    struct ceph_osd_request *req)
+ {
+-	dout("__register_linger_request %p\n", req);
++	dout("%s %p tid %llu\n", __func__, req, req->r_tid);
++	WARN_ON(!req->r_linger);
++
+ 	ceph_osdc_get_request(req);
+ 	list_add_tail(&req->r_linger_item, &osdc->req_linger);
+ 	if (req->r_osd)
+@@ -1268,8 +1270,17 @@ static void __register_linger_request(struct ceph_osd_client *osdc,
+ static void __unregister_linger_request(struct ceph_osd_client *osdc,
+ 					struct ceph_osd_request *req)
+ {
+-	dout("__unregister_linger_request %p\n", req);
++	WARN_ON(!req->r_linger);
++
++	if (list_empty(&req->r_linger_item)) {
++		dout("%s %p tid %llu not registered\n", __func__, req,
++		     req->r_tid);
++		return;
++	}
++
++	dout("%s %p tid %llu\n", __func__, req, req->r_tid);
+ 	list_del_init(&req->r_linger_item);
++
+ 	if (req->r_osd) {
+ 		list_del_init(&req->r_linger_osd_item);
+ 		maybe_move_osd_to_lru(osdc, req->r_osd);
+@@ -1283,10 +1294,8 @@ void ceph_osdc_unregister_linger_request(struct ceph_osd_client *osdc,
+ 					 struct ceph_osd_request *req)
+ {
+ 	mutex_lock(&osdc->request_mutex);
+-	if (req->r_linger) {
+-		req->r_linger = 0;
++	if (req->r_linger)
+ 		__unregister_linger_request(osdc, req);
+-	}
+ 	mutex_unlock(&osdc->request_mutex);
+ }
+ EXPORT_SYMBOL(ceph_osdc_unregister_linger_request);
+-- 
+2.1.4
+

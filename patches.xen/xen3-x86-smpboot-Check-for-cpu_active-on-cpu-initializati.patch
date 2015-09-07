@@ -1,0 +1,51 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Thu, 16 Jul 2015 10:40:03 +0200
+Subject: [PATCH] x86/smpboot: Check for cpu_active on cpu initialization
+Patch-mainline: Never, SUSE-Xen specific
+References: bsc#932285
+
+Currently the code to bring up secondary CPUs only checks
+for cpu_online before it proceeds with launching the per-cpu
+threads for the freshly booted remote CPU.
+
+But the code to move these threads to the new CPU checks for
+cpu_active to do so. If this check fails the threads end up
+on the wrong CPU, causing warnings and bugs like:
+
+	WARNING: CPU: 0 PID: 1 at ../kernel/workqueue.c:4417 workqueue_cpu_up_callback
+
+and/or:
+
+	kernel BUG at ../kernel/smpboot.c:135!
+
+The reason is that the cpu_active bit for the new CPU
+becomes visible significantly later than the cpu_online bit.
+The reasons could be that the kernel runs in a KVM guest,
+where the vCPU thread gets preempted when the cpu_online bit
+is set, but with cpu_active still clear.
+
+But this could also happen on bare-metal systems with lots
+of CPUs. We have observed this issue on an 88 core x86
+system on bare-metal.
+
+To fix this issue, wait before the remote CPU is online
+*and* active before launching the per-cpu threads.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+Automatically created from "patches.fixes/x86-smpboot-Check-for-cpu_active-on-cpu-initializati.patch" by xen-port-patches.py
+
+--- a/drivers/xen/core/smpboot.c
++++ b/drivers/xen/core/smpboot.c
+@@ -399,9 +399,10 @@ int __cpu_up(unsigned int cpu, struct ta
+ 		/* Wait 5s total for a response. */
+ 		unsigned long timeout = jiffies + 5 * HZ;
+ 
+-		while (!cpu_online(cpu) && time_before_eq(jiffies, timeout))
++		while ((!cpu_online(cpu) || !cpu_active(cpu)) &&
++			time_before_eq(jiffies, timeout))
+ 			HYPERVISOR_yield();
+-		if (!cpu_online(cpu)) {
++		if (!cpu_online(cpu) || !cpu_active(cpu)) {
+ 			VOID(HYPERVISOR_vcpu_op(VCPUOP_down, cpu, NULL));
+ 			rc = -ETIMEDOUT;
+ 		}
