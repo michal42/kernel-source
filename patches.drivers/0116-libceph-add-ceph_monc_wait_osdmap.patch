@@ -1,0 +1,76 @@
+From e91e183c53902a7f9be46eb562d8b878be9563cc Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Tue, 13 May 2014 11:19:27 +0400
+Subject: [PATCH 116/213] libceph: add ceph_monc_wait_osdmap()
+References: fate#318918
+Git-commit: 6044cde6f2a94d88142d4401624152a741866338
+Patch-mainline: v3.16-rc1
+
+Add ceph_monc_wait_osdmap(), which will block until the osdmap with the
+specified epoch is received or timeout occurs.
+
+Export both of these as they are going to be needed by rbd.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ include/linux/ceph/mon_client.h |  2 ++
+ net/ceph/mon_client.c           | 27 +++++++++++++++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/include/linux/ceph/mon_client.h b/include/linux/ceph/mon_client.h
+index 585ef94..deb47e4 100644
+--- a/include/linux/ceph/mon_client.h
++++ b/include/linux/ceph/mon_client.h
+@@ -104,6 +104,8 @@ extern int ceph_monc_got_mdsmap(struct ceph_mon_client *monc, u32 have);
+ extern int ceph_monc_got_osdmap(struct ceph_mon_client *monc, u32 have);
+ 
+ extern void ceph_monc_request_next_osdmap(struct ceph_mon_client *monc);
++extern int ceph_monc_wait_osdmap(struct ceph_mon_client *monc, u32 epoch,
++				 unsigned long timeout);
+ 
+ extern int ceph_monc_do_statfs(struct ceph_mon_client *monc,
+ 			       struct ceph_statfs *buf);
+diff --git a/net/ceph/mon_client.c b/net/ceph/mon_client.c
+index f57a6b7..61fcfc3 100644
+--- a/net/ceph/mon_client.c
++++ b/net/ceph/mon_client.c
+@@ -296,6 +296,33 @@ void ceph_monc_request_next_osdmap(struct ceph_mon_client *monc)
+ 		__send_subscribe(monc);
+ 	mutex_unlock(&monc->mutex);
+ }
++EXPORT_SYMBOL(ceph_monc_request_next_osdmap);
++
++int ceph_monc_wait_osdmap(struct ceph_mon_client *monc, u32 epoch,
++			  unsigned long timeout)
++{
++	unsigned long started = jiffies;
++	int ret;
++
++	mutex_lock(&monc->mutex);
++	while (monc->have_osdmap < epoch) {
++		mutex_unlock(&monc->mutex);
++
++		if (timeout != 0 && time_after_eq(jiffies, started + timeout))
++			return -ETIMEDOUT;
++
++		ret = wait_event_interruptible_timeout(monc->client->auth_wq,
++					 monc->have_osdmap >= epoch, timeout);
++		if (ret < 0)
++			return ret;
++
++		mutex_lock(&monc->mutex);
++	}
++
++	mutex_unlock(&monc->mutex);
++	return 0;
++}
++EXPORT_SYMBOL(ceph_monc_wait_osdmap);
+ 
+ /*
+  *
+-- 
+2.1.4
+

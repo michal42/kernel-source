@@ -1,0 +1,60 @@
+Patch-mainline: Never, kabi fix
+References: fate#316311
+From: NeilBrown <neilb@suse.com>
+Date: Mon Aug 17 21:34:45 AEST 2015
+Subject: KABI fix - cannot add vs_rpcb_optnl field.
+
+Adding vs_rpcb_optnl as a bit-field break kab, and hiding
+from kallsyms is difficult because the order or bits isn't
+well defined.
+
+So don't store the flag at all, but if
+vs_vers is 4 and vs_nproc is 2 and vs_hidden is 0, then
+it really must be NFSv4 and pretend vs_rpcb_optnl was set.
+
+Signed-off-by: NeilBrown <neilb@suse.com>
+
+
+---
+ fs/nfsd/nfs4proc.c         |    1 -
+ include/linux/sunrpc/svc.h |    4 +---
+ net/sunrpc/svc.c           |    4 +++-
+ 3 files changed, 4 insertions(+), 5 deletions(-)
+
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -1884,7 +1884,6 @@ struct svc_version	nfsd_version4 = {
+ 		.vs_proc	= nfsd_procedures4,
+ 		.vs_dispatch	= nfsd_dispatch,
+ 		.vs_xdrsize	= NFS4_SVC_XDRSIZE,
+-		.vs_rpcb_optnl	= 1,
+ };
+ 
+ /*
+--- a/include/linux/sunrpc/svc.h
++++ b/include/linux/sunrpc/svc.h
+@@ -387,10 +387,8 @@ struct svc_version {
+ 	struct svc_procedure *	vs_proc;	/* per-procedure info */
+ 	u32			vs_xdrsize;	/* xdrsize needed for this version */
+ 
+-	unsigned int		vs_hidden : 1,	/* Don't register with portmapper.
++	unsigned int		vs_hidden : 1;	/* Don't register with portmapper.
+ 						 * Only used for nfsacl so far. */
+-				vs_rpcb_optnl:1;/* Don't care the result of register.
+-						 * Only used for nfsv4. */
+ 
+ 	/* Override dispatch function (e.g. when caching replies).
+ 	 * A return value of 0 means drop the request. 
+--- a/net/sunrpc/svc.c
++++ b/net/sunrpc/svc.c
+@@ -963,7 +963,9 @@ int svc_register(const struct svc_serv *
+ 			error = __svc_register(net, progp->pg_name, progp->pg_prog,
+ 						i, family, proto, port);
+ 
+-			if (vers->vs_rpcb_optnl) {
++			if (vers->vs_vers == 4 && vers->vs_nproc == 2 &&
++			    !vers->vs_hidden) {
++				/* must be NFSv4, act as though  (vers->vs_rpcb_optnl) */
+ 				error = 0;
+ 				continue;
+ 			}

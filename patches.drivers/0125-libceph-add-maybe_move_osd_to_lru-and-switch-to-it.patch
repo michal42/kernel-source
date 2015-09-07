@@ -1,0 +1,78 @@
+From 3eabcf15ecb13f6d1b4413e395884e6f87904a60 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Fri, 20 Jun 2014 14:14:41 +0400
+Subject: [PATCH 125/213] libceph: add maybe_move_osd_to_lru() and switch to it
+References: fate#318918
+Git-commit: bbf37ec3a668a983f88b069ec2b7a1781c428eb5
+Patch-mainline: v3.17-rc1
+
+Abstract out __move_osd_to_lru() logic from __unregister_request() and
+__unregister_linger_request().
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osd_client.c | 26 ++++++++++++++------------
+ 1 file changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/net/ceph/osd_client.c b/net/ceph/osd_client.c
+index 460f117..b21bda1 100644
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -1041,12 +1041,23 @@ static void remove_all_osds(struct ceph_osd_client *osdc)
+ static void __move_osd_to_lru(struct ceph_osd_client *osdc,
+ 			      struct ceph_osd *osd)
+ {
+-	dout("__move_osd_to_lru %p\n", osd);
++	dout("%s %p\n", __func__, osd);
+ 	BUG_ON(!list_empty(&osd->o_osd_lru));
++
+ 	list_add_tail(&osd->o_osd_lru, &osdc->osd_lru);
+ 	osd->lru_ttl = jiffies + osdc->client->options->osd_idle_ttl * HZ;
+ }
+ 
++static void maybe_move_osd_to_lru(struct ceph_osd_client *osdc,
++				  struct ceph_osd *osd)
++{
++	dout("%s %p\n", __func__, osd);
++
++	if (list_empty(&osd->o_requests) &&
++	    list_empty(&osd->o_linger_requests))
++		__move_osd_to_lru(osdc, osd);
++}
++
+ static void __remove_osd_from_lru(struct ceph_osd *osd)
+ {
+ 	dout("__remove_osd_from_lru %p\n", osd);
+@@ -1193,11 +1204,7 @@ static void __unregister_request(struct ceph_osd_client *osdc,
+ 		ceph_msg_revoke(req->r_request);
+ 
+ 		list_del_init(&req->r_osd_item);
+-		if (list_empty(&req->r_osd->o_requests) &&
+-		    list_empty(&req->r_osd->o_linger_requests)) {
+-			dout("moving osd to %p lru\n", req->r_osd);
+-			__move_osd_to_lru(osdc, req->r_osd);
+-		}
++		maybe_move_osd_to_lru(osdc, req->r_osd);
+ 		if (list_empty(&req->r_linger_item))
+ 			req->r_osd = NULL;
+ 	}
+@@ -1240,12 +1247,7 @@ static void __unregister_linger_request(struct ceph_osd_client *osdc,
+ 	list_del_init(&req->r_linger_item);
+ 	if (req->r_osd) {
+ 		list_del_init(&req->r_linger_osd_item);
+-
+-		if (list_empty(&req->r_osd->o_requests) &&
+-		    list_empty(&req->r_osd->o_linger_requests)) {
+-			dout("moving osd to %p lru\n", req->r_osd);
+-			__move_osd_to_lru(osdc, req->r_osd);
+-		}
++		maybe_move_osd_to_lru(osdc, req->r_osd);
+ 		if (list_empty(&req->r_osd_item))
+ 			req->r_osd = NULL;
+ 	}
+-- 
+2.1.4
+

@@ -1,10 +1,9 @@
 From: Dave Airlie <airlied@redhat.com>
 Date: Fri Mar 28 11:05:12 2014 +1000
 Subject: drm/ast: initial DP501 support (v0.2)
-Patch-mainline: Upstream/v3.16-rc1
+Patch-mainline: v3.16-rc1
 Git-commit: 83c6620bae3f14adb2430fdcc367980fe3b7bee2
 References: bnc#871134
-Signed-off-by: Egbert Eich <eich@suse.com>
 
 This is the initial attempt at porting the DP501 code from the userspace
 driver,
@@ -20,6 +19,7 @@ add scratch reduction of VRAM size
 backup firmware properly.
 
 Signed-off-by: Dave Airlie <airlied@redhat.com>
+Signed-off-by: Egbert Eich <eich@suse.com>
 ---
  drivers/gpu/drm/ast/Makefile    |    4 
  drivers/gpu/drm/ast/ast_dp501.c |  411 ++++++++++++++++++++++++++++++++++++++++
@@ -29,8 +29,8 @@ Signed-off-by: Dave Airlie <airlied@redhat.com>
  drivers/gpu/drm/ast/ast_post.c  |    6 
  6 files changed, 508 insertions(+), 13 deletions(-)
 
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/Makefile
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/Makefile
+--- a/drivers/gpu/drm/ast/Makefile
++++ b/drivers/gpu/drm/ast/Makefile
 @@ -4,6 +4,6 @@
  
  ccflags-y := -Iinclude/drm
@@ -42,7 +42,7 @@ Signed-off-by: Dave Airlie <airlied@redhat.com>
 \ No newline at end of file
 +obj-$(CONFIG_DRM_AST) := ast.o
 --- /dev/null
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_dp501.c
++++ b/drivers/gpu/drm/ast/ast_dp501.c
 @@ -0,0 +1,411 @@
 +
 +#include <linux/firmware.h>
@@ -455,8 +455,8 @@ Signed-off-by: Dave Airlie <airlied@redhat.com>
 +		}
 +	}
 +}
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_drv.h
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_drv.h
+--- a/drivers/gpu/drm/ast/ast_drv.h
++++ b/drivers/gpu/drm/ast/ast_drv.h
 @@ -65,6 +65,13 @@ enum ast_chip {
  	AST1180,
  };
@@ -498,8 +498,8 @@ Signed-off-by: Dave Airlie <airlied@redhat.com>
 +u8 ast_get_dp501_max_clk(struct drm_device *dev);
 +void ast_init_3rdtx(struct drm_device *dev);
  #endif
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_main.c
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_main.c
+--- a/drivers/gpu/drm/ast/ast_main.c
++++ b/drivers/gpu/drm/ast/ast_main.c
 @@ -66,6 +66,7 @@ uint8_t ast_get_index_reg_mask(struct as
  static int ast_detect_chip(struct drm_device *dev)
  {
@@ -596,8 +596,8 @@ Signed-off-by: Dave Airlie <airlied@redhat.com>
  	ast_mode_fini(dev);
  	ast_fbdev_fini(dev);
  	drm_mode_config_cleanup(dev);
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_mode.c
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_mode.c
+--- a/drivers/gpu/drm/ast/ast_mode.c
++++ b/drivers/gpu/drm/ast/ast_mode.c
 @@ -460,9 +460,13 @@ static void ast_crtc_dpms(struct drm_crt
  	case DRM_MODE_DPMS_STANDBY:
  	case DRM_MODE_DPMS_SUSPEND:
@@ -639,8 +639,8 @@ Signed-off-by: Dave Airlie <airlied@redhat.com>
  	if (edid) {
  		drm_mode_connector_update_edid_property(&ast_connector->base, edid);
  		ret = drm_add_edid_modes(connector, edid);
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_post.c
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_post.c
+--- a/drivers/gpu/drm/ast/ast_post.c
++++ b/drivers/gpu/drm/ast/ast_post.c
 @@ -107,7 +107,7 @@ ast_set_def_ext_reg(struct drm_device *d
  	ast_set_index_reg_mask(ast, AST_IO_CRTC_PORT, 0xb6, 0xff, reg);
  }

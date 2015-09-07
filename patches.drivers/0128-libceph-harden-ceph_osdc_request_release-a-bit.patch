@@ -1,0 +1,47 @@
+From 156765ed92fe654ae2a92e538a333ad69bf8a8df Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Fri, 20 Jun 2014 14:14:42 +0400
+Subject: [PATCH 128/213] libceph: harden ceph_osdc_request_release() a bit
+References: fate#318918
+Git-commit: 6562d661d205ff9bd855345d6424b9fb07adaf62
+Patch-mainline: v3.17-rc1
+
+Add some WARN_ONs to alert us when we try to destroy requests that are
+still registered.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ net/ceph/osd_client.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/net/ceph/osd_client.c b/net/ceph/osd_client.c
+index 9445935..06921d6 100644
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -305,6 +305,12 @@ static void ceph_osdc_release_request(struct kref *kref)
+ 
+ 	dout("%s %p (r_request %p r_reply %p)\n", __func__, req,
+ 	     req->r_request, req->r_reply);
++	WARN_ON(!RB_EMPTY_NODE(&req->r_node));
++	WARN_ON(!list_empty(&req->r_req_lru_item));
++	WARN_ON(!list_empty(&req->r_osd_item));
++	WARN_ON(!list_empty(&req->r_linger_item));
++	WARN_ON(!list_empty(&req->r_linger_osd_item));
++	WARN_ON(req->r_osd);
+ 
+ 	if (req->r_request)
+ 		ceph_msg_put(req->r_request);
+@@ -1215,6 +1221,7 @@ static void __unregister_request(struct ceph_osd_client *osdc,
+ 
+ 	dout("__unregister_request %p tid %lld\n", req, req->r_tid);
+ 	rb_erase(&req->r_node, &osdc->requests);
++	RB_CLEAR_NODE(&req->r_node);
+ 	osdc->num_requests--;
+ 
+ 	if (req->r_osd) {
+-- 
+2.1.4
+

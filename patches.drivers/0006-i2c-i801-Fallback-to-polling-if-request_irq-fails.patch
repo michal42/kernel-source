@@ -1,0 +1,45 @@
+From ae9447171748180d4e946839c5eed6123f07f943 Mon Sep 17 00:00:00 2001
+From: Jean Delvare <jdelvare@suse.de>
+Date: Wed, 12 Nov 2014 10:24:07 +0100
+Subject: [PATCH] i2c: i801: Fallback to polling if request_irq() fails
+
+Git-commit: ae9447171748180d4e946839c5eed6123f07f943
+Patch-mainline: v3.19
+References: fate#318514
+Target: SLE12
+
+The i2c-i801 driver can work without interrupts, so there is no reason
+to make a request_irq failure fatal. Instead we can simply fallback
+to polling.
+
+Signed-off-by: Jean Delvare <jdelvare@suse.de>
+Signed-off-by: Wolfram Sang <wsa@the-dreams.de>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ drivers/i2c/busses/i2c-i801.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/drivers/i2c/busses/i2c-i801.c
++++ b/drivers/i2c/busses/i2c-i801.c
+@@ -1243,10 +1243,11 @@ static int i801_probe(struct pci_dev *de
+ 		if (err) {
+ 			dev_err(&dev->dev, "Failed to allocate irq %d: %d\n",
+ 				dev->irq, err);
+-			goto exit_release;
++			priv->features &= ~FEATURE_IRQ;
+ 		}
+-		dev_info(&dev->dev, "SMBus using PCI Interrupt\n");
+ 	}
++	dev_info(&dev->dev, "SMBus using %s\n",
++		 priv->features & FEATURE_IRQ ? "PCI interrupt" : "polling");
+ 
+ 	/* set up the sysfs linkage to our parent device */
+ 	priv->adapter.dev.parent = &dev->dev;
+@@ -1273,7 +1274,6 @@ static int i801_probe(struct pci_dev *de
+ exit_free_irq:
+ 	if (priv->features & FEATURE_IRQ)
+ 		free_irq(dev->irq, priv);
+-exit_release:
+ 	pci_release_region(dev, SMBBAR);
+ exit:
+ 	kfree(priv);

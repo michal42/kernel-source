@@ -1,0 +1,28 @@
+Subject: hv: fcopy: add memory barrier to propagate state
+From: <ohering@suse.de>
+Patch-mainline: Never, this change carry until upstream provides better method
+References: bnc#943529
+
+The .state is used by several threads of execution.
+Propagate the state to make changes visible.
+Without this change fcopy may hang at random points.
+
+diff --git a/drivers/hv/hv_fcopy.c b/drivers/hv/hv_fcopy.c
+index d1475e6..5db272e 100644
+--- a/drivers/hv/hv_fcopy.c
++++ b/drivers/hv/hv_fcopy.c
+@@ -339,6 +339,14 @@ static ssize_t fcopy_write(struct file *file, const char __user *buf,
+ 		fcopy_transaction.state = HVUTIL_USERSPACE_RECV;
+ 		fcopy_respond_to_host(response);
+ 		fcopy_transaction.state = HVUTIL_READY;
++		/*
++		 * Make the new state visible to hv_fcopy_onchannelcallback.
++		 * If an interrupt happens before: the other thread
++		 * sets the context, this thread picks it up.
++		 * If an interrupt happpens after: the other threads
++		 * sees the new state and processes its context.
++		 */
++		mb();
+ 		hv_poll_channel(fcopy_transaction.fcopy_context,
+ 				hv_fcopy_onchannelcallback);
+ 	}

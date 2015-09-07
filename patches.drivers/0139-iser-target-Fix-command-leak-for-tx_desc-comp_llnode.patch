@@ -33,15 +33,15 @@ Acked-by: Hannes Reinecke <hare@suse.de>
 
 --- a/drivers/infiniband/ulp/isert/ib_isert.c
 +++ b/drivers/infiniband/ulp/isert/ib_isert.c
-@@ -512,7 +512,6 @@ isert_connect_request(struct rdma_cm_id
+@@ -534,7 +534,6 @@ isert_connect_request(struct rdma_cm_id
  	init_completion(&isert_conn->conn_wait_comp_err);
  	kref_init(&isert_conn->conn_kref);
  	mutex_init(&isert_conn->conn_mutex);
 -	mutex_init(&isert_conn->conn_comp_mutex);
  	spin_lock_init(&isert_conn->conn_lock);
  	INIT_LIST_HEAD(&isert_conn->conn_fr_pool);
- 
-@@ -891,16 +890,17 @@ isert_init_send_wr(struct isert_conn *is
+ 	INIT_WORK(&isert_conn->release_work, isert_release_work);
+@@ -1006,16 +1005,17 @@ isert_init_send_wr(struct isert_conn *is
  	 * Coalesce send completion interrupts by only setting IB_SEND_SIGNALED
  	 * bit for every ISERT_COMP_BATCH_COUNT number of ib_post_send() calls.
  	 */
@@ -63,7 +63,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	send_wr->send_flags = IB_SEND_SIGNALED;
  }
-@@ -1717,10 +1717,45 @@ isert_send_completion(struct iser_tx_des
+@@ -1843,10 +1843,45 @@ isert_send_completion(struct iser_tx_des
  }
  
  static void
@@ -110,7 +110,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  
  	if (!isert_cmd)
  		isert_unmap_tx_desc(tx_desc, ib_dev);
-@@ -1736,6 +1771,8 @@ isert_cq_rx_comp_err(struct isert_conn *
+@@ -1862,6 +1897,8 @@ isert_cq_rx_comp_err(struct isert_conn *
  	if (isert_conn->post_recv_buf_count)
  		return;
  
@@ -119,7 +119,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	if (conn->sess) {
  		target_sess_cmd_list_set_waiting(conn->sess->se_sess);
  		target_wait_for_sess_cmds(conn->sess->se_sess);
-@@ -1777,6 +1814,9 @@ isert_cq_tx_work(struct work_struct *wor
+@@ -1903,6 +1940,9 @@ isert_cq_tx_work(struct work_struct *wor
  			pr_debug("TX wc.vendor_err: 0x%08x\n", wc.vendor_err);
  
  			if (wc.wr_id != ISER_FASTREG_LI_WRID) {
@@ -131,7 +131,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  			}
 --- a/drivers/infiniband/ulp/isert/ib_isert.h
 +++ b/drivers/infiniband/ulp/isert/ib_isert.h
-@@ -46,6 +46,7 @@ struct iser_tx_desc {
+@@ -47,6 +47,7 @@ struct iser_tx_desc {
  	struct isert_cmd *isert_cmd;
  	struct llist_node *comp_llnode_batch;
  	struct llist_node comp_llnode;
@@ -139,7 +139,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	struct ib_send_wr send_wr;
  } __packed;
  
-@@ -127,7 +128,6 @@ struct isert_conn {
+@@ -129,7 +130,6 @@ struct isert_conn {
  #define ISERT_COMP_BATCH_COUNT	8
  	int			conn_comp_batch;
  	struct llist_head	conn_comp_llist;

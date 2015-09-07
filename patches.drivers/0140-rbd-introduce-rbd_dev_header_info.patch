@@ -1,0 +1,79 @@
+From 48b7786f01332b94aa479a49a6dad9dffeba6308 Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Wed, 23 Jul 2014 17:11:19 +0400
+Subject: [PATCH 140/213] rbd: introduce rbd_dev_header_info()
+References: fate#318918
+Git-commit: a720ae0901eddab5c94a17402b7ed29e1afb5003
+Patch-mainline: v3.17-rc1
+
+A wrapper around rbd_dev_v{1,2}_header_info() to reduce duplication.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 7d45e3a..095d025 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -498,7 +498,7 @@ static void rbd_dev_remove_parent(struct rbd_device *rbd_dev);
+ 
+ static int rbd_dev_refresh(struct rbd_device *rbd_dev);
+ static int rbd_dev_v2_header_onetime(struct rbd_device *rbd_dev);
+-static int rbd_dev_v2_header_info(struct rbd_device *rbd_dev);
++static int rbd_dev_header_info(struct rbd_device *rbd_dev);
+ static const char *rbd_dev_v2_snap_name(struct rbd_device *rbd_dev,
+ 					u64 snap_id);
+ static int _rbd_dev_v2_snap_size(struct rbd_device *rbd_dev, u64 snap_id,
+@@ -3548,13 +3548,10 @@ static int rbd_dev_refresh(struct rbd_device *rbd_dev)
+ 	u64 mapping_size;
+ 	int ret;
+ 
+-	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
+ 	down_write(&rbd_dev->header_rwsem);
+ 	mapping_size = rbd_dev->mapping.size;
+-	if (rbd_dev->image_format == 1)
+-		ret = rbd_dev_v1_header_info(rbd_dev);
+-	else
+-		ret = rbd_dev_v2_header_info(rbd_dev);
++
++	ret = rbd_dev_header_info(rbd_dev);
+ 
+ 	/* If it's a mapped snapshot, validate its EXISTS flag */
+ 
+@@ -4554,6 +4551,16 @@ static int rbd_dev_v2_header_info(struct rbd_device *rbd_dev)
+ 	return ret;
+ }
+ 
++static int rbd_dev_header_info(struct rbd_device *rbd_dev)
++{
++	rbd_assert(rbd_image_format_valid(rbd_dev->image_format));
++
++	if (rbd_dev->image_format == 1)
++		return rbd_dev_v1_header_info(rbd_dev);
++
++	return rbd_dev_v2_header_info(rbd_dev);
++}
++
+ static int rbd_bus_add_dev(struct rbd_device *rbd_dev)
+ {
+ 	struct device *dev;
+@@ -5199,10 +5206,7 @@ static int rbd_dev_image_probe(struct rbd_device *rbd_dev, bool mapping)
+ 			goto out_header_name;
+ 	}
+ 
+-	if (rbd_dev->image_format == 1)
+-		ret = rbd_dev_v1_header_info(rbd_dev);
+-	else
+-		ret = rbd_dev_v2_header_info(rbd_dev);
++	ret = rbd_dev_header_info(rbd_dev);
+ 	if (ret)
+ 		goto err_out_watch;
+ 
+-- 
+2.1.4
+

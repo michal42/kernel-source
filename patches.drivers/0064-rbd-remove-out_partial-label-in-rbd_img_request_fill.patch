@@ -1,0 +1,63 @@
+From a0617f29d23a494b778429093bdd69d254b0c7dd Mon Sep 17 00:00:00 2001
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Tue, 4 Mar 2014 11:57:17 +0200
+Subject: [PATCH 064/213] rbd: remove out_partial label in
+ rbd_img_request_fill()
+References: fate#318918
+Git-commit: 62054da65c626dd603190c16805f92cf2cf47d4c
+Patch-mainline: v3.15-rc5
+
+Commit 03507db631c94 ("rbd: fix buffer size for writes to images with
+snapshots") moved the call to rbd_img_obj_request_add() up, making the
+out_partial label bogus.  Remove it.
+
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index 341ad81..b88afa1 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -2248,6 +2248,7 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
+ 		rbd_segment_name_free(object_name);
+ 		if (!obj_request)
+ 			goto out_unwind;
++
+ 		/*
+ 		 * set obj_request->img_request before creating the
+ 		 * osd_request so that it gets the right snapc
+@@ -2265,7 +2266,7 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
+ 								clone_size,
+ 								GFP_ATOMIC);
+ 			if (!obj_request->bio_list)
+-				goto out_partial;
++				goto out_unwind;
+ 		} else {
+ 			unsigned int page_count;
+ 
+@@ -2280,7 +2281,7 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
+ 		osd_req = rbd_osd_req_create(rbd_dev, write_request,
+ 						obj_request);
+ 		if (!osd_req)
+-			goto out_partial;
++			goto out_unwind;
+ 		obj_request->osd_req = osd_req;
+ 		obj_request->callback = rbd_img_obj_callback;
+ 		rbd_img_request_get(img_request);
+@@ -2308,8 +2309,6 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
+ 
+ 	return 0;
+ 
+-out_partial:
+-	rbd_obj_request_put(obj_request);
+ out_unwind:
+ 	for_each_obj_request_safe(img_request, obj_request, next_obj_request)
+ 		rbd_img_obj_request_del(img_request, obj_request);
+-- 
+2.1.4
+

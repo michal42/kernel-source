@@ -1,0 +1,51 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Thu, 16 Jul 2015 10:40:03 +0200
+Subject: [PATCH] x86/smpboot: Check for cpu_active on cpu initialization
+Git-repo: origin
+Patch-mainline: no
+Git-commit: none
+References: bsc#936773
+
+Currently the code to bring up secondary CPUs only checks
+for cpu_online before it proceeds with launching the per-cpu
+threads for the freshly booted remote CPU.
+
+But the code to move these threads to the new CPU checks for
+cpu_active to do so. If this check fails the threads end up
+on the wrong CPU, causing warnings and bugs like:
+
+	WARNING: CPU: 0 PID: 1 at ../kernel/workqueue.c:4417 workqueue_cpu_up_callback
+
+and/or:
+
+	kernel BUG at ../kernel/smpboot.c:135!
+
+The reason is that the cpu_active bit for the new CPU
+becomes visible significantly later than the cpu_online bit.
+The reasons could be that the kernel runs in a KVM guest,
+where the vCPU thread gets preempted when the cpu_online bit
+is set, but with cpu_active still clear.
+
+But this could also happen on bare-metal systems with lots
+of CPUs. We have observed this issue on an 88 core x86
+system on bare-metal.
+
+To fix this issue, wait before the remote CPU is online
+*and* active before launching the per-cpu threads.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ arch/x86/kernel/smpboot.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/arch/x86/kernel/smpboot.c
++++ b/arch/x86/kernel/smpboot.c
+@@ -930,7 +930,7 @@
+ 	check_tsc_sync_source(cpu);
+ 	local_irq_restore(flags);
+ 
+-	while (!cpu_online(cpu)) {
++	while (!cpu_online(cpu) || !cpu_active(cpu)) {
+ 		cpu_relax();
+ 		touch_nmi_watchdog();
+ 	}
