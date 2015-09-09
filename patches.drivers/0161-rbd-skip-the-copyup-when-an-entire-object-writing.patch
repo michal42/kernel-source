@@ -1,0 +1,42 @@
+From be4085f8eda1533fe217ed8381d873c5ccbf1eb0 Mon Sep 17 00:00:00 2001
+From: Guangliang Zhao <lucienchao@gmail.com>
+Date: Tue, 1 Apr 2014 22:22:15 +0800
+Subject: [PATCH 161/213] rbd: skip the copyup when an entire object writing
+References: fate#318918
+Git-commit: c622d226155b12276ae3d29d546f4b314d7cd68c
+Patch-mainline: v3.18-rc1
+
+It need to copyup the parent's content when layered writing,
+but an entire object write would overwrite it, so skip it.
+
+Signed-off-by: Guangliang Zhao <lucienchao@gmail.com>
+Reviewed-by: Josh Durgin <josh.durgin@inktank.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/block/rbd.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/block/rbd.c b/drivers/block/rbd.c
+index a527203..079a181 100644
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -2812,6 +2812,14 @@ static bool img_obj_request_simple(struct rbd_obj_request *obj_request)
+ 		return true;
+ 
+ 	/*
++	 * Entire-object layered writes - we will overwrite whatever
++	 * parent data there is anyway.
++	 */
++	if (!obj_request->offset &&
++	    obj_request->length == rbd_obj_bytes(&rbd_dev->header))
++		return true;
++
++	/*
+ 	 * If the object is known to already exist, its parent data has
+ 	 * already been copied.
+ 	 */
+-- 
+2.1.4
+

@@ -1,12 +1,12 @@
 From: jbeulich@novell.com
 Subject: x86: use per-cpu storage for shared vcpu_info structure
-Patch-mainline: obsolete
+Patch-mainline: Never, SUSE-Xen specific
 
 ... reducing access code size and latency, as well as being the
 prerequisite for removing the limitation on 32 vCPU-s per guest.
 
---- sle12.orig/arch/x86/include/mach-xen/asm/hypervisor.h	2012-05-11 16:46:55.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/hypervisor.h	2012-06-15 11:18:35.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/hypervisor.h
++++ b/arch/x86/include/mach-xen/asm/hypervisor.h
 @@ -45,7 +45,13 @@
  
  extern shared_info_t *HYPERVISOR_shared_info;
@@ -30,8 +30,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  #endif
  
  #ifdef CONFIG_X86_32
---- sle12.orig/arch/x86/include/mach-xen/asm/irqflags.h	2012-05-24 09:13:47.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/irqflags.h	2012-05-24 09:53:54.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/irqflags.h
++++ b/arch/x86/include/mach-xen/asm/irqflags.h
 @@ -14,8 +14,19 @@
   * includes these barriers, for example.
   */
@@ -122,8 +122,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  	TRACE_IRQS_OFF							; \
  sysexit_ecrit:	/**** END OF SYSEXIT CRITICAL REGION ****/		; \
  	mov  $__KERNEL_PERCPU, %ecx					; \
---- sle12.orig/arch/x86/include/mach-xen/asm/percpu.h	2012-07-05 12:31:24.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/percpu.h	2012-07-05 13:56:08.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/percpu.h
++++ b/arch/x86/include/mach-xen/asm/percpu.h
 @@ -29,4 +29,47 @@
  
  #define this_vcpu_read(pcp) __pcpu_size_call_return(this_vcpu_read_, pcp)
@@ -172,8 +172,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
 +#endif
 +
  #endif /* _ASM_X86_XEN_PERCPU_H */
---- sle12.orig/arch/x86/include/mach-xen/asm/pgtable_64.h	2012-06-14 14:06:03.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/pgtable_64.h	2011-03-23 10:12:10.000000000 +0100
+--- a/arch/x86/include/mach-xen/asm/pgtable_64.h
++++ b/arch/x86/include/mach-xen/asm/pgtable_64.h
 @@ -123,6 +123,8 @@ static inline void xen_set_pgd(pgd_t *pg
  
  #define __pte_mfn(_pte) (((_pte).pte & PTE_PFN_MASK) >> PAGE_SHIFT)
@@ -183,8 +183,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  extern void sync_global_pgds(unsigned long start, unsigned long end);
  
  /*
---- sle12.orig/arch/x86/include/mach-xen/asm/special_insns.h	2013-08-12 13:00:59.000000000 +0200
-+++ sle12/arch/x86/include/mach-xen/asm/special_insns.h	2012-04-13 15:59:06.000000000 +0200
+--- a/arch/x86/include/mach-xen/asm/special_insns.h
++++ b/arch/x86/include/mach-xen/asm/special_insns.h
 @@ -97,8 +97,8 @@ static inline void xen_write_cr0(unsigne
  	xen_clear_cr0_upd();
  }
@@ -196,8 +196,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  
  static inline unsigned long xen_read_cr3(void)
  {
---- sle12.orig/arch/x86/kernel/cpu/common-xen.c	2014-12-08 14:03:26.000000000 +0100
-+++ sle12/arch/x86/kernel/cpu/common-xen.c	2013-03-25 16:33:44.000000000 +0100
+--- a/arch/x86/kernel/cpu/common-xen.c
++++ b/arch/x86/kernel/cpu/common-xen.c
 @@ -394,8 +394,16 @@ static const char *table_lookup_model(st
  __u32 cpu_caps_cleared[NCAPINTS];
  __u32 cpu_caps_set[NCAPINTS];
@@ -216,8 +216,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  #ifdef CONFIG_X86_32
  	loadsegment(fs, __KERNEL_PERCPU);
  #else
---- sle12.orig/arch/x86/kernel/head-xen.c	2013-04-05 09:25:29.000000000 +0200
-+++ sle12/arch/x86/kernel/head-xen.c	2013-04-05 09:27:47.000000000 +0200
+--- a/arch/x86/kernel/head-xen.c
++++ b/arch/x86/kernel/head-xen.c
 @@ -165,6 +165,8 @@ void __init xen_start_kernel(void)
  	HYPERVISOR_shared_info = (shared_info_t *)fix_to_virt(FIX_SHARED_INFO);
  	clear_page(empty_zero_page);
@@ -227,8 +227,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  	/* Set up mapping of lowest 1MB of physical memory. */
  	for (i = 0; i < NR_FIX_ISAMAPS; i++)
  		if (is_initial_xendomain())
---- sle12.orig/arch/x86/kernel/time-xen.c	2014-01-28 16:20:58.000000000 +0100
-+++ sle12/arch/x86/kernel/time-xen.c	2014-02-06 15:34:02.000000000 +0100
+--- a/arch/x86/kernel/time-xen.c
++++ b/arch/x86/kernel/time-xen.c
 @@ -209,16 +209,10 @@ static void get_time_values_from_xen(uns
  	local_irq_restore(flags);
  }
@@ -295,8 +295,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  			get_time_values_from_xen(cpu);
  		barrier();
  	} while (local_time_version != shadow->version);
---- sle12.orig/arch/x86/mm/hypervisor.c	2012-05-31 14:49:57.000000000 +0200
-+++ sle12/arch/x86/mm/hypervisor.c	2011-11-18 17:17:01.000000000 +0100
+--- a/arch/x86/mm/hypervisor.c
++++ b/arch/x86/mm/hypervisor.c
 @@ -42,6 +42,7 @@
  #include <xen/balloon.h>
  #include <xen/features.h>
@@ -409,8 +409,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  
  #define NR_MC     BITS_PER_LONG
  #define NR_MMU    BITS_PER_LONG
---- sle12.orig/arch/x86/mm/init_64-xen.c	2013-05-27 14:13:52.000000000 +0200
-+++ sle12/arch/x86/mm/init_64-xen.c	2013-05-27 14:14:12.000000000 +0200
+--- a/arch/x86/mm/init_64-xen.c
++++ b/arch/x86/mm/init_64-xen.c
 @@ -121,6 +121,26 @@ void __init early_make_page_readonly(voi
  		BUG();
  }
@@ -438,8 +438,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  static void ident_pmd_init(unsigned long pmd_flag, pmd_t *pmd_page,
  			   unsigned long addr, unsigned long end)
  {
---- sle12.orig/drivers/xen/Kconfig	2012-02-10 13:31:58.000000000 +0100
-+++ sle12/drivers/xen/Kconfig	2014-02-06 15:33:43.000000000 +0100
+--- a/drivers/xen/Kconfig
++++ b/drivers/xen/Kconfig
 @@ -330,6 +330,18 @@ config XEN_COMPAT
  	default 0x030002 if XEN_COMPAT_030002_AND_LATER
  	default 0
@@ -459,8 +459,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  endmenu
  
  config HAVE_IRQ_IGNORE_UNHANDLED
---- sle12.orig/drivers/xen/core/evtchn.c	2014-05-06 08:32:24.000000000 +0200
-+++ sle12/drivers/xen/core/evtchn.c	2014-02-06 15:33:40.000000000 +0100
+--- a/drivers/xen/core/evtchn.c
++++ b/drivers/xen/core/evtchn.c
 @@ -372,6 +372,10 @@ static DEFINE_PER_CPU(unsigned int, upca
  static DEFINE_PER_CPU(unsigned int, current_l1i);
  static DEFINE_PER_CPU(unsigned int, current_l2i);
@@ -539,8 +539,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  }
  EXPORT_SYMBOL_GPL(unmask_evtchn);
  
---- sle12.orig/drivers/xen/core/machine_reboot.c	2011-11-18 17:16:21.000000000 +0100
-+++ sle12/drivers/xen/core/machine_reboot.c	2013-03-05 15:50:14.000000000 +0100
+--- a/drivers/xen/core/machine_reboot.c
++++ b/drivers/xen/core/machine_reboot.c
 @@ -69,7 +69,7 @@ static void pre_suspend(void)
  		mfn_to_pfn(xen_start_info->console.domU.mfn);
  }
@@ -593,8 +593,8 @@ prerequisite for removing the limitation on 32 vCPU-s per guest.
  	if (!suspend_cancelled)
  		xen_clockevents_resume(false);
  	if (suspend_cancelled >= 0)
---- sle12.orig/drivers/xen/core/smpboot.c	2013-08-12 16:18:29.000000000 +0200
-+++ sle12/drivers/xen/core/smpboot.c	2013-08-12 16:19:37.000000000 +0200
+--- a/drivers/xen/core/smpboot.c
++++ b/drivers/xen/core/smpboot.c
 @@ -277,8 +277,13 @@ void __init smp_prepare_cpus(unsigned in
  
  void __init smp_prepare_boot_cpu(void)

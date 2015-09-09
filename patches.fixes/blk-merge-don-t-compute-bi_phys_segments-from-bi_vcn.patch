@@ -1,0 +1,47 @@
+From: Ming Lei <ming.lei@canonical.com>
+Date: Thu, 9 Oct 2014 23:17:35 +0800
+Subject: blk-merge: don't compute bi_phys_segments from bi_vcnt for cloned bio
+References: bnc#934430
+Patch-Mainline: v3.19
+Git-commit: 764f612c6c3c231b9c12cfae7c328ccc9c453258
+
+It isn't correct to figure out req->bi_phys_segments from bio->bi_vcnt
+if the bio is cloned.
+
+Signed-off-by: Ming Lei <ming.lei@canonical.com>
+Tested-by: Jeff Mahoney <jeffm@suse.com>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ block/blk-merge.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/block/blk-merge.c b/block/blk-merge.c
+index f39658c..98e2e23 100644
+--- a/block/blk-merge.c
++++ b/block/blk-merge.c
+@@ -95,14 +95,18 @@ void blk_recalc_rq_segments(struct request *rq)
+ 
+ void blk_recount_segments(struct request_queue *q, struct bio *bio)
+ {
+-	if (test_bit(QUEUE_FLAG_NO_SG_MERGE, &q->queue_flags) &&
+-	    bio->bi_vcnt < queue_max_segments(q))
++	bool no_sg_merge = !!test_bit(QUEUE_FLAG_NO_SG_MERGE,
++			&q->queue_flags);
++
++	if (no_sg_merge && !bio_flagged(bio, BIO_CLONED) &&
++			bio->bi_vcnt < queue_max_segments(q))
+ 		bio->bi_phys_segments = bio->bi_vcnt;
+ 	else {
+ 		struct bio *nxt = bio->bi_next;
+ 
+ 		bio->bi_next = NULL;
+-		bio->bi_phys_segments = __blk_recalc_rq_segments(q, bio, false);
++		bio->bi_phys_segments = __blk_recalc_rq_segments(q, bio,
++				no_sg_merge);
+ 		bio->bi_next = nxt;
+ 	}
+ 
+-- 
+1.8.5.6
+

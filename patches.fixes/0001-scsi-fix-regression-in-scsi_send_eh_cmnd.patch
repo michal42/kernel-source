@@ -1,0 +1,56 @@
+From: Alan Stern <stern@rowland.harvard.edu>
+Date: Fri, 21 Nov 2014 10:44:49 -0500
+Subject: SCSI: fix regression in scsi_send_eh_cmnd()
+Git-commit: 511833acfc06c013d453e288f483c682c60ffbff
+Patch-mainline: v3.19-rc3
+References: bsc#930813
+
+Commit ac61d1955934 (scsi: set correct completion code in
+scsi_send_eh_cmnd()) introduced a bug.  It changed the stored return
+value from a queuecommand call, but it didn't take into account that
+the return value was used again later on.  This patch fixes the bug by
+changing the later usage.
+
+There is a big comment in the middle of scsi_send_eh_cmnd() which
+does a good job of explaining how the routine works.  But it mentions
+a "rtn = FAILURE" value that doesn't exist in the code.  This patch
+adjusts the code to match the comment (I assume the comment is right
+and the code is wrong).
+
+This fixes Bugzilla #88341.
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+Reported-by: Андрей Аладьев <aladjev.andrew@gmail.com>
+Tested-by: Андрей Аладьев <aladjev.andrew@gmail.com>
+Fixes: ac61d19559349e205dad7b5122b281419aa74a82
+Acked-by: Hannes Reinecke <hare@suse.de>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/scsi_error.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index e42fff6..8afb016 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -1041,7 +1041,7 @@ retry:
+ 		}
+ 		/* signal not to enter either branch of the if () below */
+ 		timeleft = 0;
+-		rtn = NEEDS_RETRY;
++		rtn = FAILED;
+ 	} else {
+ 		timeleft = wait_for_completion_timeout(&done, timeout);
+ 		rtn = SUCCESS;
+@@ -1081,7 +1081,7 @@ retry:
+ 			rtn = FAILED;
+ 			break;
+ 		}
+-	} else if (!rtn) {
++	} else if (rtn != FAILED) {
+ 		scsi_abort_eh_cmnd(scmd);
+ 		rtn = FAILED;
+ 	}
+

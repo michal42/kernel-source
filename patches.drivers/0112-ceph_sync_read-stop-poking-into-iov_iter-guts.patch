@@ -1,0 +1,86 @@
+From e9224aaae502a76d30c216e20ebf7a4eb229beb7 Mon Sep 17 00:00:00 2001
+From: David Disseldorp <ddiss@suse.de>
+Date: Thu, 2 Jul 2015 13:44:41 +0200
+Subject: [PATCH 112/213] ceph_sync_read: stop poking into iov_iter guts
+References: fate#318918
+Git-commit: 2b777c9dd9ebbb2f8b6818d454cc5e6d7c1e3c8b
+Patch-mainline: v3.16-rc1
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+[ddiss@suse.de: libceph changes only. Ignore fs/ceph/file.c]
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ include/linux/ceph/libceph.h |  2 --
+ net/ceph/pagevec.c           | 35 ++++-------------------------------
+ 2 files changed, 4 insertions(+), 33 deletions(-)
+
+diff --git a/include/linux/ceph/libceph.h b/include/linux/ceph/libceph.h
+index 2f49aa4..279b0af 100644
+--- a/include/linux/ceph/libceph.h
++++ b/include/linux/ceph/libceph.h
+@@ -222,8 +222,6 @@ extern void ceph_copy_to_page_vector(struct page **pages,
+ extern void ceph_copy_from_page_vector(struct page **pages,
+ 				    void *data,
+ 				    loff_t off, size_t len);
+-extern int ceph_copy_page_vector_to_user(struct page **pages, void __user *data,
+-				    loff_t off, size_t len);
+ extern void ceph_zero_page_vector_range(int off, int len, struct page **pages);
+ 
+ 
+diff --git a/net/ceph/pagevec.c b/net/ceph/pagevec.c
+index 815a224..5550130 100644
+--- a/net/ceph/pagevec.c
++++ b/net/ceph/pagevec.c
+@@ -53,7 +53,10 @@ void ceph_put_page_vector(struct page **pages, int num_pages, bool dirty)
+ 			set_page_dirty_lock(pages[i]);
+ 		put_page(pages[i]);
+ 	}
+-	kfree(pages);
++	if (is_vmalloc_addr(pages))
++		vfree(pages);
++	else
++		kfree(pages);
+ }
+ EXPORT_SYMBOL(ceph_put_page_vector);
+ 
+@@ -165,36 +168,6 @@ void ceph_copy_from_page_vector(struct page **pages,
+ EXPORT_SYMBOL(ceph_copy_from_page_vector);
+ 
+ /*
+- * copy user data from a page vector into a user pointer
+- */
+-int ceph_copy_page_vector_to_user(struct page **pages,
+-					 void __user *data,
+-					 loff_t off, size_t len)
+-{
+-	int i = 0;
+-	int po = off & ~PAGE_CACHE_MASK;
+-	int left = len;
+-	int l, bad;
+-
+-	while (left > 0) {
+-		l = min_t(int, left, PAGE_CACHE_SIZE-po);
+-		bad = copy_to_user(data, page_address(pages[i]) + po, l);
+-		if (bad == l)
+-			return -EFAULT;
+-		data += l - bad;
+-		left -= l - bad;
+-		if (po) {
+-			po += l - bad;
+-			if (po == PAGE_CACHE_SIZE)
+-				po = 0;
+-		}
+-		i++;
+-	}
+-	return len;
+-}
+-EXPORT_SYMBOL(ceph_copy_page_vector_to_user);
+-
+-/*
+  * Zero an extent within a page vector.  Offset is relative to the
+  * start of the first page.
+  */
+-- 
+2.1.4
+

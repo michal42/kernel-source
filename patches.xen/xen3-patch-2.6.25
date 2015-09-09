@@ -1,6 +1,6 @@
 From: kernel.org
 Subject: 2.6.25
-Patch-mainline: 2.6.25
+Patch-mainline: Never, SUSE-Xen specific
 
 Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
 Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches.py
@@ -7763,7 +7763,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
  	    && !mm->context.has_foreign_mappings)
  		mm_unpin(mm);
  }
-@@ -258,285 +291,1146 @@ void arch_exit_mmap(struct mm_struct *mm
+@@ -258,285 +291,1154 @@ void arch_exit_mmap(struct mm_struct *mm
  static void _pte_free(struct page *page, unsigned int order)
  {
  	BUG_ON(order);
@@ -8147,10 +8147,14 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	unsigned int level;
 +
 +	spin_lock_irqsave(&pgd_lock, flags);
-+	/*
+ 	/*
+-	 * page_private is used to track the number of entries in
+-	 * the page table page have non standard attributes.
 +	 * Check for races, another CPU might have split this page
 +	 * up already:
-+	 */
+ 	 */
+-	SetPagePrivate(base);
+-	page_private(base) = 0;
 +	tmp = lookup_address(address, &level);
 +	if (tmp != kpte)
 +		goto out_unlock;
@@ -8170,19 +8174,6 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +		do_split = -EINVAL;
 +		goto out_unlock;
 +	}
-+
- 	/*
--	 * page_private is used to track the number of entries in
--	 * the page table page have non standard attributes.
-+	 * Calculate the number of pages, which fit into this large
-+	 * page starting at address:
- 	 */
--	SetPagePrivate(base);
--	page_private(base) = 0;
-+	nextpage_addr = (address + psize) & pmask;
-+	numpages = (nextpage_addr - address) >> PAGE_SHIFT;
-+	if (numpages < cpa->numpages)
-+		cpa->numpages = numpages;
  
 -	address = __pa(address);
 -	addr = address & LARGE_PAGE_MASK; 
@@ -8190,6 +8181,15 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 -	for (i = 0; i < PTRS_PER_PTE; i++, addr += PAGE_SIZE) {
 -		pbase[i] = pfn_pte(addr >> PAGE_SHIFT, 
 -				   addr == address ? prot : ref_prot);
++	/*
++	 * Calculate the number of pages, which fit into this large
++	 * page starting at address:
++	 */
++	nextpage_addr = (address + psize) & pmask;
++	numpages = (nextpage_addr - address) >> PAGE_SHIFT;
++	if (numpages < cpa->numpages)
++		cpa->numpages = numpages;
++
 +	/*
 +	 * We are safe now. Check whether the new pgprot is the same:
 +	 */
@@ -8277,15 +8277,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	gfp_t gfp = GFP_KERNEL;
 +	unsigned long flags;
 +	struct page *p;
- 
--	/* When clflush is available always use it because it is
--	   much cheaper than WBINVD. */
--	/* clflush is still broken. Disable for now. */
--	if (1 || !cpu_has_clflush)
--		asm volatile("wbinvd" ::: "memory");
--	else list_for_each_entry(pg, l, lru) {
--		void *adr = page_address(pg);
--		clflush_cache_range(adr, PAGE_SIZE);
++
 +	/*
 +	 * Avoid recursion (on debug-pagealloc) and also signal
 +	 * our priority to get to these pagetables:
@@ -8299,7 +8291,15 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	 */
 +	if (in_atomic() || irqs_disabled() || debug_pagealloc)
 +		gfp =  GFP_ATOMIC | __GFP_NORETRY | __GFP_NOWARN;
-+
+ 
+-	/* When clflush is available always use it because it is
+-	   much cheaper than WBINVD. */
+-	/* clflush is still broken. Disable for now. */
+-	if (1 || !cpu_has_clflush)
+-		asm volatile("wbinvd" ::: "memory");
+-	else list_for_each_entry(pg, l, lru) {
+-		void *adr = page_address(pg);
+-		clflush_cache_range(adr, PAGE_SIZE);
 +	while (pool_pages < pool_size || (ret && !*ret)) {
 +		p = alloc_pages(gfp, 0);
 +		if (!p) {
@@ -8628,7 +8628,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	int ret = 0;
 +
 +	if (cpa->pfn > max_pfn_mapped)
-+		return 0;
+ 		return 0;
 +
 +	/*
 +	 * No need to redo, when the primary call touched the direct
@@ -8651,7 +8651,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	 * mapping already:
 +	 */
 +	if (within(cpa->vaddr, (unsigned long) _text, (unsigned long) _end))
- 		return 0;
++		return 0;
 +
 +	/*
 +	 * If the physical address is inside the kernel map, we need
@@ -8675,10 +8675,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +static int __change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
 +{
 +	int ret, numpages = cpa->numpages;
- 
--	save_page(kpte_page);
--	if (page_private(kpte_page) == 0)
--		revert_page(address, ref_prot);
++
 +	while (numpages) {
 +		/*
 +		 * Store the remaining nr of pages for the large page
@@ -8695,7 +8692,10 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +			if (ret)
 +				return ret;
 +		}
-+
+ 
+-	save_page(kpte_page);
+-	if (page_private(kpte_page) == 0)
+-		revert_page(address, ref_prot);
 +		/*
 +		 * Adjust the number of pages with the result of the
 +		 * CPA operation. Either a large page has been
@@ -8724,19 +8724,23 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 - */
 -int change_page_attr_addr(unsigned long address, int numpages, pgprot_t prot)
 +static inline int cache_attr(pgprot_t attr)
- {
--	int err = 0, kernel_map = 0;
--	int i; 
++{
 +	return pgprot_val(attr) &
 +		(_PAGE_PAT | _PAGE_PAT_LARGE | _PAGE_PWT | _PAGE_PCD);
 +}
 +
 +static int change_page_attr_set_clr(unsigned long addr, int numpages,
 +				    pgprot_t mask_set, pgprot_t mask_clr)
-+{
+ {
+-	int err = 0, kernel_map = 0;
+-	int i; 
 +	struct cpa_data cpa;
 +	int ret, cache, checkalias;
-+
+ 
+-	if (address >= __START_KERNEL_map
+-	    && address < __START_KERNEL_map + KERNEL_TEXT_SIZE) {
+-		address = (unsigned long)__va(__pa(address));
+-		kernel_map = 1;
 +	/*
 +	 * Check, if we are requested to change a not supported
 +	 * feature:
@@ -8745,11 +8749,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	mask_clr = canon_pgprot(mask_clr);
 +	if (!pgprot_val(mask_set) && !pgprot_val(mask_clr))
 +		return 0;
- 
--	if (address >= __START_KERNEL_map
--	    && address < __START_KERNEL_map + KERNEL_TEXT_SIZE) {
--		address = (unsigned long)__va(__pa(address));
--		kernel_map = 1;
++
 +	/* Ensure we are PAGE_SIZE aligned */
 +	if (addr & ~PAGE_MASK) {
 +		addr &= PAGE_MASK;
@@ -8850,17 +8850,17 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +int set_memory_x(unsigned long addr, int numpages)
 +{
 +	return change_page_attr_clear(addr, numpages, __pgprot(_PAGE_NX));
-+}
-+EXPORT_SYMBOL(set_memory_x);
-+
-+int set_memory_nx(unsigned long addr, int numpages)
-+{
-+	return change_page_attr_set(addr, numpages, __pgprot(_PAGE_NX));
  }
-+EXPORT_SYMBOL(set_memory_nx);
++EXPORT_SYMBOL(set_memory_x);
  
 -/* Don't call this for MMIO areas that may not have a mem_map entry */
 -int change_page_attr(struct page *page, int numpages, pgprot_t prot)
++int set_memory_nx(unsigned long addr, int numpages)
++{
++	return change_page_attr_set(addr, numpages, __pgprot(_PAGE_NX));
++}
++EXPORT_SYMBOL(set_memory_nx);
++
 +int set_memory_ro(unsigned long addr, int numpages)
 +{
 +	return change_page_attr_clear(addr, numpages, __pgprot(_PAGE_RW));
@@ -8877,9 +8877,8 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +}
 +
 +int set_pages_uc(struct page *page, int numpages)
- {
- 	unsigned long addr = (unsigned long)page_address(page);
--	return change_page_attr_addr(addr, numpages, prot);
++{
++	unsigned long addr = (unsigned long)page_address(page);
 +
 +	return set_memory_uc(addr, numpages);
 +}
@@ -8890,13 +8889,9 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	unsigned long addr = (unsigned long)page_address(page);
 +
 +	return set_memory_wb(addr, numpages);
- }
++}
 +EXPORT_SYMBOL(set_pages_wb);
- 
--void global_flush_tlb(void)
--{ 
--	struct page *pg, *next;
--	struct list_head l;
++
 +int set_pages_x(struct page *page, int numpages)
 +{
 +	unsigned long addr = (unsigned long)page_address(page);
@@ -8921,8 +8916,9 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +}
 +
 +int set_pages_rw(struct page *page, int numpages)
-+{
-+	unsigned long addr = (unsigned long)page_address(page);
+ {
+ 	unsigned long addr = (unsigned long)page_address(page);
+-	return change_page_attr_addr(addr, numpages, prot);
 +
 +	return set_memory_rw(addr, numpages);
 +}
@@ -8937,8 +8933,12 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +				.mask_clr = __pgprot(0)};
 +
 +	return __change_page_attr_set_clr(&cpa, 1);
-+}
-+
+ }
+ 
+-void global_flush_tlb(void)
+-{ 
+-	struct page *pg, *next;
+-	struct list_head l;
 +static int __set_pages_np(struct page *page, int numpages)
 +{
 +	struct cpa_data cpa = { .vaddr = (unsigned long) page_address(page),
@@ -8998,9 +8998,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +	 * but that can deadlock->flush only current cpu:
 +	 */
 +	__flush_tlb_all();
- 
--EXPORT_SYMBOL(change_page_attr);
--EXPORT_SYMBOL(global_flush_tlb);
++
 +	/*
 +	 * Try to refill the page pool here. We can do this only after
 +	 * the tlb flush.
@@ -9039,14 +9037,18 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +{
 +	pte_t *pte;
 +	unsigned int level;
++	int rc;
 +
 +	pte = lookup_address(va, &level);
 +	BUG_ON(!pte || level != PG_LEVEL_4K);
-+	if (HYPERVISOR_update_va_mapping(va, pte_wrprotect(*pte), 0))
-+		BUG();
-+	if (in_secondary_range(va)) {
++	rc = HYPERVISOR_update_va_mapping(va, pte_wrprotect(*pte), 0);
++	if (!in_secondary_range(va))
++		BUG_ON(rc);
++	else {
 +		unsigned long pfn = pte_pfn(*pte);
 +
++		if (rc) /* fallback */
++			xen_l1_entry_update(pte, pte_wrprotect(*pte));
 +#ifdef CONFIG_HIGHMEM
 +		if (pfn >= highstart_pfn)
 +			kmap_flush_unused(); /* flush stale writable kmaps */
@@ -9060,14 +9062,18 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +{
 +	pte_t *pte;
 +	unsigned int level;
++	int rc;
 +
 +	pte = lookup_address(va, &level);
 +	BUG_ON(!pte || level != PG_LEVEL_4K);
-+	if (HYPERVISOR_update_va_mapping(va, pte_mkwrite(*pte), 0))
-+		BUG();
-+	if (in_secondary_range(va)) {
++	rc = HYPERVISOR_update_va_mapping(va, pte_mkwrite(*pte), 0);
++	if (!in_secondary_range(va))
++		BUG_ON(rc);
++	else {
 +		unsigned long pfn = pte_pfn(*pte);
 +
++		if (rc) /* fallback */
++			xen_l1_entry_update(pte, pte_mkwrite(*pte));
 +#ifdef CONFIG_HIGHMEM
 +		if (pfn < highstart_pfn)
 +#endif
@@ -9090,7 +9096,9 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 +void make_pages_readonly(void *va, unsigned int nr, unsigned int feature)
 +{
 +	unsigned long addr;
-+
+ 
+-EXPORT_SYMBOL(change_page_attr);
+-EXPORT_SYMBOL(global_flush_tlb);
 +	if (xen_feature(feature))
 +		return;
 +
@@ -15869,7 +15877,7 @@ Automatically created from "patches.kernel.org/patch-2.6.25" by xen-port-patches
 -#endif /* _X8664_TLBFLUSH_H */
 --- a/arch/x86/include/asm/mmu.h
 +++ b/arch/x86/include/asm/mmu.h
-@@ -24,7 +24,7 @@ typedef struct {
+@@ -29,7 +29,7 @@ typedef struct {
  	void *vdso;
  } mm_context_t;
  

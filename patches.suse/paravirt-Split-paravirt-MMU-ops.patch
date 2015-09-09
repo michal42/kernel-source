@@ -21,48 +21,26 @@ based on.
 
 Signed-off-by: Mel Gorman <mgorman@suse.de>
 ---
- arch/x86/Kconfig                            | 9 +++++++++
- arch/x86/include/asm/fixmap.h               | 2 +-
- arch/x86/include/asm/mmu_context.h          | 4 ++--
- arch/x86/include/asm/paravirt.h             | 8 ++++++++
- arch/x86/include/asm/paravirt_types.h       | 2 ++
- arch/x86/include/asm/pgalloc.h              | 2 +-
- arch/x86/include/asm/pgtable-3level_types.h | 2 +-
- arch/x86/include/asm/pgtable.h              | 2 +-
- arch/x86/include/asm/special_insns.h        | 7 ++++++-
- arch/x86/include/asm/tlbflush.h             | 4 ++--
- arch/x86/kernel/head_64.S                   | 2 +-
- arch/x86/kernel/paravirt.c                  | 8 +++++++-
- arch/x86/kernel/paravirt_patch_32.c         | 4 ++++
- arch/x86/kernel/paravirt_patch_64.c         | 6 +++++-
- arch/x86/xen/Kconfig                        | 1 +
+ arch/x86/Kconfig                            |    9 +++++++++
+ arch/x86/include/asm/fixmap.h               |    2 +-
+ arch/x86/include/asm/mmu_context.h          |    4 ++--
+ arch/x86/include/asm/paravirt.h             |    8 ++++++++
+ arch/x86/include/asm/paravirt_types.h       |    2 ++
+ arch/x86/include/asm/pgalloc.h              |    2 +-
+ arch/x86/include/asm/pgtable-3level_types.h |    2 +-
+ arch/x86/include/asm/pgtable.h              |    2 +-
+ arch/x86/include/asm/special_insns.h        |    7 ++++++-
+ arch/x86/include/asm/tlbflush.h             |    4 ++--
+ arch/x86/kernel/head_64.S                   |    2 +-
+ arch/x86/kernel/paravirt.c                  |    8 +++++++-
+ arch/x86/kernel/paravirt_patch_32.c         |    4 ++++
+ arch/x86/kernel/paravirt_patch_64.c         |    6 +++++-
+ arch/x86/xen/Kconfig                        |    1 +
  15 files changed, 51 insertions(+), 12 deletions(-)
 
-diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
-index 0673a53..0952ceb 100644
---- a/arch/x86/Kconfig
-+++ b/arch/x86/Kconfig
-@@ -642,6 +642,15 @@ config PARAVIRT
- 	  over full virtualization.  However, when run without a hypervisor
- 	  the kernel is theoretically slower and slightly larger.
- 
-+config PARAVIRT_MMU
-+	bool "PV MMU support"
-+	---help---
-+	  This option enables the paravirtualized MMU. In most (all?) cases
-+	  it's pretty useless and shouldn't be used. It will only cost you
-+	  performance, because it drags in pv-ops for memory management.
-+
-+	  If in doubt, say N.
-+
- config PARAVIRT_DEBUG
- 	bool "paravirt-ops debugging"
- 	depends on PARAVIRT && DEBUG_KERNEL
-diff --git a/arch/x86/include/asm/fixmap.h b/arch/x86/include/asm/fixmap.h
-index e846225..d52fecd 100644
 --- a/arch/x86/include/asm/fixmap.h
 +++ b/arch/x86/include/asm/fixmap.h
-@@ -167,7 +167,7 @@ void __native_set_fixmap(enum fixed_addresses idx, pte_t pte);
+@@ -167,7 +167,7 @@ void __native_set_fixmap(enum fixed_addr
  void native_set_fixmap(enum fixed_addresses idx,
  		       phys_addr_t phys, pgprot_t flags);
  
@@ -71,11 +49,9 @@ index e846225..d52fecd 100644
  static inline void __set_fixmap(enum fixed_addresses idx,
  				phys_addr_t phys, pgprot_t flags)
  {
-diff --git a/arch/x86/include/asm/mmu_context.h b/arch/x86/include/asm/mmu_context.h
-index be12c53..8ad677b 100644
 --- a/arch/x86/include/asm/mmu_context.h
 +++ b/arch/x86/include/asm/mmu_context.h
-@@ -6,14 +6,14 @@
+@@ -10,14 +10,14 @@
  #include <asm/pgalloc.h>
  #include <asm/tlbflush.h>
  #include <asm/paravirt.h>
@@ -91,12 +67,10 @@ index be12c53..8ad677b 100644
 +#endif	/* !CONFIG_PARAVIRT_MMU */
  
  /*
-  * Used for LDT copy/destruction.
-diff --git a/arch/x86/include/asm/paravirt.h b/arch/x86/include/asm/paravirt.h
-index 401f350..43f50b34 100644
+  * ldt_structs can be allocated, used, and freed, but they are never
 --- a/arch/x86/include/asm/paravirt.h
 +++ b/arch/x86/include/asm/paravirt.h
-@@ -60,6 +60,7 @@ static inline void write_cr0(unsigned long x)
+@@ -60,6 +60,7 @@ static inline void write_cr0(unsigned lo
  	PVOP_VCALL1(pv_cpu_ops.write_cr0, x);
  }
  
@@ -104,7 +78,7 @@ index 401f350..43f50b34 100644
  static inline unsigned long read_cr2(void)
  {
  	return PVOP_CALL0(unsigned long, pv_mmu_ops.read_cr2);
-@@ -79,6 +80,7 @@ static inline void write_cr3(unsigned long x)
+@@ -79,6 +80,7 @@ static inline void write_cr3(unsigned lo
  {
  	PVOP_VCALL1(pv_mmu_ops.write_cr3, x);
  }
@@ -112,7 +86,7 @@ index 401f350..43f50b34 100644
  
  static inline unsigned long read_cr4(void)
  {
-@@ -324,6 +326,7 @@ static inline void startup_ipi_hook(int phys_apicid, unsigned long start_eip,
+@@ -324,6 +326,7 @@ static inline void startup_ipi_hook(int
  }
  #endif
  
@@ -120,7 +94,7 @@ index 401f350..43f50b34 100644
  static inline void paravirt_activate_mm(struct mm_struct *prev,
  					struct mm_struct *next)
  {
-@@ -676,6 +679,7 @@ static inline void pmd_clear(pmd_t *pmdp)
+@@ -676,6 +679,7 @@ static inline void pmd_clear(pmd_t *pmdp
  	set_pmd(pmdp, __pmd(0));
  }
  #endif	/* CONFIG_X86_PAE */
@@ -128,7 +102,7 @@ index 401f350..43f50b34 100644
  
  #define  __HAVE_ARCH_START_CONTEXT_SWITCH
  static inline void arch_start_context_switch(struct task_struct *prev)
-@@ -688,6 +692,7 @@ static inline void arch_end_context_switch(struct task_struct *next)
+@@ -688,6 +692,7 @@ static inline void arch_end_context_swit
  	PVOP_VCALL1(pv_cpu_ops.end_context_switch, next);
  }
  
@@ -136,7 +110,7 @@ index 401f350..43f50b34 100644
  #define  __HAVE_ARCH_ENTER_LAZY_MMU_MODE
  static inline void arch_enter_lazy_mmu_mode(void)
  {
-@@ -709,6 +714,7 @@ static inline void __set_fixmap(unsigned /* enum fixed_addresses */ idx,
+@@ -709,6 +714,7 @@ static inline void __set_fixmap(unsigned
  {
  	pv_mmu_ops.set_fixmap(idx, phys, flags);
  }
@@ -155,8 +129,6 @@ index 401f350..43f50b34 100644
  
  #define PARAVIRT_ADJUST_EXCEPTION_FRAME					\
  	PARA_SITE(PARA_PATCH(pv_irq_ops, PV_IRQ_adjust_exception_frame), \
-diff --git a/arch/x86/include/asm/paravirt_types.h b/arch/x86/include/asm/paravirt_types.h
-index aab8f67..54f5fe6 100644
 --- a/arch/x86/include/asm/paravirt_types.h
 +++ b/arch/x86/include/asm/paravirt_types.h
 @@ -347,7 +347,9 @@ struct paravirt_patch_template {
@@ -169,8 +141,6 @@ index aab8f67..54f5fe6 100644
  	struct pv_lock_ops pv_lock_ops;
  };
  
-diff --git a/arch/x86/include/asm/pgalloc.h b/arch/x86/include/asm/pgalloc.h
-index c4412e9..e0d85d5 100644
 --- a/arch/x86/include/asm/pgalloc.h
 +++ b/arch/x86/include/asm/pgalloc.h
 @@ -7,7 +7,7 @@
@@ -182,8 +152,6 @@ index c4412e9..e0d85d5 100644
  #include <asm/paravirt.h>
  #else
  #define paravirt_pgd_alloc(mm)	__paravirt_pgd_alloc(mm)
-diff --git a/arch/x86/include/asm/pgtable-3level_types.h b/arch/x86/include/asm/pgtable-3level_types.h
-index 1bd5876..be58e74 100644
 --- a/arch/x86/include/asm/pgtable-3level_types.h
 +++ b/arch/x86/include/asm/pgtable-3level_types.h
 @@ -18,7 +18,7 @@ typedef union {
@@ -195,11 +163,9 @@ index 1bd5876..be58e74 100644
  #define SHARED_KERNEL_PMD	(pv_info.shared_kernel_pmd)
  #else
  #define SHARED_KERNEL_PMD	1
-diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
-index b459ddf..b400884 100644
 --- a/arch/x86/include/asm/pgtable.h
 +++ b/arch/x86/include/asm/pgtable.h
-@@ -32,7 +32,7 @@ extern struct list_head pgd_list;
+@@ -31,7 +31,7 @@ extern struct list_head pgd_list;
  
  extern struct mm_struct *pgd_page_get_mm(struct page *page);
  
@@ -208,11 +174,9 @@ index b459ddf..b400884 100644
  #include <asm/paravirt.h>
  #else  /* !CONFIG_PARAVIRT */
  #define set_pte(ptep, pte)		native_set_pte(ptep, pte)
-diff --git a/arch/x86/include/asm/special_insns.h b/arch/x86/include/asm/special_insns.h
-index 645cad2..8ae1304 100644
 --- a/arch/x86/include/asm/special_insns.h
 +++ b/arch/x86/include/asm/special_insns.h
-@@ -105,8 +105,9 @@ extern asmlinkage void native_load_gs_index(unsigned);
+@@ -105,8 +105,9 @@ extern asmlinkage void native_load_gs_in
  
  #ifdef CONFIG_PARAVIRT
  #include <asm/paravirt.h>
@@ -223,7 +187,7 @@ index 645cad2..8ae1304 100644
  static inline unsigned long read_cr0(void)
  {
  	return native_read_cr0();
-@@ -116,7 +117,9 @@ static inline void write_cr0(unsigned long x)
+@@ -116,7 +117,9 @@ static inline void write_cr0(unsigned lo
  {
  	native_write_cr0(x);
  }
@@ -233,7 +197,7 @@ index 645cad2..8ae1304 100644
  static inline unsigned long read_cr2(void)
  {
  	return native_read_cr2();
-@@ -136,7 +139,9 @@ static inline void write_cr3(unsigned long x)
+@@ -136,7 +139,9 @@ static inline void write_cr3(unsigned lo
  {
  	native_write_cr3(x);
  }
@@ -243,8 +207,6 @@ index 645cad2..8ae1304 100644
  static inline unsigned long read_cr4(void)
  {
  	return native_read_cr4();
-diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
-index 04905bf..a1428cb 100644
 --- a/arch/x86/include/asm/tlbflush.h
 +++ b/arch/x86/include/asm/tlbflush.h
 @@ -7,7 +7,7 @@
@@ -256,7 +218,7 @@ index 04905bf..a1428cb 100644
  #include <asm/paravirt.h>
  #else
  #define __flush_tlb() __native_flush_tlb()
-@@ -198,7 +198,7 @@ static inline void reset_lazy_tlbstate(void)
+@@ -198,7 +198,7 @@ static inline void reset_lazy_tlbstate(v
  
  #endif	/* SMP */
  
@@ -265,8 +227,24 @@ index 04905bf..a1428cb 100644
  #define flush_tlb_others(mask, mm, start, end)	\
  	native_flush_tlb_others(mask, mm, start, end)
  #endif
-diff --git a/arch/x86/kernel/head_64.S b/arch/x86/kernel/head_64.S
-index 245a843..c2ebf35 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -624,6 +624,15 @@ config PARAVIRT
+ 	  over full virtualization.  However, when run without a hypervisor
+ 	  the kernel is theoretically slower and slightly larger.
+ 
++config PARAVIRT_MMU
++	bool "PV MMU support"
++	---help---
++	  This option enables the paravirtualized MMU. In most (all?) cases
++	  it's pretty useless and shouldn't be used. It will only cost you
++	  performance, because it drags in pv-ops for memory management.
++
++	  If in doubt, say N.
++
+ config PARAVIRT_DEBUG
+ 	bool "paravirt-ops debugging"
+ 	depends on PARAVIRT && DEBUG_KERNEL
 --- a/arch/x86/kernel/head_64.S
 +++ b/arch/x86/kernel/head_64.S
 @@ -21,7 +21,7 @@
@@ -278,11 +256,9 @@ index 245a843..c2ebf35 100644
  #include <asm/asm-offsets.h>
  #include <asm/paravirt.h>
  #define GET_CR2_INTO(reg) GET_CR2_INTO_RAX ; movq %rax, reg
-diff --git a/arch/x86/kernel/paravirt.c b/arch/x86/kernel/paravirt.c
-index 1b10af8..9c6ab59 100644
 --- a/arch/x86/kernel/paravirt.c
 +++ b/arch/x86/kernel/paravirt.c
-@@ -125,7 +125,9 @@ static void *get_call_destination(u8 type)
+@@ -125,7 +125,9 @@ static void *get_call_destination(u8 typ
  		.pv_cpu_ops = pv_cpu_ops,
  		.pv_irq_ops = pv_irq_ops,
  		.pv_apic_ops = pv_apic_ops,
@@ -292,7 +268,7 @@ index 1b10af8..9c6ab59 100644
  #ifdef CONFIG_PARAVIRT_SPINLOCKS
  		.pv_lock_ops = pv_lock_ops,
  #endif
-@@ -180,6 +182,7 @@ unsigned paravirt_patch_insns(void *insnbuf, unsigned len,
+@@ -180,6 +182,7 @@ unsigned paravirt_patch_insns(void *insn
  	return insn_len;
  }
  
@@ -300,7 +276,7 @@ index 1b10af8..9c6ab59 100644
  static void native_flush_tlb(void)
  {
  	__native_flush_tlb();
-@@ -198,6 +201,7 @@ static void native_flush_tlb_single(unsigned long addr)
+@@ -198,6 +201,7 @@ static void native_flush_tlb_single(unsi
  {
  	__native_flush_tlb_single(addr);
  }
@@ -329,11 +305,9 @@ index 1b10af8..9c6ab59 100644
  EXPORT_SYMBOL_GPL(pv_apic_ops);
  EXPORT_SYMBOL_GPL(pv_info);
  EXPORT_SYMBOL    (pv_irq_ops);
-diff --git a/arch/x86/kernel/paravirt_patch_32.c b/arch/x86/kernel/paravirt_patch_32.c
-index d9f32e6..838b82a 100644
 --- a/arch/x86/kernel/paravirt_patch_32.c
 +++ b/arch/x86/kernel/paravirt_patch_32.c
-@@ -6,9 +6,11 @@ DEF_NATIVE(pv_irq_ops, restore_fl, "push %eax; popf");
+@@ -6,9 +6,11 @@ DEF_NATIVE(pv_irq_ops, restore_fl, "push
  DEF_NATIVE(pv_irq_ops, save_fl, "pushf; pop %eax");
  DEF_NATIVE(pv_cpu_ops, iret, "iret");
  DEF_NATIVE(pv_cpu_ops, irq_enable_sysexit, "sti; sysexit");
@@ -345,7 +319,7 @@ index d9f32e6..838b82a 100644
  DEF_NATIVE(pv_cpu_ops, clts, "clts");
  DEF_NATIVE(pv_cpu_ops, read_tsc, "rdtsc");
  
-@@ -42,9 +44,11 @@ unsigned native_patch(u8 type, u16 clobbers, void *ibuf,
+@@ -42,9 +44,11 @@ unsigned native_patch(u8 type, u16 clobb
  		PATCH_SITE(pv_irq_ops, save_fl);
  		PATCH_SITE(pv_cpu_ops, iret);
  		PATCH_SITE(pv_cpu_ops, irq_enable_sysexit);
@@ -357,11 +331,9 @@ index d9f32e6..838b82a 100644
  		PATCH_SITE(pv_cpu_ops, clts);
  		PATCH_SITE(pv_cpu_ops, read_tsc);
  
-diff --git a/arch/x86/kernel/paravirt_patch_64.c b/arch/x86/kernel/paravirt_patch_64.c
-index 3f08f34..786f668 100644
 --- a/arch/x86/kernel/paravirt_patch_64.c
 +++ b/arch/x86/kernel/paravirt_patch_64.c
-@@ -7,10 +7,12 @@ DEF_NATIVE(pv_irq_ops, irq_enable, "sti");
+@@ -6,10 +6,12 @@ DEF_NATIVE(pv_irq_ops, irq_disable, "cli
  DEF_NATIVE(pv_irq_ops, irq_enable, "sti");
  DEF_NATIVE(pv_irq_ops, restore_fl, "pushq %rdi; popfq");
  DEF_NATIVE(pv_irq_ops, save_fl, "pushfq; popq %rax");
@@ -374,7 +346,7 @@ index 3f08f34..786f668 100644
  DEF_NATIVE(pv_cpu_ops, clts, "clts");
  DEF_NATIVE(pv_cpu_ops, wbinvd, "wbinvd");
  
-@@ -55,11 +57,13 @@ unsigned native_patch(u8 type, u16 clobbers, void *ibuf,
+@@ -53,11 +55,13 @@ unsigned native_patch(u8 type, u16 clobb
  		PATCH_SITE(pv_cpu_ops, usergs_sysret32);
  		PATCH_SITE(pv_cpu_ops, usergs_sysret64);
  		PATCH_SITE(pv_cpu_ops, swapgs);
@@ -389,11 +361,9 @@ index 3f08f34..786f668 100644
  		PATCH_SITE(pv_cpu_ops, wbinvd);
  
  	patch_site:
-diff --git a/arch/x86/xen/Kconfig b/arch/x86/xen/Kconfig
-index 95f1a20..eda66fe 100644
 --- a/arch/x86/xen/Kconfig
 +++ b/arch/x86/xen/Kconfig
-@@ -6,6 +6,7 @@ config PARAVIRT_XEN
+@@ -6,6 +6,7 @@ config XEN
  	bool "Xen guest support"
  	depends on PARAVIRT
  	select PARAVIRT_CLOCK
