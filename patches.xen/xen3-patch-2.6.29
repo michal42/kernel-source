@@ -6597,35 +6597,6 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	}
  #else
  	math_state_restore();
---- a/arch/x86/kernel/vsyscall_64-xen.c
-+++ b/arch/x86/kernel/vsyscall_64-xen.c
-@@ -17,6 +17,9 @@
-  *  want per guest time just set the kernel.vsyscall64 sysctl to 0.
-  */
- 
-+/* Disable profiling for userspace code: */
-+#define DISABLE_BRANCH_PROFILING
-+
- #include <linux/time.h>
- #include <linux/init.h>
- #include <linux/kernel.h>
-@@ -128,7 +131,16 @@ static __always_inline void do_vgettimeo
- 			gettimeofday(tv,NULL);
- 			return;
- 		}
-+
-+		/*
-+		 * Surround the RDTSC by barriers, to make sure it's not
-+		 * speculated to outside the seqlock critical section and
-+		 * does not cause time warps:
-+		 */
-+		rdtsc_barrier();
- 		now = vread();
-+		rdtsc_barrier();
-+
- 		base = __vsyscall_gtod_data.clock.cycle_last;
- 		mask = __vsyscall_gtod_data.clock.mask;
- 		mult = __vsyscall_gtod_data.clock.mult;
 --- a/arch/x86/mm/fault-xen.c
 +++ b/arch/x86/mm/fault-xen.c
 @@ -53,7 +53,7 @@
@@ -8696,7 +8667,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	}
 --- a/drivers/xen/netback/interface.c
 +++ b/drivers/xen/netback/interface.c
-@@ -229,6 +229,15 @@ static struct ethtool_ops network_ethtoo
+@@ -230,6 +230,15 @@ static struct ethtool_ops network_ethtoo
  	.get_strings = netbk_get_strings,
  };
  
@@ -8712,7 +8683,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  netif_t *netif_alloc(struct device *parent, domid_t domid, unsigned int handle)
  {
  	int err = 0;
-@@ -263,10 +272,7 @@ netif_t *netif_alloc(struct device *pare
+@@ -264,10 +273,7 @@ netif_t *netif_alloc(struct device *pare
  
  	init_timer(&netif->tx_queue_timeout);
  
@@ -8765,7 +8736,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	dev->features        = (NETIF_F_HIGHDMA |
 --- a/drivers/xen/netback/netback.c
 +++ b/drivers/xen/netback/netback.c
-@@ -365,7 +365,7 @@ static void xen_network_done_notify(void
+@@ -366,7 +366,7 @@ static void xen_network_done_notify(void
  	static struct net_device *eth0_dev = NULL;
  	if (unlikely(eth0_dev == NULL))
  		eth0_dev = __dev_get_by_name(&init_net, "eth0");
@@ -8774,7 +8745,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  }
  /* 
   * Add following to poll() function in NAPI driver (Tigon3 is example):
-@@ -1551,7 +1551,6 @@ static void net_tx_action(unsigned long 
+@@ -1552,7 +1552,6 @@ static void net_tx_action(unsigned long 
  		dev->stats.rx_packets++;
  
  		netif_rx(skb);

@@ -2150,16 +2150,6 @@ Acked-by: jbeulich@suse.com
  /* May run on IST stack. */
  dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
  {
---- a/arch/x86/kernel/vsyscall_64-xen.c
-+++ b/arch/x86/kernel/vsyscall_64-xen.c
-@@ -25,6 +25,7 @@
- #include <linux/seqlock.h>
- #include <linux/jiffies.h>
- #include <linux/sysctl.h>
-+#include <linux/topology.h>
- #include <linux/clocksource.h>
- #include <linux/getcpu.h>
- #include <linux/cpu.h>
 --- a/arch/x86/kernel/x86_init-xen.c
 +++ b/arch/x86/kernel/x86_init-xen.c
 @@ -20,11 +20,13 @@
@@ -3247,7 +3237,7 @@ Acked-by: jbeulich@suse.com
  		ninfo->nr_frags++;
  
  		offset += copy;
-@@ -479,8 +490,8 @@ static void netbk_gop_skb(struct sk_buff
+@@ -480,8 +491,8 @@ static void netbk_gop_skb(struct sk_buff
  		meta = npo->meta + npo->meta_prod++;
  		meta->frag = skb_shinfo(skb)->frags[i];
  		meta->id = netbk_gop_frag(netif, meta, i + extra, npo,
@@ -3258,7 +3248,7 @@ Acked-by: jbeulich@suse.com
  					  meta->frag.page_offset);
  	}
  
-@@ -502,7 +513,7 @@ static inline void netbk_free_pages(int 
+@@ -503,7 +514,7 @@ static inline void netbk_free_pages(int 
  	int i;
  
  	for (i = 0; i < nr_frags; i++)
@@ -3267,7 +3257,7 @@ Acked-by: jbeulich@suse.com
  }
  
  /* This is a twin to netbk_gop_skb.  Assume that netbk_gop_skb was
-@@ -1102,11 +1113,11 @@ static gnttab_map_grant_ref_t *netbk_get
+@@ -1103,11 +1114,11 @@ static gnttab_map_grant_ref_t *netbk_get
  {
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
  	skb_frag_t *frags = shinfo->frags;
@@ -3281,7 +3271,7 @@ Acked-by: jbeulich@suse.com
  
  	for (i = start; i < shinfo->nr_frags; i++, txp++) {
  		pending_idx = pending_ring[MASK_PEND_IDX(pending_cons++)];
-@@ -1118,7 +1129,7 @@ static gnttab_map_grant_ref_t *netbk_get
+@@ -1119,7 +1130,7 @@ static gnttab_map_grant_ref_t *netbk_get
  		memcpy(&pending_tx_info[pending_idx].req, txp, sizeof(*txp));
  		netif_get(netif);
  		pending_tx_info[pending_idx].netif = netif;
@@ -3290,7 +3280,7 @@ Acked-by: jbeulich@suse.com
  	}
  
  	return mop;
-@@ -1128,7 +1139,7 @@ static int netbk_tx_check_mop(struct sk_
+@@ -1129,7 +1140,7 @@ static int netbk_tx_check_mop(struct sk_
  			       gnttab_map_grant_ref_t **mopp)
  {
  	gnttab_map_grant_ref_t *mop = *mopp;
@@ -3299,7 +3289,7 @@ Acked-by: jbeulich@suse.com
  	netif_t *netif = pending_tx_info[pending_idx].netif;
  	netif_tx_request_t *txp;
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
-@@ -1149,12 +1160,12 @@ static int netbk_tx_check_mop(struct sk_
+@@ -1150,12 +1161,12 @@ static int netbk_tx_check_mop(struct sk_
  	}
  
  	/* Skip first skb fragment if it is on same page as header fragment. */
@@ -3314,7 +3304,7 @@ Acked-by: jbeulich@suse.com
  
  		/* Check error status: if okay then remember grant handle. */
  		newerr = (++mop)->status;
-@@ -1182,7 +1193,7 @@ static int netbk_tx_check_mop(struct sk_
+@@ -1183,7 +1194,7 @@ static int netbk_tx_check_mop(struct sk_
  		pending_idx = *((u16 *)skb->data);
  		netif_idx_release(pending_idx);
  		for (j = start; j < i; j++) {
@@ -3323,7 +3313,7 @@ Acked-by: jbeulich@suse.com
  			netif_idx_release(pending_idx);
  		}
  
-@@ -1201,20 +1212,16 @@ static void netbk_fill_frags(struct sk_b
+@@ -1202,20 +1213,16 @@ static void netbk_fill_frags(struct sk_b
  	int i;
  
  	for (i = 0; i < nr_frags; i++) {
@@ -3347,7 +3337,7 @@ Acked-by: jbeulich@suse.com
  
  		skb->len += txp->size;
  		skb->data_len += txp->size;
-@@ -1445,14 +1452,11 @@ static void net_tx_action(unsigned long 
+@@ -1446,14 +1453,11 @@ static void net_tx_action(unsigned long 
  		__skb_put(skb, data_len);
  
  		skb_shinfo(skb)->nr_frags = ret;
