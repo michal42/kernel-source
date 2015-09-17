@@ -1,0 +1,43 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date: Sat, 7 Jun 2014 00:52:29 -0500
+Subject: [PATCH 15/57] Perform resync for cluster node failure
+Git-commit: 4b26a08af92c0d9c0bce07612b56ff326112321a
+Patch-mainline: v4.1
+References: fate#316335
+
+If bitmap_copy_slot returns hi>0, we need to perform resync.
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/md/md-cluster.c b/drivers/md/md-cluster.c
+index 1f82d0d731ae..d2987130be34 100644
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -223,8 +223,18 @@ void recover_bitmaps(struct md_thread *thread)
+ 			goto clear_bit;
+ 		}
+ 		ret = bitmap_copy_from_slot(mddev, slot, &lo, &hi);
+-		if (ret)
++		if (ret) {
+ 			pr_err("md-cluster: Could not copy data from bitmap %d\n", slot);
++			goto dlm_unlock;
++		}
++		if (hi > 0) {
++			/* TODO:Wait for current resync to get over */
++			set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
++			if (lo < mddev->recovery_cp)
++				mddev->recovery_cp = lo;
++			md_check_recovery(mddev);
++		}
++dlm_unlock:
+ 		dlm_unlock_sync(bm_lockres);
+ clear_bit:
+ 		clear_bit(slot, &cinfo->recovery_map);
+-- 
+2.5.0
+
