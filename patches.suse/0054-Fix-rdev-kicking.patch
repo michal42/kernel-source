@@ -1,0 +1,145 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Fri, 28 Aug 2015 14:56:34 -0500
+Subject: [PATCH 54/57] Fix rdev kicking
+Patch-mainline: Not yet, still under development
+References: fate#316335
+
+fb56dfef4e31f214cfbfa0eb8a1949591c20b118 exported and renamed
+kick_rdev_from_array, but it did not do a complete job. Revert
+that patch and create md_remove_rdev() to perform the complete
+remove.
+
+Acked-by: NeilBrown <neilb@suse.com>
+Signed-off-by: Neil Brown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c |  2 +-
+ drivers/md/md.c         | 32 ++++++++++++++++++++++++--------
+ drivers/md/md.h         |  2 +-
+ 3 files changed, 26 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/md/md-cluster.c b/drivers/md/md-cluster.c
+index 1fb172b85da6..06d5c4b99eb1 100644
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -436,7 +436,7 @@ static void process_remove_disk(struct mddev *mddev, struct cluster_msg *msg)
+ 	struct md_rdev *rdev = md_find_rdev_nr_rcu(mddev, msg->raid_slot);
+ 
+ 	if (rdev)
+-		md_kick_rdev_from_array(rdev);
++		md_kick_rdev_from_array(mddev, rdev);
+ 	else
+ 		pr_warn("%s: %d Could not find disk(%d) to REMOVE\n", __func__, __LINE__, msg->raid_slot);
+ }
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 975cbf15051d..74aabb2c9943 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -2296,11 +2296,27 @@ static void export_rdev(struct md_rdev * rdev)
+ 	kobject_put(&rdev->kobj);
+ }
+ 
+-void md_kick_rdev_from_array(struct md_rdev *rdev)
++static void kick_rdev_from_array(struct md_rdev *rdev)
+ {
+ 	unbind_rdev_from_array(rdev);
+ 	export_rdev(rdev);
+ }
++
++void md_kick_rdev_from_array(struct mddev *mddev, struct md_rdev *rdev)
++{
++	synchronize_rcu();
++	clear_bit(In_sync, &rdev->flags);
++	set_bit(RemoveSynchronised, &rdev->flags);
++	if (mddev->pers->hot_remove_disk(mddev, rdev) == 0) {
++		sysfs_unlink_rdev(mddev, rdev);
++		rdev->raid_disk = -1;
++		kick_rdev_from_array(rdev);
++	}
++	clear_bit(RemoveSynchronised, &rdev->flags);
++	clear_bit(Faulty, &rdev->flags);
++	clear_bit(WriteErrorSeen, &rdev->flags);
++	synchronize_rcu();
++}
+ EXPORT_SYMBOL_GPL(md_kick_rdev_from_array);
+ 
+ static void export_array(struct mddev *mddev)
+@@ -2312,7 +2328,7 @@ static void export_array(struct mddev *mddev)
+ 			MD_BUG();
+ 			continue;
+ 		}
+-		md_kick_rdev_from_array(rdev);
++		kick_rdev_from_array(rdev);
+ 	}
+ 	if (!list_empty(&mddev->disks))
+ 		MD_BUG();
+@@ -2789,7 +2805,7 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
+ 			struct mddev *mddev = rdev->mddev;
+ 			if (mddev_is_clustered(mddev))
+ 				md_cluster_ops->remove_disk(mddev, rdev);
+-			md_kick_rdev_from_array(rdev);
++			kick_rdev_from_array(rdev);
+ 			if (mddev_is_clustered(mddev))
+ 				md_cluster_ops->metadata_update_start(mddev);
+ 			if (mddev->pers) {
+@@ -3476,7 +3492,7 @@ static void analyze_sbs(struct mddev * mddev)
+ 				"md: fatal superblock inconsistency in %s"
+ 				" -- removing from array\n", 
+ 				bdevname(rdev->bdev,b));
+-			md_kick_rdev_from_array(rdev);
++			kick_rdev_from_array(rdev);
+ 		}
+ 
+ 
+@@ -3492,7 +3508,7 @@ static void analyze_sbs(struct mddev * mddev)
+ 			       "md: %s: %s: only %d devices permitted\n",
+ 			       mdname(mddev), bdevname(rdev->bdev, b),
+ 			       mddev->max_disks);
+-			md_kick_rdev_from_array(rdev);
++			kick_rdev_from_array(rdev);
+ 			continue;
+ 		}
+ 		if (rdev != freshest) {
+@@ -3501,7 +3517,7 @@ static void analyze_sbs(struct mddev * mddev)
+ 				printk(KERN_WARNING "md: kicking non-fresh %s"
+ 					" from array!\n",
+ 					bdevname(rdev->bdev,b));
+-				md_kick_rdev_from_array(rdev);
++				kick_rdev_from_array(rdev);
+ 				continue;
+ 			}
+ 			/* No device should have a Candidate flag
+@@ -3510,7 +3526,7 @@ static void analyze_sbs(struct mddev * mddev)
+ 			if (test_bit(Candidate, &rdev->flags)) {
+ 				pr_info("md: kicking Cluster Candidate %s from array!\n",
+ 					bdevname(rdev->bdev, b));
+-				md_kick_rdev_from_array(rdev);
++				kick_rdev_from_array(rdev);
+ 			}
+ 		}
+ 		if (mddev->level == LEVEL_MULTIPATH) {
+@@ -6158,7 +6174,7 @@ static int hot_remove_disk(struct mddev * mddev, dev_t dev)
+ 	if (mddev_is_clustered(mddev))
+ 		md_cluster_ops->remove_disk(mddev, rdev);
+ 
+-	md_kick_rdev_from_array(rdev);
++	kick_rdev_from_array(rdev);
+ 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
+ 	if (mddev->thread)
+ 		md_wakeup_thread(mddev->thread);
+diff --git a/drivers/md/md.h b/drivers/md/md.h
+index 52fa42e3d153..7902b937f5da 100644
+--- a/drivers/md/md.h
++++ b/drivers/md/md.h
+@@ -661,7 +661,7 @@ static inline void rdev_dec_pending(struct md_rdev *rdev, struct mddev *mddev)
+ extern void md_unplug(struct blk_plug_cb *cb, bool from_schedule);
+ extern void md_reload_sb(struct mddev *mddev);
+ extern void md_update_sb(struct mddev *mddev, int force);
+-extern void md_kick_rdev_from_array(struct md_rdev * rdev);
++extern void md_kick_rdev_from_array(struct mddev *mddev, struct md_rdev * rdev);
+ struct md_rdev *md_find_rdev_nr_rcu(struct mddev *mddev, int nr);
+ static inline int mddev_check_plugged(struct mddev *mddev)
+ {
+-- 
+2.5.0
+
