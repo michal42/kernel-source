@@ -1,0 +1,125 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Thu, 2 Jul 2015 10:15:43 +0800
+Subject: [PATCH 36/57] Fix read-balancing during node failure
+Git-commit: 90382ed9afeafd42ef193f0eadc6b2a252d6c24d
+Patch-mainline: v4.2
+References: fate#316335
+
+During a node failure, We need to suspend read balancing so that the
+reads are directed to the first device and stale data is not read.
+Suspending writes is not required because these would be recorded and
+synced eventually.
+
+A new flag MD_CLUSTER_SUSPEND_READ_BALANCING is set in recover_prep().
+area_resyncing() will respond true for the entire devices if this
+flag is set and the request type is READ. The flag is cleared
+in recover_done().
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Reported-by: David Teigland <teigland@redhat.com>
+Signed-off-by: NeilBrown <neilb@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c | 12 +++++++++++-
+ drivers/md/md-cluster.h |  2 +-
+ drivers/md/raid1.c      |  7 ++++---
+ 3 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/md/md-cluster.c b/drivers/md/md-cluster.c
+index d7f3bb2bd43c..203e2db1cc4a 100644
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -44,6 +44,7 @@ struct resync_info {
+ 
+ /* md_cluster_info flags */
+ #define		MD_CLUSTER_WAITING_FOR_NEWDISK		1
++#define		MD_CLUSTER_SUSPEND_READ_BALANCING	2
+ 
+ 
+ struct md_cluster_info {
+@@ -275,6 +276,9 @@ clear_bit:
+ 
+ static void recover_prep(void *arg)
+ {
++	struct mddev *mddev = arg;
++	struct md_cluster_info *cinfo = mddev->cluster_info;
++	set_bit(MD_CLUSTER_SUSPEND_READ_BALANCING, &cinfo->state);
+ }
+ 
+ static void recover_slot(void *arg, struct dlm_slot *slot)
+@@ -307,6 +311,7 @@ static void recover_done(void *arg, struct dlm_slot *slots,
+ 
+ 	cinfo->slot_number = our_slot;
+ 	complete(&cinfo->completion);
++	clear_bit(MD_CLUSTER_SUSPEND_READ_BALANCING, &cinfo->state);
+ }
+ 
+ static const struct dlm_lockspace_ops md_ls_ops = {
+@@ -816,12 +821,17 @@ static void resync_finish(struct mddev *mddev)
+ 	resync_send(mddev, RESYNCING, 0, 0);
+ }
+ 
+-static int area_resyncing(struct mddev *mddev, sector_t lo, sector_t hi)
++static int area_resyncing(struct mddev *mddev, int direction,
++		sector_t lo, sector_t hi)
+ {
+ 	struct md_cluster_info *cinfo = mddev->cluster_info;
+ 	int ret = 0;
+ 	struct suspend_info *s;
+ 
++	if ((direction == READ) &&
++		test_bit(MD_CLUSTER_SUSPEND_READ_BALANCING, &cinfo->state))
++		return 1;
++
+ 	spin_lock_irq(&cinfo->suspend_lock);
+ 	if (list_empty(&cinfo->suspend_list))
+ 		goto out;
+diff --git a/drivers/md/md-cluster.h b/drivers/md/md-cluster.h
+index 6817ee00e053..00defe2badbc 100644
+--- a/drivers/md/md-cluster.h
++++ b/drivers/md/md-cluster.h
+@@ -18,7 +18,7 @@ struct md_cluster_operations {
+ 	int (*metadata_update_start)(struct mddev *mddev);
+ 	int (*metadata_update_finish)(struct mddev *mddev);
+ 	int (*metadata_update_cancel)(struct mddev *mddev);
+-	int (*area_resyncing)(struct mddev *mddev, sector_t lo, sector_t hi);
++	int (*area_resyncing)(struct mddev *mddev, int direction, sector_t lo, sector_t hi);
+ 	int (*add_new_disk_start)(struct mddev *mddev, struct md_rdev *rdev);
+ 	int (*add_new_disk_finish)(struct mddev *mddev);
+ 	int (*new_disk_ack)(struct mddev *mddev, bool ack);
+diff --git a/drivers/md/raid1.c b/drivers/md/raid1.c
+index 7235d1ea377f..7452f2c17cc7 100644
+--- a/drivers/md/raid1.c
++++ b/drivers/md/raid1.c
+@@ -563,7 +563,7 @@ static int read_balance(struct r1conf *conf, struct r1bio *r1_bio, int *max_sect
+ 	if ((conf->mddev->recovery_cp < MaxSector &&
+ 	    (this_sector + sectors >= conf->next_resync)) ||
+ 	    (mddev_is_clustered(conf->mddev) &&
+-	    md_cluster_ops->area_resyncing(conf->mddev, this_sector,
++	    md_cluster_ops->area_resyncing(conf->mddev, READ, this_sector,
+ 		    this_sector + sectors)))
+ 		choose_first = 1;
+ 	else
+@@ -1069,7 +1069,8 @@ static void make_request(struct mddev *mddev, struct bio * bio)
+ 	    ((bio_end_sector(bio) > mddev->suspend_lo &&
+ 	    bio->bi_sector < mddev->suspend_hi) ||
+ 	    (mddev_is_clustered(mddev) &&
+-	     md_cluster_ops->area_resyncing(mddev, bio->bi_sector, bio_end_sector(bio))))) {
++	     md_cluster_ops->area_resyncing(mddev, WRITE,
++			bio->bi_sector, bio_end_sector(bio))))) {
+ 		/* As the suspend_* range is controlled by
+ 		 * userspace, we want an interruptible
+ 		 * wait.
+@@ -1082,7 +1083,7 @@ static void make_request(struct mddev *mddev, struct bio * bio)
+ 			if (bio_end_sector(bio) <= mddev->suspend_lo ||
+ 			    bio->bi_sector >= mddev->suspend_hi ||
+ 			    (mddev_is_clustered(mddev) &&
+-			     !md_cluster_ops->area_resyncing(mddev,
++			     !md_cluster_ops->area_resyncing(mddev, WRITE,
+ 				     bio->bi_sector, bio_end_sector(bio))))
+ 				break;
+ 			schedule();
+-- 
+2.5.0
+
