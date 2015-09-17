@@ -1,0 +1,65 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: s390/hmcdrv: fix interrupt registration
+Patch-mainline: v4.3-rc1
+Git-commit: e619cd3d618672bea8602d682ea63b42a1faf1bc
+References: bnc#946220, LTC#130353
+
+Description:  hmcdrv: fix interrupt registration
+Symptom:      None.
+Problem:      The z/VM part of the hmcdrv sets a currently unassigned bit
+              in control register zero to one in order to enable host
+              service interrupts. If this bit will be assigned in the future
+              this could cause all sorts of problems.
+Solution:     Set the correct bit to enable interrupts.
+Reproduction: -
+
+Upstream-Description:
+
+              s390/hmcdrv: fix interrupt registration
+
+              The z/VM driver sets bit "63-22" in control register zero to one in order
+              to enable the CP Service interrupt (0x2603). However the irq subclass mask
+              that normally corresponds to the CP Service interrupt is
+              "63-54" (== "63-22-32").
+
+              So it looks like the author read the documentation with the 32 bit sized
+              cr0 register bit positions (== 22), but didn't realize that bit numbers
+              change, if applied to a 64 bit register (== 54) due to the numbering
+              scheme.
+
+              Also use irq_subclass_register() instead if ctl_set_bit() since multiple
+              services depend on the service signal subclass mask, which is the correct
+              bit. This also explains why nobody noticed the bug, since the bit is always
+              enabled anyway (e.g. pfault).
+
+              Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+              Reviewed-by: Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
+              Acked-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/s390/char/diag_ftp.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/s390/char/diag_ftp.c
++++ b/drivers/s390/char/diag_ftp.c
+@@ -223,7 +223,7 @@ int diag_ftp_startup(void)
+ 	if (rc)
+ 		return rc;
+ 
+-	ctl_set_bit(0, 63 - 22);
++	irq_subclass_register(IRQ_SUBCLASS_SERVICE_SIGNAL);
+ 	return 0;
+ }
+ 
+@@ -232,6 +232,6 @@ int diag_ftp_startup(void)
+  */
+ void diag_ftp_shutdown(void)
+ {
+-	ctl_clear_bit(0, 63 - 22);
++	irq_subclass_unregister(IRQ_SUBCLASS_SERVICE_SIGNAL);
+ 	unregister_external_interrupt(0x2603, diag_ftp_handler);
+ }
