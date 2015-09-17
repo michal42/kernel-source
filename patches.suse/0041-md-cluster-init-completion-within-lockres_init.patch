@@ -1,0 +1,49 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Wed, 10 Jun 2015 14:37:22 +0800
+Subject: [PATCH 41/57] md-cluster: init completion within lockres_init
+Git-commit: b83d51c0785c34d552111f38fbecbe00cd58b913
+Patch-mainline: v4.3
+References: fate#316335
+
+We should init completion within lockres_init, otherwise
+completion could be initialized more than one time during
+it's life cycle.
+
+Signed-off-by: Guoqing Jiang <gqjiang@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/md/md-cluster.c b/drivers/md/md-cluster.c
+index 725f02e565e9..ddd27d76c35a 100644
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -100,7 +100,6 @@ static int dlm_lock_sync(struct dlm_lock_resource *res, int mode)
+ {
+ 	int ret = 0;
+ 
+-	init_completion(&res->completion);
+ 	ret = dlm_lock(res->ls, mode, &res->lksb,
+ 			res->flags, res->name, strlen(res->name),
+ 			0, sync_ast, res, res->bast);
+@@ -125,6 +124,7 @@ static struct dlm_lock_resource *lockres_init(struct mddev *mddev,
+ 	res = kzalloc(sizeof(struct dlm_lock_resource), GFP_KERNEL);
+ 	if (!res)
+ 		return NULL;
++	init_completion(&res->completion);
+ 	res->ls = cinfo->lockspace;
+ 	res->mddev = mddev;
+ 	namelen = strlen(name);
+@@ -169,7 +169,6 @@ static void lockres_free(struct dlm_lock_resource *res)
+ 	if (!res)
+ 		return;
+ 
+-	init_completion(&res->completion);
+ 	dlm_unlock(res->ls, res->lksb.sb_lkid, 0, &res->lksb, res);
+ 	wait_for_completion(&res->completion);
+ 
+-- 
+2.5.0
+

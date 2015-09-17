@@ -1,0 +1,55 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date: Wed, 22 Jul 2015 12:09:17 -0500
+Subject: [PATCH 56/57] md: Skip cluster setup for dm-raid
+Git-commit: d3b178adb3a3adf54ecf77758138b654c3ee7f09
+Patch-mainline: v4.2
+
+There is a bug that the bitmap superblock isn't initialised properly for
+dm-raid, so a new field can have garbage in new fields.
+(dm-raid does initialisation in the kernel - md initialised the
+ superblock in mdadm).
+
+This means that for dm-raid we cannot currently trust the new ->nodes
+field. So:
+ - use __GFP_ZERO to initialise the superblock properly for all new
+    arrays
+ - initialise all fields in bitmap_info in bitmap_new_disk_sb
+ - ignore ->nodes for dm arrays (yes, this is a hack)
+
+This bug exposes dm-raid to bug in the (still experimental) md-cluster
+code, so it is suitable for -stable.  It does cause crashes.
+
+References: fate#316335
+Cc: stable@vger.kernel.org (v4.1)
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Signed-off-by: NeilBrown <neilb@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/bitmap.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index 2182ee413a09..88ae7b1e0498 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -483,7 +483,7 @@ static int bitmap_new_disk_sb(struct bitmap *bitmap)
+ 	bitmap_super_t *sb;
+ 	unsigned long chunksize, daemon_sleep, write_behind;
+ 
+-	bitmap->storage.sb_page = alloc_page(GFP_KERNEL);
++	bitmap->storage.sb_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+ 	if (bitmap->storage.sb_page == NULL)
+ 		return -ENOMEM;
+ 	bitmap->storage.sb_page->index = 0;
+@@ -530,6 +530,7 @@ static int bitmap_new_disk_sb(struct bitmap *bitmap)
+ 	sb->state = cpu_to_le32(bitmap->flags);
+ 	bitmap->events_cleared = bitmap->mddev->events;
+ 	sb->events_cleared = cpu_to_le64(bitmap->mddev->events);
++	bitmap->mddev->bitmap_info.nodes = 0;
+ 
+ 	kunmap_atomic(sb);
+ 
+-- 
+2.5.0
+

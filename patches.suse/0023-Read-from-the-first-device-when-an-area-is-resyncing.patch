@@ -1,0 +1,39 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date: Tue, 12 Aug 2014 10:13:19 -0500
+Subject: [PATCH 23/57] Read from the first device when an area is resyncing
+Git-commit: 7d49ffcfa3cc08aa2301bf3fdb1e423a3fd33ee7
+Patch-mainline: v4.1
+References: fate#316335
+
+set choose_first true for cluster read in read balance when the area
+is resyncing.
+
+Signed-off-by: Lidong Zhong <lzhong@suse.com>
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/raid1.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/md/raid1.c b/drivers/md/raid1.c
+index 9193da0e4963..19bf21a5286b 100644
+--- a/drivers/md/raid1.c
++++ b/drivers/md/raid1.c
+@@ -560,8 +560,11 @@ static int read_balance(struct r1conf *conf, struct r1bio *r1_bio, int *max_sect
+ 	choose_next_idle = 0;
+ 	clear_bit(R1BIO_FailFast, &r1_bio->state);
+ 
+-	if (conf->mddev->recovery_cp < MaxSector &&
+-	    (this_sector + sectors >= conf->next_resync))
++	if ((conf->mddev->recovery_cp < MaxSector &&
++	    (this_sector + sectors >= conf->next_resync)) ||
++	    (mddev_is_clustered(conf->mddev) &&
++	    md_cluster_ops->area_resyncing(conf->mddev, this_sector,
++		    this_sector + sectors)))
+ 		choose_first = 1;
+ 	else
+ 		choose_first = 0;
+-- 
+2.5.0
+

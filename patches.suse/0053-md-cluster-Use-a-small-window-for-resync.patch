@@ -1,0 +1,300 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date: Wed, 19 Aug 2015 06:57:08 -0500
+Subject: [PATCH 53/57] md-cluster: Use a small window for resync
+Patch-mainline: Not yet, still under development
+References: fate#316335
+
+Suspending the entire device for resync could take too long. Resync
+in small chunks.
+
+cluster's resync window (32M) is maintained in r1conf as
+cluster_sync_low and cluster_sync_high and processed in
+raid1's sync_request(). If the current resync is outside the cluster
+resync window:
+
+1. Set the cluster_sync_low to curr_resync_completed.
+2. Check if the sync will fit in the new window, if not issue a
+   wait_barrier() and set cluster_sync_low to sector_nr.
+3. Set cluster_sync_high to cluster_sync_low + resync_window.
+4. Send a message to all nodes so they may add it in their suspension
+   list.
+
+bitmap_cond_end_sync is modified to allow to force a sync inorder
+to get the curr_resync_completed uptodate with the sector passed.
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/bitmap.c     |  4 ++--
+ drivers/md/bitmap.h     |  2 +-
+ drivers/md/md-cluster.c | 29 +++++++----------------------
+ drivers/md/md-cluster.h |  3 +--
+ drivers/md/md.c         |  8 --------
+ drivers/md/raid1.c      | 26 +++++++++++++++++++++++++-
+ drivers/md/raid1.h      |  7 +++++++
+ drivers/md/raid10.c     |  2 +-
+ drivers/md/raid5.c      |  2 +-
+ 9 files changed, 45 insertions(+), 38 deletions(-)
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index 4be3032385ec..2182ee413a09 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -1583,7 +1583,7 @@ void bitmap_close_sync(struct bitmap *bitmap)
+ }
+ EXPORT_SYMBOL(bitmap_close_sync);
+ 
+-void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector)
++void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector, bool force)
+ {
+ 	sector_t s = 0;
+ 	sector_t blocks;
+@@ -1594,7 +1594,7 @@ void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector)
+ 		bitmap->last_end_sync = jiffies;
+ 		return;
+ 	}
+-	if (time_before(jiffies, (bitmap->last_end_sync
++	if (!force && time_before(jiffies, (bitmap->last_end_sync
+ 				  + bitmap->mddev->bitmap_info.daemon_sleep)))
+ 		return;
+ 	wait_event(bitmap->mddev->recovery_wait,
+diff --git a/drivers/md/bitmap.h b/drivers/md/bitmap.h
+index 0978bdc1702c..dc37504a5ac5 100644
+--- a/drivers/md/bitmap.h
++++ b/drivers/md/bitmap.h
+@@ -257,7 +257,7 @@ void bitmap_endwrite(struct bitmap *bitmap, sector_t offset,
+ int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int degraded);
+ void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int aborted);
+ void bitmap_close_sync(struct bitmap *bitmap);
+-void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector);
++void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector, bool force);
+ 
+ void bitmap_unplug(struct bitmap *bitmap);
+ void bitmap_daemon_work(struct mddev *mddev);
+diff --git a/drivers/md/md-cluster.c b/drivers/md/md-cluster.c
+index 98d8d967a971..1fb172b85da6 100644
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -804,15 +804,6 @@ static int slot_number(struct mddev *mddev)
+ 	return cinfo->slot_number - 1;
+ }
+ 
+-static void resync_info_update(struct mddev *mddev, sector_t lo, sector_t hi)
+-{
+-	struct md_cluster_info *cinfo = mddev->cluster_info;
+-
+-	add_resync_info(mddev, cinfo->bitmap_lockres, lo, hi);
+-	/* Re-acquire the lock to refresh LVB */
+-	dlm_lock_sync(cinfo->bitmap_lockres, DLM_LOCK_PW);
+-}
+-
+ static int metadata_update_start(struct mddev *mddev)
+ {
+ 	return lock_comm(mddev->cluster_info);
+@@ -838,38 +829,33 @@ static int metadata_update_cancel(struct mddev *mddev)
+ 	return dlm_unlock_sync(cinfo->token_lockres);
+ }
+ 
+-static int resync_send(struct mddev *mddev, enum msg_type type,
+-		sector_t lo, sector_t hi)
++static int resync_info_update(struct mddev *mddev, sector_t lo, sector_t hi)
+ {
+ 	struct md_cluster_info *cinfo = mddev->cluster_info;
+ 	struct cluster_msg cmsg;
+ 	int slot = cinfo->slot_number - 1;
+ 
++	add_resync_info(mddev, cinfo->bitmap_lockres, lo, hi);
++	/* Re-acquire the lock to refresh LVB */
++	dlm_lock_sync(cinfo->bitmap_lockres, DLM_LOCK_PW);
++
+ 	pr_info("%s:%d lo: %llu hi: %llu\n", __func__, __LINE__,
+ 			(unsigned long long)lo,
+ 			(unsigned long long)hi);
+-	resync_info_update(mddev, lo, hi);
+-	cmsg.type = cpu_to_le32(type);
++	cmsg.type = cpu_to_le32(RESYNCING);
+ 	cmsg.slot = cpu_to_le32(slot);
+ 	cmsg.low = cpu_to_le64(lo);
+ 	cmsg.high = cpu_to_le64(hi);
+ 	return sendmsg(cinfo, &cmsg);
+ }
+ 
+-static int resync_start(struct mddev *mddev, sector_t lo, sector_t hi)
+-{
+-	pr_info("%s:%d\n", __func__, __LINE__);
+-	return resync_send(mddev, RESYNCING, lo, hi);
+-}
+-
+ static void resync_finish(struct mddev *mddev)
+ {
+ 	struct md_cluster_info *cinfo = mddev->cluster_info;
+ 	struct cluster_msg cmsg;
+ 	int slot = cinfo->slot_number - 1;
+ 
+-	pr_info("%s:%d\n", __func__, __LINE__);
+-	resync_send(mddev, RESYNCING, 0, 0);
++	resync_info_update(mddev, 0, 0);
+ 	if (test_bit(MD_RECOVERY_INTR, &mddev->recovery)) {
+ 		cmsg.type = cpu_to_le32(BITMAP_NEEDS_SYNC);
+ 		cmsg.slot = cpu_to_le32(slot);
+@@ -999,7 +985,6 @@ static struct md_cluster_operations cluster_ops = {
+ 	.leave  = leave,
+ 	.slot_number = slot_number,
+ 	.resync_info_update = resync_info_update,
+-	.resync_start = resync_start,
+ 	.resync_finish = resync_finish,
+ 	.metadata_update_start = metadata_update_start,
+ 	.metadata_update_finish = metadata_update_finish,
+diff --git a/drivers/md/md-cluster.h b/drivers/md/md-cluster.h
+index 00defe2badbc..02f7f4152ac1 100644
+--- a/drivers/md/md-cluster.h
++++ b/drivers/md/md-cluster.h
+@@ -12,8 +12,7 @@ struct md_cluster_operations {
+ 	int (*join)(struct mddev *mddev, int nodes);
+ 	int (*leave)(struct mddev *mddev);
+ 	int (*slot_number)(struct mddev *mddev);
+-	void (*resync_info_update)(struct mddev *mddev, sector_t lo, sector_t hi);
+-	int (*resync_start)(struct mddev *mddev, sector_t lo, sector_t hi);
++	int (*resync_info_update)(struct mddev *mddev, sector_t lo, sector_t hi);
+ 	void (*resync_finish)(struct mddev *mddev);
+ 	int (*metadata_update_start)(struct mddev *mddev);
+ 	int (*metadata_update_finish)(struct mddev *mddev);
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 94ff37809e9f..975cbf15051d 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -7908,9 +7908,6 @@ void md_do_sync(struct md_thread *thread)
+ 	md_new_event(mddev);
+ 	update_time = jiffies;
+ 
+-	if (mddev_is_clustered(mddev))
+-		md_cluster_ops->resync_start(mddev, j, max_sectors);
+-
+ 	blk_start_plug(&plug);
+ 	while (j < max_sectors) {
+ 		sector_t sectors;
+@@ -7971,8 +7968,6 @@ void md_do_sync(struct md_thread *thread)
+ 		j += sectors;
+ 		if (j > 2)
+ 			mddev->curr_resync = j;
+-		if (mddev_is_clustered(mddev))
+-			md_cluster_ops->resync_info_update(mddev, j, max_sectors);
+ 		mddev->curr_mark_cnt = io_sectors;
+ 		if (last_check == 0)
+ 			/* this is the earliest that rebuild will be
+@@ -8065,9 +8060,6 @@ void md_do_sync(struct md_thread *thread)
+ 		}
+ 	}
+  skip:
+-	if (mddev_is_clustered(mddev))
+-		md_cluster_ops->resync_finish(mddev);
+-
+ 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
+ 
+ 	if (!test_bit(MD_RECOVERY_INTR, &mddev->recovery)) {
+diff --git a/drivers/md/raid1.c b/drivers/md/raid1.c
+index 7452f2c17cc7..fc53f36ab867 100644
+--- a/drivers/md/raid1.c
++++ b/drivers/md/raid1.c
+@@ -89,6 +89,8 @@ static void r1bio_pool_free(void *r1_bio, void *data)
+ #define RESYNC_PAGES ((RESYNC_BLOCK_SIZE + PAGE_SIZE-1) / PAGE_SIZE)
+ #define RESYNC_WINDOW (RESYNC_BLOCK_SIZE * RESYNC_DEPTH)
+ #define RESYNC_WINDOW_SECTORS (RESYNC_WINDOW >> 9)
++#define CLUSTER_RESYNC_WINDOW (16 * RESYNC_WINDOW)
++#define CLUSTER_RESYNC_WINDOW_SECTORS (CLUSTER_RESYNC_WINDOW >> 9)
+ #define NEXT_NORMALIO_DISTANCE (3 * RESYNC_WINDOW_SECTORS)
+ 
+ static void * r1buf_pool_alloc(gfp_t gfp_flags, void *data)
+@@ -2484,6 +2486,13 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
+ 
+ 		bitmap_close_sync(mddev->bitmap);
+ 		close_sync(conf);
++
++		if (mddev_is_clustered(mddev)) {
++			conf->cluster_sync_low = 0;
++			conf->cluster_sync_high = 0;
++			/* Send zeros to mark end of resync */
++			md_cluster_ops->resync_finish(mddev);
++		}
+ 		return 0;
+ 	}
+ 
+@@ -2511,7 +2520,12 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
+ 	if (!go_faster && conf->nr_waiting)
+ 		msleep_interruptible(1000);
+ 
+-	bitmap_cond_end_sync(mddev->bitmap, sector_nr);
++	/* we are incrementing sector_nr below. To be safe, we check against
++	 * sector_nr + two times RESYNC_SECTORS
++	 */
++
++	bitmap_cond_end_sync(mddev->bitmap, sector_nr,
++		mddev_is_clustered(mddev) && (sector_nr + 2 * RESYNC_SECTORS > conf->cluster_sync_high));
+ 	r1_bio = mempool_alloc(conf->r1buf_pool, GFP_NOIO);
+ 	raise_barrier(conf);
+ 
+@@ -2705,6 +2719,16 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int *skipp
+  bio_full:
+ 	r1_bio->sectors = nr_sectors;
+ 
++	if (mddev_is_clustered(mddev) &&
++			conf->cluster_sync_high < sector_nr + nr_sectors) {
++		conf->cluster_sync_low = mddev->curr_resync_completed;
++		conf->cluster_sync_high = conf->cluster_sync_low + CLUSTER_RESYNC_WINDOW_SECTORS;
++		/* Send resync message */
++		md_cluster_ops->resync_info_update(mddev,
++				conf->cluster_sync_low,
++				conf->cluster_sync_high);
++	}
++
+ 	/* For a user-requested sync, we read all readable devices and do a
+ 	 * compare
+ 	 */
+diff --git a/drivers/md/raid1.h b/drivers/md/raid1.h
+index 4f385f1c8fa6..932b135c27bb 100644
+--- a/drivers/md/raid1.h
++++ b/drivers/md/raid1.h
+@@ -95,6 +95,13 @@ struct r1conf {
+ 	 * the new thread here until we fully activate the array.
+ 	 */
+ 	struct md_thread	*thread;
++
++	/* Keep track of cluster resync window to send to other
++	 * nodes.
++	 */
++	sector_t		cluster_sync_low;
++	sector_t		cluster_sync_high;
++
+ };
+ 
+ /*
+diff --git a/drivers/md/raid10.c b/drivers/md/raid10.c
+index f47e6f744ae1..6c4e5ea604be 100644
+--- a/drivers/md/raid10.c
++++ b/drivers/md/raid10.c
+@@ -3415,7 +3415,7 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr,
+ 		/* resync. Schedule a read for every block at this virt offset */
+ 		int count = 0;
+ 
+-		bitmap_cond_end_sync(mddev->bitmap, sector_nr);
++		bitmap_cond_end_sync(mddev->bitmap, sector_nr, false);
+ 
+ 		if (!bitmap_start_sync(mddev->bitmap, sector_nr,
+ 				       &sync_blocks, mddev->degraded) &&
+diff --git a/drivers/md/raid5.c b/drivers/md/raid5.c
+index b4ed779cefba..ea3fd120e2b7 100644
+--- a/drivers/md/raid5.c
++++ b/drivers/md/raid5.c
+@@ -4882,7 +4882,7 @@ static inline sector_t sync_request(struct mddev *mddev, sector_t sector_nr, int
+ 		return sync_blocks * STRIPE_SECTORS; /* keep things rounded to whole stripes */
+ 	}
+ 
+-	bitmap_cond_end_sync(mddev->bitmap, sector_nr);
++	bitmap_cond_end_sync(mddev->bitmap, sector_nr, false);
+ 
+ 	sh = get_active_stripe(conf, sector_nr, 0, 1, 0);
+ 	if (sh == NULL) {
+-- 
+2.5.0
+
