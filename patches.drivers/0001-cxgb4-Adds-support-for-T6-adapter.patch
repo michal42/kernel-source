@@ -1,0 +1,170 @@
+From: Hariprasad Shenai <hariprasad@chelsio.com>
+Date: Tue, 2 Jun 2015 13:59:39 +0530
+Subject: [PATCH 1/2] cxgb4: Adds support for T6 adapter
+Patch-mainline: v4.2-rc1
+Git-commit: 3ccc6cf74d8c0059ae076aee3bf83c9124815404 (partial)
+References: bsc#945218
+
+Adds NIC driver related changes for T6 adapter. Register related
+changes, MC related changes, VF related changes, doorbell related
+changes, debugfs changes, etc
+
+Signed-off-by: Hariprasad Shenai <hariprasad@chelsio.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+[ dchang: modified t4fw_api.h and cxgb4_debugfs.c with minimal
+changes to support new firmware, skipped others changes of the
+original patch so that there is no T6 support ]
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c | 20 ++++----
+ drivers/net/ethernet/chelsio/cxgb4/t4fw_api.h      | 53 ++++++++++++++--------
+ 2 files changed, 45 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c b/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
+index d079c4b..64d328e 100644
+--- a/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
++++ b/drivers/net/ethernet/chelsio/cxgb4/cxgb4_debugfs.c
+@@ -1108,18 +1108,21 @@ static int mps_tcam_show(struct seq_file *seq, void *v)
+ 		if (cls_lo & REPLICATE_F) {
+ 			struct fw_ldst_cmd ldst_cmd;
+ 			int ret;
++			struct fw_ldst_mps_rplc mps_rplc;
++			u32 ldst_addrspc;
+ 
+ 			memset(&ldst_cmd, 0, sizeof(ldst_cmd));
++			ldst_addrspc =
++				FW_LDST_CMD_ADDRSPACE_V(FW_LDST_ADDRSPC_MPS);
+ 			ldst_cmd.op_to_addrspace =
+ 				htonl(FW_CMD_OP_V(FW_LDST_CMD) |
+ 				      FW_CMD_REQUEST_F |
+ 				      FW_CMD_READ_F |
+-				      FW_LDST_CMD_ADDRSPACE_V(
+-					      FW_LDST_ADDRSPC_MPS));
++				      ldst_addrspc);
+ 			ldst_cmd.cycles_to_len16 = htonl(FW_LEN16(ldst_cmd));
+-			ldst_cmd.u.mps.fid_ctl =
++			ldst_cmd.u.mps.rplc.fid_idx =
+ 				htons(FW_LDST_CMD_FID_V(FW_LDST_MPS_RPLC) |
+-				      FW_LDST_CMD_CTL_V(idx));
++				      FW_LDST_CMD_IDX_V(idx));
+ 			ret = t4_wr_mbox(adap, adap->mbox, &ldst_cmd,
+ 					 sizeof(ldst_cmd), &ldst_cmd);
+ 			if (ret)
+@@ -1127,10 +1130,11 @@ static int mps_tcam_show(struct seq_file *seq, void *v)
+ 					 "replication map for idx %d: %d\n",
+ 					 idx, -ret);
+ 			else {
+-				rplc[0] = ntohl(ldst_cmd.u.mps.rplc31_0);
+-				rplc[1] = ntohl(ldst_cmd.u.mps.rplc63_32);
+-				rplc[2] = ntohl(ldst_cmd.u.mps.rplc95_64);
+-				rplc[3] = ntohl(ldst_cmd.u.mps.rplc127_96);
++				mps_rplc = ldst_cmd.u.mps.rplc;
++				rplc[0] = ntohl(mps_rplc.rplc31_0);
++				rplc[1] = ntohl(mps_rplc.rplc63_32);
++				rplc[2] = ntohl(mps_rplc.rplc95_64);
++				rplc[3] = ntohl(mps_rplc.rplc127_96);
+ 			}
+ 		}
+ 
+diff --git a/drivers/net/ethernet/chelsio/cxgb4/t4fw_api.h b/drivers/net/ethernet/chelsio/cxgb4/t4fw_api.h
+index a4a19e0..6b0ad81 100644
+--- a/drivers/net/ethernet/chelsio/cxgb4/t4fw_api.h
++++ b/drivers/net/ethernet/chelsio/cxgb4/t4fw_api.h
+@@ -788,15 +788,27 @@ struct fw_ldst_cmd {
+ 			__be16 vctl;
+ 			__be16 rval;
+ 		} mdio;
+-		struct fw_ldst_mps {
+-			__be16 fid_ctl;
+-			__be16 rplcpf_pkd;
+-			__be32 rplc127_96;
+-			__be32 rplc95_64;
+-			__be32 rplc63_32;
+-			__be32 rplc31_0;
+-			__be32 atrb;
+-			__be16 vlan[16];
++		union fw_ldst_mps {
++			struct fw_ldst_mps_rplc {
++				__be16 fid_idx;
++				__be16 rplcpf_pkd;
++				__be32 rplc255_224;
++				__be32 rplc223_192;
++				__be32 rplc191_160;
++				__be32 rplc159_128;
++				__be32 rplc127_96;
++				__be32 rplc95_64;
++				__be32 rplc63_32;
++				__be32 rplc31_0;
++			} rplc;
++			struct fw_ldst_mps_atrb {
++				__be16 fid_mpsid;
++				__be16 r2[3];
++				__be32 r3[2];
++				__be32 r4;
++				__be32 atrb;
++				__be16 vlan[16];
++			} atrb;
+ 		} mps;
+ 		struct fw_ldst_func {
+ 			u8 access_ctl;
+@@ -831,8 +843,8 @@ struct fw_ldst_cmd {
+ #define FW_LDST_CMD_FID_S       15
+ #define FW_LDST_CMD_FID_V(x)	((x) << FW_LDST_CMD_FID_S)
+ 
+-#define FW_LDST_CMD_CTL_S       0
+-#define FW_LDST_CMD_CTL_V(x)	((x) << FW_LDST_CMD_CTL_S)
++#define FW_LDST_CMD_IDX_S	0
++#define FW_LDST_CMD_IDX_V(x)	((x) << FW_LDST_CMD_IDX_S)
+ 
+ #define FW_LDST_CMD_RPLCPF_S    0
+ #define FW_LDST_CMD_RPLCPF_V(x)	((x) << FW_LDST_CMD_RPLCPF_S)
+@@ -2526,13 +2538,8 @@ enum fw_port_mod_sub_type {
+ 	FW_PORT_MOD_SUB_TYPE_TWINAX_7 = 0xC,
+ };
+ 
+-/* port stats */
+-#define FW_NUM_PORT_STATS 50
+-#define FW_NUM_PORT_TX_STATS 23
+-#define FW_NUM_PORT_RX_STATS 27
+-
+ enum fw_port_stats_tx_index {
+-	FW_STAT_TX_PORT_BYTES_IX,
++	FW_STAT_TX_PORT_BYTES_IX = 0,
+ 	FW_STAT_TX_PORT_FRAMES_IX,
+ 	FW_STAT_TX_PORT_BCAST_IX,
+ 	FW_STAT_TX_PORT_MCAST_IX,
+@@ -2554,11 +2561,12 @@ enum fw_port_stats_tx_index {
+ 	FW_STAT_TX_PORT_PPP4_IX,
+ 	FW_STAT_TX_PORT_PPP5_IX,
+ 	FW_STAT_TX_PORT_PPP6_IX,
+-	FW_STAT_TX_PORT_PPP7_IX
++	FW_STAT_TX_PORT_PPP7_IX,
++	FW_NUM_PORT_TX_STATS
+ };
+ 
+ enum fw_port_stat_rx_index {
+-	FW_STAT_RX_PORT_BYTES_IX,
++	FW_STAT_RX_PORT_BYTES_IX = 0,
+ 	FW_STAT_RX_PORT_FRAMES_IX,
+ 	FW_STAT_RX_PORT_BCAST_IX,
+ 	FW_STAT_RX_PORT_MCAST_IX,
+@@ -2584,9 +2592,14 @@ enum fw_port_stat_rx_index {
+ 	FW_STAT_RX_PORT_PPP5_IX,
+ 	FW_STAT_RX_PORT_PPP6_IX,
+ 	FW_STAT_RX_PORT_PPP7_IX,
+-	FW_STAT_RX_PORT_LESS_64B_IX
++	FW_STAT_RX_PORT_LESS_64B_IX,
++	FW_STAT_RX_PORT_MAC_ERROR_IX,
++	FW_NUM_PORT_RX_STATS
+ };
+ 
++/* port stats */
++#define FW_NUM_PORT_STATS (FW_NUM_PORT_TX_STATS + FW_NUM_PORT_RX_STATS)
++
+ struct fw_port_stats_cmd {
+ 	__be32 op_to_portid;
+ 	__be32 retval_len16;
+-- 
+2.1.2
+
