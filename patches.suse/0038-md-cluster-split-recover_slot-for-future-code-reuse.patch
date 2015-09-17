@@ -1,0 +1,65 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Fri, 29 May 2015 14:22:57 +0800
+Subject: [PATCH 38/57] md-cluster: split recover_slot for future code reuse
+Git-commit: 05cd0e51769a51f53c68e83976c83653f6ab1595
+Patch-mainline: v4.3
+References: fate#316335
+
+Make recover_slot as a wraper to __recover_slot, since the
+logic of __recover_slot could be reuse for the condition
+when other nodes need to take over the resync job.
+
+Signed-off-by: Guoqing Jiang <gqjiang@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/md/md-cluster.c b/drivers/md/md-cluster.c
+index 08b0887d5020..8d14c634fb80 100644
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -269,16 +269,11 @@ static void recover_prep(void *arg)
+ 	set_bit(MD_CLUSTER_SUSPEND_READ_BALANCING, &cinfo->state);
+ }
+ 
+-static void recover_slot(void *arg, struct dlm_slot *slot)
++static void __recover_slot(struct mddev *mddev, int slot)
+ {
+-	struct mddev *mddev = arg;
+ 	struct md_cluster_info *cinfo = mddev->cluster_info;
+ 
+-	pr_info("md-cluster: %s Node %d/%d down. My slot: %d. Initiating recovery.\n",
+-			mddev->bitmap_info.cluster_name,
+-			slot->nodeid, slot->slot,
+-			cinfo->slot_number);
+-	set_bit(slot->slot - 1, &cinfo->recovery_map);
++	set_bit(slot, &cinfo->recovery_map);
+ 	if (!cinfo->recovery_thread) {
+ 		cinfo->recovery_thread = md_register_thread(recover_bitmaps,
+ 				mddev, "recover");
+@@ -290,6 +285,20 @@ static void recover_slot(void *arg, struct dlm_slot *slot)
+ 	md_wakeup_thread(cinfo->recovery_thread);
+ }
+ 
++static void recover_slot(void *arg, struct dlm_slot *slot)
++{
++	struct mddev *mddev = arg;
++	struct md_cluster_info *cinfo = mddev->cluster_info;
++
++	pr_info("md-cluster: %s Node %d/%d down. My slot: %d. Initiating recovery.\n",
++			mddev->bitmap_info.cluster_name,
++			slot->nodeid, slot->slot,
++			cinfo->slot_number);
++	/* deduct one since dlm slot starts from one while the num of
++	 * cluster-md begins with 0 */
++	__recover_slot(mddev, slot->slot - 1);
++}
++
+ static void recover_done(void *arg, struct dlm_slot *slots,
+ 		int num_slots, int our_slot,
+ 		uint32_t generation)
+-- 
+2.5.0
+
