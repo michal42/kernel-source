@@ -1,0 +1,76 @@
+From: Christopher Oo <t-chriso@microsoft.com>
+Date: Wed, 5 Aug 2015 00:52:40 -0700
+Patch-mainline: v4.3-rc1
+Subject: Drivers: hv_vmbus: Fix signal to host condition
+Git-commit: a5cca686ce0ef4909deaee4ed46dd991e3a9ece4
+Reference: fate#315887
+
+Fixes a bug where previously hv_ringbuffer_read would pass in the old
+number of bytes available to read instead of the expected old read index
+when calculating when to signal to the host that the ringbuffer is empty.
+Since the previous write size is already saved, also changes the
+hv_need_to_signal_on_read to use the previously read value rather than
+recalculating it.
+
+Signed-off-by: Christopher Oo <t-chriso@microsoft.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/ring_buffer.c | 14 +++-----------
+ 1 file changed, 3 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/hv/ring_buffer.c b/drivers/hv/ring_buffer.c
+index 6361d12..70a1a9a 100644
+--- a/drivers/hv/ring_buffer.c
++++ b/drivers/hv/ring_buffer.c
+@@ -103,10 +103,9 @@ static bool hv_need_to_signal(u32 old_write, struct hv_ring_buffer_info *rbi)
+  *    there is room for the producer to send the pending packet.
+  */
+ 
+-static bool hv_need_to_signal_on_read(u32 old_rd,
+-					 struct hv_ring_buffer_info *rbi)
++static bool hv_need_to_signal_on_read(u32 prev_write_sz,
++				      struct hv_ring_buffer_info *rbi)
+ {
+-	u32 prev_write_sz;
+ 	u32 cur_write_sz;
+ 	u32 r_size;
+ 	u32 write_loc = rbi->ring_buffer->write_index;
+@@ -123,10 +122,6 @@ static bool hv_need_to_signal_on_read(u32 old_rd,
+ 	cur_write_sz = write_loc >= read_loc ? r_size - (write_loc - read_loc) :
+ 			read_loc - write_loc;
+ 
+-	prev_write_sz = write_loc >= old_rd ? r_size - (write_loc - old_rd) :
+-			old_rd - write_loc;
+-
+-
+ 	if ((prev_write_sz < pending_sz) && (cur_write_sz >= pending_sz))
+ 		return true;
+ 
+@@ -517,7 +512,6 @@ int hv_ringbuffer_read(struct hv_ring_buffer_info *inring_info, void *buffer,
+ 	u32 next_read_location = 0;
+ 	u64 prev_indices = 0;
+ 	unsigned long flags;
+-	u32 old_read;
+ 
+ 	if (buflen <= 0)
+ 		return -EINVAL;
+@@ -528,8 +522,6 @@ int hv_ringbuffer_read(struct hv_ring_buffer_info *inring_info, void *buffer,
+ 				&bytes_avail_toread,
+ 				&bytes_avail_towrite);
+ 
+-	old_read = bytes_avail_toread;
+-
+ 	/* Make sure there is something to read */
+ 	if (bytes_avail_toread < buflen) {
+ 		spin_unlock_irqrestore(&inring_info->ring_lock, flags);
+@@ -560,7 +552,7 @@ int hv_ringbuffer_read(struct hv_ring_buffer_info *inring_info, void *buffer,
+ 
+ 	spin_unlock_irqrestore(&inring_info->ring_lock, flags);
+ 
+-	*signal = hv_need_to_signal_on_read(old_read, inring_info);
++	*signal = hv_need_to_signal_on_read(bytes_avail_towrite, inring_info);
+ 
+ 	return 0;
+ }
