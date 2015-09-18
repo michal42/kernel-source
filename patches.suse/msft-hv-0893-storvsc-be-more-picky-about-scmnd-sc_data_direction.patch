@@ -1,0 +1,51 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Thu, 25 Jun 2015 18:12:11 +0200
+Patch-mainline: v4.3-rc1
+Subject: storvsc: be more picky about scmnd->sc_data_direction
+Git-commit: cb1cf0804fe582f8a626c3cc591cb3127536137c
+Reference: fate#315887
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Under the 'default' case in scmnd->sc_data_direction we have 3 options:
+- DMA_NONE which we handle correctly.
+- DMA_BIDIRECTIONAL which is never supposed to be set by SCSI stack.
+- Garbage value.
+
+Do WARN() and return -EINVAL in the last two cases. virtio_scsi does
+BUG_ON() here but it looks like an overkill.
+
+Reported-by: Radim Krčmář <rkrcmar@redhat.com>
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Acked-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/scsi/storvsc_drv.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
+index 3c6584f..61f4855 100644
+--- a/drivers/scsi/storvsc_drv.c
++++ b/drivers/scsi/storvsc_drv.c
+@@ -1598,10 +1598,18 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
+ 		vm_srb->data_in = READ_TYPE;
+ 		vm_srb->win8_extension.srb_flags |= SRB_FLAGS_DATA_IN;
+ 		break;
+-	default:
++	case DMA_NONE:
+ 		vm_srb->data_in = UNKNOWN_TYPE;
+ 		vm_srb->win8_extension.srb_flags |= SRB_FLAGS_NO_DATA_TRANSFER;
+ 		break;
++	default:
++		/*
++		 * This is DMA_BIDIRECTIONAL or something else we are never
++		 * supposed to see here.
++		 */
++		WARN(1, "Unexpected data direction: %d\n",
++		     scmnd->sc_data_direction);
++		return -EINVAL;
+ 	}
+ 
+ 
