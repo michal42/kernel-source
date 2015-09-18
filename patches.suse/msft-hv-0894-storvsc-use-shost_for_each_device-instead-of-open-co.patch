@@ -1,0 +1,48 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Wed, 1 Jul 2015 11:31:27 +0200
+Patch-mainline: v4.3-rc1
+Subject: storvsc: use shost_for_each_device() instead of open coding
+Git-commit: 8d6a9f5676f0e734967ac3739f5c6a28a0b047d9
+Reference: fate#315887
+
+Comment in struct Scsi_Host says that drivers are not supposed to access
+__devices directly. storvsc_host_scan() doesn't happen in irq context
+so we can just use shost_for_each_device().
+
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Reviewed-by: Long Li <longli@microsoft.com>
+Acked-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/scsi/storvsc_drv.c | 9 +--------
+ 1 file changed, 1 insertion(+), 8 deletions(-)
+
+diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
+index 61f4855..dbc9d9a 100644
+--- a/drivers/scsi/storvsc_drv.c
++++ b/drivers/scsi/storvsc_drv.c
+@@ -426,7 +426,6 @@ static void storvsc_host_scan(struct work_struct *work)
+ 	struct storvsc_scan_work *wrk;
+ 	struct Scsi_Host *host;
+ 	struct scsi_device *sdev;
+-	unsigned long flags;
+ 
+ 	wrk = container_of(work, struct storvsc_scan_work, work);
+ 	host = wrk->host;
+@@ -443,14 +442,8 @@ static void storvsc_host_scan(struct work_struct *work)
+ 	 * may have been removed this way.
+ 	 */
+ 	mutex_lock(&host->scan_mutex);
+-	spin_lock_irqsave(host->host_lock, flags);
+-	list_for_each_entry(sdev, &host->__devices, siblings) {
+-		spin_unlock_irqrestore(host->host_lock, flags);
++	shost_for_each_device(sdev, host)
+ 		scsi_test_unit_ready(sdev, 1, 1, NULL);
+-		spin_lock_irqsave(host->host_lock, flags);
+-		continue;
+-	}
+-	spin_unlock_irqrestore(host->host_lock, flags);
+ 	mutex_unlock(&host->scan_mutex);
+ 	/*
+ 	 * Now scan the host to discover LUNs that may have been added.
