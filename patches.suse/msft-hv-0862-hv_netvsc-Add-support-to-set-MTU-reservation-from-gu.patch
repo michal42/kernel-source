@@ -1,0 +1,64 @@
+From: Haiyang Zhang <haiyangz@microsoft.com>
+Date: Mon, 6 Jul 2015 14:11:37 -0700
+Patch-mainline: v4.3-rc1
+Subject: hv_netvsc: Add support to set MTU reservation from guest side
+Git-commit: f9cbce34c34bcc05ea0dd78c8999bfe88b5b6b86
+Reference: fate#315887
+
+When packet encapsulation is in use, the MTU needs to be reduced for
+headroom reservation.
+The existing code takes the updated MTU value only from the host side.
+But vSwitch extensions, such as Open vSwitch, require the flexibility
+to change the MTU to different values from within a guest during the
+lifecycle of a vNIC, when the encapsulation protocol is changed. The
+patch supports this kind of MTU changes.
+
+Signed-off-by: Haiyang Zhang <haiyangz@microsoft.com>
+Reviewed-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: <ohering@suse.de>
+---
+ drivers/net/hyperv/hyperv_net.h   | 1 +
+ drivers/net/hyperv/netvsc_drv.c   | 3 +--
+ drivers/net/hyperv/rndis_filter.c | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/hyperv/hyperv_net.h b/drivers/net/hyperv/hyperv_net.h
+index dd45440..26cd14c 100644
+--- a/drivers/net/hyperv/hyperv_net.h
++++ b/drivers/net/hyperv/hyperv_net.h
+@@ -589,6 +589,7 @@ struct nvsp_message {
+ 
+ 
+ #define NETVSC_MTU 65536
++#define NETVSC_MTU_MIN 68
+ 
+ #define NETVSC_RECEIVE_BUFFER_SIZE		(1024*1024*16)	/* 16MB */
+ #define NETVSC_RECEIVE_BUFFER_SIZE_LEGACY	(1024*1024*15)  /* 15MB */
+diff --git a/drivers/net/hyperv/netvsc_drv.c b/drivers/net/hyperv/netvsc_drv.c
+index 358475e..b855ba9 100644
+--- a/drivers/net/hyperv/netvsc_drv.c
++++ b/drivers/net/hyperv/netvsc_drv.c
+@@ -743,8 +743,7 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
+ 	if (nvdev->nvsp_version >= NVSP_PROTOCOL_VERSION_2)
+ 		limit = NETVSC_MTU - ETH_HLEN;
+ 
+-	/* Hyper-V hosts don't support MTU < ETH_DATA_LEN (1500) */
+-	if (mtu < ETH_DATA_LEN || mtu > limit)
++	if (mtu < NETVSC_MTU_MIN || mtu > limit)
+ 		return -EINVAL;
+ 
+ 	nvdev->start_remove = true;
+diff --git a/drivers/net/hyperv/rndis_filter.c b/drivers/net/hyperv/rndis_filter.c
+index 236aeb7..2e40417 100644
+--- a/drivers/net/hyperv/rndis_filter.c
++++ b/drivers/net/hyperv/rndis_filter.c
+@@ -1054,7 +1054,7 @@ int rndis_filter_device_add(struct hv_device *dev,
+ 	ret = rndis_filter_query_device(rndis_device,
+ 					RNDIS_OID_GEN_MAXIMUM_FRAME_SIZE,
+ 					&mtu, &size);
+-	if (ret == 0 && size == sizeof(u32))
++	if (ret == 0 && size == sizeof(u32) && mtu < net_device->ndev->mtu)
+ 		net_device->ndev->mtu = mtu;
+ 
+ 	/* Get the mac address */
