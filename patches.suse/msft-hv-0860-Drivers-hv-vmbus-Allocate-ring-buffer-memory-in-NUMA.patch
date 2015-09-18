@@ -1,0 +1,50 @@
+From: "K. Y. Srinivasan" <kys@microsoft.com>
+Date: Sun, 31 May 2015 21:27:03 -0700
+Patch-mainline: v4.2-rc1
+Subject: Drivers: hv: vmbus: Allocate ring buffer memory in NUMA aware fashion
+Git-commit: 294409d20572e9bcf857328286433f851168d54a
+Reference: fate#315887
+
+Allocate ring buffer memory from the NUMA node assigned to the channel.
+Since this is a performance and not a correctness issue, if the node specific
+allocation were to fail, fall back and allocate without specifying the node.
+
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/channel.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hv/channel.c b/drivers/hv/channel.c
+index 7a1c2db..603ce97 100644
+--- a/drivers/hv/channel.c
++++ b/drivers/hv/channel.c
+@@ -73,6 +73,7 @@ int vmbus_open(struct vmbus_channel *newchannel, u32 send_ringbuffer_size,
+ 	unsigned long flags;
+ 	int ret, err = 0;
+ 	unsigned long t;
++	struct page *page;
+ 
+ 	spin_lock_irqsave(&newchannel->lock, flags);
+ 	if (newchannel->state == CHANNEL_OPEN_STATE) {
+@@ -87,8 +88,17 @@ int vmbus_open(struct vmbus_channel *newchannel, u32 send_ringbuffer_size,
+ 	newchannel->channel_callback_context = context;
+ 
+ 	/* Allocate the ring buffer */
+-	out = (void *)__get_free_pages(GFP_KERNEL|__GFP_ZERO,
+-		get_order(send_ringbuffer_size + recv_ringbuffer_size));
++	page = alloc_pages_node(cpu_to_node(newchannel->target_cpu),
++				GFP_KERNEL|__GFP_ZERO,
++				get_order(send_ringbuffer_size +
++				recv_ringbuffer_size));
++
++	if (!page)
++		out = (void *)__get_free_pages(GFP_KERNEL|__GFP_ZERO,
++					       get_order(send_ringbuffer_size +
++					       recv_ringbuffer_size));
++	else
++		out = (void *)page_address(page);
+ 
+ 	if (!out) {
+ 		err = -ENOMEM;
