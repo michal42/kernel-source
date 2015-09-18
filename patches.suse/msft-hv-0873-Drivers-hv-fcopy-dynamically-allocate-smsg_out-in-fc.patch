@@ -1,0 +1,75 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Sat, 1 Aug 2015 16:08:12 -0700
+Patch-mainline: v4.3-rc1
+Subject: Drivers: hv: fcopy: dynamically allocate smsg_out in fcopy_send_data()
+Git-commit: 25ef06fe27a292ad33155045ef7a123be4c0b6ab
+Reference: fate#315887
+
+struct hv_start_fcopy is too big to be on stack on i386, the following
+warning is reported:
+
+>> drivers/hv/hv_fcopy.c:159:1: warning: the frame size of 1088 bytes is larger than 1024 bytes [-Wframe-larger-than=]
+
+Reported-by: kbuild test robot <fengguang.wu@intel.com>
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/hv_fcopy.c | 21 +++++++++++++--------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/hv/hv_fcopy.c b/drivers/hv/hv_fcopy.c
+index b50dd33..db4b887 100644
+--- a/drivers/hv/hv_fcopy.c
++++ b/drivers/hv/hv_fcopy.c
+@@ -116,7 +116,7 @@ static int fcopy_handle_handshake(u32 version)
+ 
+ static void fcopy_send_data(struct work_struct *dummy)
+ {
+-	struct hv_start_fcopy smsg_out;
++	struct hv_start_fcopy *smsg_out = NULL;
+ 	int operation = fcopy_transaction.fcopy_msg->operation;
+ 	struct hv_start_fcopy *smsg_in;
+ 	void *out_src;
+@@ -136,21 +136,24 @@ static void fcopy_send_data(struct work_struct *dummy)
+ 	switch (operation) {
+ 	case START_FILE_COPY:
+ 		out_len = sizeof(struct hv_start_fcopy);
+-		memset(&smsg_out, 0, out_len);
+-		smsg_out.hdr.operation = operation;
++		smsg_out = kzalloc(sizeof(*smsg_out), GFP_KERNEL);
++		if (!smsg_out)
++			return;
++
++		smsg_out->hdr.operation = operation;
+ 		smsg_in = (struct hv_start_fcopy *)fcopy_transaction.fcopy_msg;
+ 
+ 		utf16s_to_utf8s((wchar_t *)smsg_in->file_name, W_MAX_PATH,
+ 				UTF16_LITTLE_ENDIAN,
+-				(__u8 *)&smsg_out.file_name, W_MAX_PATH - 1);
++				(__u8 *)&smsg_out->file_name, W_MAX_PATH - 1);
+ 
+ 		utf16s_to_utf8s((wchar_t *)smsg_in->path_name, W_MAX_PATH,
+ 				UTF16_LITTLE_ENDIAN,
+-				(__u8 *)&smsg_out.path_name, W_MAX_PATH - 1);
++				(__u8 *)&smsg_out->path_name, W_MAX_PATH - 1);
+ 
+-		smsg_out.copy_flags = smsg_in->copy_flags;
+-		smsg_out.file_size = smsg_in->file_size;
+-		out_src = &smsg_out;
++		smsg_out->copy_flags = smsg_in->copy_flags;
++		smsg_out->file_size = smsg_in->file_size;
++		out_src = smsg_out;
+ 		break;
+ 
+ 	default:
+@@ -168,6 +171,8 @@ static void fcopy_send_data(struct work_struct *dummy)
+ 			fcopy_transaction.state = HVUTIL_READY;
+ 		}
+ 	}
++	kfree(smsg_out);
++
+ 	return;
+ }
+ 
