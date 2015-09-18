@@ -1,0 +1,63 @@
+From: Dexuan Cui <decui@microsoft.com>
+Date: Wed, 5 Aug 2015 00:52:39 -0700
+Patch-mainline: v4.3-rc1
+Subject: Drivers: hv: vmbus: Further improve CPU affiliation logic
+Git-commit: 3b71107d73b16074afa7658f3f0fcf837aabfe24
+Reference: fate#315887
+
+Keep track of CPU affiliations of sub-channels within the scope of the primary
+channel. This will allow us to better distribute the load amongst available
+CPUs.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/channel_mgmt.c | 20 ++++++++++++++++++--
+ include/linux/hyperv.h    |  1 +
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hv/channel_mgmt.c b/drivers/hv/channel_mgmt.c
+index 39c5afc..2f9aead 100644
+--- a/drivers/hv/channel_mgmt.c
++++ b/drivers/hv/channel_mgmt.c
+@@ -448,8 +448,24 @@ static void init_vp_index(struct vmbus_channel *channel, const uuid_le *type_gui
+ 	cpumask_xor(&available_mask, alloced_mask,
+ 		    cpumask_of_node(primary->numa_node));
+ 
+-	cur_cpu = cpumask_next(-1, &available_mask);
+-	cpumask_set_cpu(cur_cpu, alloced_mask);
++	cur_cpu = -1;
++	while (true) {
++		cur_cpu = cpumask_next(cur_cpu, &available_mask);
++		if (cur_cpu >= nr_cpu_ids) {
++			cur_cpu = -1;
++			cpumask_copy(&available_mask,
++				     cpumask_of_node(primary->numa_node));
++			continue;
++		}
++
++		if (!cpumask_test_cpu(cur_cpu,
++				&primary->alloced_cpus_in_node)) {
++			cpumask_set_cpu(cur_cpu,
++					&primary->alloced_cpus_in_node);
++			cpumask_set_cpu(cur_cpu, alloced_mask);
++			break;
++		}
++	}
+ 
+ 	channel->target_cpu = cur_cpu;
+ 	channel->target_vp = hv_context.vp_index[cur_cpu];
+diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
+index 5a3df5a..54733d5 100644
+--- a/include/linux/hyperv.h
++++ b/include/linux/hyperv.h
+@@ -699,6 +699,7 @@ struct vmbus_channel {
+ 	/*
+ 	 * State to manage the CPU affiliation of channels.
+ 	 */
++	struct cpumask alloced_cpus_in_node;
+ 	int numa_node;
+ 	/*
+ 	 * Support for sub-channels. For high performance devices,
