@@ -1,0 +1,87 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Wed, 5 Aug 2015 00:52:48 -0700
+Patch-mainline: v4.3-rc1
+Subject: Drivers: hv: vmbus: use cpu_hotplug_enable/disable
+Git-commit: f39c4280a3872b0e6c7b01076132c12ad7a90392
+Reference: fate#315887
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Commit e513229b4c38 ("Drivers: hv: vmbus: prevent cpu offlining on newer
+hypervisors") was altering smp_ops.cpu_disable to prevent CPU offlining.
+We can bo better by using cpu_hotplug_enable/disable functions instead of
+such hard-coding.
+
+Reported-by: Radim Kr.má  <rkrcmar@redhat.com>
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/vmbus_drv.c | 38 ++++----------------------------------
+ 1 file changed, 4 insertions(+), 34 deletions(-)
+
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index 45d6d7a..f19b6f7 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -828,38 +828,6 @@ static void vmbus_isr(void)
+ 	}
+ }
+ 
+-#ifdef CONFIG_HOTPLUG_CPU
+-static int hyperv_cpu_disable(void)
+-{
+-	return -ENOSYS;
+-}
+-
+-static void hv_cpu_hotplug_quirk(bool vmbus_loaded)
+-{
+-	static void *previous_cpu_disable;
+-
+-	/*
+-	 * Offlining a CPU when running on newer hypervisors (WS2012R2, Win8,
+-	 * ...) is not supported at this moment as channel interrupts are
+-	 * distributed across all of them.
+-	 */
+-
+-	if ((vmbus_proto_version == VERSION_WS2008) ||
+-	    (vmbus_proto_version == VERSION_WIN7))
+-		return;
+-
+-	if (vmbus_loaded) {
+-		previous_cpu_disable = smp_ops.cpu_disable;
+-		smp_ops.cpu_disable = hyperv_cpu_disable;
+-		pr_notice("CPU offlining is not supported by hypervisor\n");
+-	} else if (previous_cpu_disable)
+-		smp_ops.cpu_disable = previous_cpu_disable;
+-}
+-#else
+-static void hv_cpu_hotplug_quirk(bool vmbus_loaded)
+-{
+-}
+-#endif
+ 
+ /*
+  * vmbus_bus_init -Main vmbus driver initialization routine.
+@@ -901,7 +869,8 @@ static int vmbus_bus_init(int irq)
+ 	if (ret)
+ 		goto err_alloc;
+ 
+-	hv_cpu_hotplug_quirk(true);
++	if (vmbus_proto_version > VERSION_WIN7)
++		cpu_hotplug_disable();
+ 
+ 	/*
+ 	 * Only register if the crash MSRs are available
+@@ -1364,7 +1333,8 @@ static void __exit vmbus_exit(void)
+ 	}
+ 	hv_synic_free();
+ 	acpi_bus_unregister_driver(&vmbus_acpi_driver);
+-	hv_cpu_hotplug_quirk(false);
++	if (vmbus_proto_version > VERSION_WIN7)
++		cpu_hotplug_enable();
+ }
+ 
+ 
