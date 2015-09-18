@@ -1,0 +1,57 @@
+From: NeilBrown <neilb@suse.de>
+Date: Mon, 15 Dec 2014 12:57:00 +1100
+Subject: [PATCH] md: remove unnecessary 'buf' from get_bitmap_file.
+Git-commit: f4ad3d38d49dc0c4c911e31d8b884d5b74362b6e
+Patch-mainline: v4.0
+References: bsc#943270
+
+'buf' is only used because d_path fills from the end of the
+buffer instead of from the start.
+We don't need a separate buf to handle that, we just need to use
+memmove() to move the string to the start.
+
+Signed-off-by: NeilBrown <neilb@suse.de>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md.c |   12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -5761,7 +5761,7 @@ static int get_array_info(struct mddev *
+ static int get_bitmap_file(struct mddev * mddev, void __user * arg)
+ {
+ 	mdu_bitmap_file_t *file = NULL; /* too big for stack allocation */
+-	char *ptr, *buf = NULL;
++	char *ptr;
+ 	int err = -ENOMEM;
+ 
+ 	file = kzalloc(sizeof(*file), GFP_NOIO);
+@@ -5774,23 +5774,19 @@ static int get_bitmap_file(struct mddev
+ 		goto copy_out;
+ 	}
+ 
+-	buf = kmalloc(sizeof(file->pathname), GFP_KERNEL);
+-	if (!buf)
+-		goto out;
+-
+ 	ptr = d_path(&mddev->bitmap->storage.file->f_path,
+-		     buf, sizeof(file->pathname));
++		     file->pathname, sizeof(file->pathname));
+ 	if (IS_ERR(ptr))
+ 		goto out;
+ 
+-	strcpy(file->pathname, ptr);
++	memmove(file->pathname, ptr,
++		sizeof(file->pathname)-(ptr-file->pathname));
+ 
+ copy_out:
+ 	err = 0;
+ 	if (copy_to_user(arg, file, sizeof(*file)))
+ 		err = -EFAULT;
+ out:
+-	kfree(buf);
+ 	kfree(file);
+ 	return err;
+ }
