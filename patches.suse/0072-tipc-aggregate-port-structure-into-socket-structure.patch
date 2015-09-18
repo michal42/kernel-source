@@ -25,8 +25,13 @@ Reviewed-by: Ying Xue <ying.xue@windriver.com>
 Reviewed-by: Erik Hugne <erik.hugne@ericsson.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
 
-diff --git a/net/tipc/port.c b/net/tipc/port.c
-index d1abe11..7b027e9 100644
+---
+ net/tipc/port.c   |   15 +++--------
+ net/tipc/port.h   |    4 ---
+ net/tipc/socket.c |   66 ++++++++++++++++++++------------------------------
+ net/tipc/socket.h |   70 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 101 insertions(+), 54 deletions(-)
+
 --- a/net/tipc/port.c
 +++ b/net/tipc/port.c
 @@ -1,7 +1,7 @@
@@ -46,7 +51,7 @@ index d1abe11..7b027e9 100644
  
  /* Connection management: */
  #define PROBING_INTERVAL 3600000	/* [ms] => 1 h */
-@@ -200,23 +201,16 @@ struct tipc_port *tipc_createport(struct sock *sk,
+@@ -200,23 +201,16 @@ struct tipc_port *tipc_createport(struct
  				  void (*wakeup)(struct tipc_port *),
  				  const u32 importance)
  {
@@ -72,7 +77,7 @@ index d1abe11..7b027e9 100644
  	p_ptr->max_pkt = MAX_PKT_DEFAULT;
  	p_ptr->ref = ref;
  	INIT_LIST_HEAD(&p_ptr->wait_list);
-@@ -262,7 +256,6 @@ int tipc_deleteport(struct tipc_port *p_ptr)
+@@ -262,7 +256,6 @@ int tipc_deleteport(struct tipc_port *p_
  	list_del(&p_ptr->wait_list);
  	spin_unlock_bh(&tipc_port_list_lock);
  	k_term_timer(&p_ptr->timer);
@@ -80,8 +85,6 @@ index d1abe11..7b027e9 100644
  	tipc_net_route_msg(buf);
  	return 0;
  }
-diff --git a/net/tipc/port.h b/net/tipc/port.h
-index 4a2a1ac..1b20062 100644
 --- a/net/tipc/port.h
 +++ b/net/tipc/port.h
 @@ -1,7 +1,7 @@
@@ -109,8 +112,6 @@ index 4a2a1ac..1b20062 100644
  	spinlock_t *lock;
  	int connected;
  	u32 conn_type;
-diff --git a/net/tipc/socket.c b/net/tipc/socket.c
-index 6265577..912665d 100644
 --- a/net/tipc/socket.c
 +++ b/net/tipc/socket.c
 @@ -1,7 +1,7 @@
@@ -153,7 +154,7 @@ index 6265577..912665d 100644
  /**
   * advance_rx_queue - discard first buffer in socket receive queue
   *
-@@ -205,7 +198,6 @@ static int tipc_sk_create(struct net *net, struct socket *sock, int protocol,
+@@ -205,7 +198,6 @@ static int tipc_sk_create(struct net *ne
  	sk->sk_rcvbuf = sysctl_tipc_rmem[1];
  	sk->sk_data_ready = tipc_data_ready;
  	sk->sk_write_space = tipc_write_space;
@@ -161,7 +162,7 @@ index 6265577..912665d 100644
  	tipc_sk(sk)->conn_timeout = CONN_TIMEOUT_DEFAULT;
  
  	spin_unlock_bh(tp_ptr->lock);
-@@ -437,18 +429,17 @@ static int tipc_getname(struct socket *sock, struct sockaddr *uaddr,
+@@ -437,18 +429,17 @@ static int tipc_getname(struct socket *s
  			int *uaddr_len, int peer)
  {
  	struct sockaddr_tipc *addr = (struct sockaddr_tipc *)uaddr;
@@ -201,7 +202,7 @@ index 6265577..912665d 100644
  	if (!p_ptr)
  		return -EINVAL;
  
-@@ -1270,17 +1260,18 @@ static void tipc_data_ready(struct sock *sk, int len)
+@@ -1270,17 +1260,18 @@ static void tipc_data_ready(struct sock
  
  /**
   * filter_connect - Handle all incoming messages for a connection-based socket
@@ -224,7 +225,7 @@ index 6265577..912665d 100644
  	u32 retval = TIPC_ERR_NO_PORT;
  	int res;
  
-@@ -1290,10 +1281,10 @@ static u32 filter_connect(struct tipc_sock *tsock, struct sk_buff **buf)
+@@ -1290,10 +1281,10 @@ static u32 filter_connect(struct tipc_so
  	switch ((int)sock->state) {
  	case SS_CONNECTED:
  		/* Accept only connection-based messages sent by peer */
@@ -237,7 +238,7 @@ index 6265577..912665d 100644
  			}
  			retval = TIPC_OK;
  		}
-@@ -1401,7 +1392,7 @@ static u32 filter_rcv(struct sock *sk, struct sk_buff *buf)
+@@ -1401,7 +1392,7 @@ static u32 filter_rcv(struct sock *sk, s
  		if (msg_connected(msg))
  			return TIPC_ERR_NO_PORT;
  	} else {
@@ -246,7 +247,7 @@ index 6265577..912665d 100644
  		if (res != TIPC_OK || buf == NULL)
  			return res;
  	}
-@@ -1447,9 +1438,9 @@ static int backlog_rcv(struct sock *sk, struct sk_buff *buf)
+@@ -1447,9 +1438,9 @@ static int backlog_rcv(struct sock *sk,
   *
   * Returns TIPC error status code (TIPC_OK if message is not to be rejected)
   */
@@ -258,7 +259,7 @@ index 6265577..912665d 100644
  	u32 res;
  
  	/*
-@@ -1478,10 +1469,9 @@ static u32 dispatch(struct tipc_port *tport, struct sk_buff *buf)
+@@ -1478,10 +1469,9 @@ static u32 dispatch(struct tipc_port *tp
   *
   * Called with port lock already taken.
   */
@@ -271,7 +272,7 @@ index 6265577..912665d 100644
  	sk->sk_write_space(sk);
  }
  
-@@ -1661,8 +1651,7 @@ static int tipc_accept(struct socket *sock, struct socket *new_sock, int flags)
+@@ -1661,8 +1651,7 @@ static int tipc_accept(struct socket *so
  {
  	struct sock *new_sk, *sk = sock->sk;
  	struct sk_buff *buf;
@@ -281,7 +282,7 @@ index 6265577..912665d 100644
  	struct tipc_msg *msg;
  	struct tipc_portid peer;
  	u32 new_ref;
-@@ -1675,7 +1664,6 @@ static int tipc_accept(struct socket *sock, struct socket *new_sock, int flags)
+@@ -1675,7 +1664,6 @@ static int tipc_accept(struct socket *so
  		res = -EINVAL;
  		goto exit;
  	}
@@ -289,8 +290,8 @@ index 6265577..912665d 100644
  	timeo = sock_rcvtimeo(sk, flags & O_NONBLOCK);
  	res = tipc_wait_for_accept(sock, timeo);
  	if (res)
-@@ -1688,9 +1676,8 @@ static int tipc_accept(struct socket *sock, struct socket *new_sock, int flags)
- 		goto exit;
+@@ -1689,9 +1677,8 @@ static int tipc_accept(struct socket *so
+ 	security_sk_clone(sock->sk, new_sock->sk);
  
  	new_sk = new_sock->sk;
 -	new_tsock = tipc_sk(new_sk);
@@ -301,7 +302,7 @@ index 6265577..912665d 100644
  	msg = buf_msg(buf);
  
  	/* we lock on new_sk; but lockdep sees the lock on sk */
-@@ -1710,8 +1697,8 @@ static int tipc_accept(struct socket *sock, struct socket *new_sock, int flags)
+@@ -1711,8 +1698,8 @@ static int tipc_accept(struct socket *so
  
  	tipc_set_portimportance(new_ref, msg_importance(msg));
  	if (msg_named(msg)) {
@@ -312,7 +313,7 @@ index 6265577..912665d 100644
  	}
  
  	/*
-@@ -1729,7 +1716,6 @@ static int tipc_accept(struct socket *sock, struct socket *new_sock, int flags)
+@@ -1730,7 +1717,6 @@ static int tipc_accept(struct socket *so
  		skb_set_owner_r(buf, new_sk);
  	}
  	release_sock(new_sk);
@@ -320,9 +321,6 @@ index 6265577..912665d 100644
  exit:
  	release_sock(sk);
  	return res;
-diff --git a/net/tipc/socket.h b/net/tipc/socket.h
-new file mode 100644
-index 0000000..f1cd54a
 --- /dev/null
 +++ b/net/tipc/socket.h
 @@ -0,0 +1,70 @@
@@ -396,6 +394,3 @@ index 0000000..f1cd54a
 +}
 +
 +#endif
--- 
-1.9.1
-
