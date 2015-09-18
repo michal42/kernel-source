@@ -1,0 +1,52 @@
+From: Jack Morgenstein <jackm@dev.mellanox.co.il>
+Date: Tue, 23 Sep 2014 12:38:26 +0300
+Subject: [PATCH] IB/core: Fix XRC race condition in ib_uverbs_open_qp
+Patch-mainline: v3.18-rc1
+Git-commit: a040f95dc81986d7d55bd98a9455217522ef706d
+References: bsc#945942
+
+In ib_uverbs_open_qp, the sharable xrc target qp is created as a
+"pseudo" qp and added to a list of qp's sharing the same physical
+QP.  This is done before the "pseudo" qp is assigned a uobject.
+
+There is a race condition here if an async event arrives at the
+physical qp.  If the event is handled after the pseudo qp is added to
+the list, but before it is assigned a uobject, the kernel crashes in
+ib_uverbs_qp_event_handler, due to trying to dereference a NULL
+uobject pointer.
+
+Note that simply checking for non-NULL is not enough, due to error
+flows in ib_uverbs_open_qp.  If the failure is after assigning the
+uobject, but before the qp has fully been created, we still have a
+problem.
+
+Thus, in ib_uverbs_qp_event_handler, we test that the uobject is
+present, and also that it is live.
+
+Reported-by: Matthew Finlay <matt@mellanox.com>
+Signed-off-by: Jack Morgenstein <jackm@dev.mellanox.co.il>
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/core/uverbs_main.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/infiniband/core/uverbs_main.c b/drivers/infiniband/core/uverbs_main.c
+index c73b22a..bb6fea1 100644
+--- a/drivers/infiniband/core/uverbs_main.c
++++ b/drivers/infiniband/core/uverbs_main.c
+@@ -502,6 +502,10 @@ void ib_uverbs_qp_event_handler(struct ib_event *event, void *context_ptr)
+ {
+ 	struct ib_uevent_object *uobj;
+ 
++	/* for XRC target qp's, check that qp is live */
++	if (!event->element.qp->uobject || !event->element.qp->uobject->live)
++		return;
++
+ 	uobj = container_of(event->element.qp->uobject,
+ 			    struct ib_uevent_object, uobject);
+ 
+-- 
+1.8.5.2
+
