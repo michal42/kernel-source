@@ -1,0 +1,37 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Sat, 1 Aug 2015 16:08:11 -0700
+Patch-mainline: v4.3-rc1
+Subject: Drivers: hv: kvp: check kzalloc return value
+Git-commit: b36fda339729a974a8838978dcdc581d8ce68fd9
+Reference: fate#315887
+
+kzalloc() return value check was accidentally lost in 11bc3a5fa91f:
+"Drivers: hv: kvp: convert to hv_utils_transport" commit.
+
+We don't need to reset kvp_transaction.state here as we have the
+kvp_timeout_func() timeout function and in case we're in OOM situation
+it is preferable to wait.
+
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/hv_kvp.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/hv/hv_kvp.c b/drivers/hv/hv_kvp.c
+index d85798d..74c38a9 100644
+--- a/drivers/hv/hv_kvp.c
++++ b/drivers/hv/hv_kvp.c
+@@ -353,6 +353,9 @@ kvp_send_key(struct work_struct *dummy)
+ 		return;
+ 
+ 	message = kzalloc(sizeof(*message), GFP_KERNEL);
++	if (!message)
++		return;
++
+ 	message->kvp_hdr.operation = operation;
+ 	message->kvp_hdr.pool = pool;
+ 	in_msg = kvp_transaction.kvp_msg;
