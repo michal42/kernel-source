@@ -1,0 +1,145 @@
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 9 Apr 2014 12:25:40 +1000
+Subject: [PATCH] md/bitmap: don't abuse i_writecount for bitmap files.
+Git-commit: 035328c202d26a824b8632fd3b00635db5aee5a2
+Patch-mainline: v3.15
+References: bsc#943270
+
+md bitmap code currently tries to use i_writecount to stop any other
+process from writing to out bitmap file.  But that is really an abuse
+and has bit-rotted so locking is all wrong.
+
+So discard that - root should be allowed to shoot self in foot.
+
+Still use it in a much less intrusive way to stop the same file being
+used as bitmap on two different array, and apply other checks to
+ensure the file is at least vaguely usable for bitmap storage
+(is regular, is open for write.  Support for ->bmap is already checked
+elsewhere).
+
+Reported-by: Al Viro <viro@ZenIV.linux.org.uk>
+Signed-off-by: NeilBrown <neilb@suse.de>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/bitmap.c |    1 -
+ drivers/md/md.c     |   49 ++++++++++++++++---------------------------------
+ drivers/md/md.h     |    1 -
+ 3 files changed, 16 insertions(+), 35 deletions(-)
+
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -2015,7 +2015,6 @@ location_store(struct mddev *mddev, cons
+ 		if (mddev->bitmap_info.file) {
+ 			struct file *f = mddev->bitmap_info.file;
+ 			mddev->bitmap_info.file = NULL;
+-			restore_bitmap_write_access(f);
+ 			fput(f);
+ 		}
+ 	} else {
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -5306,32 +5306,6 @@ static int restart_array(struct mddev *m
+ 	return 0;
+ }
+ 
+-/* similar to deny_write_access, but accounts for our holding a reference
+- * to the file ourselves */
+-static int deny_bitmap_write_access(struct file * file)
+-{
+-	struct inode *inode = file->f_mapping->host;
+-
+-	spin_lock(&inode->i_lock);
+-	if (atomic_read(&inode->i_writecount) > 1) {
+-		spin_unlock(&inode->i_lock);
+-		return -ETXTBSY;
+-	}
+-	atomic_set(&inode->i_writecount, -1);
+-	spin_unlock(&inode->i_lock);
+-
+-	return 0;
+-}
+-
+-void restore_bitmap_write_access(struct file *file)
+-{
+-	struct inode *inode = file->f_mapping->host;
+-
+-	spin_lock(&inode->i_lock);
+-	atomic_set(&inode->i_writecount, 1);
+-	spin_unlock(&inode->i_lock);
+-}
+-
+ static void md_clean(struct mddev *mddev)
+ {
+ 	mddev->array_sectors = 0;
+@@ -5577,7 +5551,6 @@ static int do_md_stop(struct mddev * mdd
+ 
+ 		bitmap_destroy(mddev);
+ 		if (mddev->bitmap_info.file) {
+-			restore_bitmap_write_access(mddev->bitmap_info.file);
+ 			fput(mddev->bitmap_info.file);
+ 			mddev->bitmap_info.file = NULL;
+ 		}
+@@ -6142,7 +6115,7 @@ abort_export:
+ 
+ static int set_bitmap_file(struct mddev *mddev, int fd)
+ {
+-	int err;
++	int err = 0;
+ 
+ 	if (mddev->pers) {
+ 		if (!mddev->pers->quiesce)
+@@ -6154,6 +6127,7 @@ static int set_bitmap_file(struct mddev
+ 
+ 
+ 	if (fd >= 0) {
++		struct inode *inode;
+ 		if (mddev->bitmap)
+ 			return -EEXIST; /* cannot add when bitmap is present */
+ 		mddev->bitmap_info.file = fget(fd);
+@@ -6164,10 +6138,21 @@ static int set_bitmap_file(struct mddev
+ 			return -EBADF;
+ 		}
+ 
+-		err = deny_bitmap_write_access(mddev->bitmap_info.file);
+-		if (err) {
++		inode = mddev->bitmap_info.file->f_mapping->host;
++		if (!S_ISREG(inode->i_mode)) {
++			printk(KERN_ERR "%s: error: bitmap file must be a regular file\n",
++			       mdname(mddev));
++			err = -EBADF;
++		} else if (!(mddev->bitmap_info.file->f_mode & FMODE_WRITE)) {
++			printk(KERN_ERR "%s: error: bitmap file must open for write\n",
++			       mdname(mddev));
++			err = -EBADF;
++		} else if (atomic_read(&inode->i_writecount) != 1) {
+ 			printk(KERN_ERR "%s: error: bitmap file is already in use\n",
+ 			       mdname(mddev));
++			err = -EBUSY;
++		}
++		if (err) {
+ 			fput(mddev->bitmap_info.file);
+ 			mddev->bitmap_info.file = NULL;
+ 			return err;
+@@ -6190,10 +6175,8 @@ static int set_bitmap_file(struct mddev
+ 		mddev->pers->quiesce(mddev, 0);
+ 	}
+ 	if (fd < 0) {
+-		if (mddev->bitmap_info.file) {
+-			restore_bitmap_write_access(mddev->bitmap_info.file);
++		if (mddev->bitmap_info.file)
+ 			fput(mddev->bitmap_info.file);
+-		}
+ 		mddev->bitmap_info.file = NULL;
+ 	}
+ 
+--- a/drivers/md/md.h
++++ b/drivers/md/md.h
+@@ -617,7 +617,6 @@ extern int md_check_no_bitmap(struct mdd
+ extern int md_integrity_register(struct mddev *mddev);
+ extern void md_integrity_add_rdev(struct md_rdev *rdev, struct mddev *mddev);
+ extern int strict_strtoul_scaled(const char *cp, unsigned long *res, int scale);
+-extern void restore_bitmap_write_access(struct file *file);
+ 
+ extern void mddev_init(struct mddev *mddev);
+ extern int md_run(struct mddev *mddev);
