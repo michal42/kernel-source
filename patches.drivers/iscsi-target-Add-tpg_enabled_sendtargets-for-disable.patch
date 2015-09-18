@@ -1,0 +1,146 @@
+From de54237b692fa134a6d7ad0d9da181c93b4086da Mon Sep 17 00:00:00 2001
+From: David Disseldorp <ddiss@suse.de>
+Date: Sat, 1 Aug 2015 00:10:12 -0700
+Subject: [PATCH] iscsi-target: Add tpg_enabled_sendtargets for disabled
+ discovery
+References: fate#318836
+Git-commit: a6415cddc4e6e1675a5648e7785aef716980c90c
+Git-repo: git://git.kernel.org/pub/scm/linux/kernel/git/nab/target-pending.git
+Patch-mainline: Queued in subsystem maintainer repository
+
+This patch adds a new tpg_enabled_sendtargets configfs attribute
+to allow in-band sendtargets discovery information to include
+target-portal-groups (TPGs) in !TPG_STATE_ACTIVE state.
+
+This functionality is useful for clustered iSCSI targets, where
+TPGTs handled on remote cluster nodes should be advertised in
+the SendTargets response.
+
+By default, this new attribute retains the default behaviour of
+existing code which to ignore portal-groups in !TPG_STATE_ACTIVE
+state.
+
+Signed-off-by: David Disseldorp <ddiss@suse.de>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+[ddiss@suse.de: rebase against SLE12 without be7dcfb68 or
+		fabric_prot_type]
+
+---
+ drivers/target/iscsi/iscsi_target.c          |   10 +++++-----
+ drivers/target/iscsi/iscsi_target_configfs.c |    6 ++++++
+ drivers/target/iscsi/iscsi_target_core.h     |    4 ++++
+ drivers/target/iscsi/iscsi_target_tpg.c      |   19 +++++++++++++++++++
+ drivers/target/iscsi/iscsi_target_tpg.h      |    1 +
+ 5 files changed, 35 insertions(+), 5 deletions(-)
+
+--- a/drivers/target/iscsi/iscsi_target.c
++++ b/drivers/target/iscsi/iscsi_target.c
+@@ -3397,6 +3397,7 @@ iscsit_build_sendtargets_response(struct
+ 	int target_name_printed;
+ 	unsigned char buf[ISCSI_IQN_LEN+12]; /* iqn + "TargetName=" + \0 */
+ 	unsigned char *text_in = cmd->text_in_ptr, *text_ptr = NULL;
++	bool active;
+ 
+ 	buffer_len = max(conn->conn_ops->MaxRecvDataSegmentLength,
+ 			 SENDTARGETS_BUF_LIMIT);
+@@ -3450,13 +3451,12 @@ iscsit_build_sendtargets_response(struct
+ 			}
+ 
+ 			spin_lock(&tpg->tpg_state_lock);
+-			if ((tpg->tpg_state == TPG_STATE_FREE) ||
+-			    (tpg->tpg_state == TPG_STATE_INACTIVE)) {
+-				spin_unlock(&tpg->tpg_state_lock);
+-				continue;
+-			}
++			active = (tpg->tpg_state == TPG_STATE_ACTIVE);
+ 			spin_unlock(&tpg->tpg_state_lock);
+ 
++			if (!active && tpg->tpg_attrib.tpg_enabled_sendtargets)
++				continue;
++
+ 			spin_lock(&tpg->tpg_np_lock);
+ 			list_for_each_entry(tpg_np, &tpg->tpg_gnp_list,
+ 						tpg_np_list) {
+--- a/drivers/target/iscsi/iscsi_target_configfs.c
++++ b/drivers/target/iscsi/iscsi_target_configfs.c
+@@ -1057,6 +1057,11 @@ TPG_ATTR(default_erl, S_IRUGO | S_IWUSR)
+  */
+ DEF_TPG_ATTRIB(t10_pi);
+ TPG_ATTR(t10_pi, S_IRUGO | S_IWUSR);
++/*
++ * Define iscsi_tpg_attrib_s_tpg_enabled_sendtargets
++ */
++DEF_TPG_ATTRIB(tpg_enabled_sendtargets);
++TPG_ATTR(tpg_enabled_sendtargets, S_IRUGO | S_IWUSR);
+ 
+ static struct configfs_attribute *lio_target_tpg_attrib_attrs[] = {
+ 	&iscsi_tpg_attrib_authentication.attr,
+@@ -1070,6 +1075,7 @@ static struct configfs_attribute *lio_ta
+ 	&iscsi_tpg_attrib_demo_mode_discovery.attr,
+ 	&iscsi_tpg_attrib_default_erl.attr,
+ 	&iscsi_tpg_attrib_t10_pi.attr,
++	&iscsi_tpg_attrib_tpg_enabled_sendtargets.attr,
+ 	NULL,
+ };
+ 
+--- a/drivers/target/iscsi/iscsi_target_core.h
++++ b/drivers/target/iscsi/iscsi_target_core.h
+@@ -60,6 +60,9 @@
+ #define TA_CACHE_CORE_NPS		0
+ /* T10 protection information disabled by default */
+ #define TA_DEFAULT_T10_PI		0
++/* TPG status needs to be enabled to return sendtargets discovery endpoint info */
++#define TA_DEFAULT_TPG_ENABLED_SENDTARGETS 1
++
+ 
+ #define ISCSI_IOV_DATA_BUFFER		5
+ 
+@@ -774,6 +777,7 @@ struct iscsi_tpg_attrib {
+ 	u32			demo_mode_discovery;
+ 	u32			default_erl;
+ 	u8			t10_pi;
++	u32                     tpg_enabled_sendtargets;
+ 	struct iscsi_portal_group *tpg;
+ };
+ 
+--- a/drivers/target/iscsi/iscsi_target_tpg.c
++++ b/drivers/target/iscsi/iscsi_target_tpg.c
+@@ -228,6 +228,7 @@ static void iscsit_set_default_tpg_attri
+ 	a->demo_mode_discovery = TA_DEMO_MODE_DISCOVERY;
+ 	a->default_erl = TA_DEFAULT_ERL;
+ 	a->t10_pi = TA_DEFAULT_T10_PI;
++	a->tpg_enabled_sendtargets = TA_DEFAULT_TPG_ENABLED_SENDTARGETS;
+ }
+ 
+ int iscsit_tpg_add_portal_group(struct iscsi_tiqn *tiqn, struct iscsi_portal_group *tpg)
+@@ -881,3 +882,21 @@ int iscsit_ta_t10_pi(
+ 
+ 	return 0;
+ }
++
++int iscsit_ta_tpg_enabled_sendtargets(
++	struct iscsi_portal_group *tpg,
++	u32 flag)
++{
++	struct iscsi_tpg_attrib *a = &tpg->tpg_attrib;
++
++	if ((flag != 0) && (flag != 1)) {
++		pr_err("Illegal value %d\n", flag);
++		return -EINVAL;
++	}
++
++	a->tpg_enabled_sendtargets = flag;
++	pr_debug("iSCSI_TPG[%hu] - TPG enabled bit required for SendTargets:"
++		" %s\n", tpg->tpgt, (a->tpg_enabled_sendtargets) ? "ON" : "OFF");
++
++	return 0;
++}
+--- a/drivers/target/iscsi/iscsi_target_tpg.h
++++ b/drivers/target/iscsi/iscsi_target_tpg.h
+@@ -40,5 +40,6 @@ extern int iscsit_ta_prod_mode_write_pro
+ extern int iscsit_ta_demo_mode_discovery(struct iscsi_portal_group *, u32);
+ extern int iscsit_ta_default_erl(struct iscsi_portal_group *, u32);
+ extern int iscsit_ta_t10_pi(struct iscsi_portal_group *, u32);
++extern int iscsit_ta_tpg_enabled_sendtargets(struct iscsi_portal_group *, u32);
+ 
+ #endif /* ISCSI_TARGET_TPG_H */
