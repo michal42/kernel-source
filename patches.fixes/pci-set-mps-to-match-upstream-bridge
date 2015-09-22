@@ -1,0 +1,126 @@
+From: Keith Busch <keith.busch@intel.com>
+Date: Mon, 24 Aug 2015 08:48:16 -0500
+Subject: PCI: Set MPS to match upstream bridge
+Git-commit: 27d868b5e6cfaee4fec66b388e4085ff94050fa7
+Patch-mainline: v4.3-rc1
+References: bsc#943313
+
+Firmware typically configures the PCIe fabric with a consistent Max Payload
+Size setting based on the devices present at boot.  A hot-added device
+typically has the power-on default MPS setting (128 bytes), which may not
+match the fabric.
+
+The previous Linux default, in the absence of any "pci=pcie_bus_*" options,
+was PCIE_BUS_TUNE_OFF, in which we never touch MPS, even for hot-added
+devices.
+
+Add a new default setting, PCIE_BUS_DEFAULT, in which we make sure every
+device's MPS setting matches the upstream bridge.  This makes it more
+likely that a hot-added device will work in a system with optimized MPS
+configuration.
+
+Note that if we hot-add a device that only supports 128-byte MPS, it still
+likely won't work because we don't reconfigure the rest of the fabric.
+Booting with "pci=pcie_bus_peer2peer" is a workaround for this because it
+sets MPS to 128 for everything.
+
+[bhelgaas: changelog, new default, rework for pci_configure_device() path]
+Tested-by: Keith Busch <keith.busch@intel.com>
+Tested-by: Jordan Hargrave <jharg93@gmail.com>
+Signed-off-by: Keith Busch <keith.busch@intel.com>
+Signed-off-by: Bjorn Helgaas <bhelgaas@google.com>
+Acked-by: Yinghai Lu <yinghai@kernel.org>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/pci/pci.c    |  2 +-
+ drivers/pci/probe.c  | 22 ++++++++++++++++++++--
+ drivers/pci/quirks.c |  3 ++-
+ include/linux/pci.h  |  9 +++++----
+ 4 files changed, 28 insertions(+), 8 deletions(-)
+
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -79,7 +79,7 @@
+ unsigned long pci_hotplug_io_size  = DEFAULT_HOTPLUG_IO_SIZE;
+ unsigned long pci_hotplug_mem_size = DEFAULT_HOTPLUG_MEM_SIZE;
+ 
+-enum pcie_bus_config_types pcie_bus_config = PCIE_BUS_TUNE_OFF;
++enum pcie_bus_config_types pcie_bus_config = PCIE_BUS_DEFAULT;
+ 
+ /*
+  * The default CLS is used if arch didn't set CLS explicitly and not
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -1155,7 +1155,7 @@
+ static void pci_configure_mps(struct pci_dev *dev)
+ {
+ 	struct pci_dev *bridge = pci_upstream_bridge(dev);
+-	int mps, p_mps;
++	int mps, p_mps, rc;
+ 
+ 	if (!pci_is_pcie(dev) || !bridge || !pci_is_pcie(bridge))
+ 		return;
+@@ -1171,6 +1171,23 @@
+ 				mps, pci_name(bridge), p_mps);
+ 		return;
+ 	}
++
++	/*
++	 * Fancier MPS configuration is done later by
++	 * pcie_bus_configure_settings()
++	 */
++	if (pcie_bus_config != PCIE_BUS_DEFAULT)
++		return;
++
++	rc = pcie_set_mps(dev, p_mps);
++	if (rc) {
++		dev_warn(&dev->dev, "can't set Max Payload Size to %d; if necessary, use \"pci=pcie_bus_safe\" and report a bug\n",
++			 p_mps);
++		return;
++	}
++
++	dev_info(&dev->dev, "Max Payload Size set to %d (was %d, max %d)\n",
++		 p_mps, mps, 128 << dev->pcie_mpss);
+ }
+ 
+ static void pci_release_capabilities(struct pci_dev *dev)
+@@ -1633,7 +1650,8 @@
+ 	if (!pci_is_pcie(dev))
+ 		return 0;
+ 
+-	if (pcie_bus_config == PCIE_BUS_TUNE_OFF)
++	if (pcie_bus_config == PCIE_BUS_TUNE_OFF ||
++	    pcie_bus_config == PCIE_BUS_DEFAULT)
+ 		return 0;
+ 
+ 	mps = 128 << *(u8 *)data;
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -2877,7 +2877,8 @@
+ 	int err;
+ 	u16 rcc;
+ 
+-	if (pcie_bus_config == PCIE_BUS_TUNE_OFF)
++	if (pcie_bus_config == PCIE_BUS_TUNE_OFF ||
++	    pcie_bus_config == PCIE_BUS_DEFAULT)
+ 		return;
+ 
+ 	/* Intel errata specifies bits to change but does not say what they are.
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -706,10 +706,11 @@
+ void pcie_bus_configure_settings(struct pci_bus *bus);
+ 
+ enum pcie_bus_config_types {
+-	PCIE_BUS_TUNE_OFF,
+-	PCIE_BUS_SAFE,
+-	PCIE_BUS_PERFORMANCE,
+-	PCIE_BUS_PEER2PEER,
++	PCIE_BUS_TUNE_OFF,	/* don't touch MPS at all */
++	PCIE_BUS_DEFAULT,	/* ensure MPS matches upstream bridge */
++	PCIE_BUS_SAFE,		/* use largest MPS boot-time devices support */
++	PCIE_BUS_PERFORMANCE,	/* use MPS and MRRS for best performance */
++	PCIE_BUS_PEER2PEER,	/* set MPS = 128 for all devices */
+ };
+ 
+ extern enum pcie_bus_config_types pcie_bus_config;
