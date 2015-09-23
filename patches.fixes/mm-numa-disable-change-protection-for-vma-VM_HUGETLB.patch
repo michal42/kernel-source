@@ -1,0 +1,48 @@
+From 6b79c57b92cdd90853002980609af516d14c4f9c Mon Sep 17 00:00:00 2001
+From: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Date: Tue, 7 Apr 2015 14:26:47 -0700
+Subject: [PATCH] mm: numa: disable change protection for vma(VM_HUGETLB)
+Git-commit: 6b79c57b92cdd90853002980609af516d14c4f9c
+Patch-mainline: v4.0
+References: bnc#943573
+
+Currently when a process accesses a hugetlb range protected with
+PROTNONE, unexpected COWs are triggered, which finally puts the hugetlb
+subsystem into a broken/uncontrollable state, where for example
+h->resv_huge_pages is subtracted too much and wraps around to a very
+large number, and the free hugepage pool is no longer maintainable.
+
+This patch simply stops changing protection for vma(VM_HUGETLB) to fix
+the problem.  And this also allows us to avoid useless overhead of minor
+faults.
+
+Signed-off-by: Naoya Horiguchi <n-horiguchi@ah.jp.nec.com>
+Suggested-by: Mel Gorman <mgorman@suse.de>
+Cc: Hugh Dickins <hughd@google.com>
+Cc: "Kirill A. Shutemov" <kirill@shutemov.name>
+Cc: David Rientjes <rientjes@google.com>
+Cc: Rik van Riel <riel@redhat.com>
+Cc: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Michal Hocko <mhocko@suse.cz>
+
+---
+ kernel/sched/fair.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1747,8 +1747,10 @@ void task_numa_work(struct callback_head
+ 		vma = mm->mmap;
+ 	}
+ 	for (; vma; vma = vma->vm_next) {
+-		if (!vma_migratable(vma) || !vma_policy_mof(p, vma))
++		if (!vma_migratable(vma) || !vma_policy_mof(p, vma) ||
++			is_vm_hugetlb_page(vma)) {
+ 			continue;
++		}
+ 
+ 		/*
+ 		 * Skip inaccessible VMAs to avoid any confusion between
