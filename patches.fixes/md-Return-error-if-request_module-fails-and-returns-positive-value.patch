@@ -1,0 +1,33 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date:   Wed Jul 22 12:09:15 2015 -0500
+Git-commit: b0c26a79d6993b280931f8e2b406ca4b220bb58f
+Subject: md: Return error if request_module fails and returns positive value
+References: bsc#947506
+Patch-mainline: 4.2
+
+request_module() can return 256 (process exited) in some cases,
+which is not as specified in the documentation before the
+request_module() definition. Convert the error to -ENOENT.
+
+The positive error number results in bitmap_create() returning
+a value that is meant to be an error but doesn't look like one,
+so it is dereferenced as a point and causes a crash.
+
+(not needed for stable as this is "experimental" code)
+Fixes: edb39c9deda8 ("Introduce md_cluster_operations to handle cluster functions")
+Signed-off-By: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Signed-off-by: NeilBrown <neilb@suse.com>
+
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 5025b3e..0fcf6de 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -7439,7 +7439,7 @@ int md_setup_cluster(struct mddev *mddev, int nodes)
+ 	err = request_module("md-cluster");
+ 	if (err) {
+ 		pr_err("md-cluster module not found.\n");
+-		return err;
++		return -ENOENT;
+ 	}
+ 
+ 	spin_lock(&pers_lock);
