@@ -1,0 +1,95 @@
+From: Bjorn Helgaas <bhelgaas@google.com>
+Date: Thu, 20 Aug 2015 16:08:27 -0500
+Subject: PCI: Move MPS configuration check to pci_configure_device()
+Git-commit: 9dae3a97297f71e884ed8e7664955bcacb86f010
+Patch-mainline: v4.3-rc1
+References: bsc#943313
+
+Previously we checked for invalid MPS settings, i.e., a device with MPS
+different than its upstream bridge, in pcie_bus_detect_mps().  We only did
+this if the arch or hotplug driver called pcie_bus_configure_settings(),
+and then only if PCIe bus tuning was disabled (PCIE_BUS_TUNE_OFF).
+
+Move the MPS checking code to pci_configure_device(), so we do it in the
+pci_device_add() path for every device.
+
+Signed-off-by: Bjorn Helgaas <bhelgaas@google.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/pci/probe.c | 43 ++++++++++++++++++++++++-------------------
+ 1 file changed, 24 insertions(+), 19 deletions(-)
+
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -1152,6 +1152,27 @@
+ 	return 0;
+ }
+ 
++static void pci_configure_mps(struct pci_dev *dev)
++{
++	struct pci_dev *bridge = pci_upstream_bridge(dev);
++	int mps, p_mps;
++
++	if (!pci_is_pcie(dev) || !bridge || !pci_is_pcie(bridge))
++		return;
++
++	mps = pcie_get_mps(dev);
++	p_mps = pcie_get_mps(bridge);
++
++	if (mps == p_mps)
++		return;
++
++	if (pcie_bus_config == PCIE_BUS_TUNE_OFF) {
++		dev_warn(&dev->dev, "Max Payload Size %d, but upstream %s set to %d; if necessary, use \"pci=pcie_bus_safe\" and report a bug\n",
++				mps, pci_name(bridge), p_mps);
++		return;
++	}
++}
++
+ static void pci_release_capabilities(struct pci_dev *dev)
+ {
+ 	pci_vpd_release(dev);
+@@ -1353,6 +1374,8 @@
+ {
+ 	int ret;
+ 
++	pci_configure_mps(dev);
++
+ 	device_initialize(&dev->dev);
+ 	dev->dev.release = pci_release_dev;
+ 
+@@ -1603,22 +1626,6 @@
+ 			"with pci=pcie_bus_safe.\n");
+ }
+ 
+-static void pcie_bus_detect_mps(struct pci_dev *dev)
+-{
+-	struct pci_dev *bridge = dev->bus->self;
+-	int mps, p_mps;
+-
+-	if (!bridge)
+-		return;
+-
+-	mps = pcie_get_mps(dev);
+-	p_mps = pcie_get_mps(bridge);
+-
+-	if (mps != p_mps)
+-		dev_warn(&dev->dev, "Max Payload Size %d, but upstream %s set to %d; if necessary, use \"pci=pcie_bus_safe\" and report a bug\n",
+-			 mps, pci_name(bridge), p_mps);
+-}
+-
+ static int pcie_bus_configure_set(struct pci_dev *dev, void *data)
+ {
+ 	int mps, orig_mps;
+@@ -1626,10 +1633,8 @@
+ 	if (!pci_is_pcie(dev))
+ 		return 0;
+ 
+-	if (pcie_bus_config == PCIE_BUS_TUNE_OFF) {
+-		pcie_bus_detect_mps(dev);
++	if (pcie_bus_config == PCIE_BUS_TUNE_OFF)
+ 		return 0;
+-	}
+ 
+ 	mps = 128 << *(u8 *)data;
+ 	orig_mps = pcie_get_mps(dev);
