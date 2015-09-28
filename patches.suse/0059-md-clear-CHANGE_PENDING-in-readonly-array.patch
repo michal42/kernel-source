@@ -1,0 +1,36 @@
+From: Shaohua Li <shli@fb.com>
+Date: Fri, 18 Sep 2015 10:20:12 -0700
+Subject: [PATCH] md: clear CHANGE_PENDING in readonly array
+Git-commit: 5747dca568d3bfa4dafe9aa616ce172c4154022c
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git://neil.brown.name/md/
+References: bsc#941530
+
+If faulty disks of an array are more than allowed degraded number, the
+array enters error handling. It will be marked as read-only with
+MD_CHANGE_PENDING/RECOVERY_NEEDED set. But currently recovery doesn't
+clear CHANGE_PENDING bit for read-only array.  If MD_CHANGE_PENDING is
+set for a raid5 array, all returned IO will be hold on a list till the
+bit is clear. But recovery nevery clears this bit, the IO is always in
+pending state and nevery finish. This has bad effects like upper layer
+can't get an IO error and the array can't be stopped.
+
+Fixes: c3cce6cda162 ("md/raid5: ensure device failure recorded before write request returns.")
+Signed-off-by: Shaohua Li <shli@fb.com>
+Signed-off-by: NeilBrown <neilb@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -8221,6 +8221,7 @@ void md_check_recovery(struct mddev *mdd
+ 			set_bit(MD_RECOVERY_INTR, &mddev->recovery);
+ 			md_reap_sync_thread(mddev);
+ 			clear_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
++			clear_bit(MD_CHANGE_PENDING, &mddev->flags);
+ 			goto unlock;
+ 		}
+ 
