@@ -1,0 +1,104 @@
+From fef220da43d8537ed7d11da4db17b958cd779887 Mon Sep 17 00:00:00 2001
+From: Jarkko Nikula <jarkko.nikula@linux.intel.com>
+Date: Fri, 13 Feb 2015 15:52:25 +0200
+Subject: [PATCH] i2c: i801: Use managed pcim_* PCI device initialization and
+ reservation
+
+Git-commit: fef220da43d8537ed7d11da4db17b958cd779887
+Patch-mainline: v4.1-rc1
+References: bnc#946374
+Target: SLE-12 SP1 
+
+Simplifies the code a bit and makes easier to disable PCI device on driver
+detach by removing the pcim_pin_device() call in the future if needed.
+
+Reason why i2c-i801.c doesn't ever call pci_disable_device() was because it
+made some systems to hang during power-off. See commit d6fcb3b9cf77
+("[PATCH] i2c-i801.c: don't pci_disable_device() after it was just enabled")
+and
+http://marc.info/?l=linux-kernel&m=115160053309535&w=2
+
+Signed-off-by: Jarkko Nikula <jarkko.nikula@linux.intel.com>
+Reviewed-by: Jean Delvare <jdelvare@suse.de>
+Signed-off-by: Wolfram Sang <wsa@the-dreams.de>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ drivers/i2c/busses/i2c-i801.c |   25 +++++++++----------------
+ 1 file changed, 9 insertions(+), 16 deletions(-)
+
+--- a/drivers/i2c/busses/i2c-i801.c
++++ b/drivers/i2c/busses/i2c-i801.c
+@@ -1187,35 +1187,35 @@ static int i801_probe(struct pci_dev *de
+ 	}
+ 	priv->features &= ~disable_features;
+ 
+-	err = pci_enable_device(dev);
++	err = pcim_enable_device(dev);
+ 	if (err) {
+ 		dev_err(&dev->dev, "Failed to enable SMBus PCI device (%d)\n",
+ 			err);
+-		goto exit;
++		return err;
+ 	}
++	pcim_pin_device(dev);
+ 
+ 	/* Determine the address of the SMBus area */
+ 	priv->smba = pci_resource_start(dev, SMBBAR);
+ 	if (!priv->smba) {
+ 		dev_err(&dev->dev,
+ 			"SMBus base address uninitialized, upgrade BIOS\n");
+-		err = -ENODEV;
+-		goto exit;
++		return -ENODEV;
+ 	}
+ 
+ 	err = acpi_check_resource_conflict(&dev->resource[SMBBAR]);
+ 	if (err) {
+-		err = -ENODEV;
+-		goto exit;
++		return -ENODEV;
+ 	}
+ 
+-	err = pci_request_region(dev, SMBBAR, dev_driver_string(&dev->dev));
++	err = pcim_iomap_regions(dev, 1 << SMBBAR,
++				 dev_driver_string(&dev->dev));
+ 	if (err) {
+ 		dev_err(&dev->dev,
+ 			"Failed to request SMBus region 0x%lx-0x%Lx\n",
+ 			priv->smba,
+ 			(unsigned long long)pci_resource_end(dev, SMBBAR));
+-		goto exit;
++		return err;
+ 	}
+ 
+ 	pci_read_config_byte(priv->pci_dev, SMBHSTCFG, &temp);
+@@ -1283,7 +1283,7 @@ static int i801_probe(struct pci_dev *de
+ 	err = i2c_add_adapter(&priv->adapter);
+ 	if (err) {
+ 		dev_err(&dev->dev, "Failed to add SMBus adapter\n");
+-		goto exit_release;
++		return err;
+ 	}
+ 
+ 	i801_probe_optional_slaves(priv);
+@@ -1293,11 +1293,6 @@ static int i801_probe(struct pci_dev *de
+ 	pci_set_drvdata(dev, priv);
+ 
+ 	return 0;
+-
+-exit_release:
+-	pci_release_region(dev, SMBBAR);
+-exit:
+-	return err;
+ }
+ 
+ static void i801_remove(struct pci_dev *dev)
+@@ -1308,8 +1303,6 @@ static void i801_remove(struct pci_dev *
+ 	i2c_del_adapter(&priv->adapter);
+ 	pci_write_config_byte(dev, SMBHSTCFG, priv->original_hstcfg);
+ 
+-	pci_release_region(dev, SMBBAR);
+-
+ 	/*
+ 	 * do not call pci_disable_device(dev) since it can cause hard hangs on
+ 	 * some systems during power-off (eg. Fujitsu-Siemens Lifebook E8010)
