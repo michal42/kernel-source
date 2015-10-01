@@ -1,0 +1,78 @@
+From 1621c59d94d13380015fb5131acc6c14ecd1c797 Mon Sep 17 00:00:00 2001
+From: Jarkko Nikula <jarkko.nikula@linux.intel.com>
+Date: Fri, 13 Feb 2015 15:52:23 +0200
+Subject: [PATCH] i2c: i801: Use managed devm_* memory and irq allocation
+
+Git-commit: 1621c59d94d13380015fb5131acc6c14ecd1c797
+Patch-mainline: v4.1-rc1
+References: bnc#946374
+Target: SLE-12 SP1
+
+This simplifies the error and remove paths.
+
+Signed-off-by: Jarkko Nikula <jarkko.nikula@linux.intel.com>
+Reviewed-by: Jean Delvare <jdelvare@suse.de>
+Signed-off-by: Wolfram Sang <wsa@the-dreams.de>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ drivers/i2c/busses/i2c-i801.c |   17 ++++++-----------
+ 1 file changed, 6 insertions(+), 11 deletions(-)
+
+--- a/drivers/i2c/busses/i2c-i801.c
++++ b/drivers/i2c/busses/i2c-i801.c
+@@ -1145,7 +1145,7 @@ static int i801_probe(struct pci_dev *de
+ 	int err, i;
+ 	struct i801_priv *priv;
+ 
+-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
++	priv = devm_kzalloc(&dev->dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
+@@ -1260,8 +1260,9 @@ static int i801_probe(struct pci_dev *de
+ 	if (priv->features & FEATURE_IRQ) {
+ 		init_waitqueue_head(&priv->waitq);
+ 
+-		err = request_irq(dev->irq, i801_isr, IRQF_SHARED,
+-				  dev_driver_string(&dev->dev), priv);
++		err = devm_request_irq(&dev->dev, dev->irq, i801_isr,
++				       IRQF_SHARED,
++				       dev_driver_string(&dev->dev), priv);
+ 		if (err) {
+ 			dev_err(&dev->dev, "Failed to allocate irq %d: %d\n",
+ 				dev->irq, err);
+@@ -1282,7 +1283,7 @@ static int i801_probe(struct pci_dev *de
+ 	err = i2c_add_adapter(&priv->adapter);
+ 	if (err) {
+ 		dev_err(&dev->dev, "Failed to add SMBus adapter\n");
+-		goto exit_free_irq;
++		goto exit_release;
+ 	}
+ 
+ 	i801_probe_optional_slaves(priv);
+@@ -1293,12 +1294,9 @@ static int i801_probe(struct pci_dev *de
+ 
+ 	return 0;
+ 
+-exit_free_irq:
+-	if (priv->features & FEATURE_IRQ)
+-		free_irq(dev->irq, priv);
++exit_release:
+ 	pci_release_region(dev, SMBBAR);
+ exit:
+-	kfree(priv);
+ 	return err;
+ }
+ 
+@@ -1310,11 +1308,8 @@ static void i801_remove(struct pci_dev *
+ 	i2c_del_adapter(&priv->adapter);
+ 	pci_write_config_byte(dev, SMBHSTCFG, priv->original_hstcfg);
+ 
+-	if (priv->features & FEATURE_IRQ)
+-		free_irq(dev->irq, priv);
+ 	pci_release_region(dev, SMBBAR);
+ 
+-	kfree(priv);
+ 	/*
+ 	 * do not call pci_disable_device(dev) since it can cause hard hangs on
+ 	 * some systems during power-off (eg. Fujitsu-Siemens Lifebook E8010)
