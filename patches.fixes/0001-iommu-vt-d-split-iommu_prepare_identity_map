@@ -1,0 +1,90 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Wed, 23 Sep 2015 19:00:10 +0200
+Subject: iommu/vt-d: Split iommu_prepare_identity_map
+Git-commit: d66ce54b4664a0d66429a4de996741581d71cf90
+Patch-mainline: v4.4-rc1
+References: bsc#943916
+
+Split the part of the function that fetches the domain out
+and put the rest into into a domain_prepare_identity_map, so
+that the code can also be used with when the domain is
+already known.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 42 ++++++++++++++++++++++--------------------
+ 1 file changed, 22 insertions(+), 20 deletions(-)
+
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2400,17 +2400,11 @@
+ 				  DMA_PTE_READ|DMA_PTE_WRITE);
+ }
+ 
+-static int iommu_prepare_identity_map(struct device *dev,
+-				      unsigned long long start,
+-				      unsigned long long end)
++static int domain_prepare_identity_map(struct device *dev,
++				       struct dmar_domain *domain,
++				       unsigned long long start,
++				       unsigned long long end)
+ {
+-	struct dmar_domain *domain;
+-	int ret;
+-
+-	domain = get_domain_for_dev(dev, DEFAULT_DOMAIN_ADDRESS_WIDTH);
+-	if (!domain)
+-		return -ENOMEM;
+-
+ 	/* For _hardware_ passthrough, don't bother. But for software
+ 	   passthrough, we do it anyway -- it may indicate a memory
+ 	   range which is reserved in E820, so which didn't get set
+@@ -2430,8 +2424,7 @@
+ 			dmi_get_system_info(DMI_BIOS_VENDOR),
+ 			dmi_get_system_info(DMI_BIOS_VERSION),
+ 		     dmi_get_system_info(DMI_PRODUCT_VERSION));
+-		ret = -EIO;
+-		goto error;
++		return -EIO;
+ 	}
+ 
+ 	if (end >> agaw_to_width(domain->agaw)) {
+@@ -2441,11 +2434,24 @@
+ 		     dmi_get_system_info(DMI_BIOS_VENDOR),
+ 		     dmi_get_system_info(DMI_BIOS_VERSION),
+ 		     dmi_get_system_info(DMI_PRODUCT_VERSION));
+-		ret = -EIO;
+-		goto error;
++		return -EIO;
+ 	}
+ 
+-	ret = iommu_domain_identity_map(domain, start, end);
++	return iommu_domain_identity_map(domain, start, end);
++}
++
++static int iommu_prepare_identity_map(struct device *dev,
++				      unsigned long long start,
++				      unsigned long long end)
++{
++	struct dmar_domain *domain;
++	int ret;
++
++	domain = get_domain_for_dev(dev, DEFAULT_DOMAIN_ADDRESS_WIDTH);
++	if (!domain)
++		return -ENOMEM;
++
++	ret = domain_prepare_identity_map(dev, domain, start, end);
+ 	if (ret)
+ 		goto error;
+ 
+@@ -2456,8 +2462,9 @@
+ 
+ 	return 0;
+ 
+- error:
++error:
+ 	domain_exit(domain);
++
+ 	return ret;
+ }
+ 
