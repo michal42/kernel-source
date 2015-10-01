@@ -1,0 +1,157 @@
+From 2a7a0e9bf7b32e838d873226808ab8a6c00148f7 Mon Sep 17 00:00:00 2001
+From: Matt Fleming <matt.fleming@intel.com>
+Date: Thu, 6 Aug 2015 13:46:26 +0100
+Subject: [PATCH] watchdog: iTCO_wdt: Add support for TCO on Intel Sunrisepoint
+
+Git-commit: 2a7a0e9bf7b32e838d873226808ab8a6c00148f7
+Patch-mainline: v4.3-rc1
+References: bnc#946374
+Target: SLE-12 SP1
+
+The revision of the watchdog hardware in Sunrisepoint necessitates a new
+"version" inside the TCO watchdog driver because some of the register
+layouts have changed.
+
+Also update the Kconfig entry to select both the LPC and SMBus drivers
+since the TCO device is on the SMBus in Sunrisepoint.
+
+Signed-off-by: Matt Fleming <matt.fleming@intel.com>
+Reviewed-by: Guenter Roeck <linux@roeck-us.net>
+Signed-off-by: Lee Jones <lee.jones@linaro.org>
+Acked-by: Lee, Chun-Yi <jlee@suse.com>
+---
+ drivers/watchdog/Kconfig    |    3 +
+ drivers/watchdog/iTCO_wdt.c |   71 +++++++++++++++++++++++++++-----------------
+ 2 files changed, 46 insertions(+), 28 deletions(-)
+
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -620,7 +620,8 @@ config ITCO_WDT
+ 	tristate "Intel TCO Timer/Watchdog"
+ 	depends on (X86 || IA64) && PCI
+ 	select WATCHDOG_CORE
+-	select LPC_ICH
++	select LPC_ICH if !EXPERT
++	select I2C_I801 if !EXPERT
+ 	---help---
+ 	  Hardware driver for the intel TCO timer based watchdog devices.
+ 	  These drivers are included in the Intel 82801 I/O Controller
+--- a/drivers/watchdog/iTCO_wdt.c
++++ b/drivers/watchdog/iTCO_wdt.c
+@@ -142,59 +142,67 @@ static inline unsigned int ticks_to_seco
+ 	return iTCO_wdt_private.iTCO_version == 3 ? ticks : (ticks * 6) / 10;
+ }
+ 
++static inline u32 no_reboot_bit(void)
++{
++	u32 enable_bit;
++
++	switch (iTCO_wdt_private.iTCO_version) {
++	case 3:
++		enable_bit = 0x00000010;
++		break;
++	case 2:
++		enable_bit = 0x00000020;
++		break;
++	case 4:
++	case 1:
++	default:
++		enable_bit = 0x00000002;
++		break;
++	}
++
++	return enable_bit;
++}
++
+ static void iTCO_wdt_set_NO_REBOOT_bit(void)
+ {
+ 	u32 val32;
+ 
+ 	/* Set the NO_REBOOT bit: this disables reboots */
+-	if (iTCO_wdt_private.iTCO_version == 3) {
+-		val32 = readl(iTCO_wdt_private.gcs_pmc);
+-		val32 |= 0x00000010;
+-		writel(val32, iTCO_wdt_private.gcs_pmc);
+-	} else if (iTCO_wdt_private.iTCO_version == 2) {
++	if (iTCO_wdt_private.iTCO_version >= 2) {
+ 		val32 = readl(iTCO_wdt_private.gcs_pmc);
+-		val32 |= 0x00000020;
++		val32 |= no_reboot_bit();
+ 		writel(val32, iTCO_wdt_private.gcs_pmc);
+ 	} else if (iTCO_wdt_private.iTCO_version == 1) {
+ 		pci_read_config_dword(iTCO_wdt_private.pdev, 0xd4, &val32);
+-		val32 |= 0x00000002;
++		val32 |= no_reboot_bit();
+ 		pci_write_config_dword(iTCO_wdt_private.pdev, 0xd4, val32);
+ 	}
+ }
+ 
+ static int iTCO_wdt_unset_NO_REBOOT_bit(void)
+ {
+-	int ret = 0;
+-	u32 val32;
++	u32 enable_bit = no_reboot_bit();
++	u32 val32 = 0;
+ 
+ 	/* Unset the NO_REBOOT bit: this enables reboots */
+-	if (iTCO_wdt_private.iTCO_version == 3) {
+-		val32 = readl(iTCO_wdt_private.gcs_pmc);
+-		val32 &= 0xffffffef;
+-		writel(val32, iTCO_wdt_private.gcs_pmc);
+-
+-		val32 = readl(iTCO_wdt_private.gcs_pmc);
+-		if (val32 & 0x00000010)
+-			ret = -EIO;
+-	} else if (iTCO_wdt_private.iTCO_version == 2) {
++	if (iTCO_wdt_private.iTCO_version >= 2) {
+ 		val32 = readl(iTCO_wdt_private.gcs_pmc);
+-		val32 &= 0xffffffdf;
++		val32 &= ~enable_bit;
+ 		writel(val32, iTCO_wdt_private.gcs_pmc);
+ 
+ 		val32 = readl(iTCO_wdt_private.gcs_pmc);
+-		if (val32 & 0x00000020)
+-			ret = -EIO;
+ 	} else if (iTCO_wdt_private.iTCO_version == 1) {
+ 		pci_read_config_dword(iTCO_wdt_private.pdev, 0xd4, &val32);
+-		val32 &= 0xfffffffd;
++		val32 &= ~enable_bit;
+ 		pci_write_config_dword(iTCO_wdt_private.pdev, 0xd4, val32);
+ 
+ 		pci_read_config_dword(iTCO_wdt_private.pdev, 0xd4, &val32);
+-		if (val32 & 0x00000002)
+-			ret = -EIO;
+ 	}
+ 
+-	return ret; /* returns: 0 = OK, -EIO = Error */
++	if (val32 & enable_bit)
++		return -EIO;
++
++	return 0;
+ }
+ 
+ static int iTCO_wdt_start(struct watchdog_device *wd_dev)
+@@ -500,12 +508,21 @@ static int iTCO_wdt_probe(struct platfor
+ 		pdata->name, pdata->version, (u64)TCOBASE);
+ 
+ 	/* Clear out the (probably old) status */
+-	if (iTCO_wdt_private.iTCO_version == 3) {
++	switch (iTCO_wdt_private.iTCO_version) {
++	case 4:
++		outw(0x0008, TCO1_STS);	/* Clear the Time Out Status bit */
++		outw(0x0002, TCO2_STS);	/* Clear SECOND_TO_STS bit */
++		break;
++	case 3:
+ 		outl(0x20008, TCO1_STS);
+-	} else {
++		break;
++	case 2:
++	case 1:
++	default:
+ 		outw(0x0008, TCO1_STS);	/* Clear the Time Out Status bit */
+ 		outw(0x0002, TCO2_STS);	/* Clear SECOND_TO_STS bit */
+ 		outw(0x0004, TCO2_STS);	/* Clear BOOT_STS bit */
++		break;
+ 	}
+ 
+ 	iTCO_wdt_watchdog_dev.bootstatus = 0;
