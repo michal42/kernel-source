@@ -1,0 +1,103 @@
+From: Adrian Huang <adrianhuang0701@gmail.com>
+Date: Mon, 6 Jul 2015 12:19:13 +0800
+Subject: rtc: cmos: Revert "rtc-cmos: Add an alarm disable quirk"
+Git-commit: 8109d44f7604cd5ab833ea09da98703f6eb16460
+Patch-mainline: v4.3-rc1
+References: bsc#930145
+
+Commit d5a1c7e3fc38 ("rtc-cmos: Add an alarm disable quirk") that
+added a special quirk is not needed because [PATCH 1/2] of this
+patchset makes the kernel more robust:
+rtc-cmos: Cancel alarm timer if alarm time is equal to now+1 seconds
+
+Signed-off-by: Adrian Huang <ahuang12@lenovo.com>
+Tested-by: Egbert Eich <eich@suse.de>
+Tested-by: Diego Ercolani <diego.ercolani@gmail.com>
+Cc: Borislav Petkov <bp@suse.de>
+Signed-off-by: Alexandre Belloni <alexandre.belloni@free-electrons.com>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ drivers/rtc/rtc-cmos.c |   51 -------------------------------------------------
+ 1 file changed, 51 deletions(-)
+
+--- a/drivers/rtc/rtc-cmos.c
++++ b/drivers/rtc/rtc-cmos.c
+@@ -38,7 +38,6 @@
+ #include <linux/pm.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
+-#include <linux/dmi.h>
+ 
+ /* this is for "generic access to PC-style RTC" using CMOS_READ/CMOS_WRITE */
+ #include <asm-generic/rtc.h>
+@@ -377,51 +376,6 @@ static int cmos_set_alarm(struct device
+ 	return 0;
+ }
+ 
+-/*
+- * Do not disable RTC alarm on shutdown - workaround for b0rked BIOSes.
+- */
+-static bool alarm_disable_quirk;
+-
+-static int __init set_alarm_disable_quirk(const struct dmi_system_id *id)
+-{
+-	alarm_disable_quirk = true;
+-	pr_info("rtc-cmos: BIOS has alarm-disable quirk. ");
+-	pr_info("RTC alarms disabled\n");
+-	return 0;
+-}
+-
+-static const struct dmi_system_id rtc_quirks[] __initconst = {
+-	/* https://bugzilla.novell.com/show_bug.cgi?id=805740 */
+-	{
+-		.callback = set_alarm_disable_quirk,
+-		.ident    = "IBM Truman",
+-		.matches  = {
+-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+-			DMI_MATCH(DMI_PRODUCT_NAME, "4852570"),
+-		},
+-	},
+-	/* https://bugzilla.novell.com/show_bug.cgi?id=812592 */
+-	{
+-		.callback = set_alarm_disable_quirk,
+-		.ident    = "Gigabyte GA-990XA-UD3",
+-		.matches  = {
+-			DMI_MATCH(DMI_SYS_VENDOR,
+-					"Gigabyte Technology Co., Ltd."),
+-			DMI_MATCH(DMI_PRODUCT_NAME, "GA-990XA-UD3"),
+-		},
+-	},
+-	/* http://permalink.gmane.org/gmane.linux.kernel/1604474 */
+-	{
+-		.callback = set_alarm_disable_quirk,
+-		.ident    = "Toshiba Satellite L300",
+-		.matches  = {
+-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+-			DMI_MATCH(DMI_PRODUCT_NAME, "Satellite L300"),
+-		},
+-	},
+-	{}
+-};
+-
+ static int cmos_alarm_irq_enable(struct device *dev, unsigned int enabled)
+ {
+ 	struct cmos_rtc	*cmos = dev_get_drvdata(dev);
+@@ -430,9 +384,6 @@ static int cmos_alarm_irq_enable(struct
+ 	if (!is_valid_irq(cmos->irq))
+ 		return -EINVAL;
+ 
+-	if (alarm_disable_quirk)
+-		return 0;
+-
+ 	spin_lock_irqsave(&rtc_lock, flags);
+ 
+ 	if (enabled)
+@@ -1206,8 +1157,6 @@ static int __init cmos_init(void)
+ 			platform_driver_registered = true;
+ 	}
+ 
+-	dmi_check_system(rtc_quirks);
+-
+ 	if (retval == 0)
+ 		return 0;
+ 
