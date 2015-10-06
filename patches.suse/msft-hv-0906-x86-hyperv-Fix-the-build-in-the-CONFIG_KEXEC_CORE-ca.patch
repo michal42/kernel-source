@@ -1,0 +1,83 @@
+From: Vitaly Kuznetsov <vkuznets@redhat.com>
+Date: Wed, 23 Sep 2015 12:02:57 +0200
+Patch-mainline: v4.3-rc4
+Subject: x86/hyperv: Fix the build in the !CONFIG_KEXEC_CORE case
+Git-commit: 1e034743e918d195d339af340ae933727c072bce
+
+Recent changes in the Hyper-V driver:
+
+  b4370df2b1f5 ("Drivers: hv: vmbus: add special crash handler")
+
+broke the build when CONFIG_KEXEC_CORE is not set:
+
+  arch/x86/built-in.o: In function `hv_machine_crash_shutdown':
+  arch/x86/kernel/cpu/mshyperv.c:112: undefined reference to `native_machine_crash_shutdown'
+
+Decorate all kexec related code with #ifdef CONFIG_KEXEC_CORE.
+
+Reported-by: Jim Davis <jim.epost@gmail.com>
+Reported-by: Stephen Hemminger <stephen@networkplumber.org>
+Signed-off-by: Vitaly Kuznetsov <vkuznets@redhat.com>
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Cc: devel@linuxdriverproject.org
+Cc: K. Y. Srinivasan <kys@microsoft.com>
+Cc: Haiyang Zhang <haiyangz@microsoft.com>
+Cc: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/1443002577-25370-1-git-send-email-vkuznets@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: <ohering@suse.de>
+---
+ arch/x86/kernel/cpu/mshyperv.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/mshyperv.c b/arch/x86/kernel/cpu/mshyperv.c
+index 381c8b9..20e242e 100644
+--- a/arch/x86/kernel/cpu/mshyperv.c
++++ b/arch/x86/kernel/cpu/mshyperv.c
+@@ -34,11 +34,10 @@
+ struct ms_hyperv_info ms_hyperv;
+ EXPORT_SYMBOL_GPL(ms_hyperv);
+ 
+-static void (*hv_kexec_handler)(void);
+-static void (*hv_crash_handler)(struct pt_regs *regs);
+-
+ #if IS_ENABLED(CONFIG_HYPERV)
+ static void (*vmbus_handler)(void);
++static void (*hv_kexec_handler)(void);
++static void (*hv_crash_handler)(struct pt_regs *regs);
+ 
+ void hyperv_vector_handler(struct pt_regs *regs)
+ {
+@@ -96,8 +95,8 @@ void hv_remove_crash_handler(void)
+ 	hv_crash_handler = NULL;
+ }
+ EXPORT_SYMBOL_GPL(hv_remove_crash_handler);
+-#endif
+ 
++#ifdef CONFIG_KEXEC_CORE
+ static void hv_machine_shutdown(void)
+ {
+ 	if (kexec_in_progress && hv_kexec_handler)
+@@ -111,7 +110,8 @@ static void hv_machine_crash_shutdown(struct pt_regs *regs)
+ 		hv_crash_handler(regs);
+ 	native_machine_crash_shutdown(regs);
+ }
+-
++#endif /* CONFIG_KEXEC_CORE */
++#endif /* CONFIG_HYPERV */
+ 
+ static uint32_t  __init ms_hyperv_platform(void)
+ {
+@@ -186,8 +186,10 @@ static void __init ms_hyperv_init_platform(void)
+ 	no_timer_check = 1;
+ #endif
+ 
++#if IS_ENABLED(CONFIG_HYPERV) && defined(CONFIG_KEXEC_CORE)
+ 	machine_ops.shutdown = hv_machine_shutdown;
+ 	machine_ops.crash_shutdown = hv_machine_crash_shutdown;
++#endif
+ 	mark_tsc_unstable("running on Hyper-V");
+ }
+ 
