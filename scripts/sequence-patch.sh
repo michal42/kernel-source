@@ -71,7 +71,7 @@ END
 
 apply_fast_patches() {
     echo "[ Fast-applying ${#PATCHES_BEFORE[@]} patches. ${#PATCHES_AFTER[@]} remain. ]"
-    LAST_LOG=$(cat "${PATCHES_BEFORE[@]}" | \
+    LAST_LOG=$(echo "${PATCHES_BEFORE[@]}" | xargs cat | \
         patch -d $PATCH_DIR -p1 -E $fuzz --force --no-backup-if-mismatch \
 		-s 2>&1)
     STATUS=$?
@@ -318,8 +318,8 @@ if test -z "$CONFIG"; then
 			CONFIG=$machine-pae
 		elif test -e "config/$machine/default"; then
 			CONFIG=$machine-default
-		elif test -e "config/$machine/rt"; then
-			CONFIG=$machine-rt
+		elif test -n "$VARIANT" -a -e "config/$machine/${VARIANT#-}"; then
+			CONFIG=$machine$VARIANT
 		else
 			echo "Cannot determine default config for arch $machine"
 		fi
