@@ -1,0 +1,104 @@
+From: Markus Elfring <elfring@users.sourceforge.net>
+Date: Wed, 4 Feb 2015 14:07:56 +0100
+Subject: [PATCH 45/58] qlogic: Deletion of unnecessary checks before two
+ function calls
+Patch-mainline: v4.0-rc1
+Git-commit: 7061b2bdd620e4dda449d4d4db69de57751ab289
+References: bsc#922064 FATE#318609
+
+The functions kfree() and vfree() perform also input parameter validation.
+Thus the test around their calls is not needed.
+
+This issue was detected by using the Coccinelle software.
+
+Signed-off-by: Markus Elfring <elfring@users.sourceforge.net>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Gary Ching-Pang Lin <glin@suse.com>
+---
+ drivers/net/ethernet/qlogic/qlcnic/qlcnic_main.c     |   24 ++++++-------------
+ drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c |    3 --
+ 2 files changed, 9 insertions(+), 18 deletions(-)
+
+--- a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_main.c
++++ b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_main.c
+@@ -294,9 +294,7 @@ int qlcnic_alloc_sds_rings(struct qlcnic
+ 
+ void qlcnic_free_sds_rings(struct qlcnic_recv_context *recv_ctx)
+ {
+-	if (recv_ctx->sds_rings != NULL)
+-		kfree(recv_ctx->sds_rings);
+-
++	kfree(recv_ctx->sds_rings);
+ 	recv_ctx->sds_rings = NULL;
+ }
+ 
+@@ -1243,8 +1241,7 @@ qlcnic_check_options(struct qlcnic_adapt
+ 	if (ahw->op_mode != QLCNIC_NON_PRIV_FUNC) {
+ 		if (fw_dump->tmpl_hdr == NULL ||
+ 				adapter->fw_version > prev_fw_version) {
+-			if (fw_dump->tmpl_hdr)
+-				vfree(fw_dump->tmpl_hdr);
++			vfree(fw_dump->tmpl_hdr);
+ 			if (!qlcnic_fw_cmd_get_minidump_temp(adapter))
+ 				dev_info(&pdev->dev,
+ 					"Supports FW dump capability\n");
+@@ -2360,13 +2357,12 @@ void qlcnic_free_tx_rings(struct qlcnic_
+ 
+ 	for (ring = 0; ring < adapter->drv_tx_rings; ring++) {
+ 		tx_ring = &adapter->tx_ring[ring];
+-		if (tx_ring && tx_ring->cmd_buf_arr != NULL) {
++		if (tx_ring) {
+ 			vfree(tx_ring->cmd_buf_arr);
+ 			tx_ring->cmd_buf_arr = NULL;
+ 		}
+ 	}
+-	if (adapter->tx_ring != NULL)
+-		kfree(adapter->tx_ring);
++	kfree(adapter->tx_ring);
+ }
+ 
+ int qlcnic_alloc_tx_rings(struct qlcnic_adapter *adapter,
+@@ -2744,13 +2740,9 @@ static void qlcnic_remove(struct pci_dev
+ 	}
+ 
+ 	qlcnic_dcb_free(adapter->dcb);
+-
+ 	qlcnic_detach(adapter);
+-
+-	if (adapter->npars != NULL)
+-		kfree(adapter->npars);
+-	if (adapter->eswitch != NULL)
+-		kfree(adapter->eswitch);
++	kfree(adapter->npars);
++	kfree(adapter->eswitch);
+ 
+ 	if (qlcnic_82xx_check(adapter))
+ 		qlcnic_clr_all_drv_state(adapter, 0);
+@@ -2918,13 +2910,13 @@ void qlcnic_alloc_lb_filters_mem(struct
+ 
+ static void qlcnic_free_lb_filters_mem(struct qlcnic_adapter *adapter)
+ {
+-	if (adapter->fhash.fmax && adapter->fhash.fhead)
++	if (adapter->fhash.fmax)
+ 		kfree(adapter->fhash.fhead);
+ 
+ 	adapter->fhash.fhead = NULL;
+ 	adapter->fhash.fmax = 0;
+ 
+-	if (adapter->rx_fhash.fmax && adapter->rx_fhash.fhead)
++	if (adapter->rx_fhash.fmax)
+ 		kfree(adapter->rx_fhash.fhead);
+ 
+ 	adapter->rx_fhash.fmax = 0;
+--- a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c
++++ b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c
+@@ -1407,8 +1407,7 @@ void qlcnic_83xx_get_minidump_template(s
+ 	current_version = qlcnic_83xx_get_fw_version(adapter);
+ 
+ 	if (fw_dump->tmpl_hdr == NULL || current_version > prev_version) {
+-		if (fw_dump->tmpl_hdr)
+-			vfree(fw_dump->tmpl_hdr);
++		vfree(fw_dump->tmpl_hdr);
+ 		if (!qlcnic_fw_cmd_get_minidump_temp(adapter))
+ 			dev_info(&pdev->dev, "Supports FW dump capability\n");
+ 	}
