@@ -48,11 +48,9 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 Cc: Vojtech Pavlik <vojtech@suse.cz>
 Cc: Petr Mladek <pmladek@suse.cz>
 ---
- kernel/kgraft.c | 42 ++++++++++++++++++++++++++----------------
- 1 file changed, 26 insertions(+), 16 deletions(-)
+ kernel/kgraft.c |   37 ++++++++++++++++++++++++-------------
+ 1 file changed, 24 insertions(+), 13 deletions(-)
 
-diff --git a/kernel/kgraft.c b/kernel/kgraft.c
-index c8bf435d3f82..043f22e442b2 100644
 --- a/kernel/kgraft.c
 +++ b/kernel/kgraft.c
 @@ -14,6 +14,7 @@
@@ -80,7 +78,7 @@ index c8bf435d3f82..043f22e442b2 100644
  
  /*
   * The stub needs to modify the RIP value stored in struct pt_regs
-@@ -63,8 +74,13 @@ static void kgr_stub_slow(unsigned long ip, unsigned long parent_ip,
+@@ -63,8 +74,13 @@ static void kgr_stub_slow(unsigned long
  
  	if (in_interrupt())
  		go_old = !*this_cpu_ptr(p->patch->irq_use_new);
@@ -95,7 +93,7 @@ index c8bf435d3f82..043f22e442b2 100644
  
  	if (p->state == KGR_PATCH_REVERT_SLOW)
  		go_old = !go_old;
-@@ -251,22 +267,15 @@ static void kgr_work_fn(struct work_struct *work)
+@@ -251,22 +267,13 @@ static void kgr_work_fn(struct work_stru
  	kgr_finalize();
  }
  
@@ -115,23 +113,11 @@ index c8bf435d3f82..043f22e442b2 100644
  
  	read_lock(&tasklist_lock);
  	for_each_process(p) {
-+		/* skip tasks wandering in userspace as already migrated */
-+		if (kgr_needs_lazy_migration(p))
-+			kgr_mark_task_in_progress(p);
++		kgr_mark_task_in_progress(p);
  		/* wake up kthreads, they will clean the progress flag */
  		if (p->flags & PF_KTHREAD) {
  			/*
-@@ -275,9 +284,6 @@ static void kgr_handle_processes(void)
- 			 */
- 			wake_up_process(p);
- 		}
--		/* mark tasks wandering in userspace as already migrated */
--		if (!kgr_needs_lazy_migration(p))
--			kgr_task_safe(p);
- 	}
- 	read_unlock(&tasklist_lock);
- }
-@@ -558,8 +564,10 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert, bool force)
+@@ -555,8 +562,10 @@ int kgr_modify_kernel(struct kgr_patch *
  	 * If the patch has immediate flag set, avoid the lazy-switching
  	 * between universes completely.
  	 */
@@ -144,7 +130,7 @@ index c8bf435d3f82..043f22e442b2 100644
  
  	kgr_for_each_patch_fun(patch, patch_fun) {
  		patch_fun->patch = patch;
-@@ -594,6 +602,8 @@ int kgr_modify_kernel(struct kgr_patch *patch, bool revert, bool force)
+@@ -591,6 +600,8 @@ int kgr_modify_kernel(struct kgr_patch *
  		kgr_finalize();
  	} else {
  		kgr_handle_processes();
@@ -153,6 +139,3 @@ index c8bf435d3f82..043f22e442b2 100644
  		/*
  		 * give everyone time to exit kernel, and check after a while
  		 */
--- 
-2.1.1
-
