@@ -159,13 +159,15 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  		mddev->pers->quiesce(mddev, 1);
  		mddev->pers->quiesce(mddev, 0);
  	}
-@@ -5416,13 +5433,16 @@ static void mddev_detach(struct mddev *m
+@@ -5416,15 +5433,18 @@ static void mddev_detach(struct mddev *m
  
  static void __md_stop(struct mddev *mddev)
  {
 -	mddev->ready = 0;
 +	struct md_personality *pers = mddev->pers;
  	mddev_detach(mddev);
+ 	/* Ensure ->event_work is done */
+ 	flush_workqueue(md_misc_wq);
 -	mddev->pers->stop(mddev);
 -	if (mddev->pers->sync_request && mddev->to_remove == NULL)
 -		mddev->to_remove = &md_redundancy_group;
@@ -181,7 +183,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	clear_bit(MD_RECOVERY_FROZEN, &mddev->recovery);
  }
  
-@@ -7204,6 +7224,7 @@ static int md_seq_show(struct seq_file *
+@@ -7205,6 +7225,7 @@ static int md_seq_show(struct seq_file *
  	if (mddev_lock(mddev) < 0)
  		return -EINTR;
  
@@ -189,7 +191,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	if (mddev->pers || mddev->raid_disks || !list_empty(&mddev->disks)) {
  		seq_printf(seq, "%s : %sactive", mdname(mddev),
  						mddev->pers ? "" : "in");
-@@ -7277,6 +7298,7 @@ static int md_seq_show(struct seq_file *
+@@ -7278,6 +7299,7 @@ static int md_seq_show(struct seq_file *
  
  		seq_printf(seq, "\n");
  	}
@@ -197,7 +199,7 @@ Acked-by: Hannes Reinecke <hare@suse.de>
  	mddev_unlock(mddev);
  	
  	return 0;
-@@ -7459,7 +7481,7 @@ void md_write_end(struct mddev *mddev)
+@@ -7460,7 +7482,7 @@ void md_write_end(struct mddev *mddev)
   * attempting a GFP_KERNEL allocation while holding the mddev lock.
   * Must be called with mddev_lock held.
   *
