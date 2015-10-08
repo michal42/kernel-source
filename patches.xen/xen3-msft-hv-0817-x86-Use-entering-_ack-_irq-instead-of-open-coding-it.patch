@@ -1,0 +1,72 @@
+From: Thomas Gleixner <tglx@linutronix.de>
+Date: Fri, 15 May 2015 15:48:25 +0200
+Subject: x86: Use entering[_ack]_irq() instead of open coding it
+Patch-mainline: Never, SUSE-Xen specific
+Reference: fate#315887
+
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Acked-by: <ohering@suse.de>
+Automatically created from "patches.suse/msft-hv-0817-x86-Use-entering-_ack-_irq-instead-of-open-coding-it.patch" by xen-port-patches.py
+
+--- a/arch/x86/kernel/apic/io_apic-xen.c
++++ b/arch/x86/kernel/apic/io_apic-xen.c
+@@ -2283,9 +2283,7 @@ asmlinkage void smp_irq_move_cleanup_int
+ {
+ 	unsigned vector, me;
+ 
+-	ack_APIC_irq();
+-	irq_enter();
+-	exit_idle();
++	entering_ack_irq();
+ 
+ 	me = smp_processor_id();
+ 	for (vector = FIRST_EXTERNAL_VECTOR; vector < NR_VECTORS; vector++) {
+@@ -2335,7 +2333,7 @@ unlock:
+ 		raw_spin_unlock(&desc->lock);
+ 	}
+ 
+-	irq_exit();
++	exiting_irq();
+ }
+ 
+ static void __irq_complete_move(struct irq_cfg *cfg, unsigned vector)
+--- a/arch/x86/kernel/irq-xen.c
++++ b/arch/x86/kernel/irq-xen.c
+@@ -210,8 +210,7 @@ __visible unsigned int __irq_entry do_IR
+ 	unsigned vector = ~regs->orig_ax;
+ 	unsigned irq;
+ 
+-	irq_enter();
+-	exit_idle();
++	entering_irq();
+ 
+ 	irq = __this_cpu_read(vector_irq[vector]);
+ 
+@@ -223,7 +222,7 @@ __visible unsigned int __irq_entry do_IR
+ 				__func__, smp_processor_id(), vector, irq);
+ 	}
+ 
+-	irq_exit();
++	exiting_irq();
+ 
+ 	set_irq_regs(old_regs);
+ 	return 1;
+@@ -258,16 +257,9 @@ __visible void smp_kvm_posted_intr_ipi(s
+ {
+ 	struct pt_regs *old_regs = set_irq_regs(regs);
+ 
+-	ack_APIC_irq();
+-
+-	irq_enter();
+-
+-	exit_idle();
+-
++	entering_ack_irq();
+ 	inc_irq_stat(kvm_posted_intr_ipis);
+-
+-	irq_exit();
+-
++	exiting_irq();
+ 	set_irq_regs(old_regs);
+ }
+ #endif
