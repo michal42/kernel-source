@@ -1,0 +1,46 @@
+From: Vlad Yasevich <vyasevic@redhat.com>
+Date: Wed, 4 Jun 2014 16:23:37 -0400
+Subject: macvlan: Support bonding events
+Patch-mainline: v3.16-rc1
+Git-commit: 4c9912556867bf89e7bb6946fd218a40b1d12139
+References: bsc#948521
+
+Bonding and team drivers generate specific events during failover
+that trigger switch updates.  When a macvlan device is configured
+on top of bonding, we want switches to learn about the macvlan
+devices as well.   This patch adds a handler to macvlan driver to
+propagate these events to all macvlan devices.  We let the generic
+inetdev event handler do the work.
+
+This allows macvlan to operated correctly over active-backup
+mode bond.
+
+Signed-off-by: Vlad Yasevich <vyasevic@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/macvlan.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/net/macvlan.c b/drivers/net/macvlan.c
+index 3b2225802da3..f371d87a1318 100644
+--- a/drivers/net/macvlan.c
++++ b/drivers/net/macvlan.c
+@@ -1050,6 +1050,13 @@ static int macvlan_device_event(struct notifier_block *unused,
+ 	case NETDEV_PRE_TYPE_CHANGE:
+ 		/* Forbid underlaying device to change its type. */
+ 		return NOTIFY_BAD;
++
++	case NETDEV_NOTIFY_PEERS:
++	case NETDEV_BONDING_FAILOVER:
++	case NETDEV_RESEND_IGMP:
++		/* Propagate to all vlans */
++		list_for_each_entry(vlan, &port->vlans, list)
++			call_netdevice_notifiers(event, vlan->dev);
+ 	}
+ 	return NOTIFY_DONE;
+ }
+-- 
+2.6.1
+
