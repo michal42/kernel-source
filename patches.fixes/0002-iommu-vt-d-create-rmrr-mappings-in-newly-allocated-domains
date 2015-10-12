@@ -1,0 +1,56 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Wed, 23 Sep 2015 19:16:01 +0200
+Subject: iommu/vt-d: Create RMRR mappings in newly allocated domains
+Git-commit: b1ce5b79aec8d8cd8bcd076d8cce8bc3cd690051
+Patch-mainline: v4.4-rc1
+References: bsc#943916
+
+Currently the RMRR entries are created only at boot time.
+This means they will vanish when the domain allocated at
+boot time is destroyed.
+This patch makes sure that also newly allocated domains will
+get RMRR mappings.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/iommu/intel-iommu.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -3217,8 +3217,10 @@
+ 
+ static struct dmar_domain *__get_valid_domain_for_dev(struct device *dev)
+ {
++	struct dmar_rmrr_unit *rmrr;
+ 	struct dmar_domain *domain;
+-	int ret;
++	struct device *i_dev;
++	int i, ret;
+ 
+ 	domain = get_domain_for_dev(dev, DEFAULT_DOMAIN_ADDRESS_WIDTH);
+ 	if (!domain) {
+@@ -3237,6 +3239,23 @@
+ 		}
+ 	}
+ 
++	/* We have a new domain - setup possible RMRRs for the device */
++	rcu_read_lock();
++	for_each_rmrr_units(rmrr) {
++		for_each_active_dev_scope(rmrr->devices, rmrr->devices_cnt,
++					  i, i_dev) {
++			if (i_dev != dev)
++				continue;
++
++			ret = domain_prepare_identity_map(dev, domain,
++							  rmrr->base_address,
++							  rmrr->end_address);
++			if (ret)
++				dev_err(dev, "Mapping reserved region failed\n");
++		}
++	}
++	rcu_read_unlock();
++
+ 	return domain;
+ }
+ 
