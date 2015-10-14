@@ -1,0 +1,195 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date: Wed, 30 Sep 2015 13:20:35 -0500
+Subject: [PATCH 64/73] md-cluster: Perform resync/recovery under a DLM lock
+Git-commit: c186b128cda5a246da25f474e4689cb2bfacfcac
+Git-repo: git://neil.brown.name/md
+Patch-mainline: Queued in subsystem maintainer repository
+References: fate#316335
+
+Resync or recovery must be performed by only one node at a time.
+A DLM lock resource, resync_lockres provides the mutual exclusion
+so that only one node performs the recovery/resync at a time.
+
+If a node is unable to get the resync_lockres, because recovery is
+being performed by another node, it set MD_RECOVER_NEEDED so as
+to schedule recovery in the future.
+
+Remove the debug message in resync_info_update()
+used during development.
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c |   29 ++++++++++++++++++++++++++---
+ drivers/md/md-cluster.h |    2 ++
+ drivers/md/md.c         |   20 +++++++++++++++++++-
+ drivers/md/raid1.c      |    2 --
+ 4 files changed, 47 insertions(+), 6 deletions(-)
+
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -55,6 +55,7 @@ struct md_cluster_info {
+ 	struct completion completion;
+ 	struct mutex sb_mutex;
+ 	struct dlm_lock_resource *bitmap_lockres;
++	struct dlm_lock_resource *resync_lockres;
+ 	struct list_head suspend_list;
+ 	spinlock_t suspend_lock;
+ 	struct md_thread *recovery_thread;
+@@ -386,6 +387,8 @@ static void process_suspend_info(struct
+ 
+ 	if (!hi) {
+ 		remove_suspend_info(mddev, slot);
++		set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
++		md_wakeup_thread(mddev->thread);
+ 		return;
+ 	}
+ 	s = kzalloc(sizeof(struct suspend_info), GFP_KERNEL);
+@@ -760,6 +763,10 @@ static int join(struct mddev *mddev, int
+ 		goto err;
+ 	}
+ 
++	cinfo->resync_lockres = lockres_init(mddev, "resync", NULL, 0);
++	if (!cinfo->resync_lockres)
++		goto err;
++
+ 	ret = gather_all_resync_info(mddev, nodes);
+ 	if (ret)
+ 		goto err;
+@@ -770,6 +777,7 @@ err:
+ 	lockres_free(cinfo->token_lockres);
+ 	lockres_free(cinfo->ack_lockres);
+ 	lockres_free(cinfo->no_new_dev_lockres);
++	lockres_free(cinfo->resync_lockres);
+ 	lockres_free(cinfo->bitmap_lockres);
+ 	if (cinfo->lockspace)
+ 		dlm_release_lockspace(cinfo->lockspace, 2);
+@@ -863,6 +871,13 @@ static int metadata_update_cancel(struct
+ 	return dlm_unlock_sync(cinfo->token_lockres);
+ }
+ 
++static int resync_start(struct mddev *mddev)
++{
++	struct md_cluster_info *cinfo = mddev->cluster_info;
++	cinfo->resync_lockres->flags |= DLM_LKF_NOQUEUE;
++	return dlm_lock_sync(cinfo->resync_lockres, DLM_LOCK_EX);
++}
++
+ static int resync_info_update(struct mddev *mddev, sector_t lo, sector_t hi)
+ {
+ 	struct md_cluster_info *cinfo = mddev->cluster_info;
+@@ -872,16 +887,22 @@ static int resync_info_update(struct mdd
+ 	add_resync_info(mddev, cinfo->bitmap_lockres, lo, hi);
+ 	/* Re-acquire the lock to refresh LVB */
+ 	dlm_lock_sync(cinfo->bitmap_lockres, DLM_LOCK_PW);
+-	pr_info("%s:%d lo: %llu hi: %llu\n", __func__, __LINE__,
+-			(unsigned long long)lo,
+-			(unsigned long long)hi);
+ 	cmsg.type = cpu_to_le32(RESYNCING);
+ 	cmsg.slot = cpu_to_le32(slot);
+ 	cmsg.low = cpu_to_le64(lo);
+ 	cmsg.high = cpu_to_le64(hi);
++
+ 	return sendmsg(cinfo, &cmsg);
+ }
+ 
++static int resync_finish(struct mddev *mddev)
++{
++	struct md_cluster_info *cinfo = mddev->cluster_info;
++	cinfo->resync_lockres->flags &= ~DLM_LKF_NOQUEUE;
++	dlm_unlock_sync(cinfo->resync_lockres);
++	return resync_info_update(mddev, 0, 0);
++}
++
+ static int area_resyncing(struct mddev *mddev, int direction,
+ 		sector_t lo, sector_t hi)
+ {
+@@ -997,6 +1018,8 @@ static struct md_cluster_operations clus
+ 	.join   = join,
+ 	.leave  = leave,
+ 	.slot_number = slot_number,
++	.resync_start = resync_start,
++	.resync_finish = resync_finish,
+ 	.resync_info_update = resync_info_update,
+ 	.metadata_update_start = metadata_update_start,
+ 	.metadata_update_finish = metadata_update_finish,
+--- a/drivers/md/md-cluster.h
++++ b/drivers/md/md-cluster.h
+@@ -16,6 +16,8 @@ struct md_cluster_operations {
+ 	int (*metadata_update_start)(struct mddev *mddev);
+ 	int (*metadata_update_finish)(struct mddev *mddev);
+ 	int (*metadata_update_cancel)(struct mddev *mddev);
++	int (*resync_start)(struct mddev *mddev);
++	int (*resync_finish)(struct mddev *mddev);
+ 	int (*area_resyncing)(struct mddev *mddev, int direction, sector_t lo, sector_t hi);
+ 	int (*add_new_disk_start)(struct mddev *mddev, struct md_rdev *rdev);
+ 	int (*add_new_disk_finish)(struct mddev *mddev);
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -7762,6 +7762,7 @@ void md_do_sync(struct md_thread *thread
+ 	struct md_rdev *rdev;
+ 	char *desc, *action = NULL;
+ 	struct blk_plug plug;
++	bool cluster_resync_finished = false;
+ 
+ 	/* just incase thread restarts... */
+ 	if (test_bit(MD_RECOVERY_DONE, &mddev->recovery))
+@@ -8047,7 +8048,11 @@ void md_do_sync(struct md_thread *thread
+ 	blk_finish_plug(&plug);
+ 	wait_event(mddev->recovery_wait, !atomic_read(&mddev->recovery_active));
+ 
+-	/* tell personality that we are finished */
++	/* tell personality and other nodes that we are finished */
++	if (mddev_is_clustered(mddev)) {
++		md_cluster_ops->resync_finish(mddev);
++		cluster_resync_finished = true;
++	}
+ 	mddev->pers->sync_request(mddev, max_sectors, &skipped, 1);
+ 
+ 	if (!test_bit(MD_RECOVERY_CHECK, &mddev->recovery) &&
+@@ -8085,6 +8090,11 @@ void md_do_sync(struct md_thread *thread
+  skip:
+ 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
+ 
++	if (mddev_is_clustered(mddev) &&
++	    test_bit(MD_RECOVERY_INTR, &mddev->recovery) &&
++	    !cluster_resync_finished)
++		md_cluster_ops->resync_finish(mddev);
++
+ 	if (!test_bit(MD_RECOVERY_INTR, &mddev->recovery)) {
+ 		/* We completed so min/max setting can be forgotten if used. */
+ 		if (test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery))
+@@ -8325,6 +8335,13 @@ void md_check_recovery(struct mddev *mdd
+ 				 */
+ 				bitmap_write_all(mddev->bitmap);
+ 			}
++			if (mddev_is_clustered(mddev)) {
++				int ret = md_cluster_ops->resync_start(mddev);
++				if (ret) {
++					mddev->sync_thread = NULL;
++					goto no_thread;
++				}
++			}
+ 			mddev->sync_thread = md_register_thread(md_do_sync,
+ 								mddev,
+ 								"resync");
+@@ -8332,6 +8349,7 @@ void md_check_recovery(struct mddev *mdd
+ 				printk(KERN_ERR "%s: could not start resync"
+ 					" thread...\n", 
+ 					mdname(mddev));
++			no_thread:
+ 				/* leave the spares where they are, it shouldn't hurt */
+ 				clear_bit(MD_RECOVERY_RUNNING, &mddev->recovery);
+ 				clear_bit(MD_RECOVERY_SYNC, &mddev->recovery);
+--- a/drivers/md/raid1.c
++++ b/drivers/md/raid1.c
+@@ -2525,8 +2525,6 @@ static sector_t sync_request(struct mdde
+ 		if (mddev_is_clustered(mddev)) {
+ 			conf->cluster_sync_low = 0;
+ 			conf->cluster_sync_high = 0;
+-			/* Send zeros to mark end of resync */
+-			md_cluster_ops->resync_info_update(mddev, 0, 0);
+ 		}
+ 		return 0;
+ 	}
