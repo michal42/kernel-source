@@ -1,0 +1,48 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Mon, 12 Oct 2015 17:21:27 +0800
+Subject: [PATCH 72/73] md-cluster: only call kick_rdev_from_array after remove
+ disk successfully
+Git-commit: a9720903d1415317e18f439917f760ec592f3e3b
+Git-repo: git://neil.brown.name/md
+Patch-mainline: Queued in subsystem maintainer repository
+References: fate#316335
+
+For cluster raid, we should not kick it from array if the disk can't be
+remove from array successfully.
+
+Signed-off-by: Guoqing Jiang <gqjiang@suse.com>
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md.c |   17 ++++++++++-------
+ 1 file changed, 10 insertions(+), 7 deletions(-)
+
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -2842,15 +2842,18 @@ state_store(struct md_rdev *rdev, const
+ 			err = -EBUSY;
+ 		else {
+ 			struct mddev *mddev = rdev->mddev;
++			err = 0;
+ 			if (mddev_is_clustered(mddev))
+-				md_cluster_ops->remove_disk(mddev, rdev);
+-			md_kick_rdev_from_array(rdev);
+-			if (mddev->pers) {
+-				set_bit(MD_CHANGE_DEVS, &mddev->flags);
+-				md_wakeup_thread(mddev->thread);
++				err = md_cluster_ops->remove_disk(mddev, rdev);
++
++			if (err == 0) {
++				md_kick_rdev_from_array(rdev);
++				if (mddev->pers) {
++					set_bit(MD_CHANGE_DEVS, &mddev->flags);
++					md_wakeup_thread(mddev->thread);
++				}
++				md_new_event(mddev);
+ 			}
+-			md_new_event(mddev);
+-			err = 0;
+ 		}
+ 	} else if (cmd_match(buf, "writemostly")) {
+ 		set_bit(WriteMostly, &rdev->flags);
