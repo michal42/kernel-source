@@ -1,0 +1,33 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Mon, 12 Oct 2015 17:21:23 +0800
+Subject: [PATCH 69/73] md-cluster: make sure the node do not receive it's own
+ msg
+Git-commit: 256f5b245aab93bfa2d8b86d66545fceea05408e
+Git-repo: git://neil.brown.name/md
+Patch-mainline: Queued in subsystem maintainer repository
+References: fate#316335
+
+During the past test, the node occasionally received the msg which is
+sent from itself, this case should not happen in theory, but it is
+better to avoid it in case something wrong happened.
+
+Signed-off-by: Guoqing Jiang <gqjiang@suse.com>
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -464,6 +464,9 @@ static void process_readd_disk(struct md
+ 
+ static void process_recvd_msg(struct mddev *mddev, struct cluster_msg *msg)
+ {
++	if (WARN(mddev->cluster_info->slot_number - 1 == le32_to_cpu(msg->slot),
++		"node %d received it's own msg\n", le32_to_cpu(msg->slot)))
++		return;
+ 	switch (msg->type) {
+ 	case METADATA_UPDATED:
+ 		process_metadata_update(mddev, msg);
