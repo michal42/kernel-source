@@ -1,0 +1,85 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Mon, 12 Oct 2015 17:21:30 +0800
+Subject: [PATCH 73/73] md: check the return value for metadata_update_start
+Git-commit: 23b63f9fa82eed128b5c585cbfe10ced82d73e91
+Git-repo: git://neil.brown.name/md
+Patch-mainline: Queued in subsystem maintainer repository
+References: fate#316335
+
+We shouldn't run related funs of md_cluster_ops in case
+metadata_update_start returned failure.
+
+Signed-off-by: Guoqing Jiang <gqjiang@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md.c |   15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -2520,6 +2520,7 @@ void md_update_sb(struct mddev *mddev, i
+ 	int sync_req;
+ 	int nospares = 0;
+ 	int any_badblocks_changed = 0;
++	int ret = -1;
+ 
+ 	if (mddev->ro) {
+ 		if (force_change)
+@@ -2530,10 +2531,11 @@ void md_update_sb(struct mddev *mddev, i
+ 	if (mddev_is_clustered(mddev)) {
+ 		if (test_and_clear_bit(MD_CHANGE_DEVS, &mddev->flags))
+ 			force_change = 1;
+-		md_cluster_ops->metadata_update_start(mddev);
++		ret = md_cluster_ops->metadata_update_start(mddev);
+ 		/* Has someone else has updated the sb */
+ 		if (!does_sb_need_changing(mddev)) {
+-			md_cluster_ops->metadata_update_cancel(mddev);
++			if (ret == 0)
++				md_cluster_ops->metadata_update_cancel(mddev);
+ 			clear_bit(MD_CHANGE_PENDING, &mddev->flags);
+ 			return;
+ 		}
+@@ -2692,7 +2694,7 @@ rewrite:
+ 		wake_up(&rdev->blocked_wait);
+ 	}
+ 
+-	if (mddev_is_clustered(mddev))
++	if (mddev_is_clustered(mddev) && ret == 0)
+ 		md_cluster_ops->metadata_update_finish(mddev);
+ }
+ EXPORT_SYMBOL(md_update_sb);
+@@ -6178,13 +6180,14 @@ static int hot_remove_disk(struct mddev
+ {
+ 	char b[BDEVNAME_SIZE];
+ 	struct md_rdev *rdev;
++	int ret = -1;
+ 
+ 	rdev = find_rdev(mddev, dev);
+ 	if (!rdev)
+ 		return -ENXIO;
+ 
+ 	if (mddev_is_clustered(mddev))
+-		md_cluster_ops->metadata_update_start(mddev);
++		ret = md_cluster_ops->metadata_update_start(mddev);
+ 
+ 	if (rdev->raid_disk < 0)
+ 		goto kick_rdev;
+@@ -6196,7 +6199,7 @@ static int hot_remove_disk(struct mddev
+ 		goto busy;
+ 
+ kick_rdev:
+-	if (mddev_is_clustered(mddev))
++	if (mddev_is_clustered(mddev) && ret == 0)
+ 		md_cluster_ops->remove_disk(mddev, rdev);
+ 
+ 	md_kick_rdev_from_array(rdev);
+@@ -6209,7 +6212,7 @@ kick_rdev:
+ 
+ 	return 0;
+ busy:
+-	if (mddev_is_clustered(mddev))
++	if (mddev_is_clustered(mddev) && ret == 0)
+ 		md_cluster_ops->metadata_update_cancel(mddev);
+ 
+ 	printk(KERN_WARNING "md: cannot remove active disk %s from %s ...\n",
