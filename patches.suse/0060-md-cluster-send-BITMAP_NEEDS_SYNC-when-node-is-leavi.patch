@@ -1,0 +1,60 @@
+From: Guoqing Jiang <gqjiang@suse.com>
+Date: Thu, 1 Oct 2015 00:09:18 +0800
+Subject: [PATCH] md-cluster: send BITMAP_NEEDS_SYNC when node is leaving
+ cluster
+Git-commit: bfdaf3239f1de48c161ba1286ff1a52107ef2b58
+Patch-mainline: Queued in subsystem maintainer repository
+Git-repo: git://neil.brown.name/md
+References: bsc#944647
+
+Previously, BITMAP_NEEDS_SYNC message is sent when the resyc
+aborts, but it could abort for different reasons, and not all
+of reasons require another node to take over the resync ownship.
+
+It is better make BITMAP_NEEDS_SYNC message only be sent when
+the node is leaving cluster with dirty bitmap. And we also need
+to ensure dlm connection is ok.
+
+Signed-off-by: Guoqing Jiang <gqjiang@suse.com>
+Signed-off-by: NeilBrown <neilb@suse.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/md/md-cluster.c |   20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+--- a/drivers/md/md-cluster.c
++++ b/drivers/md/md-cluster.c
+@@ -779,12 +779,32 @@ err:
+ 	return ret;
+ }
+ 
++static void resync_bitmap(struct mddev *mddev)
++{
++	struct md_cluster_info *cinfo = mddev->cluster_info;
++	struct cluster_msg cmsg = {0};
++	int err;
++
++	cmsg.type = cpu_to_le32(BITMAP_NEEDS_SYNC);
++	err = sendmsg(cinfo, &cmsg);
++	if (err)
++		pr_err("%s:%d: failed to send BITMAP_NEEDS_SYNC message (%d)\n",
++			__func__, __LINE__, err);
++}
++
+ static int leave(struct mddev *mddev)
+ {
+ 	struct md_cluster_info *cinfo = mddev->cluster_info;
+ 
+ 	if (!cinfo)
+ 		return 0;
++
++	/* BITMAP_NEEDS_SYNC message should be sent when node
++	 * is leaving the cluster with dirty bitmap, also we
++	 * can only deliver it when dlm connection is available */
++	if (cinfo->slot_number > 0 && mddev->recovery_cp != MaxSector)
++		resync_bitmap(mddev);
++
+ 	md_unregister_thread(&cinfo->recovery_thread);
+ 	md_unregister_thread(&cinfo->recv_thread);
+ 	lockres_free(cinfo->message_lockres);
