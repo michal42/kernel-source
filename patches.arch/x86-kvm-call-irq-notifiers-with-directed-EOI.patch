@@ -1,0 +1,57 @@
+From c806a6ad35bfa6c92249cd0ca4772d5ac3f8cb68 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Radim=20Kr=C4=8Dm=C3=A1=C5=99?= <rkrcmar@redhat.com>
+Date: Wed, 18 Mar 2015 19:38:22 +0100
+Subject: [PATCH] KVM: x86: call irq notifiers with directed EOI
+Git-Commit: c806a6ad35bfa6c92249cd0ca4772d5ac3f8cb68
+Patch-Mainline: v4.0-rc6
+References: bsc#950862
+
+kvm_ioapic_update_eoi() wasn't called if directed EOI was enabled.
+We need to do that for irq notifiers.  (Like with edge interrupts.)
+
+Fix it by skipping EOI broadcast only.
+
+Bug: https://bugzilla.kernel.org/show_bug.cgi?id=82211
+Signed-off-by: Radim Krčmář <rkrcmar@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Tested-by: Bandan Das <bsd@redhat.com>
+Signed-off-by: Marcelo Tosatti <mtosatti@redhat.com>
+Signed-off-by: Dirk Mueller <dmueller@suse.com>
+
+---
+ arch/x86/kvm/lapic.c |    3 +--
+ virt/kvm/ioapic.c    |    4 +++-
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+--- a/arch/x86/kvm/lapic.c
++++ b/arch/x86/kvm/lapic.c
+@@ -778,8 +778,7 @@ int kvm_apic_compare_prio(struct kvm_vcp
+ 
+ static void kvm_ioapic_send_eoi(struct kvm_lapic *apic, int vector)
+ {
+-	if (!(kvm_apic_get_reg(apic, APIC_SPIV) & APIC_SPIV_DIRECTED_EOI) &&
+-	    kvm_ioapic_handles_vector(apic->vcpu->kvm, vector)) {
++	if (kvm_ioapic_handles_vector(apic->vcpu->kvm, vector)) {
+ 		int trigger_mode;
+ 		if (apic_test_vector(vector, apic->regs + APIC_TMR))
+ 			trigger_mode = IOAPIC_LEVEL_TRIG;
+--- a/virt/kvm/ioapic.c
++++ b/virt/kvm/ioapic.c
+@@ -367,6 +367,7 @@ static void __kvm_ioapic_update_eoi(stru
+ 			struct kvm_ioapic *ioapic, int vector, int trigger_mode)
+ {
+ 	int i;
++	struct kvm_lapic *apic = vcpu->arch.apic;
+ 
+ 	for (i = 0; i < IOAPIC_NUM_PINS; i++) {
+ 		union kvm_ioapic_redirect_entry *ent = &ioapic->redirtbl[i];
+@@ -388,7 +389,8 @@ static void __kvm_ioapic_update_eoi(stru
+ 		kvm_notify_acked_irq(ioapic->kvm, KVM_IRQCHIP_IOAPIC, i);
+ 		spin_lock(&ioapic->lock);
+ 
+-		if (trigger_mode != IOAPIC_LEVEL_TRIG)
++		if (trigger_mode != IOAPIC_LEVEL_TRIG ||
++		    kvm_apic_get_reg(apic, APIC_SPIV) & APIC_SPIV_DIRECTED_EOI)
+ 			continue;
+ 
+ 		ASSERT(ent->fields.trig_mode == IOAPIC_LEVEL_TRIG);
