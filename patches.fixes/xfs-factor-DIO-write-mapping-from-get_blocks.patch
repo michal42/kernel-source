@@ -1,0 +1,84 @@
+From a719370be52d1152a5f6e19c4af3b73280e25475 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Thu, 16 Apr 2015 21:57:48 +1000
+Subject: [PATCH 1/8] xfs: factor DIO write mapping from get_blocks
+Git-commit: a719370be52d1152a5f6e19c4af3b73280e25475
+Patch-mainline: v4.1-rc1
+References: bsc#949744
+
+Clarify and separate the buffer mapping logic so that the direct IO mapping is
+not tangled up in propagating the extent status to teh mapping buffer. This
+makes it easier to extend the direct IO mapping to use an ioend in future.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Acked-by: Jan Kara <jack@suse.com>
+
+---
+ fs/xfs/xfs_aops.c | 40 +++++++++++++++++++++++++++-------------
+ 1 file changed, 27 insertions(+), 13 deletions(-)
+
+diff --git a/fs/xfs/xfs_aops.c b/fs/xfs/xfs_aops.c
+index 3a9b7a1b8704..489ed200bbbb 100644
+--- a/fs/xfs/xfs_aops.c
++++ b/fs/xfs/xfs_aops.c
+@@ -1233,6 +1233,22 @@ xfs_vm_releasepage(
+ 	return try_to_free_buffers(page);
+ }
+ 
++/*
++ * do all the direct IO specific mapping buffer manipulation here.
++ */
++static void
++xfs_map_direct(
++	struct inode		*inode,
++	struct buffer_head	*bh_result,
++	struct xfs_bmbt_irec	*imap,
++	xfs_off_t		offset)
++{
++	if (ISUNWRITTEN(imap)) {
++		bh_result->b_private = inode;
++		set_buffer_defer_completion(bh_result);
++	}
++}
++
+ STATIC int
+ __xfs_get_blocks(
+ 	struct inode		*inode,
+@@ -1331,21 +1347,19 @@ __xfs_get_blocks(
+ 		goto out_unlock;
+ 	}
+ 
++	/*
++	 * For unwritten extents do not report a disk address in the buffered
++	 * read case (treat as if we're reading into a hole).
++	 */
+ 	if (imap.br_startblock != HOLESTARTBLOCK &&
+-	    imap.br_startblock != DELAYSTARTBLOCK) {
+-		/*
+-		 * For unwritten extents do not report a disk address on
+-		 * the read case (treat as if we're reading into a hole).
+-		 */
+-		if (create || !ISUNWRITTEN(&imap))
+-			xfs_map_buffer(inode, bh_result, &imap, offset);
+-		if (create && ISUNWRITTEN(&imap)) {
+-			if (direct) {
+-				bh_result->b_private = inode;
+-				set_buffer_defer_completion(bh_result);
+-			}
++	    imap.br_startblock != DELAYSTARTBLOCK &&
++	    (create || !ISUNWRITTEN(&imap))) {
++		xfs_map_buffer(inode, bh_result, &imap, offset);
++		if (ISUNWRITTEN(&imap))
+ 			set_buffer_unwritten(bh_result);
+-		}
++		/* direct IO needs special help */
++		if (create && direct)
++			xfs_map_direct(inode, bh_result, &imap, offset);
+ 	}
+ 
+ 	/*
+-- 
+2.1.4
+
