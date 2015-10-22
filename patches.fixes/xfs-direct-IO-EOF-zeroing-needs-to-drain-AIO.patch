@@ -1,0 +1,50 @@
+From 40c63fbc55a968383b8bb5cacad81585e80cd323 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Thu, 16 Apr 2015 22:03:17 +1000
+Subject: [PATCH 7/8] xfs: direct IO EOF zeroing needs to drain AIO
+Git-commit: 40c63fbc55a968383b8bb5cacad81585e80cd323
+Patch-mainline: v4.1-rc1
+References: bsc#949744
+
+When we are doing AIO DIO writes, the IOLOCK only provides an IO
+submission barrier. When we need to do EOF zeroing, we need to ensure
+that no other IO is in progress and all pending in-core EOF updates
+have been completed. This requires us to wait for all outstanding
+AIO DIO writes to the inode to complete and, if necessary, run their
+EOF updates.
+
+Once all the EOF updates are complete, we can then restart
+xfs_file_aio_write_checks() while holding the IOLOCK_EXCL, knowing
+that EOF is up to date and we have exclusive IO access to the file
+so we can run EOF block zeroing if we need to without interference.
+This gives EOF zeroing the same exclusivity against other IO as we
+provide truncate operations.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Acked-by: Jan Kara <jack@suse.com>
+
+---
+ fs/xfs/xfs_file.c |   10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -587,6 +587,16 @@ restart:
+ 			xfs_rw_iunlock(ip, *iolock);
+ 			*iolock = XFS_IOLOCK_EXCL;
+ 			xfs_rw_ilock(ip, *iolock);
++
++			/*
++			 * We now have an IO submission barrier in place, but
++			 * AIO can do EOF updates during IO completion and hence
++			 * we now need to wait for all of them to drain. Non-AIO
++			 * DIO will have drained before we are given the
++			 * XFS_IOLOCK_EXCL, and so for most cases this wait is a
++			 * no-op.
++			 */
++			inode_dio_wait(inode);
+ 			goto restart;
+ 		}
+ 		error = -xfs_zero_eof(ip, *pos, i_size_read(inode));

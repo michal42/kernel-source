@@ -1,0 +1,97 @@
+From b9d59846f73713d77f0f3fb784c7f84249fc2b93 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Thu, 16 Apr 2015 22:03:07 +1000
+Subject: [PATCH 6/8] xfs: DIO write completion size updates race
+Git-commit: b9d59846f73713d77f0f3fb784c7f84249fc2b93
+Patch-mainline: v4.1-rc1
+References: bsc#949744
+
+xfs_end_io_direct_write() can race with other IO completions when
+updating the in-core inode size. The IO completion processing is not
+serialised for direct IO - they are done either under the
+IOLOCK_SHARED for non-AIO DIO, and without any IOLOCK held at all
+during AIO DIO completion. Hence the non-atomic test-and-set update
+of the in-core inode size is racy and can result in the in-core
+inode size going backwards if the race if hit just right.
+
+If the inode size goes backwards, this can trigger the EOF zeroing
+code to run incorrectly on the next IO, which then will zero data
+that has successfully been written to disk by a previous DIO.
+
+To fix this bug, we need to serialise the test/set updates of the
+in-core inode size. This first patch introduces locking around the
+relevant updates and checks in the DIO path. Because we now have an
+ioend in xfs_end_io_direct_write(), we know exactly then we are
+doing an IO that requires an in-core EOF update, and we know that
+they are not running in interrupt context. As such, we do not need to
+use irqsave() spinlock variants to protect against interrupts while
+the lock is held.
+
+Hence we can use an existing spinlock in the inode to do this
+serialisation and so not need to grow the struct xfs_inode just to
+work around this problem.
+
+This patch does not address the test/set EOF update in
+generic_file_write_direct() for various reasons - that will be done
+as a followup with separate explanation.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Acked-by: Jan Kara <jack@suse.com>
+
+---
+ fs/xfs/xfs_aops.c |    7 +++++++
+ fs/xfs/xfs_file.c |   13 ++++++++++++-
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+--- a/fs/xfs/xfs_aops.c
++++ b/fs/xfs/xfs_aops.c
+@@ -1538,9 +1538,16 @@ xfs_end_io_direct_write(
+ 	 * with the on-disk inode size being outside the in-core inode size. We
+ 	 * have no other method of updating EOF for AIO, so always do it here
+ 	 * if necessary.
++	 *
++	 * We need to lock the test/set EOF update as we can be racing with
++	 * other IO completions here to update the EOF. Failing to serialise
++	 * here can result in EOF moving backwards and Bad Things Happen when
++	 * that occurs.
+ 	 */
++	spin_lock(&ip->i_flags_lock);
+ 	if (offset + size > i_size_read(inode))
+ 		i_size_write(inode, offset + size);
++	spin_unlock(&ip->i_flags_lock);
+ 
+ 	/*
+ 	 * If we are doing an append IO that needs to update the EOF on disk,
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -571,8 +571,18 @@ restart:
+ 	 * write.  If zeroing is needed and we are currently holding the
+ 	 * iolock shared, we need to update it to exclusive which implies
+ 	 * having to redo all checks before.
++	 *
++	 * We need to serialise against EOF updates that occur in IO
++	 * completions here. We want to make sure that nobody is changing the
++	 * size while we do this check until we have placed an IO barrier (i.e.
++	 * hold the XFS_IOLOCK_EXCL) that prevents new IO from being dispatched.
++	 * The spinlock effectively forms a memory barrier once we have the
++	 * XFS_IOLOCK_EXCL so we are guaranteed to see the latest EOF value
++	 * and hence be able to correctly determine if we need to run zeroing.
+ 	 */
++	spin_lock(&ip->i_flags_lock);
+ 	if (*pos > i_size_read(inode)) {
++		spin_unlock(&ip->i_flags_lock);
+ 		if (*iolock == XFS_IOLOCK_SHARED) {
+ 			xfs_rw_iunlock(ip, *iolock);
+ 			*iolock = XFS_IOLOCK_EXCL;
+@@ -582,7 +592,8 @@ restart:
+ 		error = -xfs_zero_eof(ip, *pos, i_size_read(inode));
+ 		if (error)
+ 			return error;
+-	}
++	} else
++		spin_unlock(&ip->i_flags_lock);
+ 
+ 	/*
+ 	 * Updating the timestamps will grab the ilock again from
