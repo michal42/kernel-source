@@ -1,0 +1,157 @@
+From: Michal Kubecek <mkubecek@suse.cz>
+Date: Fri, 23 Oct 2015 17:13:04 +0200
+Subject: kabi: protect skb_copy_and_csum_datagram_iovec() signature
+Patch-mainline: Never, kabi workaround
+References: bsc#951199
+
+The fix for bsc#951199 adds a new parameter len to exported function
+skb_copy_and_csum_datagram_iovec(). Rename the new function and create
+a wrapper providing the old interface for third party modules.
+
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+---
+ include/linux/skbuff.h |  7 +++++--
+ net/core/datagram.c    | 13 ++++++++++---
+ net/ipv4/tcp_input.c   |  4 ++--
+ net/ipv4/udp.c         |  6 +++---
+ net/ipv6/raw.c         |  2 +-
+ net/ipv6/udp.c         |  4 ++--
+ net/rxrpc/ar-recvmsg.c |  6 +++---
+ 7 files changed, 26 insertions(+), 16 deletions(-)
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index df41b13bb217..95f07574e61c 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -2407,8 +2407,11 @@ extern int	       skb_copy_datagram_iovec(const struct sk_buff *from,
+ 					       int size);
+ extern int	       skb_copy_and_csum_datagram_iovec(struct sk_buff *skb,
+ 							int hlen,
+-							struct iovec *iov,
+-							int len);
++							struct iovec *iov);
++extern int	       skb_copy_and_csum_datagram_iovec2(struct sk_buff *skb,
++							 int hlen,
++							 struct iovec *iov,
++							 int len);
+ extern int	       skb_copy_datagram_from_iovec(struct sk_buff *skb,
+ 						    int offset,
+ 						    const struct iovec *from,
+diff --git a/net/core/datagram.c b/net/core/datagram.c
+index f22f120771ef..ff04eddc1976 100644
+--- a/net/core/datagram.c
++++ b/net/core/datagram.c
+@@ -792,7 +792,7 @@ __sum16 __skb_checksum_complete(struct sk_buff *skb)
+ EXPORT_SYMBOL(__skb_checksum_complete);
+ 
+ /**
+- *	skb_copy_and_csum_datagram_iovec - Copy and checkum skb to user iovec.
++ *	skb_copy_and_csum_datagram_iovec2 - Copy and checkum skb to user iovec.
+  *	@skb: skbuff
+  *	@hlen: hardware length
+  *	@iov: io vector
+@@ -805,8 +805,8 @@ EXPORT_SYMBOL(__skb_checksum_complete);
+  *		 -EFAULT - fault during copy. Beware, in this case iovec
+  *			   can be modified!
+  */
+-int skb_copy_and_csum_datagram_iovec(struct sk_buff *skb,
+-				     int hlen, struct iovec *iov, int len)
++int skb_copy_and_csum_datagram_iovec2(struct sk_buff *skb,
++				      int hlen, struct iovec *iov, int len)
+ {
+ 	__wsum csum;
+ 	int chunk = skb->len - hlen;
+@@ -846,6 +846,13 @@ csum_error:
+ fault:
+ 	return -EFAULT;
+ }
++EXPORT_SYMBOL(skb_copy_and_csum_datagram_iovec2);
++
++int skb_copy_and_csum_datagram_iovec(struct sk_buff *skb,
++				     int hlen, struct iovec *iov)
++{
++	return skb_copy_and_csum_datagram_iovec2(skb, hlen, iov, INT_MAX);
++}
+ EXPORT_SYMBOL(skb_copy_and_csum_datagram_iovec);
+ 
+ /**
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 4829750aa424..264790d77022 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -4891,8 +4891,8 @@ static int tcp_copy_to_iovec(struct sock *sk, struct sk_buff *skb, int hlen)
+ 	if (skb_csum_unnecessary(skb))
+ 		err = skb_copy_datagram_iovec(skb, hlen, tp->ucopy.iov, chunk);
+ 	else
+-		err = skb_copy_and_csum_datagram_iovec(skb, hlen,
+-						       tp->ucopy.iov, chunk);
++		err = skb_copy_and_csum_datagram_iovec2(skb, hlen,
++							tp->ucopy.iov, chunk);
+ 
+ 	if (!err) {
+ 		tp->ucopy.len -= chunk;
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index 4908eaa1cdec..aeae4e853142 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -1243,9 +1243,9 @@ try_again:
+ 		err = skb_copy_datagram_iovec(skb, sizeof(struct udphdr),
+ 					      msg->msg_iov, copied);
+ 	else {
+-		err = skb_copy_and_csum_datagram_iovec(skb,
+-						       sizeof(struct udphdr),
+-						       msg->msg_iov, copied);
++		err = skb_copy_and_csum_datagram_iovec2(skb,
++							sizeof(struct udphdr),
++							msg->msg_iov, copied);
+ 
+ 		if (err == -EINVAL)
+ 			goto csum_copy_err;
+diff --git a/net/ipv6/raw.c b/net/ipv6/raw.c
+index 0d51ebc176a7..d82485f2896a 100644
+--- a/net/ipv6/raw.c
++++ b/net/ipv6/raw.c
+@@ -489,7 +489,7 @@ static int rawv6_recvmsg(struct kiocb *iocb, struct sock *sk,
+ 			goto csum_copy_err;
+ 		err = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, copied);
+ 	} else {
+-		err = skb_copy_and_csum_datagram_iovec(skb, 0, msg->msg_iov, copied);
++		err = skb_copy_and_csum_datagram_iovec2(skb, 0, msg->msg_iov, copied);
+ 		if (err == -EINVAL)
+ 			goto csum_copy_err;
+ 	}
+diff --git a/net/ipv6/udp.c b/net/ipv6/udp.c
+index 946ee8efe74b..b10a820da369 100644
+--- a/net/ipv6/udp.c
++++ b/net/ipv6/udp.c
+@@ -410,8 +410,8 @@ try_again:
+ 		err = skb_copy_datagram_iovec(skb, sizeof(struct udphdr),
+ 					      msg->msg_iov, copied);
+ 	else {
+-		err = skb_copy_and_csum_datagram_iovec(skb, sizeof(struct udphdr),
+-						       msg->msg_iov, copied);
++		err = skb_copy_and_csum_datagram_iovec2(skb, sizeof(struct udphdr),
++							msg->msg_iov, copied);
+ 		if (err == -EINVAL)
+ 			goto csum_copy_err;
+ 	}
+diff --git a/net/rxrpc/ar-recvmsg.c b/net/rxrpc/ar-recvmsg.c
+index c67f5d3f6e61..64651c458257 100644
+--- a/net/rxrpc/ar-recvmsg.c
++++ b/net/rxrpc/ar-recvmsg.c
+@@ -184,9 +184,9 @@ int rxrpc_recvmsg(struct kiocb *iocb, struct socket *sock,
+ 			ret = skb_copy_datagram_iovec(skb, offset,
+ 						      msg->msg_iov, copy);
+ 		} else {
+-			ret = skb_copy_and_csum_datagram_iovec(skb, offset,
+-							       msg->msg_iov,
+-							       copy);
++			ret = skb_copy_and_csum_datagram_iovec2(skb, offset,
++								msg->msg_iov,
++								copy);
+ 			if (ret == -EINVAL)
+ 				goto csum_copy_error;
+ 		}
+-- 
+2.6.2
+
