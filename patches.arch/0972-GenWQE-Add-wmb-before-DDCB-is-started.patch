@@ -1,0 +1,37 @@
+From: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Date: Thu, 20 Mar 2014 15:11:03 +0100
+Subject: [PATCH] GenWQE: Add wmb before DDCB is started
+Patch-mainline: v3.15-rc2
+Git-commit: 68fe8acc204c7fbefd4c01b8929fedb244ec283d
+References: bsc#949731,LTC#131502
+
+Needed to add wmb() before we send the DDCB for execution.
+Without the syncronizing it failed on System p.
+
+Signed-off-by: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/misc/genwqe/card_ddcb.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/misc/genwqe/card_ddcb.c
++++ b/drivers/misc/genwqe/card_ddcb.c
+@@ -305,6 +305,8 @@ static int enqueue_ddcb(struct genwqe_de
+ 			break;
+ 
+ 		new = (old | DDCB_NEXT_BE32);
++
++		wmb();
+ 		icrc_hsi_shi = cmpxchg(&prev_ddcb->icrc_hsi_shi_32, old, new);
+ 
+ 		if (icrc_hsi_shi == old)
+@@ -314,6 +316,8 @@ static int enqueue_ddcb(struct genwqe_de
+ 	/* Queue must be re-started by updating QUEUE_OFFSET */
+ 	ddcb_mark_tapped(pddcb);
+ 	num = (u64)ddcb_no << 8;
++
++	wmb();
+ 	__genwqe_writeq(cd, queue->IO_QUEUE_OFFSET, num); /* start queue */
+ 
+ 	return RET_DDCB_TAPPED;
