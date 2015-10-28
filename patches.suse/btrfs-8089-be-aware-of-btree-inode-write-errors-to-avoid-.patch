@@ -48,16 +48,14 @@ writeback).
 
 Signed-off-by: Filipe Manana <fdmanana@suse.com>
 ---
- fs/btrfs/btrfs_inode.h | 11 ++++++++
- fs/btrfs/disk-io.c     |  4 +--
- fs/btrfs/extent-tree.c |  4 ++-
- fs/btrfs/extent_io.c   | 75 ++++++++++++++++++++++++++++++++++++++++++++------
- fs/btrfs/extent_io.h   |  7 +++--
- fs/btrfs/transaction.c | 26 +++++++++++++++++
+ fs/btrfs/btrfs_inode.h |   11 +++++++
+ fs/btrfs/disk-io.c     |    4 +-
+ fs/btrfs/extent-tree.c |    4 +-
+ fs/btrfs/extent_io.c   |   75 +++++++++++++++++++++++++++++++++++++++++++------
+ fs/btrfs/extent_io.h   |    7 +++-
+ fs/btrfs/transaction.c |   26 ++++++++++++++++
  6 files changed, 114 insertions(+), 13 deletions(-)
 
-diff --git a/fs/btrfs/btrfs_inode.h b/fs/btrfs/btrfs_inode.h
-index e5fd0e3..8de1c04 100644
 --- a/fs/btrfs/btrfs_inode.h
 +++ b/fs/btrfs/btrfs_inode.h
 @@ -44,6 +44,17 @@
@@ -78,11 +76,9 @@ index e5fd0e3..8de1c04 100644
  
  /* in memory btrfs inode */
  struct btrfs_inode {
-diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
-index ae54b37..bfeacf8 100644
 --- a/fs/btrfs/disk-io.c
 +++ b/fs/btrfs/disk-io.c
-@@ -597,7 +597,7 @@ static int btree_readpage_end_io_hook(struct btrfs_io_bio *io_bio,
+@@ -597,7 +597,7 @@ static int btree_readpage_end_io_hook(st
  		goto err;
  
  	eb->read_mirror = mirror;
@@ -91,7 +87,7 @@ index ae54b37..bfeacf8 100644
  		ret = -EIO;
  		goto err;
  	}
-@@ -670,7 +670,7 @@ static int btree_io_failed_hook(struct page *page, int failed_mirror)
+@@ -670,7 +670,7 @@ static int btree_io_failed_hook(struct p
  	struct btrfs_root *root = BTRFS_I(page->mapping->host)->root;
  
  	eb = (struct extent_buffer *)page->private;
@@ -100,11 +96,9 @@ index ae54b37..bfeacf8 100644
  	eb->read_mirror = failed_mirror;
  	atomic_dec(&eb->io_pages);
  	if (test_and_clear_bit(EXTENT_BUFFER_READAHEAD, &eb->bflags))
-diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
-index d5ec7853..84626bb 100644
 --- a/fs/btrfs/extent-tree.c
 +++ b/fs/btrfs/extent-tree.c
-@@ -7039,17 +7039,19 @@ btrfs_init_new_buffer(struct btrfs_trans_handle *trans, struct btrfs_root *root,
+@@ -7040,17 +7040,19 @@ btrfs_init_new_buffer(struct btrfs_trans
  	btrfs_set_buffer_uptodate(buf);
  
  	if (root->root_key.objectid == BTRFS_TREE_LOG_OBJECTID) {
@@ -125,11 +119,9 @@ index d5ec7853..84626bb 100644
  		set_extent_dirty(&trans->transaction->dirty_pages, buf->start,
  			 buf->start + buf->len - 1, GFP_NOFS);
  	}
-diff --git a/fs/btrfs/extent_io.c b/fs/btrfs/extent_io.c
-index 24c2f0e..43f5045 100644
 --- a/fs/btrfs/extent_io.c
 +++ b/fs/btrfs/extent_io.c
-@@ -3546,9 +3546,70 @@ static void end_extent_buffer_writeback(struct extent_buffer *eb)
+@@ -3597,9 +3597,70 @@ static void end_extent_buffer_writeback(
  	wake_up_bit(&eb->bflags, EXTENT_BUFFER_WRITEBACK);
  }
  
@@ -201,7 +193,7 @@ index 24c2f0e..43f5045 100644
  	struct bio_vec *bvec = bio->bi_io_vec + bio->bi_vcnt - 1;
  	struct extent_buffer *eb;
  	int done;
-@@ -3561,10 +3622,9 @@ static void end_bio_extent_buffer_writepage(struct bio *bio, int err)
+@@ -3612,10 +3673,9 @@ static void end_bio_extent_buffer_writep
  		BUG_ON(!eb);
  		done = atomic_dec_and_test(&eb->io_pages);
  
@@ -214,7 +206,7 @@ index 24c2f0e..43f5045 100644
  		}
  
  		end_page_writeback(page);
-@@ -3592,7 +3652,7 @@ static noinline_for_stack int write_one_eb(struct extent_buffer *eb,
+@@ -3643,7 +3703,7 @@ static noinline_for_stack int write_one_
  	int rw = (epd->sync_io ? WRITE_SYNC : WRITE) | REQ_META;
  	int ret = 0;
  
@@ -223,8 +215,8 @@ index 24c2f0e..43f5045 100644
  	num_pages = num_extent_pages(eb->start, eb->len);
  	atomic_set(&eb->io_pages, num_pages);
  	if (btrfs_header_owner(eb) == BTRFS_TREE_LOG_OBJECTID)
-@@ -3609,8 +3669,7 @@ static noinline_for_stack int write_one_eb(struct extent_buffer *eb,
- 					 0, epd->bio_flags, bio_flags);
+@@ -3660,8 +3720,7 @@ static noinline_for_stack int write_one_
+ 					 0, epd->bio_flags, bio_flags, false);
  		epd->bio_flags = bio_flags;
  		if (ret) {
 -			set_bit(EXTENT_BUFFER_IOERR, &eb->bflags);
@@ -233,7 +225,7 @@ index 24c2f0e..43f5045 100644
  			end_page_writeback(p);
  			if (atomic_sub_and_test(num_pages - i, &eb->io_pages))
  				end_extent_buffer_writeback(eb);
-@@ -5018,7 +5077,7 @@ int read_extent_buffer_pages(struct extent_io_tree *tree,
+@@ -5073,7 +5132,7 @@ int read_extent_buffer_pages(struct exte
  		goto unlock_exit;
  	}
  
@@ -242,8 +234,6 @@ index 24c2f0e..43f5045 100644
  	eb->read_mirror = 0;
  	atomic_set(&eb->io_pages, num_reads);
  	for (i = start_i; i < num_pages; i++) {
-diff --git a/fs/btrfs/extent_io.h b/fs/btrfs/extent_io.h
-index 8cf67b1..8aab3f1 100644
 --- a/fs/btrfs/extent_io.h
 +++ b/fs/btrfs/extent_io.h
 @@ -41,9 +41,10 @@
@@ -269,11 +259,9 @@ index 8cf67b1..8aab3f1 100644
  
  	/* protects write locks */
  	rwlock_t lock;
-diff --git a/fs/btrfs/transaction.c b/fs/btrfs/transaction.c
-index 88dce54..4614f6d 100644
 --- a/fs/btrfs/transaction.c
 +++ b/fs/btrfs/transaction.c
-@@ -824,6 +824,8 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
+@@ -830,6 +830,8 @@ int btrfs_wait_marked_extents(struct btr
  	struct extent_state *cached_state = NULL;
  	u64 start = 0;
  	u64 end;
@@ -282,7 +270,7 @@ index 88dce54..4614f6d 100644
  
  	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
  				      EXTENT_NEED_WAIT, &cached_state)) {
-@@ -837,6 +839,26 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
+@@ -843,6 +845,26 @@ int btrfs_wait_marked_extents(struct btr
  	}
  	if (err)
  		werr = err;
@@ -309,7 +297,7 @@ index 88dce54..4614f6d 100644
  	return werr;
  }
  
-@@ -1633,6 +1655,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
+@@ -1639,6 +1661,7 @@ int btrfs_commit_transaction(struct btrf
  {
  	struct btrfs_transaction *cur_trans = trans->transaction;
  	struct btrfs_transaction *prev_trans = NULL;
@@ -317,7 +305,7 @@ index 88dce54..4614f6d 100644
  	int ret;
  
  	ret = btrfs_run_ordered_operations(trans, root, 0);
-@@ -1875,6 +1898,9 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
+@@ -1884,6 +1907,9 @@ int btrfs_commit_transaction(struct btrf
  	memcpy(root->fs_info->super_for_commit, root->fs_info->super_copy,
  	       sizeof(*root->fs_info->super_copy));
  
@@ -327,6 +315,3 @@ index 88dce54..4614f6d 100644
  	spin_lock(&root->fs_info->trans_lock);
  	cur_trans->state = TRANS_STATE_UNBLOCKED;
  	root->fs_info->running_transaction = NULL;
--- 
-1.8.4.5
-
