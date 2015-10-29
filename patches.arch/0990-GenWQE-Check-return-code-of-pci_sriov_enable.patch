@@ -1,0 +1,35 @@
+From: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Date: Wed, 10 Sep 2014 16:37:50 +0200
+Subject: [PATCH] GenWQE: Check return code of pci_sriov_enable
+Patch-mainline: v3.18-rc1
+Git-commit: bc407dd319bb8c3608369989d95b700d00e6cf43
+References: bsc#949731,LTC#131502
+
+Forgetting to check this, can lead to problems on systems which
+do not support SRIOV.
+
+Signed-off-by: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/misc/genwqe/card_base.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/drivers/misc/genwqe/card_base.c
++++ b/drivers/misc/genwqe/card_base.c
+@@ -1322,11 +1322,14 @@ static void genwqe_err_resume(struct pci
+ 
+ static int genwqe_sriov_configure(struct pci_dev *dev, int numvfs)
+ {
++	int rc;
+ 	struct genwqe_dev *cd = dev_get_drvdata(&dev->dev);
+ 
+ 	if (numvfs > 0) {
+ 		genwqe_setup_vf_jtimer(cd);
+-		pci_enable_sriov(dev, numvfs);
++		rc = pci_enable_sriov(dev, numvfs);
++		if (rc < 0)
++			return rc;
+ 		return numvfs;
+ 	}
+ 	if (numvfs == 0) {

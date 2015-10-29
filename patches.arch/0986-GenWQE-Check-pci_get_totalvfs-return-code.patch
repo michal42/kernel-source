@@ -1,0 +1,57 @@
+From: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Date: Wed, 10 Sep 2014 16:37:46 +0200
+Subject: [PATCH] GenWQE: Check pci_get_totalvfs return code
+Patch-mainline: v3.18-rc1
+Git-commit: 95a8825c9c3482e31ee5064184138a18be186515
+References: bsc#949731,LTC#131502
+
+Currently the driver is using the pci_get_totalvfs() return code
+directly in a loop. To avoid problems with potentially negative
+returns in case of errors, we are adding some more sanity checking
+code.
+
+Signed-off-by: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/misc/genwqe/card_base.c |    9 ++++++++-
+ drivers/misc/genwqe/card_base.h |    2 +-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+--- a/drivers/misc/genwqe/card_base.c
++++ b/drivers/misc/genwqe/card_base.c
+@@ -346,8 +346,13 @@ static bool genwqe_setup_vf_jtimer(struc
+ 	unsigned int vf;
+ 	u32 T = genwqe_T_psec(cd);
+ 	u64 x;
++	int totalvfs;
+ 
+-	for (vf = 0; vf < pci_sriov_get_totalvfs(pci_dev); vf++) {
++	totalvfs = pci_sriov_get_totalvfs(pci_dev);
++	if (totalvfs <= 0)
++		return false;
++
++	for (vf = 0; vf < totalvfs; vf++) {
+ 
+ 		if (cd->vf_jobtimeout_msec[vf] == 0)
+ 			continue;
+@@ -1127,6 +1132,8 @@ static int genwqe_pci_setup(struct genwq
+ 	}
+ 
+ 	cd->num_vfs = pci_sriov_get_totalvfs(pci_dev);
++	if (cd->num_vfs < 0)
++		cd->num_vfs = 0;
+ 
+ 	err = genwqe_read_ids(cd);
+ 	if (err)
+--- a/drivers/misc/genwqe/card_base.h
++++ b/drivers/misc/genwqe/card_base.h
+@@ -306,7 +306,7 @@ struct genwqe_dev {
+ 	struct pci_dev *pci_dev;	/* PCI device */
+ 	void __iomem *mmio;		/* BAR-0 MMIO start */
+ 	unsigned long mmio_len;
+-	u16 num_vfs;
++	int num_vfs;
+ 	u32 vf_jobtimeout_msec[GENWQE_MAX_VFS];
+ 	int is_privileged;		/* access to all regs possible */
+ 

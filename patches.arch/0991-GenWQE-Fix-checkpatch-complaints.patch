@@ -1,0 +1,199 @@
+From: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Date: Wed, 10 Sep 2014 16:37:51 +0200
+Subject: [PATCH] GenWQE: Fix checkpatch complaints
+Patch-mainline: v3.18-rc1
+Git-commit: d9c11d45b33c9226abd50a50c87e19bfa7c7a2cb
+References: bsc#949731,LTC#131502
+
+The checkpatch.pl script got improved. I ran it on the latest GenWQE
+sources and fixed what it complained about.
+
+Signed-off-by: Frank Haverkamp <haver@linux.vnet.ibm.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/misc/genwqe/card_base.c  |   18 +++++++++---------
+ drivers/misc/genwqe/card_ddcb.c  |   22 +++++++++-------------
+ drivers/misc/genwqe/card_dev.c   |    7 ++++---
+ drivers/misc/genwqe/card_utils.c |    5 +++--
+ 4 files changed, 25 insertions(+), 27 deletions(-)
+
+--- a/drivers/misc/genwqe/card_base.c
++++ b/drivers/misc/genwqe/card_base.c
+@@ -388,8 +388,9 @@ static int genwqe_ffdc_buffs_alloc(struc
+ 
+ 		/* currently support only the debug units mentioned here */
+ 		cd->ffdc[type].entries = e;
+-		cd->ffdc[type].regs = kmalloc(e * sizeof(struct genwqe_reg),
+-					      GFP_KERNEL);
++		cd->ffdc[type].regs =
++			kmalloc_array(e, sizeof(struct genwqe_reg),
++				      GFP_KERNEL);
+ 		/*
+ 		 * regs == NULL is ok, the using code treats this as no regs,
+ 		 * Printing warning is ok in this case.
+@@ -728,8 +729,8 @@ static u64 genwqe_fir_checking(struct ge
+ 				__genwqe_writeq(cd, sfir_addr, sfir);
+ 
+ 				dev_dbg(&pci_dev->dev,
+-					"[HM] Clearing  2ndary FIR 0x%08x "
+-					"with 0x%016llx\n", sfir_addr, sfir);
++					"[HM] Clearing  2ndary FIR 0x%08x with 0x%016llx\n",
++					sfir_addr, sfir);
+ 
+ 				/*
+ 				 * note, these cannot be error-Firs
+@@ -745,9 +746,8 @@ static u64 genwqe_fir_checking(struct ge
+ 				__genwqe_writeq(cd, fir_clr_addr, mask);
+ 
+ 				dev_dbg(&pci_dev->dev,
+-					"[HM] Clearing primary FIR 0x%08x "
+-					"with 0x%016llx\n", fir_clr_addr,
+-					mask);
++					"[HM] Clearing primary FIR 0x%08x with 0x%016llx\n",
++					fir_clr_addr, mask);
+ 			}
+ 		}
+ 	}
+@@ -1211,8 +1211,8 @@ static int genwqe_probe(struct pci_dev *
+ 		err = genwqe_health_check_start(cd);
+ 		if (err < 0) {
+ 			dev_err(&pci_dev->dev,
+-				"err: cannot start health checking! "
+-				"(err=%d)\n", err);
++				"err: cannot start health checking! (err=%d)\n",
++				err);
+ 			goto out_stop_services;
+ 		}
+ 	}
+--- a/drivers/misc/genwqe/card_ddcb.c
++++ b/drivers/misc/genwqe/card_ddcb.c
+@@ -185,8 +185,7 @@ static void print_ddcb_info(struct genwq
+ 	pddcb = queue->ddcb_vaddr;
+ 	for (i = 0; i < queue->ddcb_max; i++) {
+ 		dev_err(&pci_dev->dev,
+-			"  %c %-3d: RETC=%03x SEQ=%04x "
+-			"HSI=%02X SHI=%02x PRIV=%06llx CMD=%03x\n",
++			"  %c %-3d: RETC=%03x SEQ=%04x HSI=%02X SHI=%02x PRIV=%06llx CMD=%03x\n",
+ 			i == queue->ddcb_act ? '>' : ' ',
+ 			i,
+ 			be16_to_cpu(pddcb->retc_16),
+@@ -214,6 +213,7 @@ struct genwqe_ddcb_cmd *ddcb_requ_alloc(
+ void ddcb_requ_free(struct genwqe_ddcb_cmd *cmd)
+ {
+ 	struct ddcb_requ *req = container_of(cmd, struct ddcb_requ, cmd);
++
+ 	kfree(req);
+ }
+ 
+@@ -306,7 +306,7 @@ static int enqueue_ddcb(struct genwqe_de
+ 
+ 		new = (old | DDCB_NEXT_BE32);
+ 
+-		wmb();
++		wmb();		/* need to ensure write ordering */
+ 		icrc_hsi_shi = cmpxchg(&prev_ddcb->icrc_hsi_shi_32, old, new);
+ 
+ 		if (icrc_hsi_shi == old)
+@@ -317,7 +317,7 @@ static int enqueue_ddcb(struct genwqe_de
+ 	ddcb_mark_tapped(pddcb);
+ 	num = (u64)ddcb_no << 8;
+ 
+-	wmb();
++	wmb();			/* need to ensure write ordering */
+ 	__genwqe_writeq(cd, queue->IO_QUEUE_OFFSET, num); /* start queue */
+ 
+ 	return RET_DDCB_TAPPED;
+@@ -416,9 +416,7 @@ static int genwqe_check_ddcb_queue(struc
+ 			status  = __genwqe_readq(cd, queue->IO_QUEUE_STATUS);
+ 
+ 			dev_err(&pci_dev->dev,
+-				"[%s] SEQN=%04x HSI=%02x RETC=%03x "
+-				" Q_ERRCNTS=%016llx Q_STATUS=%016llx\n"
+-				" DDCB_DMA_ADDR=%016llx\n",
++				"[%s] SEQN=%04x HSI=%02x RETC=%03x Q_ERRCNTS=%016llx Q_STATUS=%016llx DDCB_DMA_ADDR=%016llx\n",
+ 				__func__, be16_to_cpu(pddcb->seqnum_16),
+ 				pddcb->hsi, retc_16, errcnts, status,
+ 				queue->ddcb_daddr + ddcb_offs);
+@@ -439,8 +437,7 @@ static int genwqe_check_ddcb_queue(struc
+ 		vcrc_16 = be16_to_cpu(pddcb->vcrc_16);
+ 		if (vcrc != vcrc_16) {
+ 			printk_ratelimited(KERN_ERR
+-				"%s %s: err: wrong VCRC pre=%02x vcrc_len=%d "
+-				"bytes vcrc_data=%04x is not vcrc_card=%04x\n",
++				"%s %s: err: wrong VCRC pre=%02x vcrc_len=%d bytes vcrc_data=%04x is not vcrc_card=%04x\n",
+ 				GENWQE_DEVNAME, dev_name(&pci_dev->dev),
+ 				pddcb->pre, VCRC_LENGTH(req->cmd.asv_length),
+ 				vcrc, vcrc_16);
+@@ -717,8 +714,7 @@ go_home:
+ 	genwqe_hexdump(pci_dev, pddcb, sizeof(*pddcb));
+ 
+ 	dev_err(&pci_dev->dev,
+-		"[%s] err: DDCB#%d not purged and not completed "
+-		"after %d seconds QSTAT=%016llx!!\n",
++		"[%s] err: DDCB#%d not purged and not completed after %d seconds QSTAT=%016llx!!\n",
+ 		__func__, req->num, genwqe_ddcb_software_timeout,
+ 		queue_status);
+ 
+@@ -1345,8 +1341,8 @@ int genwqe_finish_queue(struct genwqe_de
+ 			break;
+ 
+ 		dev_dbg(&pci_dev->dev,
+-			"  DEBUG [%d/%d] waiting for queue to get empty: "
+-			"%d requests!\n", i, waitmax, in_flight);
++			"  DEBUG [%d/%d] waiting for queue to get empty: %d requests!\n",
++			i, waitmax, in_flight);
+ 
+ 		/*
+ 		 * Severe severe error situation: The card itself has
+--- a/drivers/misc/genwqe/card_dev.c
++++ b/drivers/misc/genwqe/card_dev.c
+@@ -213,9 +213,9 @@ static void genwqe_remove_mappings(struc
+ 		 * GENWQE_MAPPING_SGL_TEMP should be removed by tidy up code.
+ 		 */
+ 		dev_err(&pci_dev->dev,
+-			"[%s] %d. cleanup mapping: u_vaddr=%p "
+-			"u_kaddr=%016lx dma_addr=%lx\n", __func__, i++,
+-			dma_map->u_vaddr, (unsigned long)dma_map->k_vaddr,
++			"[%s] %d. cleanup mapping: u_vaddr=%p u_kaddr=%016lx dma_addr=%lx\n",
++			__func__, i++, dma_map->u_vaddr,
++			(unsigned long)dma_map->k_vaddr,
+ 			(unsigned long)dma_map->dma_addr);
+ 
+ 		if (dma_map->type == GENWQE_MAPPING_RAW) {
+@@ -346,6 +346,7 @@ static int genwqe_open(struct inode *ino
+ static int genwqe_fasync(int fd, struct file *filp, int mode)
+ {
+ 	struct genwqe_file *cdev = (struct genwqe_file *)filp->private_data;
++
+ 	return fasync_helper(fd, filp, mode, &cdev->async_queue);
+ }
+ 
+--- a/drivers/misc/genwqe/card_utils.c
++++ b/drivers/misc/genwqe/card_utils.c
+@@ -150,6 +150,7 @@ int genwqe_read_app_id(struct genwqe_dev
+ 	memset(app_name, 0, len);
+ 	for (i = 0, j = 0; j < min(len, 4); j++) {
+ 		char ch = (char)((app_id >> (24 - j*8)) & 0xff);
++
+ 		if (ch == ' ')
+ 			continue;
+ 		app_name[i++] = isprint(ch) ? ch : 'X';
+@@ -304,8 +305,7 @@ int genwqe_alloc_sync_sgl(struct genwqe_
+ 	sgl->nr_pages = DIV_ROUND_UP(sgl->fpage_offs + user_size, PAGE_SIZE);
+ 	sgl->lpage_size = (user_size - sgl->fpage_size) % PAGE_SIZE;
+ 
+-	dev_dbg(&pci_dev->dev, "[%s] uaddr=%p usize=%8ld nr_pages=%ld "
+-		"fpage_offs=%lx fpage_size=%ld lpage_size=%ld\n",
++	dev_dbg(&pci_dev->dev, "[%s] uaddr=%p usize=%8ld nr_pages=%ld fpage_offs=%lx fpage_size=%ld lpage_size=%ld\n",
+ 		__func__, user_addr, user_size, sgl->nr_pages,
+ 		sgl->fpage_offs, sgl->fpage_size, sgl->lpage_size);
+ 
+@@ -662,6 +662,7 @@ int genwqe_user_vunmap(struct genwqe_dev
+ u8 genwqe_card_type(struct genwqe_dev *cd)
+ {
+ 	u64 card_type = cd->slu_unitcfg;
++
+ 	return (u8)((card_type & IO_SLU_UNITCFG_TYPE_MASK) >> 20);
+ }
+ 
