@@ -1,0 +1,130 @@
+From 9086db86e0b09c39abead4d747119695553e3978 Mon Sep 17 00:00:00 2001
+From: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Date: Mon, 20 Apr 2015 09:53:50 +0800
+Subject: [PATCH 17/18] btrfs: qgroup: Add the ability to skip given qgroup for
+ old/new_roots.
+Patch-mainline: v4.2
+References: bnc#935087, bnc#945649
+Git-commit: 9086db86e0b09c39abead4d747119695553e3978
+
+This is used by later qgroup fix patches for snapshot.
+
+As current snapshot accounting is done by btrfs_qgroup_inherit(), but
+new extent oriented quota mechanism will account extent from
+btrfs_copy_root() and other snapshot things, causing wrong result.
+
+So add this ability to handle snapshot accounting.
+
+Signed-off-by: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+---
+ fs/btrfs/delayed-ref.h |    8 ++++++++
+ fs/btrfs/qgroup.c      |    8 ++++++++
+ fs/btrfs/transaction.c |    1 +
+ fs/btrfs/transaction.h |   23 +++++++++++++++++++++++
+ 4 files changed, 40 insertions(+)
+
+--- a/fs/btrfs/delayed-ref.h
++++ b/fs/btrfs/delayed-ref.h
+@@ -165,6 +165,14 @@ struct btrfs_delayed_ref_root {
+ 	int flushing;
+ 
+ 	u64 run_delayed_start;
++
++	/*
++	 * To make qgroup to skip given root.
++	 * This is for snapshot, as btrfs_qgroup_inherit() will manully
++	 * modify counters for snapshot and its source, so we should skip
++	 * the snapshot in new_root/old_roots or it will get calculated twice
++	 */
++	u64 qgroup_to_skip;
+ };
+ 
+ extern struct kmem_cache *btrfs_delayed_ref_head_cachep;
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
+@@ -1246,9 +1246,11 @@ int btrfs_qgroup_prepare_account_extents
+ 	struct btrfs_qgroup_extent_record *record;
+ 	struct btrfs_delayed_ref_root *delayed_refs;
+ 	struct rb_node *node;
++	u64 qgroup_to_skip;
+ 	int ret = 0;
+ 
+ 	delayed_refs = &trans->transaction->delayed_refs;
++	qgroup_to_skip = delayed_refs->qgroup_to_skip;
+ 
+ 	/*
+ 	 * No need to do lock, since this function will only be called in
+@@ -1262,6 +1264,8 @@ int btrfs_qgroup_prepare_account_extents
+ 					   &record->old_roots);
+ 		if (ret < 0)
+ 			break;
++		if (qgroup_to_skip)
++			ulist_del(record->old_roots, qgroup_to_skip, 0);
+ 		node = rb_next(node);
+ 	}
+ 	return ret;
+@@ -1555,9 +1559,11 @@ int btrfs_qgroup_account_extents(struct
+ 	struct btrfs_delayed_ref_root *delayed_refs;
+ 	struct ulist *new_roots = NULL;
+ 	struct rb_node *node;
++	u64 qgroup_to_skip;
+ 	int ret = 0;
+ 
+ 	delayed_refs = &trans->transaction->delayed_refs;
++	qgroup_to_skip = delayed_refs->qgroup_to_skip;
+ 	while ((node = rb_first(&delayed_refs->dirty_extent_root))) {
+ 		record = rb_entry(node, struct btrfs_qgroup_extent_record,
+ 				  node);
+@@ -1572,6 +1578,8 @@ int btrfs_qgroup_account_extents(struct
+ 					record->bytenr, (u64)-1, &new_roots);
+ 			if (ret < 0)
+ 				goto cleanup;
++			if (qgroup_to_skip)
++				ulist_del(new_roots, qgroup_to_skip, 0);
+ 			ret = btrfs_qgroup_account_extent(trans, fs_info,
+ 					record->bytenr, record->num_bytes,
+ 					record->old_roots, new_roots);
+--- a/fs/btrfs/transaction.c
++++ b/fs/btrfs/transaction.c
+@@ -228,6 +228,7 @@ loop:
+ 	cur_trans->delayed_refs.num_heads = 0;
+ 	cur_trans->delayed_refs.flushing = 0;
+ 	cur_trans->delayed_refs.run_delayed_start = 0;
++	cur_trans->delayed_refs.qgroup_to_skip = 0;
+ 
+ 	/*
+ 	 * although the tree mod log is per file system and not per transaction,
+--- a/fs/btrfs/transaction.h
++++ b/fs/btrfs/transaction.h
+@@ -135,6 +135,29 @@ static inline void btrfs_set_inode_last_
+ 	spin_unlock(&BTRFS_I(inode)->lock);
+ }
+ 
++/*
++ * Make qgroup codes to skip given qgroupid, means the old/new_roots for
++ * qgroup won't contain the qgroupid in it.
++ */
++static inline void btrfs_set_skip_qgroup(struct btrfs_trans_handle *trans,
++					 u64 qgroupid)
++{
++	struct btrfs_delayed_ref_root *delayed_refs;
++
++	delayed_refs = &trans->transaction->delayed_refs;
++	WARN_ON(delayed_refs->qgroup_to_skip);
++	delayed_refs->qgroup_to_skip = qgroupid;
++}
++
++static inline void btrfs_clear_skip_qgroup(struct btrfs_trans_handle *trans)
++{
++	struct btrfs_delayed_ref_root *delayed_refs;
++
++	delayed_refs = &trans->transaction->delayed_refs;
++	WARN_ON(!delayed_refs->qgroup_to_skip);
++	delayed_refs->qgroup_to_skip = 0;
++}
++
+ int btrfs_end_transaction(struct btrfs_trans_handle *trans,
+ 			  struct btrfs_root *root);
+ struct btrfs_trans_handle *btrfs_start_transaction(struct btrfs_root *root,
