@@ -1,0 +1,333 @@
+From: Petr Tesarik <ptesarik@suse.com>
+Subject: Include VMCOREINFO if CONFIG_XEN_PRIVILEGED_GUEST && !CONFIG_KEXEC
+References: bsc#952094
+Patch-mainline: not yet, must be re-checked with pvops
+
+If CONFIG_KEXEC is not set, /sys/kernel/vmcoreinfo is not available,
+and kexec-tools cannot add it to the ELF core headers.
+
+It is then impossible to reduce core dump size with makedumpfile.
+It is possible only to save the full machine dump as an uncompressed
+ELF file.
+
+With this patch, Xen Dom0 kernels will always have VMCOREINFO,
+regardless of CONFIG_KEXEC.
+
+Signed-off-by: Petr Tesarik <ptesarik@suse.com>
+
+---
+ arch/x86/kernel/Makefile           |    4 +++-
+ arch/x86/kernel/machine_kexec_32.c |    4 ++++
+ arch/x86/kernel/machine_kexec_64.c |    4 ++++
+ drivers/xen/core/Makefile          |    4 +++-
+ drivers/xen/core/machine_kexec.c   |    6 ++++++
+ include/linux/kexec.h              |   18 ++++++++++++++++++
+ kernel/Makefile                    |    4 +++-
+ kernel/kexec.c                     |   16 ++++++++++++++++
+ kernel/ksysfs.c                    |    6 ++++++
+ kernel/printk/printk.c             |    2 +-
+ 10 files changed, 64 insertions(+), 4 deletions(-)
+
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -48,7 +48,9 @@ obj-$(CONFIG_MODULE_SIG_UEFI) += modsign
+ obj-$(CONFIG_KALLSYMS) += kallsyms.o
+ obj-$(CONFIG_STACK_UNWIND) += unwind.o
+ obj-$(CONFIG_BSD_PROCESS_ACCT) += acct.o
+-obj-$(CONFIG_KEXEC) += kexec.o
++ifeq ($(findstring y,$(CONFIG_KEXEC)$(CONFIG_XEN_PRIVILEGED_GUEST)),y)
++obj-y += kexec.o
++endif
+ obj-$(CONFIG_BACKTRACE_SELF_TEST) += backtracetest.o
+ obj-$(CONFIG_COMPAT) += compat.o
+ obj-$(CONFIG_CGROUPS) += cgroup.o
+--- a/kernel/kexec.c
++++ b/kernel/kexec.c
+@@ -45,11 +45,15 @@
+ #include <crypto/hash.h>
+ #include <crypto/sha.h>
+ 
++#ifdef CONFIG_KEXEC
++
+ #ifndef CONFIG_XEN
+ /* Per cpu memory for storing cpu states in case of system crash. */
+ note_buf_t __percpu *crash_notes;
+ #endif
+ 
++#endif /* CONFIG_KEXEC */
++
+ /* vmcoreinfo stuff */
+ static unsigned char vmcoreinfo_data[VMCOREINFO_BYTES];
+ u32
+@@ -60,6 +64,8 @@ vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
+ size_t vmcoreinfo_size;
+ size_t vmcoreinfo_max_size = sizeof(vmcoreinfo_data);
+ 
++#ifdef CONFIG_KEXEC
++
+ /* Flag to indicate we are going to kexec a new kernel */
+ bool kexec_in_progress = false;
+ 
+@@ -1624,6 +1630,8 @@ unlock:
+ }
+ #endif /* !CONFIG_XEN */
+ 
++#endif /* CONFIG_KEXEC */
++
+ static u32 *append_elf_note(u32 *buf, char *name, unsigned type, void *data,
+ 			    size_t data_len)
+ {
+@@ -1652,6 +1660,8 @@ static void final_note(u32 *buf)
+ 	memcpy(buf, &note, sizeof(note));
+ }
+ 
++#ifdef CONFIG_KEXEC
++
+ #ifndef CONFIG_XEN
+ void crash_save_cpu(struct pt_regs *regs, int cpu)
+ {
+@@ -1971,6 +1981,8 @@ int __init parse_crashkernel_low(char *c
+ }
+ #endif
+ 
++#endif /* CONFIG_KEXEC */
++
+ static void update_vmcoreinfo_note(void)
+ {
+ 	u32 *buf = vmcoreinfo_note;
+@@ -2104,6 +2116,8 @@ static int __init crash_save_vmcoreinfo_
+ 
+ subsys_initcall(crash_save_vmcoreinfo_init);
+ 
++#ifdef CONFIG_KEXEC
++
+ #ifdef CONFIG_KEXEC_FILE
+ static int __kexec_add_segment(struct kimage *image, char *buf,
+ 			       unsigned long bufsz, unsigned long mem,
+@@ -2871,3 +2885,5 @@ int kernel_kexec(void)
+ 	mutex_unlock(&kexec_mutex);
+ 	return error;
+ }
++
++#endif /* CONFIG_KEXEC */
+--- a/include/linux/kexec.h
++++ b/include/linux/kexec.h
+@@ -7,13 +7,17 @@
+ #include <xen/interface/kexec.h>
+ #endif
+ 
++#if defined(CONFIG_KEXEC) || defined(CONFIG_XEN_PRIVILEGED_GUEST)
++
+ #ifdef CONFIG_KEXEC
+ #include <linux/list.h>
+ #include <linux/linkage.h>
+ #include <linux/compat.h>
+ #include <linux/ioport.h>
+ #include <linux/elfcore.h>
++#endif
+ #include <linux/elf.h>
++#ifdef CONFIG_KEXEC
+ #include <linux/module.h>
+ #include <asm/kexec.h>
+ 
+@@ -51,6 +55,8 @@
+ #define KEXEC_CRASH_MEM_ALIGN PAGE_SIZE
+ #endif
+ 
++#endif /* CONFIG_KEXEC */
++
+ #define KEXEC_NOTE_HEAD_BYTES ALIGN(sizeof(struct elf_note), 4)
+ #define KEXEC_CORE_NOTE_NAME "CORE"
+ #define KEXEC_CORE_NOTE_NAME_BYTES ALIGN(sizeof(KEXEC_CORE_NOTE_NAME), 4)
+@@ -66,6 +72,8 @@
+ 			    KEXEC_CORE_NOTE_DESC_BYTES )
+ #endif
+ 
++#ifdef CONFIG_KEXEC
++
+ #ifndef KEXEC_ARCH_HAS_PAGE_MACROS
+ #define kexec_page_to_pfn(page)  page_to_pfn(page)
+ #define kexec_pfn_to_page(pfn)   pfn_to_page(pfn)
+@@ -252,6 +260,7 @@ void crash_save_cpu(struct pt_regs *regs
+ void crash_save_vmcoreinfo(void);
+ void crash_map_reserved_pages(void);
+ void crash_unmap_reserved_pages(void);
++#endif /* CONFIG_KEXEC */
+ void arch_crash_save_vmcoreinfo(void);
+ __printf(1, 2)
+ void vmcoreinfo_append_str(const char *fmt, ...);
+@@ -279,6 +288,8 @@ unsigned long paddr_vmcoreinfo_note(void
+ #define VMCOREINFO_CONFIG(name) \
+ 	vmcoreinfo_append_str("CONFIG_%s=y\n", #name)
+ 
++#ifdef CONFIG_KEXEC
++
+ extern struct kimage *kexec_image;
+ extern struct kimage *kexec_crash_image;
+ extern int kexec_load_disabled;
+@@ -298,6 +309,8 @@ extern int kexec_load_disabled;
+ #define KEXEC_FILE_FLAGS	(KEXEC_FILE_UNLOAD | KEXEC_FILE_ON_CRASH | \
+ 				 KEXEC_FILE_NO_INITRAMFS)
+ 
++#endif /* CONFIG_KEXEC */
++
+ #define VMCOREINFO_BYTES           (4096)
+ #define VMCOREINFO_NOTE_NAME       "VMCOREINFO"
+ #define VMCOREINFO_NOTE_NAME_BYTES ALIGN(sizeof(VMCOREINFO_NOTE_NAME), 4)
+@@ -311,16 +324,21 @@ extern int kexec_load_disabled;
+ 					 PAGE_SIZE)
+ #endif
+ 
++#ifdef CONFIG_KEXEC
++
+ /* Location of a reserved region to hold the crash kernel.
+  */
+ extern struct resource crashk_res;
+ extern struct resource crashk_low_res;
+ typedef u32 note_buf_t[KEXEC_NOTE_BYTES/4];
+ extern note_buf_t __percpu *crash_notes;
++#endif /* CONFIG_KEXEC */
+ extern u32 vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
+ extern size_t vmcoreinfo_size;
+ extern size_t vmcoreinfo_max_size;
++#endif /* CONFIG_KEXEC || CONFIG_XEN_PRIVILEGED_GUEST */
+ 
++#ifdef CONFIG_KEXEC
+ /* flag to track if kexec reboot is in progress */
+ extern bool kexec_in_progress;
+ 
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -68,7 +68,9 @@ obj-$(CONFIG_DYNAMIC_FTRACE)	+= ftrace.o
+ obj-$(CONFIG_FUNCTION_GRAPH_TRACER) += ftrace.o
+ obj-$(CONFIG_FTRACE_SYSCALLS)	+= ftrace.o
+ obj-$(CONFIG_X86_TSC)		+= trace_clock.o
+-obj-$(CONFIG_KEXEC)		+= machine_kexec_$(BITS).o
++ifeq ($(findstring y,$(CONFIG_KEXEC)$(CONFIG_XEN_PRIVILEGED_GUEST)),y)
++obj-y				+= machine_kexec_$(BITS).o
++endif
+ obj-$(CONFIG_KEXEC)		+= relocate_kernel_$(BITS).o crash.o
+ obj-$(CONFIG_KEXEC_FILE)	+= kexec-bzimage64.o
+ obj-$(CONFIG_CRASH_DUMP)	+= crash_dump_$(BITS).o
+--- a/arch/x86/kernel/machine_kexec_32.c
++++ b/arch/x86/kernel/machine_kexec_32.c
+@@ -26,6 +26,8 @@
+ #include <asm/cacheflush.h>
+ #include <asm/debugreg.h>
+ 
++#ifdef CONFIG_KEXEC
++
+ static void set_idt(void *newidt, __u16 limit)
+ {
+ 	struct desc_ptr curidt;
+@@ -259,6 +261,8 @@ void machine_kexec(struct kimage *image)
+ 	__ftrace_enabled_restore(save_ftrace_enabled);
+ }
+ 
++#endif /* CONFIG_KEXEC */
++
+ void arch_crash_save_vmcoreinfo(void)
+ {
+ #ifdef CONFIG_NUMA
+--- a/arch/x86/kernel/machine_kexec_64.c
++++ b/arch/x86/kernel/machine_kexec_64.c
+@@ -25,6 +25,8 @@
+ #include <asm/debugreg.h>
+ #include <asm/kexec-bzimage64.h>
+ 
++#ifdef CONFIG_KEXEC
++
+ #ifdef CONFIG_KEXEC_FILE
+ static struct kexec_file_ops *kexec_file_loaders[] = {
+ 		&kexec_bzImage64_ops,
+@@ -304,6 +306,8 @@ void machine_kexec(struct kimage *image)
+ }
+ #endif
+ 
++#endif /* CONFIG_KEXEC */
++
+ void arch_crash_save_vmcoreinfo(void)
+ {
+ #ifndef CONFIG_XEN /* could really be CONFIG_RELOCATABLE */
+--- a/kernel/ksysfs.c
++++ b/kernel/ksysfs.c
+@@ -125,6 +125,10 @@ KERNEL_ATTR_RW(kexec_crash_size);
+ KERNEL_ATTR_RO(kexec_crash_size);
+ #endif
+ 
++#endif /* CONFIG_KEXEC */
++
++#if defined(CONFIG_KEXEC) || defined(CONFIG_XEN_PRIVILEGED_GUEST)
++
+ static ssize_t vmcoreinfo_show(struct kobject *kobj,
+ 			       struct kobj_attribute *attr, char *buf)
+ {
+@@ -222,6 +226,8 @@ static struct attribute * kernel_attrs[]
+ 	&kexec_loaded_attr.attr,
+ 	&kexec_crash_loaded_attr.attr,
+ 	&kexec_crash_size_attr.attr,
++#endif
++#if defined(CONFIG_KEXEC) || defined(CONFIG_XEN_PRIVILEGED_GUEST)
+ 	&vmcoreinfo_attr.attr,
+ #endif
+ 	&rcu_expedited_attr.attr,
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -1072,7 +1072,7 @@ const struct file_operations kmsg_fops =
+ 	.release = devkmsg_release,
+ };
+ 
+-#ifdef CONFIG_KEXEC
++#if defined(CONFIG_KEXEC) || defined(CONFIG_XEN_PRIVILEGED_GUEST)
+ /*
+  * This appends the listed symbols to /proc/vmcoreinfo
+  *
+--- a/drivers/xen/core/Makefile
++++ b/drivers/xen/core/Makefile
+@@ -9,7 +9,9 @@ obj-$(CONFIG_PROC_FS)		+= xen_proc.o
+ obj-$(CONFIG_HOTPLUG_CPU)	+= cpu_hotplug.o
+ obj-$(CONFIG_XEN_SMPBOOT)	+= smpboot.o
+ obj-$(CONFIG_SMP)		+= spinlock.o
+-obj-$(CONFIG_KEXEC)		+= machine_kexec.o
++ifeq ($(findstring y,$(CONFIG_KEXEC)$(CONFIG_XEN_PRIVILEGED_GUEST)),y)
++obj-y				+= machine_kexec.o
++endif
+ obj-$(CONFIG_GENERIC_CLOCKEVENTS) += clockevents.o
+ obj-$(CONFIG_XEN_DOMCTL)	+= domctl.o
+ CFLAGS_domctl.o			:= -D__XEN_PUBLIC_XEN_H__
+--- a/drivers/xen/core/machine_kexec.c
++++ b/drivers/xen/core/machine_kexec.c
+@@ -12,6 +12,8 @@
+ #include <linux/bootmem.h>
+ #include <xen/pcpu.h>
+ 
++#ifdef CONFIG_KEXEC
++
+ extern void machine_kexec_setup_load_arg(xen_kexec_image_t *xki, 
+ 					 struct kimage *image);
+ extern int machine_kexec_setup_resources(struct resource *hypervisor,
+@@ -374,6 +376,8 @@ void __noreturn machine_kexec(struct kim
+ 	panic("KEXEC_CMD_kexec hypercall should not return\n");
+ }
+ 
++#endif /* CONFIG_KEXEC */
++
+ #ifdef CONFIG_X86
+ unsigned long paddr_vmcoreinfo_note(void)
+ {
+@@ -381,6 +385,7 @@ unsigned long paddr_vmcoreinfo_note(void
+ }
+ #endif
+ 
++#ifdef CONFIG_KEXEC
+ void machine_shutdown(void)
+ {
+ 	/* do nothing */
+@@ -391,6 +396,7 @@ void machine_crash_shutdown(struct pt_re
+ 	/* The kernel is broken so disable interrupts */
+ 	local_irq_disable();
+ }
++#endif /* CONFIG_KEXEC */
+ 
+ /*
+  * Local variables:
