@@ -1,0 +1,82 @@
+From 91a60f20712179e56b7a6c3d332a5f6f9a54aa11 Mon Sep 17 00:00:00 2001
+From: Jani Nikula <jani.nikula@intel.com>
+Date: Thu, 31 Oct 2013 18:55:48 +0200
+Subject: [PATCH] drm/i915: move opregion asle request handling to a work queue
+Git-commit: 91a60f20712179e56b7a6c3d332a5f6f9a54aa11
+Patch-mainline: 3.13-rc1
+References: bsc#953826
+
+Doing this has been long overdue anyway, but now we really need it in
+preparation for per connector backlight handling.
+
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Reviewed-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/i915_drv.h       |    1 +
+ drivers/gpu/drm/i915/intel_opregion.c |   20 ++++++++++++++++++--
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -229,6 +229,7 @@ struct intel_opregion {
+ 	struct opregion_asle __iomem *asle;
+ 	void __iomem *vbt;
+ 	u32 __iomem *lid_state;
++	struct work_struct asle_work;
+ };
+ #define OPREGION_SIZE            (8*1024)
+ 
+--- a/drivers/gpu/drm/i915/intel_opregion.c
++++ b/drivers/gpu/drm/i915/intel_opregion.c
+@@ -234,9 +234,13 @@ static u32 asle_set_pfit(struct drm_devi
+ 	return ASLE_PFIT_FAILED;
+ }
+ 
+-void intel_opregion_asle_intr(struct drm_device *dev)
++static void asle_work(struct work_struct *work)
+ {
+-	struct drm_i915_private *dev_priv = dev->dev_private;
++	struct intel_opregion *opregion =
++		container_of(work, struct intel_opregion, asle_work);
++	struct drm_i915_private *dev_priv =
++		container_of(opregion, struct drm_i915_private, opregion);
++	struct drm_device *dev = dev_priv->dev;
+ 	struct opregion_asle __iomem *asle = dev_priv->opregion.asle;
+ 	u32 asle_stat = 0;
+ 	u32 asle_req;
+@@ -266,6 +270,14 @@ void intel_opregion_asle_intr(struct drm
+ 	iowrite32(asle_stat, &asle->aslc);
+ }
+ 
++void intel_opregion_asle_intr(struct drm_device *dev)
++{
++	struct drm_i915_private *dev_priv = dev->dev_private;
++
++	if (dev_priv->opregion.asle)
++		schedule_work(&dev_priv->opregion.asle_work);
++}
++
+ #define ACPI_EV_DISPLAY_SWITCH (1<<0)
+ #define ACPI_EV_LID            (1<<1)
+ #define ACPI_EV_DOCK           (1<<2)
+@@ -466,6 +478,8 @@ void intel_opregion_fini(struct drm_devi
+ 	if (opregion->asle)
+ 		iowrite32(ASLE_ARDY_NOT_READY, &opregion->asle->ardy);
+ 
++	cancel_work_sync(&dev_priv->opregion.asle_work);
++
+ 	if (opregion->acpi) {
+ 		iowrite32(0, &opregion->acpi->drdy);
+ 
+@@ -499,6 +513,8 @@ int intel_opregion_setup(struct drm_devi
+ 		return -ENOTSUPP;
+ 	}
+ 
++	INIT_WORK(&opregion->asle_work, asle_work);
++
+ 	base = acpi_os_ioremap(asls, OPREGION_SIZE);
+ 	if (!base)
+ 		return -ENOMEM;
