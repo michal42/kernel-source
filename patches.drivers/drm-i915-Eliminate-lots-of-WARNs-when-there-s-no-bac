@@ -1,0 +1,87 @@
+From dc5a43636c2fd50c694f16d042e0639fff5044fd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ville=20Syrj=C3=A4l=C3=A4?= <ville.syrjala@linux.intel.com>
+Date: Thu, 16 Jan 2014 18:27:15 +0200
+Subject: [PATCH] drm/i915: Eliminate lots of WARNs when there's no backlight present
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: dc5a43636c2fd50c694f16d042e0639fff5044fd
+Patch-mainline: 3.14-rc5
+References: bsc#941113
+
+My 855gm doesn't register the intel backlight but it still ends up
+calling the backlight code to enable/disable the backlight via the
+LVDS code. This leads to some WARNs due to backlight.max being 0.
+
+Let's have intel_panel_enable_backlight() and intel_panel_disable_backlight()
+check whether there's a backlight present or not.
+
+Also move the backlight.present check from asle_set_backlight() into
+intel_panel_set_backlight() for some extra symmetry.
+
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_opregion.c |   10 ++--------
+ drivers/gpu/drm/i915/intel_panel.c    |    6 +++---
+ 2 files changed, 5 insertions(+), 11 deletions(-)
+
+--- a/drivers/gpu/drm/i915/intel_opregion.c
++++ b/drivers/gpu/drm/i915/intel_opregion.c
+@@ -161,9 +161,7 @@ struct opregion_asle {
+ static u32 asle_set_backlight(struct drm_device *dev, u32 bclp)
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+-	struct drm_connector *connector;
+ 	struct intel_connector *intel_connector;
+-	struct intel_panel *panel;
+ 	struct opregion_asle __iomem *asle = dev_priv->opregion.asle;
+ 
+ 	DRM_DEBUG_DRIVER("bclp = 0x%08x\n", bclp);
+@@ -182,12 +180,8 @@ static u32 asle_set_backlight(struct drm
+ 	 * only one).
+ 	 */
+ 	DRM_DEBUG_KMS("updating opregion backlight %d/255\n", bclp);
+-	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+-		intel_connector = to_intel_connector(connector);
+-		panel = &intel_connector->panel;
+-		if (panel->backlight.present)
+-			intel_panel_set_backlight(intel_connector, bclp, 255);
+-	}
++	list_for_each_entry(intel_connector, &dev->mode_config.connector_list, base.head)
++		intel_panel_set_backlight(intel_connector, bclp, 255);
+ 	iowrite32(DIV_ROUND_UP(bclp * 100, 255) | ASLE_CBLV_VALID, &asle->cblv);
+ 
+ 	mutex_unlock(&dev->mode_config.mutex);
+--- a/drivers/gpu/drm/i915/intel_panel.c
++++ b/drivers/gpu/drm/i915/intel_panel.c
+@@ -465,7 +465,7 @@ void intel_panel_set_backlight(struct in
+ 	u32 freq;
+ 	unsigned long flags;
+ 
+-	if (pipe == INVALID_PIPE)
++	if (!panel->backlight.present || pipe == INVALID_PIPE)
+ 		return;
+ 
+ 	spin_lock_irqsave(&dev_priv->backlight_lock, flags);
+@@ -542,7 +542,7 @@ void intel_panel_disable_backlight(struc
+ 	enum pipe pipe = intel_get_pipe_from_connector(connector);
+ 	unsigned long flags;
+ 
+-	if (pipe == INVALID_PIPE)
++	if (!panel->backlight.present || pipe == INVALID_PIPE)
+ 		return;
+ 
+ 	/*
+@@ -712,7 +712,7 @@ void intel_panel_enable_backlight(struct
+ 	enum pipe pipe = intel_get_pipe_from_connector(connector);
+ 	unsigned long flags;
+ 
+-	if (pipe == INVALID_PIPE)
++	if (!panel->backlight.present || pipe == INVALID_PIPE)
+ 		return;
+ 
+ 	DRM_DEBUG_KMS("pipe %c\n", pipe_name(pipe));
