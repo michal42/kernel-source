@@ -1,0 +1,65 @@
+From b329b32854eca71853ce1e3e06b573c25b262d5f Mon Sep 17 00:00:00 2001
+From: Jani Nikula <jani.nikula@intel.com>
+Date: Fri, 8 Nov 2013 16:48:57 +0200
+Subject: [PATCH 05/14] drm/i915: fix gen2-gen3 backlight set
+Git-commit: b329b32854eca71853ce1e3e06b573c25b262d5f
+Patch-mainline: 3.14-rc1
+References: bsc#941113,bsc#953971
+
+Citing Jani's response to Imre's question in the review discussion:
+
+> According to the gen2/3 bspec I have, the correct mask is
+> BACKLIGHT_DUTY_CYCLE_MASK_PNV only in case of IS_PINEVIEW(dev), for
+> everything else it's BACKLIGHT_DUTY_CYCLE_MASK.
+
+What you say is correct, but we've treated all gen2/3 similar to PNV
+since
+
+commit ca88479c1c3b7b1a9f94320745f5331e1de77f80
+Author: Keith Packard <keithp@keithp.com>
+Date: Fri Nov 18 11:09:24 2011 -0800
+
+    drm/i915: Treat pre-gen4 backlight duty cycle value consistently
+
+i.e. we only use the high 15 bits for all gen2/3. For non-PNV this just
+means the lowest bit is always zero. For PNV the lowest bit has a
+different meaning in both the PWM freq and duty cycle fields.
+
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Reviewed-by: Imre Deak <imre.deak@intel.com>
+[danvet: Make the commit message less empty.]
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_panel.c |   10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+--- a/drivers/gpu/drm/i915/intel_panel.c
++++ b/drivers/gpu/drm/i915/intel_panel.c
+@@ -534,7 +534,7 @@ static void i9xx_set_backlight(struct in
+ {
+ 	struct drm_device *dev = connector->base.dev;
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+-	u32 tmp;
++	u32 tmp, mask;
+ 
+ 	if (is_backlight_combination_mode(dev)) {
+ 		u32 max = intel_panel_get_max_backlight(connector);
+@@ -549,10 +549,14 @@ static void i9xx_set_backlight(struct in
+ 		pci_write_config_byte(dev->pdev, PCI_LBPC, lbpc);
+ 	}
+ 
+-	if (INTEL_INFO(dev)->gen < 4)
++	if (IS_GEN4(dev)) {
++		mask = BACKLIGHT_DUTY_CYCLE_MASK;
++	} else {
+ 		level <<= 1;
++		mask = BACKLIGHT_DUTY_CYCLE_MASK_PNV;
++	}
+ 
+-	tmp = I915_READ(BLC_PWM_CTL) & ~BACKLIGHT_DUTY_CYCLE_MASK;
++	tmp = I915_READ(BLC_PWM_CTL) & ~mask;
+ 	I915_WRITE(BLC_PWM_CTL, tmp | level);
+ }
+ 

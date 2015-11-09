@@ -1,0 +1,128 @@
+From f91c15e0808e612abacdb0fbca557b23fe2aa4d1 Mon Sep 17 00:00:00 2001
+From: Jani Nikula <jani.nikula@intel.com>
+Date: Fri, 8 Nov 2013 16:49:00 +0200
+Subject: [PATCH 08/14] drm/i915: use the initialized backlight max value instead of reading it
+Git-commit: f91c15e0808e612abacdb0fbca557b23fe2aa4d1
+Patch-mainline: 3.14-rc1
+References: bsc#941113
+
+We now have the max backlight value cached. Use it.
+
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Reviewed-by: Imre Deak <imre.deak@intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_panel.c |   45 +++++++++++++++++++------------------
+ 1 file changed, 24 insertions(+), 21 deletions(-)
+
+--- a/drivers/gpu/drm/i915/intel_panel.c
++++ b/drivers/gpu/drm/i915/intel_panel.c
+@@ -415,9 +415,6 @@ static u32 vlv_get_max_backlight(struct
+ 	return _vlv_get_max_backlight(dev, pipe);
+ }
+ 
+-/* XXX: query mode clock or hardware clock and program max PWM appropriately
+- * when it's 0.
+- */
+ static u32 intel_panel_get_max_backlight(struct intel_connector *connector)
+ {
+ 	struct drm_device *dev = connector->base.dev;
+@@ -445,15 +442,16 @@ static u32 intel_panel_compute_brightnes
+ {
+ 	struct drm_device *dev = connector->base.dev;
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
++	struct intel_panel *panel = &connector->panel;
++
++	WARN_ON(panel->backlight.max == 0);
+ 
+ 	if (i915_panel_invert_brightness < 0)
+ 		return val;
+ 
+ 	if (i915_panel_invert_brightness > 0 ||
+ 	    dev_priv->quirks & QUIRK_INVERT_BRIGHTNESS) {
+-		u32 max = intel_panel_get_max_backlight(connector);
+-		if (max)
+-			return max - val;
++		return panel->backlight.max - val;
+ 	}
+ 
+ 	return val;
+@@ -534,17 +532,15 @@ static void i9xx_set_backlight(struct in
+ {
+ 	struct drm_device *dev = connector->base.dev;
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
++	struct intel_panel *panel = &connector->panel;
+ 	u32 tmp, mask;
+ 
++	WARN_ON(panel->backlight.max == 0);
++
+ 	if (is_backlight_combination_mode(dev)) {
+-		u32 max = intel_panel_get_max_backlight(connector);
+ 		u8 lbpc;
+ 
+-		/* we're screwed, but keep behaviour backwards compatible */
+-		if (!max)
+-			max = 1;
+-
+-		lbpc = level * 0xfe / max + 1;
++		lbpc = level * 0xfe / panel->backlight.max + 1;
+ 		level /= lbpc;
+ 		pci_write_config_byte(dev->pdev, PCI_LBPC, lbpc);
+ 	}
+@@ -599,13 +595,10 @@ void intel_panel_set_backlight(struct in
+ 
+ 	spin_lock_irqsave(&dev_priv->backlight_lock, flags);
+ 
+-	freq = intel_panel_get_max_backlight(connector);
+-	if (!freq) {
+-		/* we are screwed, bail out */
+-		goto out;
+-	}
++	WARN_ON(panel->backlight.max == 0);
+ 
+-	/* scale to hardware, but be careful to not overflow */
++	/* scale to hardware max, but be careful to not overflow */
++	freq = panel->backlight.max;
+ 	if (freq < max)
+ 		level = level * freq / max;
+ 	else
+@@ -617,7 +610,7 @@ void intel_panel_set_backlight(struct in
+ 
+ 	if (panel->backlight.enabled)
+ 		intel_panel_actually_set_backlight(connector, level);
+-out:
++
+ 	spin_unlock_irqrestore(&dev_priv->backlight_lock, flags);
+ }
+ 
+@@ -818,8 +811,13 @@ void intel_panel_enable_backlight(struct
+ 
+ 	spin_lock_irqsave(&dev_priv->backlight_lock, flags);
+ 
++	/* XXX: transitional, call to make sure freq is set */
++	intel_panel_get_max_backlight(connector);
++
++	WARN_ON(panel->backlight.max == 0);
++
+ 	if (panel->backlight.level == 0) {
+-		panel->backlight.level = intel_panel_get_max_backlight(connector);
++		panel->backlight.level = panel->backlight.max;
+ 		if (panel->backlight.device)
+ 			panel->backlight.device->props.brightness =
+ 				panel->backlight.level;
+@@ -937,7 +935,12 @@ static void intel_backlight_device_unreg
+ }
+ #endif /* CONFIG_BACKLIGHT_CLASS_DEVICE */
+ 
+-/* Note: The setup hooks can't assume pipe is set! */
++/*
++ * Note: The setup hooks can't assume pipe is set!
++ *
++ * XXX: Query mode clock or hardware clock and program PWM modulation frequency
++ * appropriately when it's 0. Use VBT and/or sane defaults.
++ */
+ static int pch_setup_backlight(struct intel_connector *connector)
+ {
+ 	struct intel_panel *panel = &connector->panel;

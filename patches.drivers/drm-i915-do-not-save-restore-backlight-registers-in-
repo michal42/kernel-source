@@ -1,0 +1,203 @@
+From 565ee3897f0cb1e9b09905747b3784e6605767e8 Mon Sep 17 00:00:00 2001
+From: Jani Nikula <jani.nikula@intel.com>
+Date: Wed, 13 Nov 2013 12:56:29 +0200
+Subject: [PATCH 14/14] drm/i915: do not save/restore backlight registers in KMS
+Git-commit: 565ee3897f0cb1e9b09905747b3784e6605767e8
+Patch-mainline: 3.14-rc1
+References: bsc#941113
+
+The backlight enable code now has the smarts to do the right thing. Only
+do backlight register save/restore in UMS.
+
+Some VLV specific code gets dropped as UMS is not supported on VLV.
+
+V2: Move save/restore to UMS instead of removing completely (Daniel).
+
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Reviewed-by: Imre Deak <imre.deak@intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/i915_drv.h     |    2 -
+ drivers/gpu/drm/i915/i915_suspend.c |   45 ------------------------------------
+ drivers/gpu/drm/i915/i915_ums.c     |   27 +++++++++++++++++++++
+ 3 files changed, 27 insertions(+), 47 deletions(-)
+
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -713,8 +713,6 @@ struct i915_suspend_saved_registers {
+ 	u32 saveBLC_PWM_CTL;
+ 	u32 saveBLC_PWM_CTL2;
+ 	u32 saveBLC_HIST_CTL_B;
+-	u32 saveBLC_PWM_CTL_B;
+-	u32 saveBLC_PWM_CTL2_B;
+ 	u32 saveBLC_CPU_PWM_CTL;
+ 	u32 saveBLC_CPU_PWM_CTL2;
+ 	u32 saveFPB0;
+--- a/drivers/gpu/drm/i915/i915_suspend.c
++++ b/drivers/gpu/drm/i915/i915_suspend.c
+@@ -192,7 +192,6 @@ static void i915_restore_vga(struct drm_
+ static void i915_save_display(struct drm_device *dev)
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+-	unsigned long flags;
+ 
+ 	/* Display arbitration control */
+ 	if (INTEL_INFO(dev)->gen <= 4)
+@@ -203,46 +202,27 @@ static void i915_save_display(struct drm
+ 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
+ 		i915_save_display_reg(dev);
+ 
+-	spin_lock_irqsave(&dev_priv->backlight_lock, flags);
+-
+ 	/* LVDS state */
+ 	if (HAS_PCH_SPLIT(dev)) {
+ 		dev_priv->regfile.savePP_CONTROL = I915_READ(PCH_PP_CONTROL);
+-		dev_priv->regfile.saveBLC_PWM_CTL = I915_READ(BLC_PWM_PCH_CTL1);
+-		dev_priv->regfile.saveBLC_PWM_CTL2 = I915_READ(BLC_PWM_PCH_CTL2);
+-		dev_priv->regfile.saveBLC_CPU_PWM_CTL = I915_READ(BLC_PWM_CPU_CTL);
+-		dev_priv->regfile.saveBLC_CPU_PWM_CTL2 = I915_READ(BLC_PWM_CPU_CTL2);
+ 		if (HAS_PCH_IBX(dev) || HAS_PCH_CPT(dev))
+ 			dev_priv->regfile.saveLVDS = I915_READ(PCH_LVDS);
+ 	} else if (IS_VALLEYVIEW(dev)) {
+ 		dev_priv->regfile.savePP_CONTROL = I915_READ(PP_CONTROL);
+ 		dev_priv->regfile.savePFIT_PGM_RATIOS = I915_READ(PFIT_PGM_RATIOS);
+ 
+-		dev_priv->regfile.saveBLC_PWM_CTL =
+-			I915_READ(VLV_BLC_PWM_CTL(PIPE_A));
+ 		dev_priv->regfile.saveBLC_HIST_CTL =
+ 			I915_READ(VLV_BLC_HIST_CTL(PIPE_A));
+-		dev_priv->regfile.saveBLC_PWM_CTL2 =
+-			I915_READ(VLV_BLC_PWM_CTL2(PIPE_A));
+-		dev_priv->regfile.saveBLC_PWM_CTL_B =
+-			I915_READ(VLV_BLC_PWM_CTL(PIPE_B));
+ 		dev_priv->regfile.saveBLC_HIST_CTL_B =
+ 			I915_READ(VLV_BLC_HIST_CTL(PIPE_B));
+-		dev_priv->regfile.saveBLC_PWM_CTL2_B =
+-			I915_READ(VLV_BLC_PWM_CTL2(PIPE_B));
+ 	} else {
+ 		dev_priv->regfile.savePP_CONTROL = I915_READ(PP_CONTROL);
+ 		dev_priv->regfile.savePFIT_PGM_RATIOS = I915_READ(PFIT_PGM_RATIOS);
+-		dev_priv->regfile.saveBLC_PWM_CTL = I915_READ(BLC_PWM_CTL);
+ 		dev_priv->regfile.saveBLC_HIST_CTL = I915_READ(BLC_HIST_CTL);
+-		if (INTEL_INFO(dev)->gen >= 4)
+-			dev_priv->regfile.saveBLC_PWM_CTL2 = I915_READ(BLC_PWM_CTL2);
+ 		if (IS_MOBILE(dev) && !IS_I830(dev))
+ 			dev_priv->regfile.saveLVDS = I915_READ(LVDS);
+ 	}
+ 
+-	spin_unlock_irqrestore(&dev_priv->backlight_lock, flags);
+-
+ 	if (!IS_I830(dev) && !IS_845G(dev) && !HAS_PCH_SPLIT(dev))
+ 		dev_priv->regfile.savePFIT_CONTROL = I915_READ(PFIT_CONTROL);
+ 
+@@ -278,7 +258,6 @@ static void i915_restore_display(struct
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 	u32 mask = 0xffffffff;
+-	unsigned long flags;
+ 
+ 	/* Display arbitration */
+ 	if (INTEL_INFO(dev)->gen <= 4)
+@@ -287,12 +266,6 @@ static void i915_restore_display(struct
+ 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
+ 		i915_restore_display_reg(dev);
+ 
+-	spin_lock_irqsave(&dev_priv->backlight_lock, flags);
+-
+-	/* LVDS state */
+-	if (INTEL_INFO(dev)->gen >= 4 && !HAS_PCH_SPLIT(dev))
+-		I915_WRITE(BLC_PWM_CTL2, dev_priv->regfile.saveBLC_PWM_CTL2);
+-
+ 	if (drm_core_check_feature(dev, DRIVER_MODESET))
+ 		mask = ~LVDS_PORT_EN;
+ 
+@@ -305,13 +278,6 @@ static void i915_restore_display(struct
+ 		I915_WRITE(PFIT_CONTROL, dev_priv->regfile.savePFIT_CONTROL);
+ 
+ 	if (HAS_PCH_SPLIT(dev)) {
+-		I915_WRITE(BLC_PWM_PCH_CTL1, dev_priv->regfile.saveBLC_PWM_CTL);
+-		I915_WRITE(BLC_PWM_PCH_CTL2, dev_priv->regfile.saveBLC_PWM_CTL2);
+-		/* NOTE: BLC_PWM_CPU_CTL must be written after BLC_PWM_CPU_CTL2;
+-		 * otherwise we get blank eDP screen after S3 on some machines
+-		 */
+-		I915_WRITE(BLC_PWM_CPU_CTL2, dev_priv->regfile.saveBLC_CPU_PWM_CTL2);
+-		I915_WRITE(BLC_PWM_CPU_CTL, dev_priv->regfile.saveBLC_CPU_PWM_CTL);
+ 		I915_WRITE(PCH_PP_ON_DELAYS, dev_priv->regfile.savePP_ON_DELAYS);
+ 		I915_WRITE(PCH_PP_OFF_DELAYS, dev_priv->regfile.savePP_OFF_DELAYS);
+ 		I915_WRITE(PCH_PP_DIVISOR, dev_priv->regfile.savePP_DIVISOR);
+@@ -319,21 +285,12 @@ static void i915_restore_display(struct
+ 		I915_WRITE(RSTDBYCTL,
+ 			   dev_priv->regfile.saveMCHBAR_RENDER_STANDBY);
+ 	} else if (IS_VALLEYVIEW(dev)) {
+-		I915_WRITE(VLV_BLC_PWM_CTL(PIPE_A),
+-			   dev_priv->regfile.saveBLC_PWM_CTL);
+ 		I915_WRITE(VLV_BLC_HIST_CTL(PIPE_A),
+ 			   dev_priv->regfile.saveBLC_HIST_CTL);
+-		I915_WRITE(VLV_BLC_PWM_CTL2(PIPE_A),
+-			   dev_priv->regfile.saveBLC_PWM_CTL2);
+-		I915_WRITE(VLV_BLC_PWM_CTL(PIPE_B),
+-			   dev_priv->regfile.saveBLC_PWM_CTL);
+ 		I915_WRITE(VLV_BLC_HIST_CTL(PIPE_B),
+ 			   dev_priv->regfile.saveBLC_HIST_CTL);
+-		I915_WRITE(VLV_BLC_PWM_CTL2(PIPE_B),
+-			   dev_priv->regfile.saveBLC_PWM_CTL2);
+ 	} else {
+ 		I915_WRITE(PFIT_PGM_RATIOS, dev_priv->regfile.savePFIT_PGM_RATIOS);
+-		I915_WRITE(BLC_PWM_CTL, dev_priv->regfile.saveBLC_PWM_CTL);
+ 		I915_WRITE(BLC_HIST_CTL, dev_priv->regfile.saveBLC_HIST_CTL);
+ 		I915_WRITE(PP_ON_DELAYS, dev_priv->regfile.savePP_ON_DELAYS);
+ 		I915_WRITE(PP_OFF_DELAYS, dev_priv->regfile.savePP_OFF_DELAYS);
+@@ -341,8 +298,6 @@ static void i915_restore_display(struct
+ 		I915_WRITE(PP_CONTROL, dev_priv->regfile.savePP_CONTROL);
+ 	}
+ 
+-	spin_unlock_irqrestore(&dev_priv->backlight_lock, flags);
+-
+ 	/* only restore FBC info on the platform that supports FBC*/
+ 	intel_disable_fbc(dev);
+ 	if (I915_HAS_FBC(dev)) {
+--- a/drivers/gpu/drm/i915/i915_ums.c
++++ b/drivers/gpu/drm/i915/i915_ums.c
+@@ -270,6 +270,18 @@ void i915_save_display_reg(struct drm_de
+ 	}
+ 	/* FIXME: regfile.save TV & SDVO state */
+ 
++	/* Backlight */
++	if (HAS_PCH_SPLIT(dev)) {
++		dev_priv->regfile.saveBLC_PWM_CTL = I915_READ(BLC_PWM_PCH_CTL1);
++		dev_priv->regfile.saveBLC_PWM_CTL2 = I915_READ(BLC_PWM_PCH_CTL2);
++		dev_priv->regfile.saveBLC_CPU_PWM_CTL = I915_READ(BLC_PWM_CPU_CTL);
++		dev_priv->regfile.saveBLC_CPU_PWM_CTL2 = I915_READ(BLC_PWM_CPU_CTL2);
++	} else {
++		dev_priv->regfile.saveBLC_PWM_CTL = I915_READ(BLC_PWM_CTL);
++		if (INTEL_INFO(dev)->gen >= 4)
++			dev_priv->regfile.saveBLC_PWM_CTL2 = I915_READ(BLC_PWM_CTL2);
++	}
++
+ 	return;
+ }
+ 
+@@ -280,6 +292,21 @@ void i915_restore_display_reg(struct drm
+ 	int dpll_b_reg, fpb0_reg, fpb1_reg;
+ 	int i;
+ 
++	/* Backlight */
++	if (HAS_PCH_SPLIT(dev)) {
++		I915_WRITE(BLC_PWM_PCH_CTL1, dev_priv->regfile.saveBLC_PWM_CTL);
++		I915_WRITE(BLC_PWM_PCH_CTL2, dev_priv->regfile.saveBLC_PWM_CTL2);
++		/* NOTE: BLC_PWM_CPU_CTL must be written after BLC_PWM_CPU_CTL2;
++		 * otherwise we get blank eDP screen after S3 on some machines
++		 */
++		I915_WRITE(BLC_PWM_CPU_CTL2, dev_priv->regfile.saveBLC_CPU_PWM_CTL2);
++		I915_WRITE(BLC_PWM_CPU_CTL, dev_priv->regfile.saveBLC_CPU_PWM_CTL);
++	} else {
++		if (INTEL_INFO(dev)->gen >= 4)
++			I915_WRITE(BLC_PWM_CTL2, dev_priv->regfile.saveBLC_PWM_CTL2);
++		I915_WRITE(BLC_PWM_CTL, dev_priv->regfile.saveBLC_PWM_CTL);
++	}
++
+ 	/* Display port ratios (must be done before clock is set) */
+ 	if (SUPPORTS_INTEGRATED_DP(dev)) {
+ 		I915_WRITE(_PIPEA_DATA_M_G4X, dev_priv->regfile.savePIPEA_GMCH_DATA_M);

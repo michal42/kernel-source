@@ -1,0 +1,121 @@
+From c91c9f32843a1b433de5a1ead4789a6bc8d3d914 Mon Sep 17 00:00:00 2001
+From: Jani Nikula <jani.nikula@intel.com>
+Date: Fri, 8 Nov 2013 16:48:55 +0200
+Subject: [PATCH 03/14] drm/i915: make asle notifications update backlight on all connectors
+Git-commit: c91c9f32843a1b433de5a1ead4789a6bc8d3d914
+Patch-mainline: 3.14-rc1
+References: bsc#941113
+
+ALthough usually there's only one connector that supports backlight,
+this also finds the correct connector. Before, we only updated the
+connector on pipe A, which might not be the one with backlight. (This
+only made a difference on BYT.)
+
+Signed-off-by: Jani Nikula <jani.nikula@intel.com>
+Reviewed-by: Imre Deak <imre.deak@intel.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Acked-by: Takashi Iwai <tiwai@suse.de>
+
+---
+ drivers/gpu/drm/i915/intel_drv.h      |    1 
+ drivers/gpu/drm/i915/intel_opregion.c |   42 ++++++++++------------------------
+ drivers/gpu/drm/i915/intel_panel.c    |    4 +++
+ 3 files changed, 18 insertions(+), 29 deletions(-)
+
+--- a/drivers/gpu/drm/i915/intel_drv.h
++++ b/drivers/gpu/drm/i915/intel_drv.h
+@@ -160,6 +160,7 @@ struct intel_panel {
+ 
+ 	/* backlight */
+ 	struct {
++		bool present;
+ 		u32 level;
+ 		bool enabled;
+ 		struct backlight_device *device;
+--- a/drivers/gpu/drm/i915/intel_opregion.c
++++ b/drivers/gpu/drm/i915/intel_opregion.c
+@@ -161,13 +161,10 @@ struct opregion_asle {
+ static u32 asle_set_backlight(struct drm_device *dev, u32 bclp)
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+-	struct drm_encoder *encoder;
+ 	struct drm_connector *connector;
+-	struct intel_connector *intel_connector = NULL;
+-	struct drm_crtc *crtc = dev_priv->pipe_to_crtc_mapping[0];
++	struct intel_connector *intel_connector;
++	struct intel_panel *panel;
+ 	struct opregion_asle __iomem *asle = dev_priv->opregion.asle;
+-	u32 ret = 0;
+-	bool found = false;
+ 
+ 	DRM_DEBUG_DRIVER("bclp = 0x%08x\n", bclp);
+ 
+@@ -179,37 +176,24 @@ static u32 asle_set_backlight(struct drm
+ 		return ASLE_BACKLIGHT_FAILED;
+ 
+ 	mutex_lock(&dev->mode_config.mutex);
++
+ 	/*
+-	 * Could match the OpRegion connector here instead, but we'd also need
+-	 * to verify the connector could handle a backlight call.
++	 * Update backlight on all connectors that support backlight (usually
++	 * only one).
+ 	 */
+-	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head)
+-		if (encoder->crtc == crtc) {
+-			found = true;
+-			break;
+-		}
+-
+-	if (!found) {
+-		ret = ASLE_BACKLIGHT_FAILED;
+-		goto out;
+-	}
+-
+-	list_for_each_entry(connector, &dev->mode_config.connector_list, head)
+-		if (connector->encoder == encoder)
+-			intel_connector = to_intel_connector(connector);
+-
+-	if (!intel_connector) {
+-		ret = ASLE_BACKLIGHT_FAILED;
+-		goto out;
++	DRM_DEBUG_KMS("updating opregion backlight %d/255\n", bclp);
++	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
++		intel_connector = to_intel_connector(connector);
++		panel = &intel_connector->panel;
++		if (panel->backlight.present)
++			intel_panel_set_backlight(intel_connector, bclp, 255);
+ 	}
+-
+-	intel_panel_set_backlight(intel_connector, bclp, 255);
+ 	iowrite32(DIV_ROUND_UP(bclp * 100, 255) | ASLE_CBLV_VALID, &asle->cblv);
+ 
+-out:
+ 	mutex_unlock(&dev->mode_config.mutex);
+ 
+-	return ret;
++
++	return 0;
+ }
+ 
+ static u32 asle_set_als_illum(struct drm_device *dev, u32 alsi)
+--- a/drivers/gpu/drm/i915/intel_panel.c
++++ b/drivers/gpu/drm/i915/intel_panel.c
+@@ -821,13 +821,17 @@ int intel_panel_setup_backlight(struct d
+ 
+ 	intel_backlight_device_register(intel_connector);
+ 
++	panel->backlight.present = true;
++
+ 	return 0;
+ }
+ 
+ void intel_panel_destroy_backlight(struct drm_connector *connector)
+ {
+ 	struct intel_connector *intel_connector = to_intel_connector(connector);
++	struct intel_panel *panel = &intel_connector->panel;
+ 
++	panel->backlight.present = false;
+ 	intel_backlight_device_unregister(intel_connector);
+ }
+ 
