@@ -62,7 +62,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	IA32_ARG_FIXUP
  	call *ia32_sys_call_table(,%rax,8) # xxx: rip relative
  ia32_sysret:
-@@ -380,7 +380,9 @@ ia32_tracesys:			 
+@@ -380,7 +380,9 @@ ia32_tracesys:
  	call syscall_trace_enter
  	LOAD_ARGS32 ARGOFFSET  /* reload args from stack in case ptrace changed it */
  	RESTORE_REST
@@ -309,7 +309,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #endif  /* __KERNEL__ */
  
  #ifdef CONFIG_X86_32
-@@ -104,9 +108,9 @@ static inline void early_quirks(void) { 
+@@ -104,9 +108,9 @@ static inline void early_quirks(void) {
  
  #ifdef CONFIG_NUMA
  /* Returns the node based on pci bus */
@@ -372,7 +372,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  /*
   * ZERO_PAGE is a global shared page that is always zero: used
   * for zero-mapped memory areas etc..
-@@ -309,41 +318,42 @@ static inline pte_t pte_mkspecial(pte_t 
+@@ -309,41 +318,42 @@ static inline pte_t pte_mkspecial(pte_t
  
  extern pteval_t __supported_pte_mask;
  
@@ -933,7 +933,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  /* Direct interface for emergencies */
  static struct console *early_console = &early_vga_console;
  static int __initdata early_console_initialized;
-@@ -958,7 +915,7 @@ asmlinkage void early_printk(const char 
+@@ -958,7 +915,7 @@ asmlinkage void early_printk(const char
  	va_list ap;
  
  	va_start(ap, fmt);
@@ -1508,7 +1508,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	CFI_REMEMBER_STATE
  	/*
  	 * sysretq will re-enable interrupts:
-@@ -381,7 +543,7 @@ sysret_check:		
+@@ -381,7 +543,7 @@ sysret_check:
  
  	CFI_RESTORE_STATE
  	/* Handle reschedules */
@@ -1559,7 +1559,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #ifdef CONFIG_AUDITSYSCALL
  	testl $(_TIF_WORK_SYSCALL_ENTRY & ~_TIF_SYSCALL_AUDIT),TI_flags(%rcx)
  	jz auditsys
-@@ -475,8 +640,8 @@ tracesys:			 
+@@ -475,8 +640,8 @@ tracesys:
  	call *sys_call_table(,%rax,8)
  	movq %rax,RAX-ARGOFFSET(%rsp)
  	/* Use IRET because user could have changed frame */
@@ -2582,7 +2582,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	reserve_early(round_up(__pa_symbol(&_end), PAGE_SIZE),
 --- a/arch/x86/kernel/apic/io_apic-xen.c
 +++ b/arch/x86/kernel/apic/io_apic-xen.c
-@@ -112,102 +112,276 @@ static int __init parse_noapic(char *str
+@@ -112,103 +112,277 @@ static int __init parse_noapic(char *str
  }
  early_param("noapic", parse_noapic);
  
@@ -2682,7 +2682,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +
 +	cfg = irq_cfgx;
 +	count = ARRAY_SIZE(irq_cfgx);
- 
++
 +	for (i = 0; i < count; i++) {
 +		desc = irq_to_desc(i);
 +		desc->chip_data = &cfg[i];
@@ -2694,7 +2694,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +
 +	return 0;
 +}
-+
+ 
 +#ifdef CONFIG_SPARSE_IRQ
  static struct irq_cfg *irq_cfg(unsigned int irq)
  {
@@ -2707,12 +2707,10 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +		cfg = desc->chip_data;
 +
 +	return cfg;
- }
- 
--static struct irq_cfg *irq_cfg_alloc(unsigned int irq)
++}
++
 +static struct irq_cfg *get_one_free_irq_cfg(int cpu)
- {
--	return irq_cfg(irq);
++{
 +	struct irq_cfg *cfg;
 +	int node;
 +
@@ -2737,6 +2735,24 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +	return cfg;
  }
  
+-static struct irq_cfg *irq_cfg_alloc(unsigned int irq)
++int arch_init_chip_data(struct irq_desc *desc, int cpu)
+ {
+-	return irq_cfg(irq);
++	struct irq_cfg *cfg;
++
++	cfg = desc->chip_data;
++	if (!cfg) {
++		desc->chip_data = get_one_free_irq_cfg(cpu);
++		if (!desc->chip_data) {
++			printk(KERN_ERR "can not alloc irq_cfg\n");
++			BUG_ON(1);
++		}
++	}
++
++	return 0;
+ }
+ 
 -#ifdef CONFIG_XEN
 -#define irq_2_pin_init()
 -#define add_pin_to_irq(irq, apic, pin)
@@ -2747,9 +2763,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 - */
 -#define MAX_PLUS_SHARED_IRQS NR_IRQS
 -#define PIN_MAP_SIZE (MAX_PLUS_SHARED_IRQS + NR_IRQS)
-+int arch_init_chip_data(struct irq_desc *desc, int cpu)
-+{
-+	struct irq_cfg *cfg;
++#ifdef CONFIG_NUMA_MIGRATE_IRQ_DESC
  
 -/*
 - * This is performance-critical, we want to do it O(1)
@@ -2757,34 +2771,15 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 - * the indexing order of this array favors 1:1 mappings
 - * between pins and IRQs.
 - */
-+	cfg = desc->chip_data;
-+	if (!cfg) {
-+		desc->chip_data = get_one_free_irq_cfg(cpu);
-+		if (!desc->chip_data) {
-+			printk(KERN_ERR "can not alloc irq_cfg\n");
-+			BUG_ON(1);
-+		}
-+	}
++static void
++init_copy_irq_2_pin(struct irq_cfg *old_cfg, struct irq_cfg *cfg, int cpu)
++{
++	struct irq_pin_list *old_entry, *head, *tail, *entry;
  
 -struct irq_pin_list {
 -	int apic, pin;
 -	struct irq_pin_list *next;
 -};
-+	return 0;
-+}
- 
--static struct irq_pin_list irq_2_pin_head[PIN_MAP_SIZE];
--static struct irq_pin_list *irq_2_pin_ptr;
-+#ifdef CONFIG_NUMA_MIGRATE_IRQ_DESC
- 
--static void __init irq_2_pin_init(void)
-+static void
-+init_copy_irq_2_pin(struct irq_cfg *old_cfg, struct irq_cfg *cfg, int cpu)
- {
--	struct irq_pin_list *pin = irq_2_pin_head;
--	int i;
-+	struct irq_pin_list *old_entry, *head, *tail, *entry;
-+
 +	cfg->irq_2_pin = NULL;
 +	old_entry = old_cfg->irq_2_pin;
 +	if (!old_entry)
@@ -2818,19 +2813,24 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +		old_entry	= old_entry->next;
 +	}
  
--	for (i = 1; i < PIN_MAP_SIZE; i++)
--		pin[i-1].next = &pin[i];
+-static struct irq_pin_list irq_2_pin_head[PIN_MAP_SIZE];
+-static struct irq_pin_list *irq_2_pin_ptr;
 +	tail->next = NULL;
 +	cfg->irq_2_pin = head;
 +}
-+
+ 
+-static void __init irq_2_pin_init(void)
 +static void free_irq_2_pin(struct irq_cfg *old_cfg, struct irq_cfg *cfg)
-+{
+ {
+-	struct irq_pin_list *pin = irq_2_pin_head;
+-	int i;
 +	struct irq_pin_list *entry, *next;
 +
 +	if (old_cfg->irq_2_pin == cfg->irq_2_pin)
 +		return;
-+
+ 
+-	for (i = 1; i < PIN_MAP_SIZE; i++)
+-		pin[i-1].next = &pin[i];
 +	entry = old_cfg->irq_2_pin;
  
 -	irq_2_pin_ptr = &pin[0];
@@ -2889,8 +2889,8 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +		free_irq_cfg(old_cfg);
 +		old_desc->chip_data = NULL;
 +	}
-+}
-+
+ }
+ 
 +static void
 +set_extra_move_desc(struct irq_desc *desc, const struct cpumask *mask)
 +{
@@ -2916,11 +2916,12 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +static inline void
 +set_extra_move_desc(struct irq_desc *desc, const struct cpumask *mask)
 +{
- }
++}
 +#endif
- 
++
  struct io_apic {
  	unsigned int index;
+ 	unsigned int unused[3];
 @@ -220,7 +394,7 @@ static __attribute_const__ struct io_api
  	return (void __iomem *) __fix_to_virt(FIX_IO_APIC_BASE_0 + idx)
  		+ (mp_ioapics[idx].mp_apicaddr & ~PAGE_MASK);
@@ -2943,7 +2944,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  
  	spin_lock_irqsave(&ioapic_lock, flags);
  	entry = cfg->irq_2_pin;
-@@ -365,13 +538,32 @@ static void ioapic_mask_entry(int apic, 
+@@ -365,13 +538,32 @@ static void ioapic_mask_entry(int apic,
  }
  
  #ifdef CONFIG_SMP
@@ -2999,7 +3000,8 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +
 +	if (!cpumask_intersects(mask, cpu_online_mask))
 +		return BAD_APICID;
-+
+ 
+-static void set_ioapic_affinity_irq(unsigned int irq, cpumask_t mask)
 +	irq = desc->irq;
 +	cfg = desc->chip_data;
 +	if (assign_irq_vector(irq, cfg, mask))
@@ -3009,8 +3011,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 +	set_extra_move_desc(desc, mask);
 +	return cpu_mask_to_apicid_and(&desc->affinity, cpu_online_mask);
 +}
- 
--static void set_ioapic_affinity_irq(unsigned int irq, cpumask_t mask)
++
 +static void
 +set_ioapic_affinity_irq_desc(struct irq_desc *desc, const struct cpumask *mask)
  {
@@ -3085,7 +3086,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		cfg->irq_2_pin = entry;
  		entry->apic = apic;
  		entry->pin = pin;
-@@ -463,7 +682,7 @@ static void add_pin_to_irq(unsigned int 
+@@ -463,7 +682,7 @@ static void add_pin_to_irq(unsigned int
  		entry = entry->next;
  	}
  
@@ -3094,7 +3095,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	entry = entry->next;
  	entry->apic = apic;
  	entry->pin = pin;
-@@ -472,11 +691,10 @@ static void add_pin_to_irq(unsigned int 
+@@ -472,11 +691,10 @@ static void add_pin_to_irq(unsigned int
  /*
   * Reroute an IRQ to a different pin.
   */
@@ -3428,7 +3429,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #endif
  
  static int setup_ioapic_entry(int apic, int irq,
-@@ -1295,24 +1591,25 @@ static int setup_ioapic_entry(int apic, 
+@@ -1295,24 +1591,25 @@ static int setup_ioapic_entry(int apic,
  	return 0;
  }
  
@@ -3460,7 +3461,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #endif
  
  	apic_printk(APIC_VERBOSE,KERN_DEBUG
-@@ -1323,16 +1620,15 @@ static void setup_IO_APIC_irq(int apic, 
+@@ -1323,16 +1620,15 @@ static void setup_IO_APIC_irq(int apic,
  
  
  	if (setup_ioapic_entry(mp_ioapics[apic].mp_apicid, irq, &entry,
@@ -3606,7 +3607,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		spin_unlock_irqrestore(&ioapic_lock, flags);
  	}
  
-@@ -2128,24 +2439,20 @@ static void migrate_ioapic_irq(int irq, 
+@@ -2128,24 +2439,20 @@ static void migrate_ioapic_irq(int irq,
  	 */
  	modify_irte(irq, &irte);
  
@@ -3824,7 +3825,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	}
  #endif
  
-@@ -2326,7 +2665,8 @@ static void ack_apic_level(unsigned int 
+@@ -2326,7 +2665,8 @@ static void ack_apic_level(unsigned int
  	* operation to prevent an edge-triggered interrupt escaping meanwhile.
  	* The idea is from Manfred Spraul.  --macro
  	*/
@@ -3834,7 +3835,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  
  	v = apic_read(APIC_TMR + ((i & ~0x1f) >> 1));
  #endif
-@@ -2365,17 +2705,18 @@ static void ack_apic_level(unsigned int 
+@@ -2365,17 +2705,18 @@ static void ack_apic_level(unsigned int
  		 * accurate and is causing problems then it is a hardware bug
  		 * and you can go talk to the chipset vendor about it.
  		 */
@@ -3963,7 +3964,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	apic_write(APIC_LVT0, APIC_DM_FIXED | cfg->vector);	/* Fixed mode */
  	enable_8259A_irq(0);
  
-@@ -2918,22 +3257,26 @@ unsigned int create_irq_nr(unsigned int 
+@@ -2918,22 +3257,26 @@ unsigned int create_irq_nr(unsigned int
  	unsigned int irq;
  	unsigned int new;
  	unsigned long flags;
@@ -4000,7 +4001,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  			irq = new;
  		break;
  	}
-@@ -2941,15 +3284,21 @@ unsigned int create_irq_nr(unsigned int 
+@@ -2941,15 +3284,21 @@ unsigned int create_irq_nr(unsigned int
  
  	if (irq > 0) {
  		dynamic_irq_init(irq);
@@ -4174,7 +4175,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  {
  	int ret;
  	struct msi_msg msg;
-@@ -3192,7 +3524,7 @@ static int setup_msi_irq(struct pci_dev 
+@@ -3192,7 +3524,7 @@ static int setup_msi_irq(struct pci_dev
  	if (ret < 0)
  		return ret;
  
@@ -4183,7 +4184,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	write_msi_msg(irq, &msg);
  
  #ifdef CONFIG_INTR_REMAP
-@@ -3212,26 +3544,13 @@ static int setup_msi_irq(struct pci_dev 
+@@ -3212,26 +3544,13 @@ static int setup_msi_irq(struct pci_dev
  	return 0;
  }
  
@@ -4254,7 +4255,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		if (ret < 0)
  			goto error;
  		sub_handle++;
-@@ -3325,24 +3645,18 @@ void arch_teardown_msi_irq(unsigned int 
+@@ -3325,24 +3645,18 @@ void arch_teardown_msi_irq(unsigned int
  
  #ifdef CONFIG_DMAR
  #ifdef CONFIG_SMP
@@ -4267,16 +4268,16 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	unsigned int dest;
 -	cpumask_t tmp;
 -	struct irq_desc *desc;
- 
+-
 -	cpus_and(tmp, mask, cpu_online_map);
 -	if (cpus_empty(tmp))
+-		return;
+ 
+-	if (assign_irq_vector(irq, mask))
 +	dest = set_desc_affinity(desc, mask);
 +	if (dest == BAD_APICID)
  		return;
  
--	if (assign_irq_vector(irq, mask))
--		return;
--
 -	cfg = irq_cfg(irq);
 -	cpus_and(tmp, cfg->domain, mask);
 -	dest = cpu_mask_to_apicid(tmp);
@@ -4308,16 +4309,16 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	struct msi_msg msg;
  	unsigned int dest;
 -	cpumask_t tmp;
- 
+-
 -	cpus_and(tmp, mask, cpu_online_map);
 -	if (cpus_empty(tmp))
+-		return;
+ 
+-	if (assign_irq_vector(irq, mask))
 +	dest = set_desc_affinity(desc, mask);
 +	if (dest == BAD_APICID)
  		return;
  
--	if (assign_irq_vector(irq, mask))
--		return;
--
 -	cfg = irq_cfg(irq);
 -	cpus_and(tmp, cfg->domain, mask);
 -	dest = cpu_mask_to_apicid(tmp);
@@ -4371,7 +4372,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #endif
  
  static struct irq_chip ht_irq_chip = {
-@@ -3507,17 +3806,14 @@ int arch_setup_ht_irq(unsigned int irq, 
+@@ -3507,17 +3806,14 @@ int arch_setup_ht_irq(unsigned int irq,
  {
  	struct irq_cfg *cfg;
  	int err;
@@ -4392,7 +4393,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  
  		msg.address_hi = HT_IRQ_HIGH_DEST_ID(dest);
  
-@@ -3553,7 +3849,7 @@ int arch_setup_ht_irq(unsigned int irq, 
+@@ -3553,7 +3849,7 @@ int arch_setup_ht_irq(unsigned int irq,
  int arch_enable_uv_irq(char *irq_name, unsigned int irq, int cpu, int mmr_blade,
  		       unsigned long mmr_offset)
  {
@@ -4692,7 +4693,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #endif
  	return 0;
  }
-@@ -106,25 +107,31 @@ static int show_other_interrupts(struct 
+@@ -106,25 +107,31 @@ static int show_other_interrupts(struct
  int show_interrupts(struct seq_file *p, void *v)
  {
  	unsigned long flags, any_count = 0;
@@ -4727,7 +4728,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	spin_lock_irqsave(&desc->lock, flags);
  #ifndef CONFIG_SMP
  	any_count = kstat_irqs(i);
-@@ -136,7 +143,7 @@ int show_interrupts(struct seq_file *p, 
+@@ -136,7 +143,7 @@ int show_interrupts(struct seq_file *p,
  	if (!action && !any_count)
  		goto out;
  
@@ -4788,7 +4789,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  
  #include <mach_apic.h>
  #ifdef CONFIG_X86_32
-@@ -54,13 +54,13 @@ static int __init mpf_checksum(unsigned 
+@@ -54,13 +54,13 @@ static int __init mpf_checksum(unsigned
  	return sum & 0xFF;
  }
  
@@ -5173,7 +5174,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  			break;
  		}
  		if (x86_quirks->mpc_record)
-@@ -430,16 +423,16 @@ static int __init ELCR_trigger(unsigned 
+@@ -430,16 +423,16 @@ static int __init ELCR_trigger(unsigned
  
  static void __init construct_default_ioirq_mptable(int mpc_default_type)
  {
@@ -5943,7 +5944,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  unsigned long long __init find_and_reserve_crashkernel(unsigned long long size)
  {
  	const unsigned long long alignment = 16<<20; 	/* 16M */
-@@ -650,165 +653,32 @@ static int __init setup_elfcorehdr(char 
+@@ -650,165 +653,32 @@ static int __init setup_elfcorehdr(char
  early_param("elfcorehdr", setup_elfcorehdr);
  #endif
  
@@ -6041,10 +6042,10 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
 -
 -		if (addr == 0)
 -			break;
--
+ 
 -		if ((addr + size) > corruption_check_size)
 -			size = corruption_check_size - addr;
- 
+-
 -		if (size == 0)
 -			break;
 -
@@ -6858,7 +6859,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	if (start_pfn < end_pfn) {
  		nr_range = save_mr(mr, nr_range, start_pfn, end_pfn, 0);
  		pos = end_pfn << PAGE_SHIFT;
-@@ -1152,7 +1154,7 @@ int arch_add_memory(int nid, u64 start, 
+@@ -1152,7 +1154,7 @@ int arch_add_memory(int nid, u64 start,
  	if (last_mapped_pfn > max_pfn_mapped)
  		max_pfn_mapped = last_mapped_pfn;
  
@@ -7168,7 +7169,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  /*
   * For RAM pages, mark the pages as non WB memory type using
   * PageNonWB (PG_arch_1). We allow only one set_memory_uc() or
-@@ -360,9 +389,13 @@ int reserve_memtype(u64 start, u64 end, 
+@@ -360,9 +389,13 @@ int reserve_memtype(u64 start, u64 end,
  					      req_type & _PAGE_CACHE_MASK);
  	}
  
@@ -7184,7 +7185,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	else if (is_range_ram < 0)
  		return -EINVAL;
  
-@@ -374,9 +407,6 @@ int reserve_memtype(u64 start, u64 end, 
+@@ -374,9 +407,6 @@ int reserve_memtype(u64 start, u64 end,
  	new->end	= end;
  	new->type	= actual_type;
  
@@ -7584,7 +7585,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #ifdef CONFIG_COMPAT
 --- a/drivers/gpu/drm/i915/i915_drv.h
 +++ b/drivers/gpu/drm/i915/i915_drv.h
-@@ -1948,6 +1948,11 @@ int __i915_add_request(struct intel_ring
+@@ -1951,6 +1951,11 @@ int __i915_add_request(struct intel_ring
  	__i915_add_request(ring, NULL, NULL, seqno)
  int __must_check i915_wait_seqno(struct intel_ring_buffer *ring,
  				 uint32_t seqno);
@@ -7984,7 +7985,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  /* Constructor for packed IRQ information. */
  static inline u32 mk_irq_info(u32 type, u32 index, u32 evtchn)
  {
-@@ -89,26 +111,30 @@ static inline u32 mk_irq_info(u32 type, 
+@@ -89,26 +111,30 @@ static inline u32 mk_irq_info(u32 type,
  	return ((type << (32 - _IRQT_BITS)) | (index << _EVTCHN_BITS) | evtchn);
  }
  
@@ -8092,7 +8093,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  {
  	unsigned long       l1, l2;
  	unsigned long       masked_l1, masked_l2;
-@@ -357,14 +384,25 @@ asmlinkage void evtchn_do_upcall(struct 
+@@ -357,14 +384,25 @@ asmlinkage void evtchn_do_upcall(struct
  	xen_spin_irq_exit();
  }
  
@@ -8186,7 +8187,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  
   out:
  	spin_unlock(&irq_mapping_update_lock);
-@@ -490,7 +529,7 @@ static int bind_ipi_to_irq(unsigned int 
+@@ -490,7 +529,7 @@ static int bind_ipi_to_irq(unsigned int
  	spin_lock(&irq_mapping_update_lock);
  
  	if ((irq = per_cpu(ipi_to_irq, cpu)[ipi]) == -1) {
@@ -8195,7 +8196,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  			goto out;
  
  		bind_ipi.vcpu = cpu;
-@@ -500,14 +539,14 @@ static int bind_ipi_to_irq(unsigned int 
+@@ -500,14 +539,14 @@ static int bind_ipi_to_irq(unsigned int
  		evtchn = bind_ipi.port;
  
  		evtchn_to_irq[evtchn] = irq;
@@ -8414,16 +8415,16 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  #else
  #define identity_mapped_irq(irq) (1)
  #endif
-@@ -1126,7 +1221,7 @@ void evtchn_register_pirq(int irq)
- 	BUG_ON(irq < PIRQ_BASE || irq - PIRQ_BASE >= NR_PIRQS);
- 	if (identity_mapped_irq(irq) || type_from_irq(irq) != IRQT_UNBOUND)
- 		return;
--	irq_info[irq] = mk_irq_info(IRQT_PIRQ, irq, 0);
-+	irq_cfg(irq)->info = mk_irq_info(IRQT_PIRQ, irq, 0);
- 	set_irq_chip_and_handler_name(irq, &pirq_chip, handle_fasteoi_irq,
- 				      "fasteoi");
- }
-@@ -1139,12 +1234,17 @@ int evtchn_map_pirq(int irq, int xen_pir
+@@ -1143,7 +1238,7 @@ int evtchn_register_pirq(int irq)
+ 	}
+ 
+ 	if (!identity_mapped_irq(irq)) {
+-		irq_info[irq] = mk_irq_info(IRQT_PIRQ, irq, 0);
++		irq_cfg(irq)->info = mk_irq_info(IRQT_PIRQ, irq, 0);
+ 		set_irq_chip_and_handler_name(irq, &pirq_chip,
+ 					      handle_fasteoi_irq, "fasteoi");
+ 	}
+@@ -1160,12 +1255,17 @@ int evtchn_map_pirq(int irq, int xen_pir
  		irq = PIRQ_BASE + NR_PIRQS - 1;
  		spin_lock(&irq_alloc_lock);
  		do {
@@ -8443,7 +8444,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  				break;
  			}
  		} while (--irq >= PIRQ_BASE);
-@@ -1163,7 +1263,7 @@ int evtchn_map_pirq(int irq, int xen_pir
+@@ -1184,7 +1284,7 @@ int evtchn_map_pirq(int irq, int xen_pir
  		 * then causes a warning in dynamic_irq_cleanup().
  		 */
  		set_irq_chip_and_handler(irq, NULL, NULL);
@@ -8452,7 +8453,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		return 0;
  	} else if (type_from_irq(irq) != IRQT_PIRQ
  		   || index_from_irq(irq) != xen_pirq) {
-@@ -1200,23 +1300,17 @@ void __init xen_init_IRQ(void)
+@@ -1221,23 +1321,17 @@ void __init xen_init_IRQ(void)
  	for (i = 0; i < EVTCHN_2L_NR_CHANNELS; i++)
  		mask_evtchn(i);
  
@@ -8661,7 +8662,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	return nxt;
  }
  
-@@ -333,13 +333,13 @@ void xen_spin_kick(const raw_spinlock_t 
+@@ -333,13 +333,13 @@ void xen_spin_kick(const raw_spinlock_t
  		return;
  
  	if (unlikely(!cpu_online(local)))
@@ -8677,7 +8678,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		if (start == stop)
  			return;
  	}
-@@ -399,7 +399,7 @@ void xen_spin_kick(const raw_spinlock_t 
+@@ -399,7 +399,7 @@ void xen_spin_kick(const raw_spinlock_t
  			notify_remote_via_evtchn(per_cpu(poll_evtchn, cpu));
  			return;
  		}
@@ -8766,7 +8767,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  }
  /* 
   * Add following to poll() function in NAPI driver (Tigon3 is example):
-@@ -1551,7 +1551,6 @@ static void net_tx_action(unsigned long 
+@@ -1551,7 +1551,6 @@ static void net_tx_action(unsigned long
  		dev->stats.rx_packets++;
  
  		netif_rx(skb);
@@ -8804,7 +8805,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		}
  	}
  
-@@ -1489,7 +1488,6 @@ err:	
+@@ -1489,7 +1488,6 @@ err:
  
  		/* Pass it up. */
  		netif_receive_skb(skb);
@@ -8812,7 +8813,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	}
  
  	/* If we get a callback with very few responses, reduce fill target. */
-@@ -1531,7 +1529,7 @@ err:	
+@@ -1531,7 +1529,7 @@ err:
  		}
  
  		if (!more_to_do && !accel_more_to_do)
@@ -9464,7 +9465,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  static int is_swiotlb_buffer(dma_addr_t addr)
  {
  	unsigned long pfn = mfn_to_local_pfn(PFN_DOWN(addr));
-@@ -254,46 +295,50 @@ static int is_swiotlb_buffer(dma_addr_t 
+@@ -254,46 +295,50 @@ static int is_swiotlb_buffer(dma_addr_t
  }
  
  /*
@@ -9560,7 +9561,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	int i;
  	unsigned long mask;
  	unsigned long offset_slots;
-@@ -314,6 +358,10 @@ map_single(struct device *hwdev, struct 
+@@ -314,6 +358,10 @@ map_single(struct device *hwdev, struct
  
  	mask = dma_get_seg_boundary(hwdev);
  	offset_slots = -IO_TLB_SEGSIZE;
@@ -9571,7 +9572,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  	max_slots = mask + 1
  		    ? ALIGN(mask + 1, 1 << IO_TLB_SHIFT) >> IO_TLB_SHIFT
  		    : 1UL << (BITS_PER_LONG - IO_TLB_SHIFT);
-@@ -336,7 +384,7 @@ map_single(struct device *hwdev, struct 
+@@ -336,7 +384,7 @@ map_single(struct device *hwdev, struct
  	 */
  	spin_lock_irqsave(&io_tlb_lock, flags);
  	index = ALIGN(io_tlb_index, stride);
@@ -9580,7 +9581,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		index = 0;
  	wrap = index;
  
-@@ -344,7 +392,7 @@ map_single(struct device *hwdev, struct 
+@@ -344,7 +392,7 @@ map_single(struct device *hwdev, struct
  		while (iommu_is_span_boundary(index, nslots, offset_slots,
  					      max_slots)) {
  			index += stride;
@@ -9589,7 +9590,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  				index = 0;
  			if (index == wrap)
  				goto not_found;
-@@ -368,13 +416,13 @@ map_single(struct device *hwdev, struct 
+@@ -368,13 +416,13 @@ map_single(struct device *hwdev, struct
  			 * Update the indices to avoid searching in the next
  			 * round.
  			 */
@@ -9639,7 +9640,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  /*
   * dma_addr is the kernel virtual address of the bounce buffer to unmap.
   */
-@@ -421,13 +454,13 @@ unmap_single(struct device *hwdev, char 
+@@ -421,13 +454,13 @@ unmap_single(struct device *hwdev, char
  	unsigned long flags;
  	int i, count, nslots = ALIGN(size, 1 << IO_TLB_SHIFT) >> IO_TLB_SHIFT;
  	int index = (dma_addr - io_tlb_start) >> IO_TLB_SHIFT;
@@ -9681,7 +9682,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  		else
  			BUG_ON(dir != DMA_FROM_DEVICE);
  		break;
-@@ -492,7 +529,7 @@ swiotlb_full(struct device *dev, size_t 
+@@ -492,7 +529,7 @@ swiotlb_full(struct device *dev, size_t
  	 * the damage, or panic when the transfer is too big.
  	 */
  	printk(KERN_ERR "PCI-DMA: Out of SW-IOMMU space for %zu bytes at "
@@ -9777,7 +9778,7 @@ Automatically created from "patches.kernel.org/patch-2.6.29" by xen-port-patches
  
  /*
   * Same as above, but for a sub-range of the mapping.
-@@ -636,7 +675,7 @@ swiotlb_sync_single_range(struct device 
+@@ -636,7 +675,7 @@ swiotlb_sync_single_range(struct device
  			  unsigned long offset, size_t size,
  			  int dir, int target)
  {
