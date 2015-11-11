@@ -23,7 +23,7 @@ Acked-by: jbeulich@suse.com
  	depends on CPU_V7 && !CPU_V6
 --- a/arch/arm/Makefile
 +++ b/arch/arm/Makefile
-@@ -261,7 +261,7 @@ endif
+@@ -269,7 +269,7 @@ endif
  core-$(CONFIG_FPE_NWFPE)	+= arch/arm/nwfpe/
  core-$(CONFIG_FPE_FASTFPE)	+= $(FASTFPE_OBJ)
  core-$(CONFIG_VFP)		+= arch/arm/vfp/
@@ -232,7 +232,7 @@ Acked-by: jbeulich@suse.com
  }
  
  #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-@@ -382,9 +381,9 @@ pte_t *populate_extra_pte(unsigned long 
+@@ -382,9 +381,9 @@ pte_t *populate_extra_pte(unsigned long
  #endif	/* __ASSEMBLY__ */
  
  #ifdef CONFIG_X86_32
@@ -280,7 +280,7 @@ Acked-by: jbeulich@suse.com
  #endif
  
  #ifndef __ASSEMBLY__
-@@ -361,6 +361,7 @@ int phys_mem_access_prot_allowed(struct 
+@@ -361,6 +361,7 @@ int phys_mem_access_prot_allowed(struct
  void set_pte_vaddr(unsigned long vaddr, pte_t pte);
  
  extern void xen_pagetable_reserve(u64 start, u64 end);
@@ -344,7 +344,7 @@ Acked-by: jbeulich@suse.com
  		/*
 --- a/arch/x86/kernel/cpu/amd.c
 +++ b/arch/x86/kernel/cpu/amd.c
-@@ -657,7 +657,6 @@ static void init_amd(struct cpuinfo_x86 
+@@ -657,7 +657,6 @@ static void init_amd(struct cpuinfo_x86
  			}
  		}
  	}
@@ -352,7 +352,7 @@ Acked-by: jbeulich@suse.com
  
  	/*
  	 * The way access filter has a performance penalty on some workloads.
-@@ -671,6 +670,7 @@ static void init_amd(struct cpuinfo_x86 
+@@ -671,6 +670,7 @@ static void init_amd(struct cpuinfo_x86
  			wrmsrl_safe(0xc0011021, value);
  		}
  	}
@@ -1072,7 +1072,7 @@ Acked-by: jbeulich@suse.com
  unsigned long boot_option_idle_override = IDLE_NO_OVERRIDE;
 --- a/arch/x86/kernel/process_64-xen.c
 +++ b/arch/x86/kernel/process_64-xen.c
-@@ -155,28 +155,17 @@ static inline u32 read_32bit_tls(struct 
+@@ -155,28 +155,17 @@ static inline u32 read_32bit_tls(struct
  }
  
  int copy_thread(unsigned long clone_flags, unsigned long sp,
@@ -1571,7 +1571,7 @@ Acked-by: jbeulich@suse.com
  	local_irq_enable();
  
  	info.si_signo = SIGILL;
-@@ -672,10 +695,11 @@ dotraplinkage void do_iret_error(struct 
+@@ -672,10 +695,11 @@ dotraplinkage void do_iret_error(struct
  	info.si_code = ILL_BADSTK;
  	info.si_addr = NULL;
  	if (notify_die(DIE_TRAP, "iret exception", regs, error_code,
@@ -1597,7 +1597,7 @@ Acked-by: jbeulich@suse.com
  int __init iommu_init_noop(void) { return 0; }
  
  /*
-@@ -70,8 +69,7 @@ struct x86_init_ops x86_init __initdata 
+@@ -70,8 +69,7 @@ struct x86_init_ops x86_init __initdata
  	},
  
  	.paging = {
@@ -1694,28 +1694,25 @@ Acked-by: jbeulich@suse.com
 +static void __init find_early_table_space(struct map_range *mr, int nr_range)
  {
 -	unsigned long puds, pmds, ptes, tables;
--
--	puds = (end + PUD_SIZE - 1) >> PUD_SHIFT;
--	tables = roundup(puds * sizeof(pud_t), PAGE_SIZE);
--
--	if (use_gbpages) {
--		unsigned long extra;
 +	int i;
 +	unsigned long puds = 0, pmds = 0, ptes = 0, tables;
+ 
+-	puds = (end + PUD_SIZE - 1) >> PUD_SHIFT;
+-	tables = roundup(puds * sizeof(pud_t), PAGE_SIZE);
++	for (i = 0; i < nr_range; i++) {
++		unsigned long range, extra;
+ 
+-	if (use_gbpages) {
+-		unsigned long extra;
++		range = mr[i].end - mr[i].start;
++		puds += (range + PUD_SIZE - 1) >> PUD_SHIFT;
  
 -		extra = end - ((end>>PUD_SHIFT) << PUD_SHIFT);
 -		pmds = (extra + PMD_SIZE - 1) >> PMD_SHIFT;
 -	} else
 -		pmds = (end + PMD_SIZE - 1) >> PMD_SHIFT;
-+	for (i = 0; i < nr_range; i++) {
-+		unsigned long range, extra;
- 
+-
 -	tables += roundup(pmds * sizeof(pmd_t), PAGE_SIZE);
-+		range = mr[i].end - mr[i].start;
-+		puds += (range + PUD_SIZE - 1) >> PUD_SHIFT;
- 
--	if (use_pse) {
--		unsigned long extra;
 +		if (mr[i].page_size_mask & (1 << PG_LEVEL_1G)) {
 +			extra = range - ((range >> PUD_SHIFT) << PUD_SHIFT);
 +			pmds += (extra + PMD_SIZE - 1) >> PMD_SHIFT;
@@ -1723,6 +1720,9 @@ Acked-by: jbeulich@suse.com
 +			pmds += (range + PMD_SIZE - 1) >> PMD_SHIFT;
 +		}
  
+-	if (use_pse) {
+-		unsigned long extra;
+-
 -		extra = end - ((end>>PMD_SHIFT) << PMD_SHIFT);
 +		if (mr[i].page_size_mask & (1 << PG_LEVEL_2M)) {
 +			extra = range - ((range >> PMD_SHIFT) << PMD_SHIFT);
@@ -1768,7 +1768,7 @@ Acked-by: jbeulich@suse.com
  #define addr_to_page(addr)						\
 --- a/arch/x86/mm/init_64-xen.c
 +++ b/arch/x86/mm/init_64-xen.c
-@@ -492,7 +492,8 @@ phys_pte_init(pte_t *pte_page, unsigned 
+@@ -492,7 +492,8 @@ phys_pte_init(pte_t *pte_page, unsigned
  		 * these mappings are more intelligent.
  		 */
  		if (__pte_val(*pte)) {
@@ -1778,7 +1778,7 @@ Acked-by: jbeulich@suse.com
  			continue;
  		}
  
-@@ -557,6 +558,8 @@ phys_pmd_init(pmd_t *pmd_page, unsigned 
+@@ -557,6 +558,8 @@ phys_pmd_init(pmd_t *pmd_page, unsigned
  			 * attributes.
  			 */
  			if (page_size_mask & (1 << PG_LEVEL_2M)) {
@@ -1787,7 +1787,7 @@ Acked-by: jbeulich@suse.com
  				last_map_addr = next;
  				continue;
  			}
-@@ -645,6 +648,8 @@ phys_pud_init(pud_t *pud_page, unsigned 
+@@ -645,6 +648,8 @@ phys_pud_init(pud_t *pud_page, unsigned
  			 * attributes.
  			 */
  			if (page_size_mask & (1 << PG_LEVEL_1G)) {
@@ -2011,7 +2011,7 @@ Acked-by: jbeulich@suse.com
  extern void tpm_gen_interrupt(struct tpm_chip *);
 --- a/drivers/hwmon/coretemp-xen.c
 +++ b/drivers/hwmon/coretemp-xen.c
-@@ -213,8 +213,11 @@ static const struct tjmax tjmax_table[] 
+@@ -213,8 +213,11 @@ static const struct tjmax tjmax_table[]
  	{ "CPU N455", 100000 },
  	{ "CPU N470", 100000 },
  	{ "CPU N475", 100000 },
@@ -2134,7 +2134,7 @@ Acked-by: jbeulich@suse.com
  #ifdef CONFIG_X86
 --- a/drivers/xen/console/console.c
 +++ b/drivers/xen/console/console.c
-@@ -346,10 +346,13 @@ void __init dom0_init_screen_info(const 
+@@ -346,10 +346,13 @@ void __init dom0_init_screen_info(const
  #define DUMMY_TTY(_tty) ((xc_mode == XC_TTY) &&		\
  			 ((_tty)->index != (xc_num - 1)))
  
@@ -2347,7 +2347,7 @@ Acked-by: jbeulich@suse.com
  #undef COPY_BACK
  
  	default:
-@@ -79,3 +88,5 @@ int xen_physdev_op_compat(int cmd, void 
+@@ -79,3 +88,5 @@ int xen_physdev_op_compat(int cmd, void
  	return rc;
  }
  EXPORT_SYMBOL_GPL(xen_physdev_op_compat);
@@ -2527,6 +2527,13 @@ Acked-by: jbeulich@suse.com
 -	extra = !!head_meta->frag.size + 1;
 +	head_meta->copy = 0;
 +	n = !!head_meta->frag.size + 1;
++
++	for (i = 0; i < nr_frags; i++, n++) {
++		const skb_frag_t *frag = skb_shinfo(skb)->frags + i;
++		unsigned int offset = frag->page_offset;
++		unsigned int len = skb_frag_size(frag);
++		struct page *frag_page = skb_frag_page(frag);
++		struct page *page = frag_page + PFN_DOWN(offset);
  
 -	for (i = 0; i < nr_frags; i++) {
 -		meta = npo->meta + npo->meta_prod++;
@@ -2535,13 +2542,6 @@ Acked-by: jbeulich@suse.com
 -					  skb_frag_page(&meta->frag),
 -					  skb_frag_size(&meta->frag),
 -					  meta->frag.page_offset);
-+	for (i = 0; i < nr_frags; i++, n++) {
-+		const skb_frag_t *frag = skb_shinfo(skb)->frags + i;
-+		unsigned int offset = frag->page_offset;
-+		unsigned int len = skb_frag_size(frag);
-+		struct page *frag_page = skb_frag_page(frag);
-+		struct page *page = frag_page + PFN_DOWN(offset);
-+
 +		if (!len)
 +			continue;
 +		for (meta = NULL, offset &= ~PAGE_MASK; len; ) {
@@ -2620,7 +2620,7 @@ Acked-by: jbeulich@suse.com
  }
  
  /* This is a twin to netbk_gop_skb.  Assume that netbk_gop_skb was
-@@ -545,18 +621,23 @@ static int netbk_check_gop(unsigned int 
+@@ -544,18 +620,23 @@ static int netbk_check_gop(unsigned int
  	gnttab_copy_t     *copy_op;
  	int status = XEN_NETIF_RSP_OKAY;
  	int i;
@@ -2655,7 +2655,7 @@ Acked-by: jbeulich@suse.com
  		} else {
  			if (!xen_feature(XENFEAT_auto_translated_physmap)) {
  				mcl = npo->mcl + npo->mcl_cons++;
-@@ -584,23 +665,22 @@ static int netbk_check_gop(unsigned int 
+@@ -583,23 +664,22 @@ static int netbk_check_gop(unsigned int
  	return status;
  }
  
@@ -2691,7 +2691,7 @@ Acked-by: jbeulich@suse.com
  }
  
  static void net_rx_action(unsigned long unused)
-@@ -625,7 +705,7 @@ static void net_rx_action(unsigned long 
+@@ -624,7 +704,7 @@ static void net_rx_action(unsigned long
  	static multicall_entry_t rx_mcl[NET_RX_RING_SIZE+3];
  	static mmu_update_t rx_mmu[NET_RX_RING_SIZE];
  	static gnttab_transfer_t grant_trans_op[NET_RX_RING_SIZE];
@@ -2700,7 +2700,7 @@ Acked-by: jbeulich@suse.com
  	static unsigned char rx_notify[NR_IRQS];
  	static u16 notify_list[NET_RX_RING_SIZE];
  	static struct netbk_rx_meta meta[NET_RX_RING_SIZE];
-@@ -637,17 +717,24 @@ static void net_rx_action(unsigned long 
+@@ -636,17 +716,24 @@ static void net_rx_action(unsigned long
  		mcl: rx_mcl,
  		meta: meta};
  
@@ -2728,7 +2728,7 @@ Acked-by: jbeulich@suse.com
  			/* Memory squeeze? Back off for an arbitrary while. */
  			if ( net_ratelimit() )
  				netdev_warn(skb->dev, "memory squeeze\n");
-@@ -656,15 +743,9 @@ static void net_rx_action(unsigned long 
+@@ -655,15 +742,9 @@ static void net_rx_action(unsigned long
  			break;
  		}
  
@@ -2745,7 +2745,7 @@ Acked-by: jbeulich@suse.com
  	}
  
  	BUG_ON(npo.meta_prod > ARRAY_SIZE(meta));
-@@ -707,7 +788,7 @@ static void net_rx_action(unsigned long 
+@@ -706,7 +787,7 @@ static void net_rx_action(unsigned long
  	BUG_ON(npo.mmu_mcl && npo.mcl[npo.mmu_mcl].result != 0);
  
  	while ((skb = __skb_dequeue(&rxq)) != NULL) {
@@ -2754,7 +2754,7 @@ Acked-by: jbeulich@suse.com
  
  		netif = netdev_priv(skb->dev);
  
-@@ -768,9 +849,9 @@ static void net_rx_action(unsigned long 
+@@ -767,9 +848,9 @@ static void net_rx_action(unsigned long
  			gso->flags = 0;
  		}
  
@@ -2767,7 +2767,7 @@ Acked-by: jbeulich@suse.com
  
  		RING_PUSH_RESPONSES_AND_CHECK_NOTIFY(&netif->rx, ret);
  		irq = netif->irq;
-@@ -1218,9 +1299,10 @@ void netbk_get_requests(netif_t *netif, 
+@@ -1217,9 +1298,10 @@ void netbk_get_requests(netif_t *netif,
  		frag_set_pending_idx(&frags[i], pending_idx);
  	}
  
@@ -3430,7 +3430,7 @@ Acked-by: jbeulich@suse.com
  static inline int hvm_get_parameter(int idx, uint64_t *value)
  {
  	struct xen_hvm_param xhv;
-@@ -16,7 +47,8 @@ static inline int hvm_get_parameter(int 
+@@ -16,7 +47,8 @@ static inline int hvm_get_parameter(int
  	xhv.index = idx;
  	r = HYPERVISOR_hvm_op(HVMOP_get_param, &xhv);
  	if (r < 0) {
