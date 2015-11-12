@@ -1,0 +1,58 @@
+From: Kent Overstreet <kmo@daterainc.com>
+Date: Mon, 17 Mar 2014 18:58:55 -0700
+Subject: bcache: Fix a lockdep splat in an error path
+References: bnc#951638
+Patch-Mainline: v3.16
+Git-commit: 4fa03402cda2fac1a54248c7578b939d95931dc0
+
+Signed-off-by: Kent Overstreet <kmo@daterainc.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.de>
+---
+ drivers/md/bcache/super.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/md/bcache/super.c b/drivers/md/bcache/super.c
+index a2f89e0..5b0e850 100644
+--- a/drivers/md/bcache/super.c
++++ b/drivers/md/bcache/super.c
+@@ -1849,7 +1849,10 @@ static void register_cache(struct cache_sb *sb, struct page *sb_page,
+ 	if (kobject_add(&ca->kobj, &part_to_dev(bdev->bd_part)->kobj, "bcache"))
+ 		goto err;
+ 
++	mutex_lock(&bch_register_lock);
+ 	err = register_cache_set(ca);
++	mutex_unlock(&bch_register_lock);
++
+ 	if (err)
+ 		goto err;
+ 
+@@ -1911,8 +1914,6 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
+ 	if (!try_module_get(THIS_MODULE))
+ 		return -EBUSY;
+ 
+-	mutex_lock(&bch_register_lock);
+-
+ 	if (!(path = kstrndup(buffer, size, GFP_KERNEL)) ||
+ 	    !(sb = kmalloc(sizeof(struct cache_sb), GFP_KERNEL)))
+ 		goto err;
+@@ -1947,7 +1948,9 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
+ 		if (!dc)
+ 			goto err_close;
+ 
++		mutex_lock(&bch_register_lock);
+ 		register_bdev(sb, sb_page, bdev, dc);
++		mutex_unlock(&bch_register_lock);
+ 	} else {
+ 		struct cache *ca = kzalloc(sizeof(*ca), GFP_KERNEL);
+ 		if (!ca)
+@@ -1960,7 +1963,6 @@ out:
+ 		put_page(sb_page);
+ 	kfree(sb);
+ 	kfree(path);
+-	mutex_unlock(&bch_register_lock);
+ 	module_put(THIS_MODULE);
+ 	return ret;
+ 
+-- 
+1.8.5.6
+
