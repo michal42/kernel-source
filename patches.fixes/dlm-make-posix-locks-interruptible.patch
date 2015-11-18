@@ -1,0 +1,36 @@
+From: Eric Ren <zren@suse.com>
+Date: Wed, 14 Oct 2015 23:28:26 +0800
+Subject: [PATCH] dlm: make posix locks interruptible
+Patch-mainline: v4.4-rc1
+Git-commit: a6b1533e9a57d76cd3d9b7649d29ac604b1874b8
+Reference: bsc#947241
+
+Replace wait_event_killable with wait_event_interruptible
+so that a program waiting for a posix lock can be
+interrupted by a signal.  With the killable version,
+a program was not interruptible by a signal if it
+had a signal handler set for it, overriding the default
+action of terminating the process.
+
+Signed-off-by: Eric Ren <zren@suse.com>
+Signed-off-by: David Teigland <teigland@redhat.com>
+---
+ fs/dlm/plock.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/dlm/plock.c b/fs/dlm/plock.c
+index 5532f09..88f1036 100644
+--- a/fs/dlm/plock.c
++++ b/fs/dlm/plock.c
+@@ -145,7 +145,7 @@ int dlm_posix_lock(dlm_lockspace_t *lockspace, u64 number, struct file *file,
+ 	send_op(op);
+ 
+ 	if (xop->callback == NULL) {
+-		rv = wait_event_killable(recv_wq, (op->done != 0));
++		rv = wait_event_interruptible(recv_wq, (op->done != 0));
+ 		if (rv == -ERESTARTSYS) {
+ 			log_debug(ls, "dlm_posix_lock: wait killed %llx",
+ 				  (unsigned long long)number);
+-- 
+2.6.2
+
