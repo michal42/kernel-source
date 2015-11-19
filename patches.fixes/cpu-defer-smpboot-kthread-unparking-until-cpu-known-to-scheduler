@@ -1,0 +1,114 @@
+From: "Paul E. McKenney" <paulmck@linux.vnet.ibm.com>
+Date: Sun, 12 Apr 2015 08:06:55 -0700
+Subject: cpu: Defer smpboot kthread unparking until CPU known to scheduler
+Git-commit: 00df35f991914db6b8bde8cf09808e19a9cffc3d
+Patch-mainline: v4.1-rc1
+References: bsc#936773
+
+Currently, smpboot_unpark_threads() is invoked before the incoming CPU
+has been added to the scheduler's runqueue structures.  This might
+potentially cause the unparked kthread to run on the wrong CPU, since the
+correct CPU isn't fully set up yet.
+
+That causes a sporadic, hard to debug boot crash triggering on some
+systems, reported by Borislav Petkov, and bisected down to:
+
+  2a442c9c6453 ("x86: Use common outgoing-CPU-notification code")
+
+This patch places smpboot_unpark_threads() in a CPU hotplug
+notifier with priority set so that these kthreads are unparked just after
+the CPU has been added to the runqueues.
+
+Reported-and-tested-by: Borislav Petkov <bp@suse.de>
+Signed-off-by: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: linux-kernel@vger.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ include/linux/cpu.h |  2 ++
+ init/main.c         |  1 +
+ kernel/cpu.c        | 34 +++++++++++++++++++++++++++++++---
+ 3 files changed, 34 insertions(+), 3 deletions(-)
+
+--- a/include/linux/cpu.h
++++ b/include/linux/cpu.h
+@@ -73,6 +73,7 @@
+ 	/* migration should happen before other stuff but after perf */
+ 	CPU_PRI_PERF		= 20,
+ 	CPU_PRI_MIGRATION	= 10,
++	CPU_PRI_SMPBOOT		= 9,
+ 	/* bring up workqueues before normal notifiers and down after */
+ 	CPU_PRI_WORKQUEUE_UP	= 5,
+ 	CPU_PRI_WORKQUEUE_DOWN	= -5,
+@@ -141,6 +142,7 @@
+ }
+ #endif
+ 
++void smpboot_thread_init(void);
+ int cpu_up(unsigned int cpu);
+ void notify_cpu_starting(unsigned int cpu);
+ extern void cpu_maps_update_begin(void);
+--- a/init/main.c
++++ b/init/main.c
+@@ -370,6 +370,7 @@
+ 	int pid;
+ 
+ 	rcu_scheduler_starting();
++	smpboot_thread_init();
+ 	/*
+ 	 * We need to spawn init first so that it obtains pid 1, however
+ 	 * the init task will end up wanting to create kthreads, which, if
+--- a/kernel/cpu.c
++++ b/kernel/cpu.c
+@@ -393,6 +393,37 @@
+ EXPORT_SYMBOL(cpu_down);
+ #endif /*CONFIG_HOTPLUG_CPU*/
+ 
++/*
++ * Unpark per-CPU smpboot kthreads at CPU-online time.
++ */
++static int smpboot_thread_call(struct notifier_block *nfb,
++			       unsigned long action, void *hcpu)
++{
++	int cpu = (long)hcpu;
++
++	switch (action & ~CPU_TASKS_FROZEN) {
++
++	case CPU_ONLINE:
++		smpboot_unpark_threads(cpu);
++		break;
++
++	default:
++		break;
++	}
++
++	return NOTIFY_OK;
++}
++
++static struct notifier_block smpboot_thread_notifier = {
++	.notifier_call = smpboot_thread_call,
++	.priority = CPU_PRI_SMPBOOT,
++};
++
++void __cpuinit smpboot_thread_init(void)
++{
++	register_cpu_notifier(&smpboot_thread_notifier);
++}
++
+ /* Requires cpu_add_remove_lock to be held */
+ static int _cpu_up(unsigned int cpu, int tasks_frozen)
+ {
+@@ -432,9 +463,6 @@
+ 		goto out_notify;
+ 	BUG_ON(!cpu_online(cpu));
+ 
+-	/* Wake the per cpu threads */
+-	smpboot_unpark_threads(cpu);
+-
+ 	/* Now call notifier in preparation. */
+ 	cpu_notify(CPU_ONLINE | mod, hcpu);
+ 
