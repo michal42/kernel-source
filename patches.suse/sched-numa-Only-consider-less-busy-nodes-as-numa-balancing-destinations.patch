@@ -1,0 +1,130 @@
+From 0b34ed5f04e7dd93295863bdbacb9e83bf26dd60 Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Thu, 28 May 2015 09:52:49 -0400
+Subject: [PATCH] sched/numa: Only consider less busy nodes as numa balancing
+ destinations
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.2
+Git-commit: 6f9aad0bc37286c0441b57f0ba8cffee50715426
+
+Changeset a43455a1d572 ("sched/numa: Ensure task_numa_migrate() checks
+the preferred node") fixes an issue where workloads would never
+converge on a fully loaded (or overloaded) system.
+
+However, it introduces a regression on less than fully loaded systems,
+where workloads converge on a few NUMA nodes, instead of properly
+staying spread out across the whole system. This leads to a reduction
+in available memory bandwidth, and usable CPU cache, with predictable
+performance problems.
+
+The root cause appears to be an interaction between the load balancer
+and NUMA balancing, where the short term load represented by the load
+balancer differs from the long term load the NUMA balancing code would
+like to base its decisions on.
+
+Simply reverting a43455a1d572 would re-introduce the non-convergence
+of workloads on fully loaded systems, so that is not a good option. As
+an aside, the check done before a43455a1d572 only applied to a task's
+preferred node, not to other candidate nodes in the system, so the
+converge-on-too-few-nodes problem still happens, just to a lesser
+degree.
+
+Instead, try to compensate for the impedance mismatch between the load
+balancer and NUMA balancing by only ever considering a lesser loaded
+node as a destination for NUMA balancing, regardless of whether the
+task is trying to move to the preferred node, or to another node.
+
+This patch also addresses the issue that a system with a single
+runnable thread would never migrate that thread to near its memory,
+introduced by 095bebf61a46 ("sched/numa: Do not move past the balance
+point if unbalanced").
+
+A test where the main thread creates a large memory area, and spawns a
+worker thread to iterate over the memory (placed on another node by
+select_task_rq_fair), after which the main thread goes to sleep and
+waits for the worker thread to loop over all the memory now sees the
+worker thread migrated to where the memory is, instead of having all
+the memory migrated over like before.
+
+Jirka has run a number of performance tests on several systems: single
+instance SpecJBB 2005 performance is 7-15% higher on a 4 node system,
+with higher gains on systems with more cores per socket.
+Multi-instance SpecJBB 2005 (one per node), linpack, and stream see
+little or no changes with the revert of 095bebf61a46 and this patch.
+
+Reported-by: Artem Bityutski <dedekind1@gmail.com>
+Reported-by: Jirka Hladky <jhladky@redhat.com>
+Tested-by: Jirka Hladky <jhladky@redhat.com>
+Tested-by: Artem Bityutskiy <dedekind1@gmail.com>
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Acked-by: Mel Gorman <mgorman@suse.de>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: H. Peter Anvin <hpa@zytor.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Srikar Dronamraju <srikar@linux.vnet.ibm.com>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Link: http://lkml.kernel.org/r/20150528095249.3083ade0@annuminas.surriel.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 30 ++++++++++++++++++++++++++++--
+ 1 file changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 0bdcd997f563..d948aae46575 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1329,6 +1329,30 @@ static void task_numa_find_cpu(struct task_numa_env *env,
+ 	}
+ }
+ 
++/* Only move tasks to a NUMA node less busy than the current node. */
++static bool numa_has_capacity(struct task_numa_env *env)
++{
++	struct numa_stats *src = &env->src_stats;
++	struct numa_stats *dst = &env->dst_stats;
++
++	if (src->has_free_capacity && !dst->has_free_capacity)
++		return false;
++
++	/*
++	 * Only consider a task move if the source has a higher load
++	 * than the destination, corrected for CPU capacity on each node.
++	 *
++	 *      src->load                dst->load
++	 * --------------------- vs ---------------------
++	 * src->compute_capacity    dst->compute_capacity
++	 */
++	if (src->load * dst->compute_capacity >
++	    dst->load * src->compute_capacity)
++		return true;
++
++	return false;
++}
++
+ static int task_numa_migrate(struct task_struct *p)
+ {
+ 	struct task_numa_env env = {
+@@ -1382,7 +1406,8 @@ static int task_numa_migrate(struct task_struct *p)
+ 	update_numa_stats(&env.dst_stats, env.dst_nid);
+ 
+ 	/* Try to find a spot on the preferred nid. */
+-	task_numa_find_cpu(&env, taskimp, groupimp);
++	if (numa_has_capacity(&env))
++		task_numa_find_cpu(&env, taskimp, groupimp);
+ 
+ 	/*
+ 	 * Look at other nodes in these cases:
+@@ -1405,7 +1430,8 @@ static int task_numa_migrate(struct task_struct *p)
+ 
+ 			env.dst_nid = nid;
+ 			update_numa_stats(&env.dst_stats, env.dst_nid);
+-			task_numa_find_cpu(&env, taskimp, groupimp);
++			if (numa_has_capacity(&env))
++				task_numa_find_cpu(&env, taskimp, groupimp);
+ 		}
+ 	}
+ 
