@@ -1,0 +1,46 @@
+From 8f2194b3f120a88a8f4218665c4bb17caaca9e9d Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Thu, 5 Nov 2015 15:56:22 -0500
+Subject: [PATCH] sched/numa: Fix math underflow in task_tick_numa()
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.4
+Git-commit: 25b3e5a3344e1f700c1efec5b6f0199f04707fb1
+
+The NUMA balancing code implements delays in scanning by
+advancing curr->node_stamp beyond curr->se.sum_exec_runtime.
+
+With unsigned math, that creates an underflow, which results
+in task_numa_work being queued all the time, even when we
+don't want to.
+
+Avoiding the math underflow makes it possible to reduce CPU
+overhead in the NUMA balancing code.
+
+Reported-and-tested-by: Jan Stancek <jstancek@redhat.com>
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: mgorman@suse.de
+Link: http://lkml.kernel.org/r/1446756983-28173-2-git-send-email-riel@redhat.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index d948aae46575..234a91f2c91a 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -2124,7 +2124,7 @@ void task_tick_numa(struct rq *rq, struct task_struct *curr)
+ 	now = curr->se.sum_exec_runtime;
+ 	period = (u64)curr->numa_scan_period * NSEC_PER_MSEC;
+ 
+-	if (now - curr->node_stamp > period) {
++	if (now > curr->node_stamp + period) {
+ 		if (!curr->node_stamp)
+ 			curr->numa_scan_period = task_scan_min(curr);
+ 		curr->node_stamp += period;
