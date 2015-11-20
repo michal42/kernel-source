@@ -1,0 +1,50 @@
+From 3572de92bc0cb4a8255929cc33a6b7c2d22c9649 Mon Sep 17 00:00:00 2001
+From: Vladimir Davydov <vdavydov@parallels.com>
+Date: Tue, 8 Sep 2015 15:02:18 -0700
+Subject: [PATCH] mm: vmscan: never isolate more pages than necessary
+
+References: VM Performance
+Patch-mainline: v4.3
+Git-commit: 0b802f101d0c6caeeee89066dc2c8665082a83df
+
+If transparent huge pages are enabled, we can isolate many more pages
+than we actually need to scan, because we count both single and huge
+pages equally in isolate_lru_pages().
+
+Since commit 5bc7b8aca942d ("mm: thp: add split tail pages to shrink
+page list in page reclaim"), we scan all the tail pages immediately
+after a huge page split (see shrink_page_list()).  As a result, we can
+reclaim up to SWAP_CLUSTER_MAX * HPAGE_PMD_NR (512 MB) in one run!
+
+This is easy to catch on memcg reclaim with zswap enabled.  The latter
+makes swapout instant so that if we happen to scan an unreferenced huge
+page we will evict both its head and tail pages immediately, which is
+likely to result in excessive reclaim.
+
+Signed-off-by: Vladimir Davydov <vdavydov@parallels.com>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Reviewed-by: Michal Hocko <mhocko@suse.cz>
+Cc: Vlastimil Babka <vbabka@suse.cz>
+Cc: Minchan Kim <minchan@kernel.org>
+Cc: Mel Gorman <mgorman@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ mm/vmscan.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 481de8c009c1..385b9649e5e7 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -1268,7 +1268,8 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
+ 	unsigned long nr_taken = 0;
+ 	unsigned long scan;
+ 
+-	for (scan = 0; scan < nr_to_scan && !list_empty(src); scan++) {
++	for (scan = 0; scan < nr_to_scan && nr_taken < nr_to_scan &&
++					!list_empty(src); scan++) {
+ 		struct page *page;
+ 		int nr_pages;
+ 
