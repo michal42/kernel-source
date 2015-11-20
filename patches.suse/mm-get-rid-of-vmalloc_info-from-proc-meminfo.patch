@@ -1,0 +1,172 @@
+From 451e9d70c9627232253223b46ad1a68fc564bd0d Mon Sep 17 00:00:00 2001
+From: Linus Torvalds <torvalds@linux-foundation.org>
+Date: Sun, 1 Nov 2015 17:09:15 -0800
+Subject: [PATCH] mm: get rid of 'vmalloc_info' from /proc/meminfo
+
+References: VM Performance
+Patch-mainline: v4.4
+Git-commit: a5ad88ce8c7fae7ddc72ee49a11a75aa837788e0
+
+It turns out that at least some versions of glibc end up reading
+/proc/meminfo at every single startup, because glibc wants to know the
+amount of memory the machine has.  And while that's arguably insane,
+it's just how things are.
+
+And it turns out that it's not all that expensive most of the time, but
+the vmalloc information statistics (amount of virtual memory used in the
+vmalloc space, and the biggest remaining chunk) can be rather expensive
+to compute.
+
+The 'get_vmalloc_info()' function actually showed up on my profiles as
+4% of the CPU usage of "make test" in the git source repository, because
+the git tests are lots of very short-lived shell-scripts etc.
+
+It turns out that apparently this same silly vmalloc info gathering
+shows up on the facebook servers too, according to Dave Jones.  So it's
+not just "make test" for git.
+
+We had two patches to just cache the information (one by me, one by
+Ingo) to mitigate this issue, but the whole vmalloc information of of
+rather dubious value to begin with, and people who *actually* want to
+know what the situation is wrt the vmalloc area should just look at the
+much more complete /proc/vmallocinfo instead.
+
+In fact, according to my testing - and perhaps more importantly,
+according to that big search engine in the sky: Google - there is
+nothing out there that actually cares about those two expensive fields:
+VmallocUsed and VmallocChunk.
+
+So let's try to just remove them entirely.  Actually, this just removes
+the computation and reports the numbers as zero for now, just to try to
+be minimally intrusive.
+
+If this breaks anything, we'll obviously have to re-introduce the code
+to compute this all and add the caching patches on top.  But if given
+the option, I'd really prefer to just remove this bad idea entirely
+rather than add even more code to work around our historical mistake
+that likely nobody really cares about.
+
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ fs/proc/meminfo.c       |  7 ++-----
+ include/linux/vmalloc.h | 12 ------------
+ mm/vmalloc.c            | 47 -----------------------------------------------
+ 3 files changed, 2 insertions(+), 64 deletions(-)
+
+diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
+index f8b13ba4aff0..8645e3346ed5 100644
+--- a/fs/proc/meminfo.c
++++ b/fs/proc/meminfo.c
+@@ -24,7 +24,6 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
+ {
+ 	struct sysinfo i;
+ 	unsigned long committed;
+-	struct vmalloc_info vmi;
+ 	long cached;
+ 	long available;
+ 	unsigned long pagecache;
+@@ -46,8 +45,6 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
+ 	if (cached < 0)
+ 		cached = 0;
+ 
+-	get_vmalloc_info(&vmi);
+-
+ 	for (lru = LRU_BASE; lru < NR_LRU_LISTS; lru++)
+ 		pages[lru] = global_page_state(NR_LRU_BASE + lru);
+ 
+@@ -184,8 +181,8 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
+ 		K(vm_commit_limit()),
+ 		K(committed),
+ 		(unsigned long)VMALLOC_TOTAL >> 10,
+-		vmi.used >> 10,
+-		vmi.largest_chunk >> 10
++		0ul, // used to be vmalloc 'used'
++		0ul  // used to be vmalloc 'largest_chunk'
+ #ifdef CONFIG_MEMORY_FAILURE
+ 		,atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)
+ #endif
+diff --git a/include/linux/vmalloc.h b/include/linux/vmalloc.h
+index 4b8a89189a29..178e42953ff0 100644
+--- a/include/linux/vmalloc.h
++++ b/include/linux/vmalloc.h
+@@ -174,22 +174,10 @@ pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms)
+ # endif
+ #endif
+ 
+-struct vmalloc_info {
+-	unsigned long   used;
+-	unsigned long   largest_chunk;
+-};
+-
+ #ifdef CONFIG_MMU
+ #define VMALLOC_TOTAL (VMALLOC_END - VMALLOC_START)
+-extern void get_vmalloc_info(struct vmalloc_info *vmi);
+ #else
+-
+ #define VMALLOC_TOTAL 0UL
+-#define get_vmalloc_info(vmi)			\
+-do {						\
+-	(vmi)->used = 0;			\
+-	(vmi)->largest_chunk = 0;		\
+-} while (0)
+ #endif
+ 
+ #endif /* _LINUX_VMALLOC_H */
+diff --git a/mm/vmalloc.c b/mm/vmalloc.c
+index 2c82edc41747..030ae801cde1 100644
+--- a/mm/vmalloc.c
++++ b/mm/vmalloc.c
+@@ -2706,52 +2706,5 @@ static int __init proc_vmalloc_init(void)
+ }
+ module_init(proc_vmalloc_init);
+ 
+-void get_vmalloc_info(struct vmalloc_info *vmi)
+-{
+-	struct vmap_area *va;
+-	unsigned long free_area_size;
+-	unsigned long prev_end;
+-
+-	vmi->used = 0;
+-	vmi->largest_chunk = 0;
+-
+-	prev_end = VMALLOC_START;
+-
+-	rcu_read_lock();
+-
+-	if (list_empty(&vmap_area_list)) {
+-		vmi->largest_chunk = VMALLOC_TOTAL;
+-		goto out;
+-	}
+-
+-	list_for_each_entry_rcu(va, &vmap_area_list, list) {
+-		unsigned long addr = va->va_start;
+-
+-		/*
+-		 * Some archs keep another range for modules in vmalloc space
+-		 */
+-		if (addr < VMALLOC_START)
+-			continue;
+-		if (addr >= VMALLOC_END)
+-			break;
+-
+-		if (va->flags & (VM_LAZY_FREE | VM_LAZY_FREEING))
+-			continue;
+-
+-		vmi->used += (va->va_end - va->va_start);
+-
+-		free_area_size = addr - prev_end;
+-		if (vmi->largest_chunk < free_area_size)
+-			vmi->largest_chunk = free_area_size;
+-
+-		prev_end = va->va_end;
+-	}
+-
+-	if (VMALLOC_END - prev_end > vmi->largest_chunk)
+-		vmi->largest_chunk = VMALLOC_END - prev_end;
+-
+-out:
+-	rcu_read_unlock();
+-}
+ #endif
+ 
