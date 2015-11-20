@@ -1,0 +1,138 @@
+From 383979a1f3ea28482d84c2c65ad8de9ae9f81e01 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 12 Nov 2013 15:08:31 -0800
+Subject: [PATCH] mm: factor commit limit calculation
+
+References: VM Performance
+Patch-mainline: v3.13
+Git-commit: 00619bcc44d6b779aa366130b354153c222e4380
+
+The same calculation is currently done in three differents places.
+Factor that code so future changes has to be made at only one place.
+
+[akpm@linux-foundation.org: uninline vm_commit_limit()]
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+Cc: Dave Hansen <dave.hansen@linux.intel.com>
+Cc: Michal Hocko <mhocko@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ fs/proc/meminfo.c    |  5 +----
+ include/linux/mman.h |  2 ++
+ mm/mmap.c            |  4 +---
+ mm/nommu.c           |  3 +--
+ mm/util.c            | 13 +++++++++++++
+ 5 files changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
+index b56af20198f0..f8b13ba4aff0 100644
+--- a/fs/proc/meminfo.c
++++ b/fs/proc/meminfo.c
+@@ -24,7 +24,6 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
+ {
+ 	struct sysinfo i;
+ 	unsigned long committed;
+-	unsigned long allowed;
+ 	struct vmalloc_info vmi;
+ 	long cached;
+ 	long available;
+@@ -41,8 +40,6 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
+ 	si_meminfo(&i);
+ 	si_swapinfo(&i);
+ 	committed = percpu_counter_read_positive(&vm_committed_as);
+-	allowed = ((totalram_pages - hugetlb_total_pages())
+-		* sysctl_overcommit_ratio / 100) + total_swap_pages;
+ 
+ 	cached = global_page_state(NR_FILE_PAGES) -
+ 			total_swapcache_pages() - i.bufferram;
+@@ -184,7 +181,7 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
+ 		K(global_page_state(NR_UNSTABLE_NFS)),
+ 		K(global_page_state(NR_BOUNCE)),
+ 		K(global_page_state(NR_WRITEBACK_TEMP)),
+-		K(allowed),
++		K(vm_commit_limit()),
+ 		K(committed),
+ 		(unsigned long)VMALLOC_TOTAL >> 10,
+ 		vmi.used >> 10,
+diff --git a/include/linux/mman.h b/include/linux/mman.h
+index 92dc257251e4..7f7f8dae4b1d 100644
+--- a/include/linux/mman.h
++++ b/include/linux/mman.h
+@@ -87,4 +87,6 @@ calc_vm_flag_bits(unsigned long flags)
+ 	       _calc_vm_trans(flags, MAP_DENYWRITE,  VM_DENYWRITE ) |
+ 	       _calc_vm_trans(flags, MAP_LOCKED,     VM_LOCKED    );
+ }
++
++unsigned long vm_commit_limit(void);
+ #endif /* _LINUX_MMAN_H */
+diff --git a/mm/mmap.c b/mm/mmap.c
+index 9d2f49bd6557..0b036efc85d0 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -180,14 +180,12 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
+ 		goto error;
+ 	}
+ 
+-	allowed = (totalram_pages - hugetlb_total_pages())
+-	       	* sysctl_overcommit_ratio / 100;
++	allowed = vm_commit_limit();
+ 	/*
+ 	 * Reserve some for root
+ 	 */
+ 	if (!cap_sys_admin)
+ 		allowed -= sysctl_admin_reserve_kbytes >> (PAGE_SHIFT - 10);
+-	allowed += total_swap_pages;
+ 
+ 	/*
+ 	 * Don't let a single process grow so big a user can't recover
+diff --git a/mm/nommu.c b/mm/nommu.c
+index 075383b3dc67..f9e2847b4d1a 100644
+--- a/mm/nommu.c
++++ b/mm/nommu.c
+@@ -1956,13 +1956,12 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
+ 		goto error;
+ 	}
+ 
+-	allowed = totalram_pages * sysctl_overcommit_ratio / 100;
++	allowed = vm_commit_limit();
+ 	/*
+ 	 * Reserve some 3% for root
+ 	 */
+ 	if (!cap_sys_admin)
+ 		allowed -= sysctl_admin_reserve_kbytes >> (PAGE_SHIFT - 10);
+-	allowed += total_swap_pages;
+ 
+ 	/*
+ 	 * Don't let a single process grow so big a user can't recover
+diff --git a/mm/util.c b/mm/util.c
+index 18fd704c1a19..90b68634420d 100644
+--- a/mm/util.c
++++ b/mm/util.c
+@@ -8,6 +8,9 @@
+ #include <linux/swap.h>
+ #include <linux/swapops.h>
+ #include <linux/vmalloc.h>
++#include <linux/mman.h>
++#include <linux/hugetlb.h>
++
+ #include <asm/uaccess.h>
+ 
+ #include "internal.h"
+@@ -408,6 +411,16 @@ struct address_space *page_mapping(struct page *page)
+ 	return mapping;
+ }
+ 
++/*
++ * Committed memory limit enforced when OVERCOMMIT_NEVER policy is used
++ */
++unsigned long vm_commit_limit(void)
++{
++	return ((totalram_pages - hugetlb_total_pages())
++		* sysctl_overcommit_ratio / 100) + total_swap_pages;
++}
++
++
+ /* Tracepoints definitions. */
+ EXPORT_TRACEPOINT_SYMBOL(kmalloc);
+ EXPORT_TRACEPOINT_SYMBOL(kmem_cache_alloc);
