@@ -1,0 +1,56 @@
+From d1573cf6004b3a14560b7f6f7bdc495d4b487f9f Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Thu, 9 Oct 2014 17:27:47 -0400
+Subject: [PATCH] sched/numa: Check all nodes when placing a pseudo-interleaved
+ group
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v3.19
+Git-commit: 9de05d48711cd5314920ed05f873d84eaf66ccf1
+
+In pseudo-interleaved numa_groups, all tasks try to relocate to
+the group's preferred_nid.  When a group is spread across multiple
+NUMA nodes, this can lead to tasks swapping their location with
+other tasks inside the same group, instead of swapping location with
+tasks from other NUMA groups. This can keep NUMA groups from converging.
+
+Examining all nodes, when dealing with a task in a pseudo-interleaved
+NUMA group, avoids this problem. Note that only CPUs in nodes that
+improve the task or group score are examined, so the loop isn't too
+bad.
+
+Tested-by: Vinod Chegu <chegu_vinod@hp.com>
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Cc: "Vinod Chegu" <chegu_vinod@hp.com>
+Cc: mgorman@suse.de
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Link: http://lkml.kernel.org/r/20141009172747.0d97c38c@annuminas.surriel.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ kernel/sched/fair.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 78385521ec5e..0bdcd997f563 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -1384,8 +1384,15 @@ static int task_numa_migrate(struct task_struct *p)
+ 	/* Try to find a spot on the preferred nid. */
+ 	task_numa_find_cpu(&env, taskimp, groupimp);
+ 
+-	/* No space available on the preferred nid. Look elsewhere. */
+-	if (env.best_cpu == -1) {
++	/*
++	 * Look at other nodes in these cases:
++	 * - there is no space available on the preferred_nid
++	 * - the task is part of a numa_group that is interleaved across
++	 *   multiple NUMA nodes; in order to better consolidate the group,
++	 *   we need to check other locations.
++	 */
++	if (env.best_cpu == -1 || (p->numa_group &&
++			nodes_weight(p->numa_group->active_nodes) > 1)) {
+ 		for_each_online_node(nid) {
+ 			if (nid == env.src_nid || nid == p->numa_preferred_nid)
+ 				continue;
