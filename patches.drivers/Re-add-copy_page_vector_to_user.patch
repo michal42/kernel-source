@@ -1,0 +1,68 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Date: Wed, 25 Nov 2015 16:14:56 -0600
+Subject: [PATCH] Re-add copy_page_vector_to_user
+Patch-mainline: Never, re-adding a function deleted by previous patch
+
+patches.drivers/0112-ceph_sync_read-stop-poking-into-iov_iter-guts.patch
+removed an important cephfs function (ceph_copy_page_vector_to_user).
+Ideally, we would want to delete the patch, but it exports the function
+ang that would break the kABI. So, adding it locally.
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+---
+ fs/ceph/file.c | 32 +++++++++++++++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/fs/ceph/file.c b/fs/ceph/file.c
+index 84ff9bb..2ae508b 100644
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -403,6 +403,36 @@ more:
+ }
+ 
+ /*
++ * copy user data from a page vector into a user pointer
++ */
++static int copy_page_vector_to_user(struct page **pages,
++		void __user *data,
++		loff_t off, size_t len)
++{
++	int i = 0;
++	int po = off & ~PAGE_CACHE_MASK;
++	int left = len;
++	int l, bad;
++
++	while (left > 0) {
++		l = min_t(int, left, PAGE_CACHE_SIZE-po);
++		bad = copy_to_user(data, page_address(pages[i]) + po, l);
++		if (bad == l)
++			return -EFAULT;
++		data += l - bad;
++		left -= l - bad;
++		if (po) {
++			po += l - bad;
++			if (po == PAGE_CACHE_SIZE)
++				po = 0;
++		}
++		i++;
++	}
++	return len;
++}
++
++
++/*
+  * Completely synchronous read and write methods.  Direct from __user
+  * buffer to osd, or directly to user pages (if O_DIRECT).
+  *
+@@ -445,7 +475,7 @@ static ssize_t ceph_sync_read(struct file *file, char __user *data,
+ 			   (unsigned long)data & ~PAGE_MASK);
+ 
+ 	if (ret >= 0 && !o_direct)
+-		ret = ceph_copy_page_vector_to_user(pages, data, off, ret);
++		ret = copy_page_vector_to_user(pages, data, off, ret);
+ 	if (ret >= 0)
+ 		*poff = off + ret;
+ 
+-- 
+2.6.2
+
