@@ -18,7 +18,7 @@ Acked-by: Lee Duncan <lduncan@suse.com>
 
 --- a/drivers/block/rbd.c
 +++ b/drivers/block/rbd.c
-@@ -2914,7 +2914,7 @@ static void rbd_watch_cb(u64 ver, u64 no
+@@ -2926,7 +2926,7 @@ static void rbd_watch_cb(u64 ver, u64 no
   * Request sync osd watch/unwatch.  The value of "start" determines
   * whether a watch request is being initiated or torn down.
   */
@@ -27,7 +27,7 @@ Acked-by: Lee Duncan <lduncan@suse.com>
  {
  	struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc;
  	struct rbd_obj_request *obj_request;
-@@ -2989,6 +2989,22 @@ out_cancel:
+@@ -3001,6 +3001,22 @@ out_cancel:
  	return ret;
  }
  
@@ -50,39 +50,39 @@ Acked-by: Lee Duncan <lduncan@suse.com>
  /*
   * Synchronous osd object method call.  Returns the number of bytes
   * returned in the outbound buffer, or a negative error code.
-@@ -5017,7 +5033,6 @@ static void rbd_dev_image_release(struct
- static int rbd_dev_image_probe(struct rbd_device *rbd_dev, bool mapping)
+@@ -5032,7 +5048,6 @@ static void rbd_dev_image_release(struct
+ static int rbd_dev_image_probe(struct rbd_device *rbd_dev, int depth)
  {
  	int ret;
 -	int tmp;
  
  	/*
  	 * Get the id from the image id object.  Unless there's an
-@@ -5036,7 +5051,7 @@ static int rbd_dev_image_probe(struct rb
+@@ -5051,7 +5066,7 @@ static int rbd_dev_image_probe(struct rb
  		goto err_out_format;
  
- 	if (mapping) {
+ 	if (!depth) {
 -		ret = rbd_dev_header_watch_sync(rbd_dev, true);
 +		ret = rbd_dev_header_watch_sync(rbd_dev);
  		if (ret)
  			goto out_header_name;
  	}
-@@ -5063,12 +5078,8 @@ static int rbd_dev_image_probe(struct rb
+@@ -5078,12 +5093,8 @@ static int rbd_dev_image_probe(struct rb
  err_out_probe:
  	rbd_dev_unprobe(rbd_dev);
  err_out_watch:
--	if (mapping) {
+-	if (!depth) {
 -		tmp = rbd_dev_header_watch_sync(rbd_dev, false);
 -		if (tmp)
 -			rbd_warn(rbd_dev, "unable to tear down "
 -					"watch request (%d)\n", tmp);
 -	}
-+	if (mapping)
++	if (!depth)
 +		rbd_dev_header_unwatch_sync(rbd_dev);
  out_header_name:
  	kfree(rbd_dev->header_name);
  	rbd_dev->header_name = NULL;
-@@ -5264,16 +5275,14 @@ static ssize_t do_rbd_remove(struct bus_
+@@ -5279,16 +5290,14 @@ static ssize_t do_rbd_remove(struct bus_
  	if (ret < 0 || already)
  		return ret;
  
