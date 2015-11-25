@@ -1,0 +1,183 @@
+From: Hannes Reinecke <hare@suse.de>
+Date: Thu, 11 Jun 2015 10:01:26 +0200
+Subject: target: use 'se_dev_entry' when allocating UAs
+Git-commit: c51c8e7bcac966f209da83630fc8ca7e6cad279b
+Patch-Mainline: v4.2
+References: bsc#933514
+
+We need to use 'se_dev_entry' as argument when allocating
+UAs, otherwise we'll never see any UAs for an implicit
+ALUA state transition triggered from userspace.
+
+(Add target_ua_allocate_lun() common caller - nab)
+
+[hare: ported to SLE12-SP1]
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+---
+ drivers/target/target_core_alua.c | 26 ++++++++++++++--------
+ drivers/target/target_core_ua.c   | 46 ++++++++++++++++++++++++---------------
+ drivers/target/target_core_ua.h   |  1 +
+ 3 files changed, 46 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/target/target_core_alua.c b/drivers/target/target_core_alua.c
+index 63512cc..b02a5d9 100644
+--- a/drivers/target/target_core_alua.c
++++ b/drivers/target/target_core_alua.c
+@@ -1007,22 +1007,30 @@ static void core_alua_do_transition_tg_pt_work(struct work_struct *work)
+ 					alua_port_list) {
+ 			lacl = se_deve->se_lun_acl;
+ 			/*
+-			 * se_deve->se_lun_acl pointer may be NULL for a
+-			 * entry created without explicit Node+MappedLUN ACLs
++			 * spc4r37 p.242:
++			 * After an explicit target port asymmetric access
++			 * state change, a device server shall establish a
++			 * unit attention condition with the additional sense
++			 * code set to ASYMMETRIC ACCESS STATE CHANGED for
++			 * the initiator port associated with every I_T nexus
++			 * other than the I_T nexus on which the SET TARGET
++			 * PORT GROUPS command was received.
+ 			 */
+-			if (!lacl)
+-				continue;
+-
+ 			if ((tg_pt_gp->tg_pt_gp_alua_access_status ==
+ 			     ALUA_STATUS_ALTERED_BY_EXPLICIT_STPG) &&
+-			   (tg_pt_gp->tg_pt_gp_alua_nacl != NULL) &&
+-			    (tg_pt_gp->tg_pt_gp_alua_nacl == lacl->se_lun_nacl) &&
+ 			   (tg_pt_gp->tg_pt_gp_alua_port != NULL) &&
+ 			    (tg_pt_gp->tg_pt_gp_alua_port == port))
+ 				continue;
+ 
+-			core_scsi3_ua_allocate(lacl->se_lun_nacl,
+-				se_deve->mapped_lun, 0x2A,
++			/*
++			 * se_deve->se_lun_acl pointer may be NULL for a
++			 * entry created without explicit Node+MappedLUN ACLs
++			 */
++			if (lacl && (tg_pt_gp->tg_pt_gp_alua_nacl != NULL) &&
++			    (tg_pt_gp->tg_pt_gp_alua_nacl == lacl->se_lun_nacl))
++			    continue;
++
++			core_scsi3_ua_allocate_deve(se_deve, 0x2A,
+ 				ASCQ_2AH_ASYMMETRIC_ACCESS_STATE_CHANGED);
+ 		}
+ 		spin_unlock_bh(&port->sep_alua_lock);
+diff --git a/drivers/target/target_core_ua.c b/drivers/target/target_core_ua.c
+index 505519b..265cd8c 100644
+--- a/drivers/target/target_core_ua.c
++++ b/drivers/target/target_core_ua.c
+@@ -79,19 +79,12 @@ target_scsi3_ua_check(struct se_cmd *cmd)
+ 	}
+ }
+ 
+-int core_scsi3_ua_allocate(
+-	struct se_node_acl *nacl,
+-	u32 unpacked_lun,
++int core_scsi3_ua_allocate_deve(
++	struct se_dev_entry *deve,
+ 	u8 asc,
+ 	u8 ascq)
+ {
+-	struct se_dev_entry *deve;
+ 	struct se_ua *ua, *ua_p, *ua_tmp;
+-	/*
+-	 * PASSTHROUGH OPS
+-	 */
+-	if (!nacl)
+-		return -EINVAL;
+ 
+ 	ua = kmem_cache_zalloc(se_ua_cache, GFP_ATOMIC);
+ 	if (!ua) {
+@@ -100,13 +93,9 @@ int core_scsi3_ua_allocate(
+ 	}
+ 	INIT_LIST_HEAD(&ua->ua_nacl_list);
+ 
+-	ua->ua_nacl = nacl;
+ 	ua->ua_asc = asc;
+ 	ua->ua_ascq = ascq;
+ 
+-	spin_lock_irq(&nacl->device_list_lock);
+-	deve = nacl->device_list[unpacked_lun];
+-
+ 	spin_lock(&deve->ua_lock);
+ 	list_for_each_entry_safe(ua_p, ua_tmp, &deve->ua_list, ua_nacl_list) {
+ 		/*
+@@ -114,7 +103,6 @@ int core_scsi3_ua_allocate(
+ 		 */
+ 		if ((ua_p->ua_asc == asc) && (ua_p->ua_ascq == ascq)) {
+ 			spin_unlock(&deve->ua_lock);
+-			spin_unlock_irq(&nacl->device_list_lock);
+ 			kmem_cache_free(se_ua_cache, ua);
+ 			return 0;
+ 		}
+@@ -159,7 +147,6 @@ int core_scsi3_ua_allocate(
+ 			list_add_tail(&ua->ua_nacl_list,
+ 				&deve->ua_list);
+ 		spin_unlock(&deve->ua_lock);
+-		spin_unlock_irq(&nacl->device_list_lock);
+ 
+ 		atomic_inc(&deve->ua_count);
+ 		smp_mb__after_atomic_inc();
+@@ -167,11 +154,10 @@ int core_scsi3_ua_allocate(
+ 	}
+ 	list_add_tail(&ua->ua_nacl_list, &deve->ua_list);
+ 	spin_unlock(&deve->ua_lock);
+-	spin_unlock_irq(&nacl->device_list_lock);
+ 
+-	pr_debug("[%s]: Allocated UNIT ATTENTION, mapped LUN: %u, ASC:"
++	pr_debug("Allocated UNIT ATTENTION, mapped LUN: %u, ASC:"
+ 		" 0x%02x, ASCQ: 0x%02x\n",
+-		nacl->se_tpg->se_tpg_tfo->get_fabric_name(), unpacked_lun,
++		deve->mapped_lun,
+ 		asc, ascq);
+ 
+ 	atomic_inc(&deve->ua_count);
+@@ -179,6 +165,30 @@ int core_scsi3_ua_allocate(
+ 	return 0;
+ }
+ 
++int core_scsi3_ua_allocate(
++	struct se_node_acl *nacl,
++	u32 unpacked_lun,
++	u8 asc,
++	u8 ascq)
++{
++	struct se_dev_entry *deve;
++	int ret;
++
++	if (!nacl)
++		return -EINVAL;
++
++	spin_lock_irq(&nacl->device_list_lock);
++	deve = nacl->device_list[unpacked_lun];
++	if (!deve) {
++		spin_unlock_irq(&nacl->device_list_lock);
++		return -EINVAL;
++	}
++
++	ret = core_scsi3_ua_allocate_deve(deve, asc, ascq);
++	spin_unlock_irq(&nacl->device_list_lock);
++	return ret;
++}
++
+ void core_scsi3_ua_release_all(
+ 	struct se_dev_entry *deve)
+ {
+diff --git a/drivers/target/target_core_ua.h b/drivers/target/target_core_ua.h
+index be912b3..e21f363 100644
+--- a/drivers/target/target_core_ua.h
++++ b/drivers/target/target_core_ua.h
+@@ -27,6 +27,7 @@
+ extern struct kmem_cache *se_ua_cache;
+ 
+ extern sense_reason_t target_scsi3_ua_check(struct se_cmd *);
++extern int core_scsi3_ua_allocate_deve(struct se_dev_entry *, u8, u8);
+ extern int core_scsi3_ua_allocate(struct se_node_acl *, u32, u8, u8);
+ extern void core_scsi3_ua_release_all(struct se_dev_entry *);
+ extern void core_scsi3_ua_for_check_condition(struct se_cmd *, u8 *, u8 *);
+-- 
+1.8.5.6
+
