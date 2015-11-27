@@ -24,13 +24,13 @@ Acked-by: David Disseldorp <ddiss@suse.de>
 
 ---
  fs/ceph/addr.c                  |    4 -
- include/linux/ceph/osd_client.h |    3 -
+ include/linux/ceph/osd_client.h |    8 ++
  net/ceph/osd_client.c           |  109 +++++++++++++++++++++++++++++++---------
- 3 files changed, 89 insertions(+), 27 deletions(-)
+ 3 files changed, 93 insertions(+), 28 deletions(-)
 
 --- a/fs/ceph/addr.c
 +++ b/fs/ceph/addr.c
-@@ -249,7 +249,7 @@ static void finish_read(struct ceph_osd_
+@@ -249,7 +249,7 @@
  	dout("finish_read %p req %p rc %d bytes %d\n", inode, req, rc, bytes);
  
  	/* unlock all pages, zeroing any data we didn't read */
@@ -39,7 +39,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  	BUG_ON(osd_data->type != CEPH_OSD_DATA_TYPE_PAGES);
  	num_pages = calc_pages_for((u64)osd_data->alignment,
  					(u64)osd_data->length);
-@@ -591,7 +591,7 @@ static void writepages_finish(struct cep
+@@ -591,7 +591,7 @@
  	long writeback_stat;
  	unsigned issued = ceph_caps_issued(ci);
  
@@ -50,7 +50,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  					(u64)osd_data->length);
 --- a/include/linux/ceph/osd_client.h
 +++ b/include/linux/ceph/osd_client.h
-@@ -90,7 +90,8 @@ struct ceph_osd_req_op {
+@@ -90,7 +90,8 @@
  			u64 offset, length;
  			u64 truncate_size;
  			u32 truncate_seq;
@@ -60,9 +60,21 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  		} extent;
  		struct {
  			u32 name_len;
+@@ -270,7 +271,10 @@
+ extern void osd_req_op_extent_update(struct ceph_osd_request *osd_req,
+ 					unsigned int which, u64 length);
+ 
+-extern struct ceph_osd_data *osd_req_op_extent_osd_data(
++extern struct ceph_osd_data *osd_req_op_extent_osd_request_data(
++					struct ceph_osd_request *osd_req,
++					unsigned int which);
++extern struct ceph_osd_data *osd_req_op_extent_osd_response_data(
+ 					struct ceph_osd_request *osd_req,
+ 					unsigned int which);
+ extern struct ceph_osd_data *osd_req_op_cls_response_data(
 --- a/net/ceph/osd_client.c
 +++ b/net/ceph/osd_client.c
-@@ -145,12 +145,20 @@ osd_req_op_raw_data_in(struct ceph_osd_r
+@@ -145,12 +145,20 @@
  }
  
  struct ceph_osd_data *
@@ -87,7 +99,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  
  struct ceph_osd_data *
  osd_req_op_cls_response_data(struct ceph_osd_request *osd_req,
-@@ -178,21 +186,46 @@ void osd_req_op_extent_osd_data_pages(st
+@@ -178,21 +186,46 @@
  			u64 length, u32 alignment,
  			bool pages_from_pool, bool own_pages)
  {
@@ -141,7 +153,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  }
  EXPORT_SYMBOL(osd_req_op_extent_osd_data_pagelist);
  
-@@ -200,10 +233,22 @@ EXPORT_SYMBOL(osd_req_op_extent_osd_data
+@@ -200,10 +233,22 @@
  void osd_req_op_extent_osd_data_bio(struct ceph_osd_request *osd_req,
  			unsigned int which, struct bio *bio, size_t bio_length)
  {
@@ -167,7 +179,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  }
  EXPORT_SYMBOL(osd_req_op_extent_osd_data_bio);
  #endif /* CONFIG_BLOCK */
-@@ -212,10 +257,22 @@ void osd_req_op_extent_osd_data_sg(struc
+@@ -212,10 +257,22 @@
  			unsigned int which, struct scatterlist *sgl,
  			unsigned int init_sg_offset, u64 length)
  {
@@ -193,7 +205,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  }
  EXPORT_SYMBOL(osd_req_op_extent_osd_data_sg);
  
-@@ -307,8 +364,10 @@ static void osd_req_op_data_release(stru
+@@ -307,8 +364,10 @@
  
  	switch (op->op) {
  	case CEPH_OSD_OP_READ:
@@ -205,7 +217,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  		break;
  	case CEPH_OSD_OP_CALL:
  		ceph_osd_data_release(&op->cls.request_info);
-@@ -689,19 +748,21 @@ static u64 osd_req_encode_op(struct ceph
+@@ -689,19 +748,21 @@
  	case CEPH_OSD_OP_WRITE:
  	case CEPH_OSD_OP_ZERO:
  	case CEPH_OSD_OP_TRUNCATE:
@@ -232,7 +244,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  		break;
  	case CEPH_OSD_OP_CALL:
  		dst->cls.class_len = src->cls.class_len;
-@@ -2888,7 +2949,7 @@ static struct ceph_msg *get_reply(struct
+@@ -2888,7 +2949,7 @@
  		 * XXX page data.  Probably OK for reads, but this
  		 * XXX ought to be done more generally.
  		 */
