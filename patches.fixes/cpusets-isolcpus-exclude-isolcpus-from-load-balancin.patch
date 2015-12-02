@@ -1,0 +1,105 @@
+From a8bffa9fba5e2a9569768bd424ab56405c3bd09f Mon Sep 17 00:00:00 2001
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 9 Mar 2015 12:12:08 -0400
+Subject: [PATCH] cpusets, isolcpus: exclude isolcpus from load balancing
+ in cpusets
+Git-commit: 47b8ea7186aae7f474ec4c98f43eaa8da719cd83
+Patch-mainline: v4.1
+References: bsc#957395
+
+Ensure that cpus specified with the isolcpus= boot commandline
+option stay outside of the load balancing in the kernel scheduler.
+
+Operations like load balancing can introduce unwanted latencies,
+which is exactly what the isolcpus= commandline is there to prevent.
+
+Previously, simply creating a new cpuset, without even touching the
+cpuset.cpus field inside the new cpuset, would undo the effects of
+isolcpus=, by creating a scheduler domain spanning the whole system,
+and setting up load balancing inside that domain. The cpuset root
+cpuset.cpus file is read-only, so there was not even a way to undo
+that effect.
+
+This does not impact the majority of cpusets users, since isolcpus=
+is a fairly specialized feature used for realtime purposes.
+
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Clark Williams <williams@redhat.com>
+Cc: Li Zefan <lizefan@huawei.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Luiz Capitulino <lcapitulino@redhat.com>
+Cc: Mike Galbraith <umgwanakikbuti@gmail.com>
+Cc: cgroups@vger.kernel.org
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Tested-by: David Rientjes <rientjes@google.com>
+Acked-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Acked-by: David Rientjes <rientjes@google.com>
+Acked-by: Zefan Li <lizefan@huawei.com>
+Signed-off-by: Tejun Heo <tj@kernel.org>
+Acked-by: Matt Fleming <mfleming@suse.de>
+---
+ kernel/cpuset.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/cpuset.c b/kernel/cpuset.c
+index b5f0faa..8db56d0 100644
+--- a/kernel/cpuset.c
++++ b/kernel/cpuset.c
+@@ -577,6 +577,7 @@ static int generate_sched_domains(cpumask_var_t **domains,
+ 	int csn;		/* how many cpuset ptrs in csa so far */
+ 	int i, j, k;		/* indices for partition finding loops */
+ 	cpumask_var_t *doms;	/* resulting partition; i.e. sched domains */
++	cpumask_var_t non_isolated_cpus;  /* load balanced CPUs */
+ 	struct sched_domain_attr *dattr;  /* attributes for custom domains */
+ 	int ndoms = 0;		/* number of sched domains in result */
+ 	int nslot;		/* next empty doms[] struct cpumask slot */
+@@ -586,6 +587,10 @@ static int generate_sched_domains(cpumask_var_t **domains,
+ 	dattr = NULL;
+ 	csa = NULL;
+ 
++	if (!alloc_cpumask_var(&non_isolated_cpus, GFP_KERNEL))
++		goto done;
++	cpumask_andnot(non_isolated_cpus, cpu_possible_mask, cpu_isolated_map);
++
+ 	/* Special case for the 99% of systems with one, full, sched domain */
+ 	if (is_sched_load_balance(&top_cpuset)) {
+ 		ndoms = 1;
+@@ -599,6 +604,8 @@ static int generate_sched_domains(cpumask_var_t **domains,
+ 			update_domain_attr_tree(dattr, &top_cpuset);
+ 		}
+ 		cpumask_copy(doms[0], top_cpuset.cpus_allowed);
++		cpumask_and(doms[0], top_cpuset.cpus_allowed,
++				     non_isolated_cpus);
+ 
+ 		goto done;
+ 	}
+@@ -621,7 +628,8 @@ static int generate_sched_domains(cpumask_var_t **domains,
+ 		 * the corresponding sched domain.
+ 		 */
+ 		if (!cpumask_empty(cp->cpus_allowed) &&
+-		    !is_sched_load_balance(cp))
++		    !(is_sched_load_balance(cp) &&
++		      cpumask_intersects(cp->cpus_allowed, non_isolated_cpus)))
+ 			continue;
+ 
+ 		if (is_sched_load_balance(cp))
+@@ -705,7 +713,7 @@ restart:
+ 			struct cpuset *b = csa[j];
+ 
+ 			if (apn == b->pn) {
+-				cpumask_or(dp, dp, b->cpus_allowed);
++				cpumask_and(dp, dp, non_isolated_cpus);
+ 				if (dattr)
+ 					update_domain_attr_tree(dattr + nslot, b);
+ 
+@@ -718,6 +726,7 @@ restart:
+ 	BUG_ON(nslot != ndoms);
+ 
+ done:
++	free_cpumask_var(non_isolated_cpus);
+ 	kfree(csa);
+ 
+ 	/*
+-- 
+2.6.2
+
