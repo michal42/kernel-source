@@ -1,0 +1,65 @@
+From 0ea00bd957c84bccfd722987f6f094d12a3c631d Mon Sep 17 00:00:00 2001
+From: Michal Marek <mmarek@suse.com>
+Date: Wed, 18 Nov 2015 14:14:10 +0100
+Subject: [PATCH 1/2] kabi: Restore kabi in struct se_cmd
+References: bsc#954635
+Patch-mainline: Never, kabi
+
+Put the two new members added by
+patches.drivers/target-compare-and-write-backend-driver-sense-handli.patch
+to existing holes on 64bit and hide them from the checker.
+
+struct se_cmd {
+...
+	u32                        orig_fe_lun;          /*    48     4 */
+
+	/* XXX 4 bytes hole, try to pack */
+...
+	struct kref                cmd_kref;             /*   192     4 */
+
+	/* XXX 4 bytes hole, try to pack */
+...
+};
+
+Signed-off-by: Michal Marek <mmarek@suse.com>
+
+---
+ include/target/target_core_base.h | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index b85d58906760..ea5baa3453a2 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -477,8 +477,6 @@ struct se_dif_v1_tuple {
+ };
+ 
+ struct se_cmd {
+-	sense_reason_t		sense_reason;
+-	u32			sense_info;
+ 	/* SAM response code being sent to initiator */
+ 	u8			scsi_status;
+ 	u8			scsi_asc;
+@@ -503,6 +501,9 @@ struct se_cmd {
+ 	u32			data_length;
+ 	u32			residual_count;
+ 	u32			orig_fe_lun;
++#ifndef __GENKSYMS__
++	sense_reason_t		sense_reason;
++#endif
+ 	/* Persistent Reservation key */
+ 	u64			pr_res_key;
+ 	/* Used for sense data */
+@@ -518,6 +519,9 @@ struct se_cmd {
+ 	struct list_head	se_cmd_list;
+ 	struct completion	cmd_wait_comp;
+ 	struct kref		cmd_kref;
++#ifndef __GENKSYMS__
++	u32			sense_info;
++#endif
+ 	struct target_core_fabric_ops *se_tfo;
+ 	sense_reason_t		(*execute_cmd)(struct se_cmd *);
+ 	sense_reason_t		(*execute_rw)(struct se_cmd *, struct scatterlist *,
+-- 
+2.1.4
+

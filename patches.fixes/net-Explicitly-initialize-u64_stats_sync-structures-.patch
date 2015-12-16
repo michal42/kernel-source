@@ -79,11 +79,11 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  net/ipv6/af_inet6.c                            |   14 ++++++++++++++
  net/ipv6/ip6_gre.c                             |   15 +++++++++++++++
  net/ipv6/ip6_tunnel.c                          |    7 +++++++
- net/ipv6/sit.c                                 |   15 +++++++++++++++
+ net/ipv6/sit.c                                 |    7 +++++++
  net/netfilter/ipvs/ip_vs_ctl.c                 |   25 ++++++++++++++++++++++---
  net/openvswitch/datapath.c                     |    6 ++++++
  net/openvswitch/vport.c                        |    8 ++++++++
- 34 files changed, 253 insertions(+), 6 deletions(-)
+ 34 files changed, 245 insertions(+), 6 deletions(-)
 --- a/drivers/net/dummy.c
 +++ b/drivers/net/dummy.c
 @@ -88,10 +88,16 @@ static netdev_tx_t dummy_xmit(struct sk_
@@ -166,7 +166,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	rx_ring->size = ALIGN(rx_ring->size, 4096);
 --- a/drivers/net/ethernet/marvell/mvneta.c
 +++ b/drivers/net/ethernet/marvell/mvneta.c
-@@ -2792,6 +2792,9 @@ static int mvneta_probe(struct platform_
+@@ -2799,6 +2799,9 @@ static int mvneta_probe(struct platform_
  
  	pp = netdev_priv(dev);
  
@@ -331,7 +331,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
 --- a/drivers/net/team/team.c
 +++ b/drivers/net/team/team.c
-@@ -1544,6 +1544,12 @@ static int team_init(struct net_device *
+@@ -1554,6 +1554,12 @@ static int team_init(struct net_device *
  	if (!team->pcpu_stats)
  		return -ENOMEM;
  
@@ -431,7 +431,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  			     vxlan->dst_port);
 --- a/drivers/net/xen-netfront.c
 +++ b/drivers/net/xen-netfront.c
-@@ -1301,6 +1301,12 @@ static struct net_device *xennet_create_
+@@ -1296,6 +1296,12 @@ static struct net_device *xennet_create_
  	if (np->stats == NULL)
  		goto exit;
  
@@ -545,7 +545,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  			  __alignof__(struct linux_mib)) < 0)
 --- a/net/ipv4/ip_tunnel.c
 +++ b/net/ipv4/ip_tunnel.c
-@@ -981,13 +981,19 @@ int ip_tunnel_init(struct net_device *de
+@@ -983,13 +983,19 @@ int ip_tunnel_init(struct net_device *de
  {
  	struct ip_tunnel *tunnel = netdev_priv(dev);
  	struct iphdr *iph = &tunnel->parms.iph;
@@ -625,7 +625,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  			  __alignof__(struct icmpv6_mib)) < 0)
 --- a/net/ipv6/ip6_gre.c
 +++ b/net/ipv6/ip6_gre.c
-@@ -1250,6 +1250,7 @@ static void ip6gre_tunnel_setup(struct n
+@@ -1251,6 +1251,7 @@ static void ip6gre_tunnel_setup(struct n
  static int ip6gre_tunnel_init(struct net_device *dev)
  {
  	struct ip6_tnl *tunnel;
@@ -633,7 +633,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	tunnel = netdev_priv(dev);
  
-@@ -1269,6 +1270,13 @@ static int ip6gre_tunnel_init(struct net
+@@ -1270,6 +1271,13 @@ static int ip6gre_tunnel_init(struct net
  
  	dev->iflink = tunnel->parms.link;
  
@@ -647,7 +647,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	return 0;
  }
  
-@@ -1448,6 +1456,7 @@ static void ip6gre_netlink_parms(struct
+@@ -1449,6 +1457,7 @@ static void ip6gre_netlink_parms(struct
  static int ip6gre_tap_init(struct net_device *dev)
  {
  	struct ip6_tnl *tunnel;
@@ -655,7 +655,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	tunnel = netdev_priv(dev);
  
-@@ -1463,6 +1472,12 @@ static int ip6gre_tap_init(struct net_de
+@@ -1464,6 +1473,12 @@ static int ip6gre_tap_init(struct net_de
  
  	dev->iflink = tunnel->parms.link;
  
@@ -713,28 +713,6 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	return 0;
  }
  
-@@ -1329,6 +1336,7 @@ static int __net_init ipip6_fb_tunnel_in
- 	struct iphdr *iph = &tunnel->parms.iph;
- 	struct net *net = dev_net(dev);
- 	struct sit_net *sitn = net_generic(net, sit_net_id);
-+	int i;
- 
- 	tunnel->dev = dev;
- 	tunnel->net = dev_net(dev);
-@@ -1341,6 +1349,13 @@ static int __net_init ipip6_fb_tunnel_in
- 	dev->tstats = alloc_percpu(struct pcpu_tstats);
- 	if (!dev->tstats)
- 		return -ENOMEM;
-+
-+	for_each_possible_cpu(i) {
-+		struct pcpu_tstats *ipip6_fb_stats;
-+		ipip6_fb_stats = per_cpu_ptr(dev->tstats, i);
-+		u64_stats_init(&ipip6_fb_stats->syncp);
-+	}
-+
- 	dev_hold(dev);
- 	rcu_assign_pointer(sitn->tunnels_wc[0], tunnel);
- 	return 0;
 --- a/net/netfilter/ipvs/ip_vs_ctl.c
 +++ b/net/netfilter/ipvs/ip_vs_ctl.c
 @@ -842,7 +842,7 @@ ip_vs_new_dest(struct ip_vs_service *svc

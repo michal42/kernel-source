@@ -1,0 +1,231 @@
+From: NeilBrown <neilb@suse.com>
+Date: Sun, 11 Oct 2015 08:55:46 +1100
+Subject: [PATCH] sunrpc/cache: make cache flushing more reliable.
+References: bsc#947478
+Patch-mainline: v4.4-rc1
+Git-commit: 778620364ef525e83597a6edee4d0a69db67fd3d
+
+The caches used to store sunrpc authentication information can be
+flushed by writing a timestamp to a file in /proc.
+
+This timestamp has a one-second resolution and any entry in cache that
+was last_refreshed *before* that time is treated as expired.
+
+This is problematic as it is not possible to reliably flush the cache
+without interrupting NFS service.
+If the current time is written to the "flush" file, any entry that was
+added since the current second started will still be treated as valid.
+If one second beyond than the current time is written to the file
+then no entries can be valid until the second ticks over.  This will
+mean that no NFS request will be handled for up to 1 second.
+
+To resolve this issue we make two changes:
+
+1/ treat an entry as expired if the timestamp when it was last_refreshed
+  is before *or the same as* the expiry time.  This means that current
+  code which writes out the current time will now flush the cache
+  reliably.
+
+2/ when a new entry in added to the cache -  set the last_refresh timestamp
+  to 1 second *beyond* the current flush time, when that not in the
+  past.
+  This ensures that newly added entries will always be valid.
+
+
+Now that we have a very reliable way to flush the cache, and also
+since we are using "since-boot" timestamps which are monotonic,
+change cache_purge() to set the smallest future flush_time which
+will work, and leave it there: don't revert to '1'.
+
+Also disable the setting of the 'flush_time' far into the future.
+That has never been useful and is now awkward as it would cause
+last_refresh times to be strange.
+Finally: if a request is made to set the 'flush_time' to the current
+second, assume the intent is to flush the cache and advance it, if
+necessary, to 1 second beyond the current 'flush_time' so that all
+active entries will be deemed to be expired.
+
+As part of this we need to add a 'cache_detail' arg to cache_init()
+and cache_fresh_locked() so they can find the current ->flush_time.
+
+Signed-off-by: NeilBrown <neilb@suse.com>
+Reported-by: Olaf Kirch <okir@suse.com>
+---
+ include/linux/sunrpc/cache.h |   16 ++++++++----
+ net/sunrpc/cache.c           |   53 ++++++++++++++++++++++++++++++++-----------
+ 2 files changed, 51 insertions(+), 18 deletions(-)
+
+--- a/include/linux/sunrpc/cache.h
++++ b/include/linux/sunrpc/cache.h
+@@ -48,8 +48,10 @@
+ struct cache_head {
+ 	struct cache_head * next;
+ 	time_t		expiry_time;	/* After time time, don't use the data */
+-	time_t		last_refresh;   /* If CACHE_PENDING, this is when upcall 
+-					 * was sent, else this is when update was received
++	time_t		last_refresh;   /* If CACHE_PENDING, this is when upcall was
++					 * sent, else this is when update was
++					 * received, though it is alway set to
++					 * be *after* ->flush_time.
+ 					 */
+ 	struct kref	ref;
+ 	unsigned long	flags;
+@@ -105,8 +107,12 @@ struct cache_detail {
+ 	/* fields below this comment are for internal use
+ 	 * and should not be touched by cache owners
+ 	 */
+-	time_t			flush_time;		/* flush all cache items with last_refresh
+-							 * earlier than this */
++	time_t			flush_time;		/* flush all cache items with
++							 * last_refresh at or earlier
++							 * than this.  last_refresh
++							 * is never set at or earlier
++							 * than this.
++							 */
+ 	struct list_head	others;
+ 	time_t			nextcheck;
+ 	int			entries;
+@@ -203,7 +209,7 @@ static inline void cache_put(struct cach
+ static inline int cache_is_expired(struct cache_detail *detail, struct cache_head *h)
+ {
+ 	return  (h->expiry_time < seconds_since_boot()) ||
+-		(detail->flush_time > h->last_refresh);
++		(detail->flush_time >= h->last_refresh);
+ }
+ 
+ extern int cache_check(struct cache_detail *detail,
+--- a/net/sunrpc/cache.c
++++ b/net/sunrpc/cache.c
+@@ -40,13 +40,16 @@
+ static bool cache_defer_req(struct cache_req *req, struct cache_head *item);
+ static void cache_revisit_request(struct cache_head *item);
+ 
+-static void cache_init(struct cache_head *h)
++static void cache_init(struct cache_head *h, struct cache_detail *detail)
+ {
+ 	time_t now = seconds_since_boot();
+ 	h->next = NULL;
+ 	h->flags = 0;
+ 	kref_init(&h->ref);
+ 	h->expiry_time = now + CACHE_NEW_EXPIRY;
++	if (now <= detail->flush_time)
++		/* ensure it isn't already expired */
++		now = detail->flush_time + 1;
+ 	h->last_refresh = now;
+ }
+ 
+@@ -81,7 +84,7 @@ struct cache_head *sunrpc_cache_lookup(s
+ 	 * we might get lose if we need to
+ 	 * cache_put it soon.
+ 	 */
+-	cache_init(new);
++	cache_init(new, detail);
+ 	detail->init(new, key);
+ 
+ 	write_lock(&detail->hash_lock);
+@@ -118,10 +121,15 @@ EXPORT_SYMBOL_GPL(sunrpc_cache_lookup);
+ 
+ static void cache_dequeue(struct cache_detail *detail, struct cache_head *ch);
+ 
+-static void cache_fresh_locked(struct cache_head *head, time_t expiry)
++static void cache_fresh_locked(struct cache_head *head, time_t expiry,
++			       struct cache_detail *detail)
+ {
++	time_t now = seconds_since_boot();
++	if (now <= detail->flush_time)
++		/* ensure it isn't immediately treated as expired */
++		now = detail->flush_time + 1;
+ 	head->expiry_time = expiry;
+-	head->last_refresh = seconds_since_boot();
++	head->last_refresh = now;
+ 	smp_wmb(); /* paired with smp_rmb() in cache_is_valid() */
+ 	set_bit(CACHE_VALID, &head->flags);
+ }
+@@ -152,7 +160,7 @@ struct cache_head *sunrpc_cache_update(s
+ 				set_bit(CACHE_NEGATIVE, &old->flags);
+ 			else
+ 				detail->update(old, new);
+-			cache_fresh_locked(old, new->expiry_time);
++			cache_fresh_locked(old, new->expiry_time, detail);
+ 			write_unlock(&detail->hash_lock);
+ 			cache_fresh_unlocked(old, detail);
+ 			return old;
+@@ -165,7 +173,7 @@ struct cache_head *sunrpc_cache_update(s
+ 		cache_put(old, detail);
+ 		return NULL;
+ 	}
+-	cache_init(tmp);
++	cache_init(tmp, detail);
+ 	detail->init(tmp, old);
+ 	head = &detail->hash_table[hash];
+ 
+@@ -178,8 +186,8 @@ struct cache_head *sunrpc_cache_update(s
+ 	*head = tmp;
+ 	detail->entries++;
+ 	cache_get(tmp);
+-	cache_fresh_locked(tmp, new->expiry_time);
+-	cache_fresh_locked(old, 0);
++	cache_fresh_locked(tmp, new->expiry_time, detail);
++	cache_fresh_locked(old, 0, detail);
+ 	write_unlock(&detail->hash_lock);
+ 	cache_fresh_unlocked(tmp, detail);
+ 	cache_fresh_unlocked(old, detail);
+@@ -224,7 +232,8 @@ static int try_to_negate_entry(struct ca
+ 	rv = cache_is_valid(h);
+ 	if (rv == -EAGAIN) {
+ 		set_bit(CACHE_NEGATIVE, &h->flags);
+-		cache_fresh_locked(h, seconds_since_boot()+CACHE_NEW_EXPIRY);
++		cache_fresh_locked(h, seconds_since_boot()+CACHE_NEW_EXPIRY,
++				   detail);
+ 		rv = -ENOENT;
+ 	}
+ 	write_unlock(&detail->hash_lock);
+@@ -491,10 +500,13 @@ EXPORT_SYMBOL_GPL(cache_flush);
+ 
+ void cache_purge(struct cache_detail *detail)
+ {
+-	detail->flush_time = LONG_MAX;
++	time_t now = seconds_since_boot();
++	if (detail->flush_time >= now)
++		now = detail->flush_time + 1;
++	/* 'now' is the maximum value any 'last_refresh' can have */
++	detail->flush_time = now;
+ 	detail->nextcheck = seconds_since_boot();
+ 	cache_flush();
+-	detail->flush_time = 1;
+ }
+ EXPORT_SYMBOL_GPL(cache_purge);
+ 
+@@ -1451,6 +1463,7 @@ static ssize_t write_flush(struct file *
+ {
+ 	char tbuf[20];
+ 	char *bp, *ep;
++	time_t then, now;
+ 
+ 	if (*ppos || count > sizeof(tbuf)-1)
+ 		return -EINVAL;
+@@ -1462,8 +1475,22 @@ static ssize_t write_flush(struct file *
+ 		return -EINVAL;
+ 
+ 	bp = tbuf;
+-	cd->flush_time = get_expiry(&bp);
+-	cd->nextcheck = seconds_since_boot();
++	then = get_expiry(&bp);
++	now = seconds_since_boot();
++	cd->nextcheck = now;
++	/* Can only set flush_time to 1 second beyond "now", or
++	 * possibly 1 second beyond flushtime.  This is because
++	 * flush_time never goes backwards so it mustn't get too far
++	 * ahead of time.
++	 */
++	if (then >= now) {
++		/* Want to flush everything, so behave like cache_purge() */
++		if (cd->flush_time >= now)
++			now = cd->flush_time + 1;
++		then = now;
++	}
++
++	cd->flush_time = then;
+ 	cache_flush();
+ 
+ 	*ppos += count;

@@ -114,8 +114,11 @@ suffix=$(sed -rn 's/^Source0:.*\.(tar\.[a-z0-9]*)$/\1/p' rpm/kernel-source.spec.
 # copies. The linux tarball is not deleted if it is already there
 for f in "$build_dir"/*; do
 	case "$f" in
-	*/"linux-$SRCVERSION.$suffix")
+	"$build_dir/linux-$SRCVERSION.$suffix")
 		continue
+		;;
+	"$build_dir"/patches.*)
+		rm -rf "$f"
 	esac
 	rm -f "$f"
 done
@@ -201,8 +204,7 @@ if test -e "$build_dir"/config-options.changes; then
 	mv "$build_dir"/config-options.changes \
 		"$build_dir"/config-options.changes.txt
 fi
-# FIXME: move config-subst out of rpm/
-rm "$build_dir/config-subst"
+rm -f "$build_dir/config-subst"
 
 changelog=$build_dir/kernel-source$VARIANT.changes
 if test -e kernel-source.changes; then

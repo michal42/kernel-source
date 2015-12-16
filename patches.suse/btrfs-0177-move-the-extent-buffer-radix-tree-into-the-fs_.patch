@@ -23,7 +23,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -1659,6 +1659,10 @@ struct btrfs_fs_info {
+@@ -1660,6 +1660,10 @@ struct btrfs_fs_info {
  	spinlock_t reada_lock;
  	struct radix_tree_root reada_tree;
  
@@ -90,7 +90,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	tree->mapping = mapping;
  }
  
-@@ -3501,6 +3499,7 @@ static int write_one_eb(struct extent_bu
+@@ -3556,6 +3554,7 @@ static int write_one_eb(struct extent_bu
  			struct extent_page_data *epd)
  {
  	struct block_device *bdev = fs_info->fs_devices->latest_bdev;
@@ -98,7 +98,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	u64 offset = eb->start;
  	unsigned long i, num_pages;
  	unsigned long bio_flags = 0;
-@@ -3518,7 +3517,7 @@ static int write_one_eb(struct extent_bu
+@@ -3573,7 +3572,7 @@ static int write_one_eb(struct extent_bu
  
  		clear_page_dirty_for_io(p);
  		set_page_writeback(p);
@@ -106,8 +106,8 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
 +		ret = submit_extent_page(rw, tree, p, offset >> 9,
  					 PAGE_CACHE_SIZE, 0, bdev, &epd->bio,
  					 -1, end_bio_extent_buffer_writepage,
- 					 0, epd->bio_flags, bio_flags);
-@@ -4387,10 +4386,9 @@ static inline void btrfs_release_extent_
+ 					 0, epd->bio_flags, bio_flags, false);
+@@ -4446,10 +4445,9 @@ static inline void btrfs_release_extent_
  	__free_extent_buffer(eb);
  }
  
@@ -121,7 +121,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  {
  	struct extent_buffer *eb = NULL;
  
-@@ -4399,7 +4397,7 @@ static struct extent_buffer *__alloc_ext
+@@ -4458,7 +4456,7 @@ static struct extent_buffer *__alloc_ext
  		return NULL;
  	eb->start = start;
  	eb->len = len;
@@ -130,7 +130,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	eb->bflags = 0;
  	rwlock_init(&eb->lock);
  	atomic_set(&eb->write_locks, 0);
-@@ -4531,13 +4529,14 @@ static void mark_extent_buffer_accessed(
+@@ -4592,13 +4590,14 @@ static void mark_extent_buffer_accessed(
  	}
  }
  
@@ -148,7 +148,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	if (eb && atomic_inc_not_zero(&eb->refs)) {
  		rcu_read_unlock();
  		mark_extent_buffer_accessed(eb, NULL);
-@@ -4548,7 +4547,7 @@ struct extent_buffer *find_extent_buffer
+@@ -4609,7 +4608,7 @@ struct extent_buffer *find_extent_buffer
  	return NULL;
  }
  
@@ -157,7 +157,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  					  u64 start, unsigned long len)
  {
  	unsigned long num_pages = num_extent_pages(start, len);
-@@ -4557,16 +4556,15 @@ struct extent_buffer *alloc_extent_buffe
+@@ -4618,16 +4617,15 @@ struct extent_buffer *alloc_extent_buffe
  	struct extent_buffer *eb;
  	struct extent_buffer *exists = NULL;
  	struct page *p;
@@ -177,7 +177,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  	if (!eb)
  		return NULL;
  
-@@ -4621,12 +4619,13 @@ again:
+@@ -4681,12 +4679,13 @@ again:
  	if (ret)
  		goto free_eb;
  
@@ -195,7 +195,7 @@ Signed-off-by: David Sterba <dsterba@suse.cz>
  		if (exists)
  			goto free_eb;
  		else
-@@ -4679,14 +4678,14 @@ static int release_extent_buffer(struct
+@@ -4739,14 +4738,14 @@ static int release_extent_buffer(struct
  	WARN_ON(atomic_read(&eb->refs) == 0);
  	if (atomic_dec_and_test(&eb->refs)) {
  		if (test_and_clear_bit(EXTENT_BUFFER_IN_TREE, &eb->bflags)) {

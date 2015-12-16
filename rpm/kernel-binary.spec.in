@@ -31,11 +31,10 @@
 %define build_xen	("%build_flavor" == "xen" || "%build_flavor" == "ec2")
 %define build_vanilla	("%build_flavor" == "vanilla")
 
-%define build_src_dir %my_builddir/linux-%srcversion
 %define src_install_dir /usr/src/linux-%kernelrelease%variant
 %define obj_install_dir %src_install_dir-obj
 %define rpm_install_dir %buildroot%obj_install_dir
-%define kernel_build_dir %build_src_dir/linux-obj
+%define kernel_build_dir %my_builddir/linux-%srcversion/linux-obj
 
 %(chmod +x %_sourcedir/{@SCRIPTS@})
 
@@ -150,6 +149,7 @@ Conflicts:      hyper-v < 4
 Provides:       kernel = %version-%source_rel
 @PROVIDES_OBSOLETES@
 @PROVIDES_OBSOLETES_BASE@
+%obsolete_rebuilds %name
 @SOURCES@
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 ExclusiveArch:  @ARCHS@
@@ -287,14 +287,13 @@ if [ -f %_sourcedir/localversion ] ; then
     cat %_sourcedir/localversion > localversion
 fi
 
+cp %my_builddir/config/%cpu_arch_flavor .config
 if test -e %my_builddir/config.addon/%cpu_arch_flavor; then
 	# FIXME: config.addon doesn't affect the %CONFIG_ macros defined at
 	# the top of the specfile
-	%_sourcedir/configtool.pl %my_builddir/config{,.addon}/%cpu_arch_flavor >.config
-else
-	cp %my_builddir/config/%cpu_arch_flavor .config
+	../scripts/kconfig/merge_config.sh -m .config %my_builddir/config.addon/%cpu_arch_flavor
 fi
-%build_src_dir/scripts/config \
+../scripts/config \
 	--set-str CONFIG_LOCALVERSION -%source_rel-%build_flavor \
 	--enable  CONFIG_SUSE_KERNEL \
 %if 0%{?__debug_package:1}
@@ -304,7 +303,7 @@ fi
 	--disable CONFIG_DEBUG_INFO
 %endif
 
-MAKE_ARGS="$MAKE_ARGS -C %build_src_dir O=$PWD"
+MAKE_ARGS="$MAKE_ARGS %{?_smp_mflags} -C .. O=$PWD"
 if test -e %_sourcedir/TOLERATE-UNKNOWN-NEW-CONFIG-OPTIONS; then
     yes '' | make oldconfig $MAKE_ARGS
 else
@@ -375,24 +374,15 @@ touch signing_key.x509
 %endif
 
 
-# The %{_smp_mflags} macro is defined to a number, make will spawn that many jobs.
-# There are several ways how to define it:
-# If you are using the build script:
-#     build --jobs=N kernel-$flavor.spec
-# With plain rpmbuild:
-#     rpmbuild -ba --define 'jobs N' kernel-$flavor.spec
-# To spawn as many jobs as there are cpu cores:
-#     rpmbuild -ba --define "%_smp_mflags -j 0$(grep -Ec 'cpu[0-9]' /proc/stat)" \
-#         kernel-$flavor.spec
-# You can also set this permanently in ~/.rpmmacros:
-#     %_smp_mflags -j 0%(grep -Ec 'cpu[0-9]' /proc/stat)
+MAKE_ARGS="$MAKE_ARGS %{?_smp_mflags}"
+
 %if %CONFIG_KMSG_IDS == "y"
     chmod +x ../scripts/kmsg-doc
     MAKE_ARGS="$MAKE_ARGS D=2"
 %endif
 
 while true; do
-    make %{?_smp_mflags} all $MAKE_ARGS CONFIG_DEBUG_SECTION_MISMATCH=y 2>&1 \
+    make all $MAKE_ARGS 2>&1 \
         | tee buildlog
     if test "${PIPESTATUS[0]}" -eq 0; then
         break
@@ -488,16 +478,7 @@ add_vmlinux()
 %endif
 %ifarch %arm
     add_vmlinux --compressed
-    case "%build_flavor" in
-    default | lpae)
-        image=zImage
-        ;;
-    *)
-        # quickly compile uImage so we have something to boot from
-        make %{?_smp_mflags} uImage $MAKE_ARGS CONFIG_DEBUG_SECTION_MISMATCH=y
-        image=uImage
-        ;;
-    esac
+    image=zImage
     cp -p arch/arm/boot/$image %buildroot/boot/$image-%kernelrelease-%build_flavor
 %endif
 %ifarch aarch64
@@ -841,6 +822,7 @@ Requires(post): modutils
 Requires(post): perl-Bootloader
 Requires(post): mkinitrd
 @PROVIDES_OBSOLETES_BASE@
+%obsolete_rebuilds %name-base
 
 %description base
 @DESCRIPTION@
@@ -876,6 +858,7 @@ Requires(post): modutils
 Requires(post): perl-Bootloader
 Requires(post): mkinitrd
 @PROVIDES_OBSOLETES_EXTRA@
+%obsolete_rebuilds %name-extra
 Supplements:    packageand(product(SUSE_SLED):%{name}_%_target_cpu)
 
 %description extra
@@ -924,6 +907,7 @@ Provides:       multiversion(kernel)
 Requires:       kernel-devel%variant = %version-%source_rel
 Supplements:    packageand(%name:kernel-devel%variant)
 @PROVIDES_OBSOLETES_DEVEL@
+%obsolete_rebuilds %name-devel
 PreReq:         coreutils
 
 %description devel

@@ -1,0 +1,50 @@
+From: Dan McLeran <daniel.mcleran@intel.com>
+Date: Tue, 1 Jul 2014 09:33:32 -0600
+Subject: NVMe: Add shutdown timeout as module parameter.
+References: bnc#936076,FATE#318544
+Patch-Mainline: v3.20
+Git-commit: 2484f40780b97df1b5eb09e78ce4efaa78b21875
+
+The current implementation hard-codes the shutdown timeout to 2 seconds.
+Some devices take longer than this to complete a normal shutdown.
+Changing the shutdown timeout to a module parameter with a default
+timeout of 5 seconds.
+
+Signed-off-by: Dan McLeran <daniel.mcleran@intel.com>
+Signed-off-by: Matthew Wilcox <matthew.r.wilcox@intel.com>
+Signed-off-by: Jens Axboe <axboe@fb.com>
+Acked-by: Hannes Reinecke <hare@suse.de>
+---
+ drivers/block/nvme-core.c |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+--- a/drivers/block/nvme-core.c
++++ b/drivers/block/nvme-core.c
+@@ -48,6 +48,7 @@
+ 
+ #define NVME_Q_DEPTH 1024
+ #define SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))
++#define SHUTDOWN_TIMEOUT	(shutdown_timeout * HZ)
+ #define CQ_SIZE(depth)		(depth * sizeof(struct nvme_completion))
+ #define ADMIN_TIMEOUT	(60 * HZ)
+ #define IOD_TIMEOUT	(4 * NVME_IO_TIMEOUT)
+@@ -56,6 +57,10 @@ unsigned char io_timeout = 30;
+ module_param(io_timeout, byte, 0644);
+ MODULE_PARM_DESC(io_timeout, "timeout in seconds for I/O");
+ 
++static unsigned char shutdown_timeout = 5;
++module_param(shutdown_timeout, byte, 0644);
++MODULE_PARM_DESC(shutdown_timeout, "timeout in seconds for controller shutdown");
++
+ static int nvme_major;
+ module_param(nvme_major, int, 0);
+ 
+@@ -1476,7 +1481,7 @@ static int nvme_shutdown_ctrl(struct nvm
+ 	cc = (readl(&dev->bar->cc) & ~NVME_CC_SHN_MASK) | NVME_CC_SHN_NORMAL;
+ 	writel(cc, &dev->bar->cc);
+ 
+-	timeout = 2 * HZ + jiffies;
++	timeout = SHUTDOWN_TIMEOUT + jiffies;
+ 	while ((readl(&dev->bar->csts) & NVME_CSTS_SHST_MASK) !=
+ 							NVME_CSTS_SHST_CMPLT) {
+ 		msleep(100);
