@@ -2503,6 +2503,18 @@ Acked-by: jbeulich@suse.com
  		return 0;
  
  	ret = spurious_fault_check(error_code, pte);
+@@ -1077,7 +1073,10 @@ __do_page_fault(struct pt_regs *regs, un
+ 		}
+ 
+ 		if (!(error_code & (PF_RSVD | PF_USER | PF_PROT))) {
+-			if (vmalloc_fault(address) >= 0)
++			pagefault_disable(); /* suppress lazy MMU updates */
++			fault = vmalloc_fault(address);
++			pagefault_enable();
++			if (fault >= 0)
+ 				return;
+ 
+ 			if (kmemcheck_fault(regs, address, error_code))
 --- a/arch/x86/mm/init-xen.c
 +++ b/arch/x86/mm/init-xen.c
 @@ -16,105 +16,151 @@
@@ -5070,7 +5082,7 @@ Acked-by: jbeulich@suse.com
  	&dev_attr_oo_req.attr,
 --- a/drivers/xen/blktap/blktap.c
 +++ b/drivers/xen/blktap/blktap.c
-@@ -1143,7 +1143,7 @@ static void fast_flush_area(pending_req_
+@@ -1148,7 +1148,7 @@ static void fast_flush_area(pending_req_
  
  static void print_stats(blkif_t *blkif)
  {
