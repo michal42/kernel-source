@@ -1,0 +1,44 @@
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 20 May 2015 15:05:09 +1000
+Subject: [PATCH] md/bitmap: remove rcu annotation from pointer arithmetic.
+Patch-mainline: v4.1-rc5
+Git-commit: 8532e3439087de69bb1b71fd6be2baa6fc196a55
+
+Evaluating  "&mddev->disks" is simple pointer arithmetic, so
+it does not need 'rcu' annotations - no dereferencing is happening.
+
+Also enhance the comment to explain that 'rdev' in that case
+is not actually a pointer to an rdev.
+
+Reported-by: Patrick Marlier <patrick.marlier@gmail.com>
+Signed-off-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+---
+ drivers/md/bitmap.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index 2bc56e2..135a090 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -177,11 +177,16 @@ static struct md_rdev *next_active_rdev(struct md_rdev *rdev, struct mddev *mdde
+ 	 * nr_pending is 0 and In_sync is clear, the entries we return will
+ 	 * still be in the same position on the list when we re-enter
+ 	 * list_for_each_entry_continue_rcu.
++	 *
++	 * Note that if entered with 'rdev == NULL' to start at the
++	 * beginning, we temporarily assign 'rdev' to an address which
++	 * isn't really an rdev, but which can be used by
++	 * list_for_each_entry_continue_rcu() to find the first entry.
+ 	 */
+ 	rcu_read_lock();
+ 	if (rdev == NULL)
+ 		/* start at the beginning */
+-		rdev = list_entry_rcu(&mddev->disks, struct md_rdev, same_set);
++		rdev = list_entry(&mddev->disks, struct md_rdev, same_set);
+ 	else {
+ 		/* release the previous rdev and start from there. */
+ 		rdev_dec_pending(rdev, mddev);
+-- 
+2.1.4
+
