@@ -1,0 +1,103 @@
+From: Tang Chen <tangchen@cn.fujitsu.com>
+Date: Wed, 24 Sep 2014 15:57:57 +0800
+Subject: kvm: Add arch specific mmu notifier for page invalidation
+Git-commit: fe71557afbec641fee73711e40602bed37f6f33b
+Patch-mainline: v3.18-rc1
+References: bsc#959463
+
+This will be used to let the guest run while the APIC access page is
+not pinned.  Because subsequent patches will fill in the function
+for x86, place the (still empty) x86 implementation in the x86.c file
+instead of adding an inline function in kvm_host.h.
+
+Signed-off-by: Tang Chen <tangchen@cn.fujitsu.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ arch/arm/include/asm/kvm_host.h     | 5 +++++
+ arch/arm64/include/asm/kvm_host.h   | 5 +++++
+ arch/powerpc/include/asm/kvm_host.h | 5 +++++
+ arch/x86/include/asm/kvm_host.h     | 2 ++
+ arch/x86/kvm/x86.c                  | 5 +++++
+ virt/kvm/kvm_main.c                 | 3 +++
+ 6 files changed, 25 insertions(+)
+
+--- a/arch/arm/include/asm/kvm_host.h
++++ b/arch/arm/include/asm/kvm_host.h
+@@ -186,6 +186,11 @@
+ 	return 0;
+ }
+ 
++static inline void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
++							 unsigned long address)
++{
++}
++
+ struct kvm_vcpu *kvm_arm_get_running_vcpu(void);
+ struct kvm_vcpu __percpu **kvm_get_running_vcpus(void);
+ 
+--- a/arch/arm64/include/asm/kvm_host.h
++++ b/arch/arm64/include/asm/kvm_host.h
+@@ -175,6 +175,11 @@
+ 	return 0;
+ }
+ 
++static inline void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
++							 unsigned long address)
++{
++}
++
+ struct kvm_vcpu *kvm_arm_get_running_vcpu(void);
+ struct kvm_vcpu * __percpu *kvm_get_running_vcpus(void);
+ 
+--- a/arch/powerpc/include/asm/kvm_host.h
++++ b/arch/powerpc/include/asm/kvm_host.h
+@@ -69,6 +69,11 @@
+ #define KVM_NR_PAGE_SIZES	1
+ #define KVM_PAGES_PER_HPAGE(x)	(1UL<<31)
+ 
++static inline void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
++							 unsigned long address)
++{
++}
++
+ #define HPTEG_CACHE_NUM			(1 << 15)
+ #define HPTEG_HASH_BITS_PTE		13
+ #define HPTEG_HASH_BITS_PTE_LONG	12
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1049,6 +1049,8 @@
+ int kvm_arch_interrupt_allowed(struct kvm_vcpu *vcpu);
+ int kvm_cpu_get_interrupt(struct kvm_vcpu *v);
+ void kvm_vcpu_reset(struct kvm_vcpu *vcpu);
++void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
++					   unsigned long address);
+ 
+ void kvm_define_shared_msr(unsigned index, u32 msr);
+ int kvm_set_shared_msr(unsigned index, u64 val, u64 mask);
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -6192,6 +6192,11 @@
+ 	return complete_emulated_io(vcpu);
+ }
+ 
++void kvm_arch_mmu_notifier_invalidate_page(struct kvm *kvm,
++					   unsigned long address)
++{
++}
++
+ /*
+  * Implements the following, as a state machine:
+  *
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -289,6 +289,9 @@
+ 		kvm_flush_remote_tlbs(kvm);
+ 
+ 	spin_unlock(&kvm->mmu_lock);
++
++	kvm_arch_mmu_notifier_invalidate_page(kvm, address);
++
+ 	srcu_read_unlock(&kvm->srcu, idx);
+ }
+ 
