@@ -1,0 +1,87 @@
+From: Jiang Liu <jiang.liu@huawei.com>
+Date: Mon, 2 Sep 2013 11:57:34 +0800
+Subject: ACPI / processor: Introduce apic_id in struct processor to save
+ parsed APIC id
+Git-commit: ca9f62ac783bf88c54143f8065adc0fc8df859c1
+Patch-mainline: v3.13-rc1
+References: bsc#959463
+
+For cpu hot add, we evaluate _MAT or parse MADT twice to get APIC id,
+here is the code logic:
+acpi_processor_add()
+	acpi_processor_get_info()
+		acpi_get_cpuid() will evaluate _MAT or parse MADT;
+	acpi_processor_hotadd_init()
+		acpi_map_lsapic() will evaluate _MAT again;
+
+This can be done more effectively, this patch introduces apic_id in struct
+processor to save parsed APIC id, and then we can use it and remove the
+duplicated _MAT evaluation.
+
+Signed-off-by: Jiang Liu <jiang.liu@huawei.com>
+Signed-off-by: Hanjun Guo <hanjun.guo@linaro.org>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ drivers/acpi/acpi_processor.c |  4 +++-
+ drivers/acpi/processor_core.c | 26 +++++++++++++++++++++-----
+ include/acpi/processor.h      |  3 +++
+ 3 files changed, 27 insertions(+), 6 deletions(-)
+
+--- a/drivers/acpi/processor_core.c
++++ b/drivers/acpi/processor_core.c
+@@ -164,16 +164,23 @@
+ 	return apic_id;
+ }
+ 
+-int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
++int acpi_get_apicid(acpi_handle handle, int type, u32 acpi_id)
+ {
+-#ifdef CONFIG_SMP
+-	int i;
+-#endif
+ 	int apic_id = -1;
+ 
+ 	apic_id = map_mat_entry(handle, type, acpi_id);
+ 	if (apic_id == -1)
+ 		apic_id = map_madt_entry(type, acpi_id);
++
++	return apic_id;
++}
++
++int acpi_map_cpuid(int apic_id, int type, u32 acpi_id)
++{
++#ifdef CONFIG_SMP
++	int i;
++#endif
++
+ 	if (apic_id == -1) {
+ 		/*
+ 		 * On UP processor, there is no _MAT or MADT table.
+@@ -213,6 +220,15 @@
+ #endif
+ 	return -1;
+ }
++
++int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
++{
++	int apic_id;
++
++	apic_id = acpi_get_apicid(handle, type, acpi_id);
++
++	return acpi_map_cpuid(apic_id, type, acpi_id);
++}
+ EXPORT_SYMBOL_GPL(acpi_get_cpuid);
+ 
+ static bool __init processor_physically_present(acpi_handle handle)
+--- a/include/acpi/processor.h
++++ b/include/acpi/processor.h
+@@ -314,6 +314,8 @@
+ 
+ /* in processor_core.c */
+ void acpi_processor_set_pdc(acpi_handle handle);
++int acpi_get_apicid(acpi_handle, int type, u32 acpi_id);
++int acpi_map_cpuid(int apic_id, int type, u32 acpi_id);
+ int acpi_get_cpuid(acpi_handle, int type, u32 acpi_id);
+ 
+ /* in processor_throttling.c */
