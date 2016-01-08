@@ -1,0 +1,44 @@
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 28 May 2014 13:39:23 +1000
+Subject: [PATCH] md/bitmap: remove confusing code from filemap_get_page.
+Patch-mainline: v3.16-rc1
+Git-commit: f2e06c58841b3e89eaacfa88ce14389d311c54a8
+
+file_page_index(store, 0) is *always* 0.
+This is because the bitmap sb, at 256 bytes, is *always* less than
+one page.
+So subtracting it has no effect and the code should be removed.
+
+Reported-by: Goldwyn Rodrigues <rgoldwyn@suse.de>
+Signed-off-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+---
+ drivers/md/bitmap.c | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index 9a8e66a..67f8b31 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -669,17 +669,13 @@ static inline unsigned long file_page_offset(struct bitmap_storage *store,
+ /*
+  * return a pointer to the page in the filemap that contains the given bit
+  *
+- * this lookup is complicated by the fact that the bitmap sb might be exactly
+- * 1 page (e.g., x86) or less than 1 page -- so the bitmap might start on page
+- * 0 or page 1
+  */
+ static inline struct page *filemap_get_page(struct bitmap_storage *store,
+ 					    unsigned long chunk)
+ {
+ 	if (file_page_index(store, chunk) >= store->file_pages)
+ 		return NULL;
+-	return store->filemap[file_page_index(store, chunk)
+-			      - file_page_index(store, 0)];
++	return store->filemap[file_page_index(store, chunk)];
+ }
+ 
+ static int bitmap_storage_alloc(struct bitmap_storage *store,
+-- 
+2.1.4
+
