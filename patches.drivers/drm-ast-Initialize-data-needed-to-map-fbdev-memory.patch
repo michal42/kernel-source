@@ -18,8 +18,18 @@ Signed-off-by: Egbert Eich <eich@suse.de>
  drivers/gpu/drm/ast/ast_mode.c |    2 ++
  4 files changed, 11 insertions(+)
 
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_fb.c
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_fb.c
+--- a/drivers/gpu/drm/ast/ast_drv.h
++++ b/drivers/gpu/drm/ast/ast_drv.h
+@@ -298,6 +298,7 @@ int ast_framebuffer_init(struct drm_devi
+ int ast_fbdev_init(struct drm_device *dev);
+ void ast_fbdev_fini(struct drm_device *dev);
+ void ast_fbdev_set_suspend(struct drm_device *dev, int state);
++void ast_fbdev_set_base(struct ast_private *ast, unsigned long gpu_addr);
+ 
+ struct ast_bo {
+ 	struct ttm_buffer_object bo;
+--- a/drivers/gpu/drm/ast/ast_fb.c
++++ b/drivers/gpu/drm/ast/ast_fb.c
 @@ -375,3 +375,10 @@ void ast_fbdev_set_suspend(struct drm_de
  
  	fb_set_suspend(ast->fbdev->helper.fbdev, state);
@@ -31,18 +41,8 @@ Signed-off-by: Egbert Eich <eich@suse.de>
 +		ast->fbdev->helper.fbdev->apertures->ranges[0].base + gpu_addr;
 +	ast->fbdev->helper.fbdev->fix.smem_len = ast->vram_size - gpu_addr;
 +}
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_drv.h
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_drv.h
-@@ -298,6 +298,7 @@ int ast_framebuffer_init(struct drm_devi
- int ast_fbdev_init(struct drm_device *dev);
- void ast_fbdev_fini(struct drm_device *dev);
- void ast_fbdev_set_suspend(struct drm_device *dev, int state);
-+void ast_fbdev_set_base(struct ast_private *ast, unsigned long gpu_addr);
- 
- struct ast_bo {
- 	struct ttm_buffer_object bo;
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_main.c
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_main.c
+--- a/drivers/gpu/drm/ast/ast_main.c
++++ b/drivers/gpu/drm/ast/ast_main.c
 @@ -393,6 +393,7 @@ int ast_driver_load(struct drm_device *d
  	dev->mode_config.min_height = 0;
  	dev->mode_config.preferred_depth = 24;
@@ -51,8 +51,8 @@ Signed-off-by: Egbert Eich <eich@suse.de>
  
  	if (ast->chip == AST2100 ||
  	    ast->chip == AST2200 ||
---- linux-3.12-SLE12.orig/drivers/gpu/drm/ast/ast_mode.c
-+++ linux-3.12-SLE12/drivers/gpu/drm/ast/ast_mode.c
+--- a/drivers/gpu/drm/ast/ast_mode.c
++++ b/drivers/gpu/drm/ast/ast_mode.c
 @@ -518,6 +518,8 @@ static int ast_crtc_do_set_base(struct d
  		ret = ttm_bo_kmap(&bo->bo, 0, bo->bo.num_pages, &bo->kmap);
  		if (ret)
