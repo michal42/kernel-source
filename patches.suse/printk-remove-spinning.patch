@@ -15,9 +15,27 @@ didn't see problems with this.
 
 Signed-off-by: Jan Kara <jack@suse.cz>
 
-diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.12-SLE12/kernel/printk/printk.c linux-3.12-SLE12-1-printk-lockup/kernel/printk/printk.c
---- linux-3.12-SLE12/kernel/printk/printk.c	2014-06-24 18:18:46.839348369 +0200
-+++ linux-3.12-SLE12-1-printk-lockup/kernel/printk/printk.c	2014-06-25 14:57:33.853175732 +0200
+---
+ include/linux/semaphore.h |    5 ++++
+ kernel/printk/printk.c    |   55 +++++-----------------------------------------
+ 2 files changed, 11 insertions(+), 49 deletions(-)
+
+--- a/include/linux/semaphore.h
++++ b/include/linux/semaphore.h
+@@ -36,6 +36,11 @@ static inline void sema_init(struct sema
+ 	lockdep_init_map(&sem->lock.dep_map, "semaphore->lock", &__key, 0);
+ }
+ 
++static inline bool sema_has_waiters(struct semaphore *sem)
++{
++	return !list_empty(&sem->wait_list);
++}
++
+ extern void down(struct semaphore *sem);
+ extern int __must_check down_interruptible(struct semaphore *sem);
+ extern int __must_check down_killable(struct semaphore *sem);
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
 @@ -95,11 +95,6 @@ enum {
  	 * hand over printing. Cleared before console_sem is released.
  	 */
@@ -30,7 +48,7 @@ diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.12-SLE12/kernel/printk/pr
  };
  static long printk_handover_state;
  
-@@ -2680,36 +2675,6 @@ int console_trylock(void)
+@@ -2033,36 +2028,6 @@ int console_trylock(void)
  }
  EXPORT_SYMBOL(console_trylock);
  
@@ -67,7 +85,7 @@ diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.12-SLE12/kernel/printk/pr
  int is_console_locked(void)
  {
  	return console_locked;
-@@ -2758,7 +2723,7 @@ static bool cpu_stop_printing(int printe
+@@ -2110,7 +2075,7 @@ static bool cpu_stop_printing(int printe
  	if (!printk_offload_chars || printed_chars < printk_offload_chars)
  		return false;
  	/* Someone is spinning on console_sem? Give away to him. */
@@ -76,7 +94,7 @@ diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.12-SLE12/kernel/printk/pr
  		return true;
  	if (!test_bit(PRINTK_HANDOVER_B, &printk_handover_state)) {
  		set_bit(PRINTK_HANDOVER_B, &printk_handover_state);
-@@ -3240,21 +3205,13 @@ static int printing_task(void *arg)
+@@ -2593,21 +2558,13 @@ static int printing_task(void *arg)
  	while (1) {
  		prepare_to_wait_exclusive(&print_queue, &wait,
  					  TASK_INTERRUPTIBLE);
@@ -103,18 +121,3 @@ diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.12-SLE12/kernel/printk/pr
  	}
  	return 0;
  }
-diff -rupX /crypted/home/jack/.kerndiffexclude linux-3.12-SLE12/include/linux/semaphore.h linux-3.12-SLE12-1-printk-lockup/include/linux/semaphore.h
---- linux-3.12-SLE12/include/linux/semaphore.h	2013-11-04 00:41:51.000000000 +0100
-+++ linux-3.12-SLE12-1-printk-lockup/include/linux/semaphore.h	2014-06-25 14:58:30.470266533 +0200
-@@ -36,6 +36,11 @@ static inline void sema_init(struct sema
- 	lockdep_init_map(&sem->lock.dep_map, "semaphore->lock", &__key, 0);
- }
- 
-+static inline bool sema_has_waiters(struct semaphore *sem)
-+{
-+	return !list_empty(&sem->wait_list);
-+}
-+
- extern void down(struct semaphore *sem);
- extern int __must_check down_interruptible(struct semaphore *sem);
- extern int __must_check down_killable(struct semaphore *sem);

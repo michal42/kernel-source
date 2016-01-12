@@ -66,13 +66,11 @@ the structures, e.g. crash, makedumpfile. They need to get updated.
 
 Signed-off-by: Petr Mladek <pmladek@suse.cz>
 ---
- kernel/printk/printk.c | 353 ++++++++++++++++++++++++++++++++-----------------
+ kernel/printk/printk.c |  353 +++++++++++++++++++++++++++++++------------------
  1 file changed, 229 insertions(+), 124 deletions(-)
 
-Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
-===================================================================
---- linux-3.12-printk-auto-size.orig/kernel/printk/printk.c
-+++ linux-3.12-printk-auto-size/kernel/printk/printk.c
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
 @@ -169,6 +169,13 @@ EXPORT_SYMBOL(console_set_on_cmdline);
  static int console_may_schedule;
  
@@ -385,7 +383,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  
  	return msg->text_len;
  }
-@@ -649,7 +757,7 @@ static ssize_t devkmsg_read(struct file
+@@ -650,7 +758,7 @@ static ssize_t devkmsg_read(struct file
  		goto out;
  	}
  
@@ -394,7 +392,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  	ts_usec = msg->ts_nsec;
  	do_div(ts_usec, 1000);
  
-@@ -710,7 +818,7 @@ static ssize_t devkmsg_read(struct file
+@@ -711,7 +819,7 @@ static ssize_t devkmsg_read(struct file
  		user->buf[len++] = '\n';
  	}
  
@@ -403,7 +401,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  	user->seq++;
  	raw_spin_unlock_irq(&logbuf_lock);
  
-@@ -1165,12 +1273,12 @@ static int syslog_print(char __user *buf
+@@ -1166,12 +1274,12 @@ static int syslog_print(char __user *buf
  		}
  
  		skip = syslog_partial;
@@ -418,7 +416,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  			syslog_seq++;
  			syslog_prev = msg->flags;
  			n -= syslog_partial;
-@@ -1231,11 +1339,11 @@ static int syslog_print_all(char __user
+@@ -1232,11 +1340,11 @@ static int syslog_print_all(char __user
  		idx = clear_idx;
  		prev = 0;
  		while (seq < log_next_seq) {
@@ -432,7 +430,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  			seq++;
  		}
  
-@@ -1244,11 +1352,11 @@ static int syslog_print_all(char __user
+@@ -1245,11 +1353,11 @@ static int syslog_print_all(char __user
  		idx = clear_idx;
  		prev = 0;
  		while (len > size && seq < log_next_seq) {
@@ -446,7 +444,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  			seq++;
  		}
  
-@@ -1257,7 +1365,7 @@ static int syslog_print_all(char __user
+@@ -1258,7 +1366,7 @@ static int syslog_print_all(char __user
  
  		len = 0;
  		while (len >= 0 && seq < next_seq) {
@@ -455,7 +453,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  			int textlen;
  
  			textlen = msg_print_text(msg, prev, true, text,
-@@ -1266,7 +1374,7 @@ static int syslog_print_all(char __user
+@@ -1267,7 +1375,7 @@ static int syslog_print_all(char __user
  				len = textlen;
  				break;
  			}
@@ -464,7 +462,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  			seq++;
  			prev = msg->flags;
  
-@@ -1403,10 +1511,10 @@ int do_syslog(int type, char __user *buf
+@@ -1400,10 +1508,10 @@ int do_syslog(int type, char __user *buf
  
  			error = 0;
  			while (seq < log_next_seq) {
@@ -477,7 +475,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  				seq++;
  				prev = msg->flags;
  			}
-@@ -1546,106 +1654,98 @@ static inline void printk_delay(void)
+@@ -1543,106 +1651,98 @@ static inline void printk_delay(void)
  	}
  }
  
@@ -629,7 +627,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  	}
  	return textlen;
  }
-@@ -1654,6 +1754,8 @@ asmlinkage int vprintk_emit(int facility
+@@ -1651,6 +1751,8 @@ asmlinkage int vprintk_emit(int facility
  			    const char *dict, size_t dictlen,
  			    const char *fmt, va_list args)
  {
@@ -638,7 +636,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  	static int recursion_bug;
  	static char textbuf[LOG_LINE_MAX];
  	char *text = textbuf;
-@@ -1708,7 +1810,7 @@ asmlinkage int vprintk_emit(int facility
+@@ -1705,7 +1807,7 @@ asmlinkage int vprintk_emit(int facility
  		recursion_bug = 0;
  		text_len = strlen(recursion_msg);
  		/* emit KERN_CRIT message */
@@ -647,7 +645,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  					 NULL, 0, recursion_msg, text_len);
  	}
  
-@@ -1760,14 +1862,15 @@ asmlinkage int vprintk_emit(int facility
+@@ -1757,14 +1859,15 @@ asmlinkage int vprintk_emit(int facility
  		 * Flush the conflicting buffer. An earlier newline was missing,
  		 * or another task also prints continuation lines.
  		 */
@@ -667,7 +665,7 @@ Index: linux-3.12-printk-auto-size/kernel/printk/printk.c
  						 lflags | LOG_CONT, 0,
  						 dict, dictlen, text, text_len);
  	} else {
-@@ -1781,18 +1884,19 @@ asmlinkage int vprintk_emit(int facility
+@@ -1778,18 +1881,19 @@ asmlinkage int vprintk_emit(int facility
  		 * If the preceding printk was from a different task and missed
  		 * a newline, flush and append the newline.
  		 */
