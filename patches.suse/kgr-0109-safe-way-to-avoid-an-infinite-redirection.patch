@@ -1,0 +1,70 @@
+From: Petr Mladek <pmladek@suse.com>
+Date: Wed, 2 Dec 2015 14:53:20 +0100
+Subject: kgr: Safe way to avoid an infinite redirection
+Patch-mainline: never, upstream will be different
+References: fate#313296
+
+The slow stub currently always modifies the IP address. It sets it either
+to the new or to the old function according to the current universe.
+
+We call the _new_ function from the beginning. But we skip the size
+of the ftrace call in the _old_ function to avoid an infinite loop.
+
+It works on the currently supported architectures because the ftrace
+handler call is the very first instruction in the function. But it
+might cause problems on some other architectures. For example, TOC is
+set before the ftrace handler call on PPC.
+
+The size of the skipped area might be hard to compute. Fortunately,
+we do not need to modify the IP address if we want to continue
+with the original function (no redirection). Therefore we do not
+need to know the position and size of the ftrace call at all.
+
+This patch adds the check for the original function. It renames
+"go_old" to "go_new" and inverts the logic. It makes it easier
+to read the reworked final check.
+
+Signed-off-by: Petr Mladek <pmladek@suse.com>
+Reviewed-by: Miroslav Benes <mbenes@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ kernel/kgraft.c |   17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -74,25 +74,26 @@ static notrace void kgr_stub_slow(unsign
+ 		struct ftrace_ops *ops, struct pt_regs *regs)
+ {
+ 	struct kgr_patch_fun *p = ops->private;
+-	bool go_old;
++	bool go_new;
+ 
+ 	if (in_interrupt())
+-		go_old = !*this_cpu_ptr(kgr_irq_use_new);
++		go_new = *this_cpu_ptr(kgr_irq_use_new);
+ 	else if (test_bit(0, kgr_immutable)) {
+ 		kgr_mark_task_in_progress(current);
+-		go_old = true;
++		go_new = false;
+ 	} else {
+ 		rmb(); /* test_bit before kgr_mark_task_in_progress */
+-		go_old = kgr_task_in_progress(current);
++		go_new = !kgr_task_in_progress(current);
+ 	}
+ 
+ 	if (p->state == KGR_PATCH_REVERT_SLOW)
+-		go_old = !go_old;
++		go_new = !go_new;
+ 
+-	if (go_old)
+-		kgr_set_regs_ip(regs, p->loc_old + MCOUNT_INSN_SIZE);
+-	else
++	/* Redirect the function unless we continue with the original one. */
++	if (go_new)
+ 		kgr_set_regs_ip(regs, (unsigned long)p->new_fun);
++	else if (p->loc_old != p->loc_name)
++		kgr_set_regs_ip(regs, p->loc_old);
+ }
+ 
+ static void kgr_refs_inc(void)
