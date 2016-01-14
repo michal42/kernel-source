@@ -220,7 +220,7 @@ Automatically created from "patches.kernel.org/patch-2.6.32" by xen-port-patches
 -#ifdef CONFIG_X86_LOCAL_APIC
 +#if (defined(CONFIG_X86_LOCAL_APIC) && !defined(CONFIG_XEN)) || \
 +    (defined(CONFIG_XEN_SMPBOOT) && CONFIG_XEN_COMPAT >= 0x030200)
- void arch_trigger_all_cpu_backtrace(void);
+ void arch_trigger_all_cpu_backtrace(bool);
  #define arch_trigger_all_cpu_backtrace arch_trigger_all_cpu_backtrace
  #endif
 --- a/arch/x86/include/asm/uv/uv_hub.h
@@ -740,12 +740,15 @@ Automatically created from "patches.kernel.org/patch-2.6.32" by xen-port-patches
  /* For reliability, we're prepared to waste bits here. */
  static DECLARE_BITMAP(backtrace_mask, NR_CPUS) __read_mostly;
  
-@@ -47,7 +51,11 @@ void arch_trigger_all_cpu_backtrace(void
- 	cpumask_copy(to_cpumask(backtrace_mask), cpu_online_mask);
+@@ -52,10 +56,14 @@ void arch_trigger_all_cpu_backtrace(bool
+ 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
  
- 	printk(KERN_INFO "sending NMI to all CPUs:\n");
+ 	if (!cpumask_empty(to_cpumask(backtrace_mask))) {
 +#ifndef CONFIG_XEN
- 	apic->send_IPI_all(NMI_VECTOR);
+ 		pr_info("sending NMI to %s CPUs:\n",
+ 			(include_self ? "all" : "other"));
+ 		apic->send_IPI_mask(to_cpumask(backtrace_mask), NMI_VECTOR);
+ 	}
 +#else /* this works even without CONFIG_X86_LOCAL_APIC */
 +	xen_send_IPI_all(NMI_VECTOR);
 +#endif
