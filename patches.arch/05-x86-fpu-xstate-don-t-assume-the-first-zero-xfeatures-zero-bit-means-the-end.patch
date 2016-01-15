@@ -1,0 +1,97 @@
+From: Ingo Molnar <mingo@kernel.org>
+Date: Mon, 4 May 2015 07:37:47 +0200
+Subject: x86/fpu/xstate: Don't assume the first zero xfeatures zero bit means
+ the end
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Git-commit: 39f1acd243725b4b20caa37a81b6c8f641b505b8
+Patch-mainline: v4.2-rc1
+References: bsc#938577
+
+The current xstate code in setup_xstate_features() assumes that
+the first zero bit means the end of xfeatures - but that is not
+so, the SDM clearly states that an arbitrary set of xfeatures
+might be enabled - and it is also clear from the description
+of the compaction feature that holes are possible:
+
+  "13-6 Vol. 1MANAGING STATE USING THE XSAVE FEATURE SET
+  [...]
+
+  Compacted format. Each state component i (i ≥ 2) is located at a byte
+  offset from the base address of the XSAVE area based on the XCOMP_BV
+  field in the XSAVE header:
+
+  — If XCOMP_BV[i] = 0, state component i is not in the XSAVE area.
+
+  — If XCOMP_BV[i] = 1, the following items apply:
+
+  • If XCOMP_BV[j] = 0 for every j, 2 ≤ j < i, state component i is
+    located at a byte offset 576 from the base address of the XSAVE
+    area. (This item applies if i is the first bit set in bits 62:2 of
+    the XCOMP_BV; it implies that state component i is located at the
+    beginning of the extended region.)
+
+  • Otherwise, let j, 2 ≤ j < i, be the greatest value such that
+    XCOMP_BV[j] = 1. Then state component i is located at a byte offset
+    X from the location of state component j, where X is the number of
+    bytes required for state component j as enumerated in
+    CPUID.(EAX=0DH,ECX=j):EAX. (This item implies that state component i
+    immediately follows the preceding state component whose bit is set
+    in XCOMP_BV.)"
+
+So don't assume that the first zero xfeatures bit means the end of
+all xfeatures - iterate through all of them.
+
+I'm not aware of hardware that triggers this currently.
+
+Cc: Andy Lutomirski <luto@amacapital.net>
+Cc: Borislav Petkov <bp@alien8.de>
+Cc: Dave Hansen <dave.hansen@linux.intel.com>
+Cc: Fenghua Yu <fenghua.yu@intel.com>
+Cc: H. Peter Anvin <hpa@zytor.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ arch/x86/kernel/xsave.c |   17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+--- a/arch/x86/kernel/xsave.c
++++ b/arch/x86/kernel/xsave.c
+@@ -457,23 +457,24 @@ static inline void xstate_enable(void)
+ }
+ 
+ /*
+- * Record the offsets and sizes of different state managed by the xsave
+- * memory layout.
++ * Record the offsets and sizes of various xstates contained
++ * in the XSAVE state memory layout.
++ *
++ * ( Note that certain features might be non-present, for them
++ *   we'll have 0 offset and 0 size. )
+  */
+ static void __init setup_xstate_features(void)
+ {
+-	int eax, ebx, ecx, edx, leaf = 0x2;
++	u32 eax, ebx, ecx, edx, leaf;
+ 
+-	do {
++	for (leaf = 2; leaf < XFEATURES_NR_MAX; leaf++) {
+ 		cpuid_count(XSTATE_CPUID, leaf, &eax, &ebx, &ecx, &edx);
+ 
+-		if (eax == 0)
+-			break;
+-
+ 		xstate_offsets[leaf] = ebx;
+ 		xstate_sizes[leaf] = eax;
+ 
+-	} while (1);
++		printk(KERN_INFO "x86/fpu: xstate_offset[%d]: %04x, xstate_sizes[%d]: %04x\n", leaf, ebx, leaf, eax);
++	}
+ }
+ 
+ /*

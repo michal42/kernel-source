@@ -1,0 +1,67 @@
+From: Dave Hansen <dave.hansen@linux.intel.com>
+Date: Thu, 11 Jun 2015 12:34:00 -0700
+Subject: x86/fpu: Fix double-increment in setup_xstate_features()
+Git-commit: a8424003679e90b9952e20adcd1ff1560d9dd3e9
+Patch-mainline: v4.2-rc1
+References: bsc#938577
+
+I noticed that my MPX tracepoints were producing garbage for the
+lower and upper bounds:
+
+	mpx_bounds_register_exception: address referenced: 0x00007fffffffccb7 bounds: lower: 0x0 ~upper: 0xffffffffffffffff
+	mpx_bounds_register_exception: address referenced: 0x00007fffffffccbf bounds: lower: 0x0 ~upper: 0xffffffffffffffff
+
+This is, of course, bogus because 0x00007fffffffccbf is *within*
+the bounds.  I assumed that my instruction decoder was bad and
+went looking at it.  But I eventually realized that I was
+getting a '0' offset back from xstate_offsets[BNDREGS].
+
+It was being skipped in the initialization, which is obviously
+bogus, so remove the extra leaf++.
+
+This also goes an initializes xstate_offsets/sizes[] to -1 so
+so that bugs like this will oops instead of silently failing
+in interesting ways.
+
+This was introduced by:
+
+	39f1acd ("x86/fpu/xstate: Don't assume the first zero xfeatures zero bit means the end")
+
+Signed-off-by: Dave Hansen <dave.hansen@linux.intel.com>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Andy Lutomirski <luto@amacapital.net>
+Cc: Borislav Petkov <bp@alien8.de>
+Cc: Brian Gerst <brgerst@gmail.com>
+Cc: Denys Vlasenko <dvlasenk@redhat.com>
+Cc: H. Peter Anvin <hpa@zytor.com>
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: dave@sr71.net
+Link: http://lkml.kernel.org/r/20150611193400.2E0B00DB@viggo.jf.intel.com
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ arch/x86/kernel/xsave.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/arch/x86/kernel/xsave.c
++++ b/arch/x86/kernel/xsave.c
+@@ -24,7 +24,8 @@ u64 pcntxt_mask;
+ struct xsave_struct *init_xstate_buf;
+ 
+ static struct _fpx_sw_bytes fx_sw_reserved, fx_sw_reserved_ia32;
+-static unsigned int xstate_offsets[XFEATURES_NR_MAX], xstate_sizes[XFEATURES_NR_MAX];
++static unsigned int xstate_offsets[XFEATURES_NR_MAX] = { [ 0 ... XFEATURES_NR_MAX - 1] = -1};
++static unsigned int xstate_sizes[XFEATURES_NR_MAX]   = { [ 0 ... XFEATURES_NR_MAX - 1] = -1};
+ 
+ /*
+  * If a processor implementation discern that a processor state component is
+@@ -472,7 +473,6 @@ static void __init setup_xstate_features
+ 		xstate_offsets[leaf] = ebx;
+ 		xstate_sizes[leaf] = eax;
+ 
+-		leaf++;
+ 	} while (1);
+ }
+ 
