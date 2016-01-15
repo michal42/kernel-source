@@ -82,7 +82,7 @@ Acked-by: David Chang <dchang@suse.com>
  	if (evt->enabled) {
  		adapter->pvid = le16_to_cpu(evt->tag) & VLAN_VID_MASK;
  		dev_info(&adapter->pdev->dev, "LPVID: %d\n", adapter->pvid);
-@@ -287,37 +293,32 @@ static void be_async_grp5_pvid_state_pro
+@@ -287,39 +293,34 @@ static void be_async_grp5_pvid_state_pro
  }
  
  static void be_async_grp5_evt_process(struct be_adapter *adapter,
@@ -115,6 +115,8 @@ Acked-by: David Chang <dchang@suse.com>
 -	break;
 +		be_async_grp5_pvid_state_process(adapter, compl);
 +		break;
+ 	default:
+ 		break;
  	}
  }
  
@@ -132,43 +134,43 @@ Acked-by: David Chang <dchang@suse.com>
  
  	switch (event_type) {
  	case ASYNC_DEBUG_EVENT_TYPE_QNQ:
-@@ -332,25 +333,33 @@ static void be_async_dbg_evt_process(str
+@@ -334,25 +335,33 @@ static void be_async_dbg_evt_process(str
  	}
  }
  
 -static inline bool is_link_state_evt(u32 trailer)
 +static inline bool is_link_state_evt(u32 flags)
-+{
-+	return ((flags >> ASYNC_EVENT_CODE_SHIFT) & ASYNC_EVENT_CODE_MASK) ==
-+			ASYNC_EVENT_CODE_LINK_STATE;
-+}
-+
-+static inline bool is_grp5_evt(u32 flags)
  {
 -	return ((trailer >> ASYNC_TRAILER_EVENT_CODE_SHIFT) &
 -		ASYNC_TRAILER_EVENT_CODE_MASK) ==
 -				ASYNC_EVENT_CODE_LINK_STATE;
 +	return ((flags >> ASYNC_EVENT_CODE_SHIFT) & ASYNC_EVENT_CODE_MASK) ==
-+			ASYNC_EVENT_CODE_GRP_5;
++			ASYNC_EVENT_CODE_LINK_STATE;
  }
  
 -static inline bool is_grp5_evt(u32 trailer)
-+static inline bool is_dbg_evt(u32 flags)
++static inline bool is_grp5_evt(u32 flags)
  {
 -	return (((trailer >> ASYNC_TRAILER_EVENT_CODE_SHIFT) &
 -		ASYNC_TRAILER_EVENT_CODE_MASK) ==
 -				ASYNC_EVENT_CODE_GRP_5);
 +	return ((flags >> ASYNC_EVENT_CODE_SHIFT) & ASYNC_EVENT_CODE_MASK) ==
-+			ASYNC_EVENT_CODE_QNQ;
++			ASYNC_EVENT_CODE_GRP_5;
  }
  
 -static inline bool is_dbg_evt(u32 trailer)
-+static void be_mcc_event_process(struct be_adapter *adapter,
-+				 struct be_mcc_compl *compl)
++static inline bool is_dbg_evt(u32 flags)
  {
 -	return (((trailer >> ASYNC_TRAILER_EVENT_CODE_SHIFT) &
 -		ASYNC_TRAILER_EVENT_CODE_MASK) ==
 -				ASYNC_EVENT_CODE_QNQ);
++	return ((flags >> ASYNC_EVENT_CODE_SHIFT) & ASYNC_EVENT_CODE_MASK) ==
++			ASYNC_EVENT_CODE_QNQ;
++}
++
++static void be_mcc_event_process(struct be_adapter *adapter,
++				 struct be_mcc_compl *compl)
++{
 +	if (is_link_state_evt(compl->flags))
 +		be_async_link_state_process(adapter, compl);
 +	else if (is_grp5_evt(compl->flags))
@@ -178,7 +180,7 @@ Acked-by: David Chang <dchang@suse.com>
  }
  
  static struct be_mcc_compl *be_mcc_compl_get(struct be_adapter *adapter)
-@@ -392,21 +401,13 @@ int be_process_mcc(struct be_adapter *ad
+@@ -394,21 +403,13 @@ int be_process_mcc(struct be_adapter *ad
  	struct be_mcc_obj *mcc_obj = &adapter->mcc_obj;
  
  	spin_lock(&adapter->mcc_cq_lock);

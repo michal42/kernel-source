@@ -1,0 +1,176 @@
+From: Jiri Kosina <jkosina@suse.cz>
+Date: Thu, 5 Nov 2015 18:44:41 -0800
+Subject: kernel/watchdog.c: perform all-CPU backtrace in case of hard lockup
+Git-commit: 55537871ef666b4153fd1ef8782e4a13fee142cc
+Patch-mainline: v4.4-rc1
+References: bsc#940946, bsc#937444
+
+In many cases of hardlockup reports, it's actually not possible to know
+why it triggered, because the CPU that got stuck is usually waiting on a
+resource (with IRQs disabled) in posession of some other CPU is holding.
+
+IOW, we are often looking at the stacktrace of the victim and not the
+actual offender.
+
+Introduce sysctl / cmdline parameter that makes it possible to have
+hardlockup detector perform all-CPU backtrace.
+
+Signed-off-by: Jiri Kosina <jkosina@suse.cz>
+Reviewed-by: Aaron Tomlin <atomlin@redhat.com>
+Cc: Ulrich Obergfell <uobergfe@redhat.com>
+Acked-by: Don Zickus <dzickus@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ Documentation/kernel-parameters.txt |    5 ++++
+ Documentation/sysctl/kernel.txt     |   12 +++++++++++
+ include/linux/nmi.h                 |    1 
+ kernel/sysctl.c                     |    9 ++++++++
+ kernel/watchdog.c                   |   38 +++++++++++++++++++++++++++++++++---
+ 5 files changed, 62 insertions(+), 3 deletions(-)
+
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1062,6 +1062,11 @@ bytes respectively. Such letter suffixes
+ 			Format: <unsigned int> such that (rxsize & ~0x1fffc0) == 0.
+ 			Default: 1024
+ 
++	hardlockup_all_cpu_backtrace=
++			[KNL] Should the hard-lockup detector generate
++			backtraces on all cpus.
++			Format: <integer>
++
+ 	hashdist=	[KNL,NUMA] Large hashes allocated during boot
+ 			are distributed across NUMA nodes.  Defaults on
+ 			for 64-bit NUMA, off otherwise.
+--- a/Documentation/sysctl/kernel.txt
++++ b/Documentation/sysctl/kernel.txt
+@@ -33,6 +33,7 @@ show up in /proc/sys/kernel:
+ - domainname
+ - hostname
+ - hotplug
++- hardlockup_all_cpu_backtrace
+ - kptr_restrict
+ - kstack_depth_to_print       [ X86 only ]
+ - l2cr                        [ PPC only ]
+@@ -280,6 +281,17 @@ domain names are in general different. F
+ see the hostname(1) man page.
+ 
+ ==============================================================
++hardlockup_all_cpu_backtrace:
++
++This value controls the hard lockup detector behavior when a hard
++lockup condition is detected as to whether or not to gather further
++debug information. If enabled, arch-specific all-CPU stack dumping
++will be initiated.
++
++0: do nothing. This is the default behavior.
++
++1: on detection capture more debug information.
++==============================================================
+ 
+ hotplug:
+ 
+--- a/include/linux/nmi.h
++++ b/include/linux/nmi.h
+@@ -57,6 +57,7 @@ int hw_nmi_is_cpu_stuck(struct pt_regs *
+ u64 hw_nmi_get_sample_period(int watchdog_thresh);
+ extern int watchdog_user_enabled;
+ extern int watchdog_thresh;
++extern int sysctl_hardlockup_all_cpu_backtrace;
+ struct ctl_table;
+ extern int proc_dowatchdog(struct ctl_table *, int ,
+ 			   void __user *, size_t *, loff_t *);
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -857,6 +857,15 @@ static struct ctl_table kern_table[] = {
+ 		.extra2		= &one,
+ 	},
+ 	{
++		.procname	= "hardlockup_all_cpu_backtrace",
++		.data		= &sysctl_hardlockup_all_cpu_backtrace,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= &zero,
++		.extra2		= &one,
++	},
++	{
+ 		.procname       = "nmi_watchdog",
+ 		.data           = &watchdog_user_enabled,
+ 		.maxlen         = sizeof (int),
+--- a/kernel/watchdog.c
++++ b/kernel/watchdog.c
+@@ -34,6 +34,12 @@ int __read_mostly watchdog_thresh = 10;
+ static int __read_mostly watchdog_running;
+ static u64 __read_mostly sample_period;
+ 
++#ifdef CONFIG_SMP
++int __read_mostly sysctl_hardlockup_all_cpu_backtrace;
++#else
++#define sysctl_hardlockup_all_cpu_backtrace 0
++#endif
++
+ static DEFINE_PER_CPU(unsigned long, watchdog_touch_ts);
+ static DEFINE_PER_CPU(struct task_struct *, softlockup_watchdog);
+ static DEFINE_PER_CPU(struct hrtimer, watchdog_hrtimer);
+@@ -55,6 +61,7 @@ static DEFINE_PER_CPU(struct perf_event
+ #ifdef CONFIG_HARDLOCKUP_DETECTOR
+ static int hardlockup_panic =
+ 			CONFIG_BOOTPARAM_HARDLOCKUP_PANIC_VALUE;
++static unsigned long hardlockup_allcpu_dumped;
+ 
+ static int __init hardlockup_panic_setup(char *str)
+ {
+@@ -69,6 +76,16 @@ static int __init hardlockup_panic_setup
+ __setup("nmi_watchdog=", hardlockup_panic_setup);
+ #endif
+ 
++#ifdef CONFIG_SMP
++static int __init hardlockup_all_cpu_backtrace_setup(char *str)
++{
++	sysctl_hardlockup_all_cpu_backtrace =
++		!!simple_strtol(str, NULL, 0);
++	return 1;
++}
++__setup("hardlockup_all_cpu_backtrace=", hardlockup_all_cpu_backtrace_setup);
++#endif
++
+ unsigned int __read_mostly softlockup_panic =
+ 			CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC_VALUE;
+ 
+@@ -234,15 +251,30 @@ static void watchdog_overflow_callback(s
+ 	 */
+ 	if (is_hardlockup()) {
+ 		int this_cpu = smp_processor_id();
++		struct pt_regs *regs = get_irq_regs();
+ 
+ 		/* only print hardlockups once */
+ 		if (__this_cpu_read(hard_watchdog_warn) == true)
+ 			return;
+ 
+-		if (hardlockup_panic)
+-			panic("Watchdog detected hard LOCKUP on cpu %d", this_cpu);
++		pr_emerg("Watchdog detected hard LOCKUP on cpu %d", this_cpu);
++		print_modules();
++		print_irqtrace_events(current);
++		if (regs)
++			show_regs(regs);
+ 		else
+-			WARN(1, "Watchdog detected hard LOCKUP on cpu %d", this_cpu);
++			dump_stack();
++
++		/*
++		 * Perform all-CPU dump only once to avoid multiple hardlockups
++		 * generating interleaving traces
++		 */
++		if (sysctl_hardlockup_all_cpu_backtrace &&
++				!test_and_set_bit(0, &hardlockup_allcpu_dumped))
++			trigger_allbutself_cpu_backtrace();
++
++		if (hardlockup_panic)
++			panic("Hard LOCKUP");
+ 
+ 		__this_cpu_write(hard_watchdog_warn, true);
+ 		return;
