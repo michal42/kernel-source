@@ -237,7 +237,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  /*
   * Ticket locks are conceptually two parts, one indicating the current head of
-@@ -106,7 +106,7 @@ void xen_spin_kick(const raw_spinlock_t 
+@@ -106,7 +106,7 @@ void xen_spin_kick(const raw_spinlock_t
  	    : \
  	    : "memory", "cc")
  
@@ -1405,7 +1405,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  {
  	unsigned int n, dummy, ebx, ecx, edx, l2size;
  
-@@ -433,8 +433,6 @@ void __cpuinit display_cacheinfo(struct 
+@@ -433,8 +433,6 @@ void __cpuinit display_cacheinfo(struct
  
  	if (n >= 0x80000005) {
  		cpuid(0x80000005, &dummy, &ebx, &ecx, &edx);
@@ -1414,7 +1414,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		c->x86_cache_size = (ecx>>24) + (edx>>24);
  #ifdef CONFIG_X86_64
  		/* On K8 L1 TLB is inclusive, so don't count it */
-@@ -464,9 +462,6 @@ void __cpuinit display_cacheinfo(struct 
+@@ -464,9 +462,6 @@ void __cpuinit display_cacheinfo(struct
  #endif
  
  	c->x86_cache_size = l2size;
@@ -1828,7 +1828,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  #endif
  
  /*
-@@ -77,10 +77,10 @@ static int show_other_interrupts(struct 
+@@ -77,10 +77,10 @@ static int show_other_interrupts(struct
  	seq_printf(p, "  Performance pending work\n");
  #endif
  #ifndef CONFIG_XEN
@@ -1841,7 +1841,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		seq_printf(p, "  Platform interrupts\n");
  	}
  #endif
-@@ -162,7 +162,7 @@ int show_interrupts(struct seq_file *p, 
+@@ -162,7 +162,7 @@ int show_interrupts(struct seq_file *p,
  	if (!desc)
  		return 0;
  
@@ -1850,7 +1850,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	for_each_online_cpu(j)
  		any_count |= kstat_irqs_cpu(i, j);
  	action = desc->action;
-@@ -183,7 +183,7 @@ int show_interrupts(struct seq_file *p, 
+@@ -183,7 +183,7 @@ int show_interrupts(struct seq_file *p,
  
  	seq_putc(p, '\n');
  out:
@@ -2646,7 +2646,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  /*
   *	switch_to(x,y) should switch tasks from x to y.
-@@ -571,26 +580,8 @@ __switch_to(struct task_struct *prev_p, 
+@@ -571,26 +580,8 @@ __switch_to(struct task_struct *prev_p,
  	 */
  	if (preload_fpu)
  		__math_state_restore();
@@ -3053,8 +3053,12 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
 -	if (condition & (DR_TRAP0|DR_TRAP1|DR_TRAP2|DR_TRAP3)) {
 -		if (!tsk->thread.debugreg7)
 -			goto clear_dr7;
--	}
--
++	if (regs->flags & X86_VM_MASK) {
++		handle_vm86_trap((struct kernel_vm86_regs *) regs,
++				error_code, 1);
++		return;
+ 	}
+ 
 -#ifdef CONFIG_X86_32
 -	if (regs->flags & X86_VM_MASK)
 -		goto debug_vm86;
@@ -3063,39 +3067,34 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
 -	/* Save debug status register where ptrace can see it */
 -	tsk->thread.debugreg6 = condition;
 -
--	/*
+ 	/*
 -	 * Single-stepping through TF: make sure we ignore any events in
 -	 * kernel space (but re-enable TF when returning to user mode).
--	 */
--	if (condition & DR_STEP) {
--		if (!user_mode(regs))
--			goto clear_TF_reenable;
-+	if (regs->flags & X86_VM_MASK) {
-+		handle_vm86_trap((struct kernel_vm86_regs *) regs,
-+				error_code, 1);
-+		return;
- 	}
- 
--	si_code = get_si_code(condition);
--	/* Ok, finally something we can handle */
--	send_sigtrap(tsk, regs, error_code, si_code);
--
- 	/*
--	 * Disable additional traps. They'll be re-enabled when
--	 * the signal is delivered.
 +	 * Single-stepping through system calls: ignore any exceptions in
 +	 * kernel space, but re-enable TF when returning to user mode.
 +	 *
 +	 * We already checked v86 mode above, so we can check for kernel mode
 +	 * by just checking the CPL of CS.
  	 */
--clear_dr7:
--	set_debugreg(0, 7);
+-	if (condition & DR_STEP) {
+-		if (!user_mode(regs))
+-			goto clear_TF_reenable;
 +	if ((dr6 & DR_STEP) && !user_mode(regs)) {
 +		tsk->thread.debugreg6 &= ~DR_STEP;
 +		set_tsk_thread_flag(tsk, TIF_SINGLESTEP);
 +		regs->flags &= ~X86_EFLAGS_TF;
-+	}
+ 	}
+-
+-	si_code = get_si_code(condition);
+-	/* Ok, finally something we can handle */
+-	send_sigtrap(tsk, regs, error_code, si_code);
+-
+-	/*
+-	 * Disable additional traps. They'll be re-enabled when
+-	 * the signal is delivered.
+-	 */
+-clear_dr7:
+-	set_debugreg(0, 7);
 +	si_code = get_si_code(tsk->thread.debugreg6);
 +	if (tsk->thread.debugreg6 & (DR_STEP | DR_TRAP_BITS))
 +		send_sigtrap(tsk, regs, error_code, si_code);
@@ -3155,7 +3154,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  /*
   * The platform setup functions are preset with the default functions
-@@ -61,10 +64,15 @@ struct x86_init_ops x86_init __initdata 
+@@ -61,10 +64,15 @@ struct x86_init_ops x86_init __initdata
  		.tsc_pre_init		= x86_init_noop,
  		.timer_init		= x86_init_noop,
  	},
@@ -3283,7 +3282,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
   * Memory is added always to NORMAL zone. This means you will never get
   * additional DMA/DMA32 memory.
   */
-@@ -886,6 +903,9 @@ int arch_add_memory(int nid, u64 start, 
+@@ -886,6 +903,9 @@ int arch_add_memory(int nid, u64 start,
  	ret = __add_pages(nid, zone, start_pfn, nr_pages);
  	WARN_ON_ONCE(ret);
  
@@ -3476,7 +3475,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
   * If new_type is NULL, function will return an error if it cannot reserve the
   * region with req_type. If new_type is non-NULL, function will return
   * available type in new_type in case of no error. In case of any error
-@@ -403,9 +401,7 @@ int reserve_memtype(u64 start, u64 end, 
+@@ -403,9 +401,7 @@ int reserve_memtype(u64 start, u64 end,
  	if (!pat_enabled) {
  		/* This is identical to page table setting without PAT */
  		if (new_type) {
@@ -3487,7 +3486,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  				*new_type = _PAGE_CACHE_UC_MINUS;
  			else
  				*new_type = req_type & _PAGE_CACHE_MASK;
-@@ -414,7 +410,7 @@ int reserve_memtype(u64 start, u64 end, 
+@@ -414,7 +410,7 @@ int reserve_memtype(u64 start, u64 end,
  	}
  
  	/* Low ISA region is always mapped WB in page table. No need to track */
@@ -3505,7 +3504,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		return 0;
  
  	is_range_ram = pat_pagerange_is_ram(start, end);
-@@ -609,7 +605,7 @@ static unsigned long lookup_memtype(u64 
+@@ -609,7 +605,7 @@ static unsigned long lookup_memtype(u64
  	int rettype = _PAGE_CACHE_WB;
  	struct memtype *entry;
  
@@ -3514,7 +3513,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		return rettype;
  
  	if (pat_pagerange_is_ram(paddr, paddr + PAGE_SIZE)) {
-@@ -736,9 +732,8 @@ int phys_mem_access_prot_allowed(struct 
+@@ -736,9 +732,8 @@ int phys_mem_access_prot_allowed(struct
  	if (!range_is_allowed(mfn, size))
  		return 0;
  
@@ -4565,7 +4564,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	printk(KERN_INFO "Software IO TLB enabled: \n"
  	       " Aperture:     %lu megabytes\n"
  	       " Address size: %u bits\n"
-@@ -141,7 +144,7 @@ static void swiotlb_print_info(unsigned 
+@@ -141,7 +144,7 @@ static void swiotlb_print_info(unsigned
   * structures for the software IO TLB used to implement the PCI DMA API.
   */
  void __init
