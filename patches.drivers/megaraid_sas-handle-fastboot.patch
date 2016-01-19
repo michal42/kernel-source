@@ -1,7 +1,23 @@
-From: Kashyap Desai <kashyap.desai@avagotech.com>
-Subject: megaraid_sas: Handle firmware initialization after fast boot
-Patch-Mainline: Not yet, Avagotech folks said they would send it upstream soon
+From: "sumit.saxena@avagotech.com" <sumit.saxena@avagotech.com>
+Date: Mon, 31 Aug 2015 17:23:41 +0530
+Subject: megaraid_sas: Chip reset if driver fails to get IOC ready
+Patch-Mainline: v4.4
+Git-commit: 79b82c2c560025afbb88ba7ad5cddb9c2203cf2e
 References: bsc#922071
+
+Fix the issue reported at:
+
+	http://marc.info/?l=linux-scsi&m=143694494104544&w=2
+
+Try to do chip reset at driver load time. If firmware fails to reach
+ready state, try chip reset using adp_reset() callback. For Fusion
+adapters the call back was previously void. Provide a suitable reset
+function.
+
+Signed-off-by: Sumit Saxena <sumit.saxena@avagotech.com>
+Signed-off-by: Kashyap Desai <kashyap.desai@avagotech.com>
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Signed-off-by: Martin K. Petersen <martin.petersen@oracle.com>
 
 Additional firmware initialization is required when the host is
 booted in "Fast Boot" mode, which is always the case on Intel Kylin server
@@ -9,42 +25,32 @@ booted in "Fast Boot" mode, which is always the case on Intel Kylin server
 
 Acked-by: Jean Delvare <jdelvare@suse.de>
 ---
- drivers/scsi/megaraid/megaraid_sas_fusion.c |  164 +++++++++++++++-------------
- 1 file changed, 88 insertions(+), 76 deletions(-)
+ drivers/scsi/megaraid/megaraid_sas_fusion.c |  147 +++++++++++++---------------
+ 1 file changed, 71 insertions(+), 76 deletions(-)
 
 --- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-@@ -2209,6 +2209,89 @@ static int
+@@ -2209,6 +2209,73 @@ static int
  megasas_adp_reset_fusion(struct megasas_instance *instance,
  			 struct megasas_register_set __iomem *regs)
  {
 +	u32 host_diag, abs_state, retry;
 +
-+
-+	dev_info(&instance->pdev->dev, "Entered into %s %d \n", __func__, __LINE__);
-+
-+	writel(MPI2_WRSEQ_FLUSH_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
-+	writel(MPI2_WRSEQ_1ST_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
-+	writel(MPI2_WRSEQ_2ND_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
-+	writel(MPI2_WRSEQ_3RD_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
-+	writel(MPI2_WRSEQ_4TH_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
-+	writel(MPI2_WRSEQ_5TH_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
-+	writel(MPI2_WRSEQ_6TH_KEY_VALUE,
-+	       &instance->reg_set->fusion_seq_offset);
++	/* Now try to reset the chip */
++	writel(MPI2_WRSEQ_FLUSH_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
++	writel(MPI2_WRSEQ_1ST_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
++	writel(MPI2_WRSEQ_2ND_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
++	writel(MPI2_WRSEQ_3RD_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
++	writel(MPI2_WRSEQ_4TH_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
++	writel(MPI2_WRSEQ_5TH_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
++	writel(MPI2_WRSEQ_6TH_KEY_VALUE, &instance->reg_set->fusion_seq_offset);
 +
 +	/* Check that the diag write enable (DRWE) bit is on */
 +	host_diag = readl(&instance->reg_set->fusion_host_diag);
 +	retry = 0;
 +	while (!(host_diag & HOST_DIAG_WRITE_ENABLE)) {
 +		msleep(100);
-+		host_diag =
-+		readl(&instance->reg_set->fusion_host_diag);
++		host_diag = readl(&instance->reg_set->fusion_host_diag);
 +		if (retry++ == 100) {
 +			printk(KERN_WARNING "megaraid_sas: "
 +			       "Host diag unlock failed! "
@@ -58,7 +64,7 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 +
 +	/* Send chip reset command */
 +	writel(host_diag | HOST_DIAG_RESET_ADAPTER,
-+	       &instance->reg_set->fusion_host_diag);
++		&instance->reg_set->fusion_host_diag);
 +	msleep(3000);
 +
 +	/* Make sure reset adapter bit is cleared */
@@ -66,8 +72,7 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 +	retry = 0;
 +	while (host_diag & HOST_DIAG_RESET_ADAPTER) {
 +		msleep(100);
-+		host_diag =
-+		readl(&instance->reg_set->fusion_host_diag);
++		host_diag = readl(&instance->reg_set->fusion_host_diag);
 +		if (retry++ == 1000) {
 +			printk(KERN_WARNING "megaraid_sas: "
 +			       "Diag reset adapter never "
@@ -79,17 +84,14 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 +	if (host_diag & HOST_DIAG_RESET_ADAPTER)
 +		return -1;
 +
-+	abs_state =
-+		instance->instancet->read_fw_status_reg(
-+			instance->reg_set) & MFI_STATE_MASK;
++	abs_state = instance->instancet->read_fw_status_reg(instance->reg_set)
++			& MFI_STATE_MASK;
 +	retry = 0;
 +
-+	while ((abs_state <= MFI_STATE_FW_INIT) &&
-+	       (retry++ < 1000)) {
++	while ((abs_state <= MFI_STATE_FW_INIT) && (retry++ < 1000)) {
 +		msleep(100);
-+		abs_state =
-+		instance->instancet->read_fw_status_reg(
-+			instance->reg_set) & MFI_STATE_MASK;
++		abs_state = instance->instancet->
++			read_fw_status_reg(instance->reg_set) & MFI_STATE_MASK;
 +	}
 +	if (abs_state <= MFI_STATE_FW_INIT) {
 +		printk(KERN_WARNING "megaraid_sas: firmware "
@@ -99,12 +101,10 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 +		return -1;
 +	}
 +
-+	dev_info(&instance->pdev->dev, "Exit from %s %d \n", __func__, __LINE__);
-+
  	return 0;
  }
  
-@@ -2337,13 +2420,13 @@ out:
+@@ -2337,13 +2404,13 @@ out:
  /* Core fusion reset function */
  int megasas_reset_fusion(struct Scsi_Host *shost, int iotimeout)
  {
@@ -120,7 +120,7 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
  
  	instance = (struct megasas_instance *)shost->hostdata;
  	fusion = instance->ctrl_context;
-@@ -2458,81 +2541,10 @@ int megasas_reset_fusion(struct Scsi_Hos
+@@ -2458,82 +2525,10 @@ int megasas_reset_fusion(struct Scsi_Hos
  
  		/* Now try to reset the chip */
  		for (i = 0; i < MEGASAS_FUSION_MAX_RESET_TRIES; i++) {
@@ -155,8 +155,10 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 -				}
 -			}
 -			if (!(host_diag & HOST_DIAG_WRITE_ENABLE))
--				continue;
--
++			if (instance->instancet->adp_reset
++				(instance, instance->reg_set))
+ 				continue;
+ 
 -			/* Send chip reset command */
 -			writel(host_diag | HOST_DIAG_RESET_ADAPTER,
 -			       &instance->reg_set->fusion_host_diag);
@@ -179,7 +181,7 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 -			}
 -			if (host_diag & HOST_DIAG_RESET_ADAPTER)
 -				continue;
- 
+-
 -			abs_state =
 -				instance->instancet->read_fw_status_reg(
 -					instance->reg_set) & MFI_STATE_MASK;
@@ -199,9 +201,7 @@ Acked-by: Jean Delvare <jdelvare@suse.de>
 -					instance->host->host_no);
 -				continue;
 -			}
-+			if (instance->instancet->adp_reset
-+				(instance, instance->reg_set))
-+ 				continue;
- 
+-
  			/* Wait for FW to become ready */
  			if (megasas_transition_to_ready(instance, 1)) {
+ 				printk(KERN_WARNING "megaraid_sas: Failed to "
