@@ -1,0 +1,99 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: xen: Linux 3.12.52
+Patch-mainline: Never, SUSE-Xen specific
+References: CVE-2015-8543 CVE-2015-8569 CVE-2015-8575 bnc#814440 bsc#939145 bsc#952579 bsc#955422 bsc#958886 bsc#959190 bsc#959399
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Automatically created from "patches.kernel.org/patch-3.12.51-52" by xen-port-patches.py
+
+--- a/arch/x86/kernel/cpu/common-xen.c
++++ b/arch/x86/kernel/cpu/common-xen.c
+@@ -302,8 +302,9 @@ static __always_inline void setup_smap(s
+ {
+ 	unsigned long eflags;
+ 
++	asm ("pushf;" __ASM_SIZE(pop) "%0" : "=rm" (eflags));
++
+ 	/* This should have been cleared long ago */
+-	raw_local_save_flags(eflags);
+ 	BUG_ON(eflags & X86_EFLAGS_AC);
+ 
+ 	if (cpu_has(c, X86_FEATURE_SMAP)) {
+--- a/arch/x86/kernel/setup-xen.c
++++ b/arch/x86/kernel/setup-xen.c
+@@ -578,7 +578,7 @@ static void __init memblock_x86_reserve_
+ # define CRASH_KERNEL_ADDR_HIGH_MAX	MAXMEM
+ #endif
+ 
+-static void __init reserve_crashkernel_low(void)
++static int __init reserve_crashkernel_low(void)
+ {
+ #ifdef CONFIG_X86_64
+ 	const unsigned long long alignment = 16<<20;	/* 16M */
+@@ -605,17 +605,16 @@ static void __init reserve_crashkernel_l
+ 	} else {
+ 		/* passed with crashkernel=0,low ? */
+ 		if (!low_size)
+-			return;
++			return 0;
+ 	}
+ 
+ 	low_base = memblock_find_in_range(low_size, (1ULL<<32),
+ 					low_size, alignment);
+ 
+ 	if (!low_base) {
+-		if (!auto_set)
+-			pr_info("crashkernel low reservation failed - No suitable area found.\n");
+-
+-		return;
++		pr_err("Cannot reserve %ldMB crashkernel low memory, please try smaller size.\n",
++		       (unsigned long)(low_size >> 20));
++		return -ENOMEM;
+ 	}
+ 
+ 	memblock_reserve(low_base, low_size);
+@@ -627,6 +626,7 @@ static void __init reserve_crashkernel_l
+ 	crashk_low_res.end   = low_base + low_size - 1;
+ 	insert_resource(&iomem_resource, &crashk_low_res);
+ #endif
++	return 0;
+ }
+ 
+ static void __init reserve_crashkernel(void)
+@@ -678,6 +678,11 @@ static void __init reserve_crashkernel(v
+ 	}
+ 	memblock_reserve(crash_base, crash_size);
+ 
++	if (crash_base >= (1ULL << 32) && reserve_crashkernel_low()) {
++		memblock_free(crash_base, crash_size);
++		return;
++	}
++
+ 	printk(KERN_INFO "Reserving %ldMB of memory at %ldMB "
+ 			"for crashkernel (System RAM: %ldMB)\n",
+ 			(unsigned long)(crash_size >> 20),
+@@ -687,9 +692,6 @@ static void __init reserve_crashkernel(v
+ 	crashk_res.start = crash_base;
+ 	crashk_res.end   = crash_base + crash_size - 1;
+ 	insert_resource(&iomem_resource, &crashk_res);
+-
+-	if (crash_base >= (1ULL<<32))
+-		reserve_crashkernel_low();
+ }
+ #else
+ static void __init reserve_crashkernel(void)
+@@ -1307,6 +1309,14 @@ void __init setup_arch(char **cmdline_p)
+ 	clone_pgd_range(initial_page_table + KERNEL_PGD_BOUNDARY,
+ 			swapper_pg_dir     + KERNEL_PGD_BOUNDARY,
+ 			KERNEL_PGD_PTRS);
++
++	/*
++	 * sync back low identity map too.  It is used for example
++	 * in the 32-bit EFI stub.
++	 */
++	clone_pgd_range(initial_page_table,
++			swapper_pg_dir     + KERNEL_PGD_BOUNDARY,
++			min(KERNEL_PGD_PTRS, KERNEL_PGD_BOUNDARY));
+ #endif
+ 
+ 	tboot_probe();

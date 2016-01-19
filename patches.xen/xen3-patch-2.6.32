@@ -740,21 +740,18 @@ Automatically created from "patches.kernel.org/patch-2.6.32" by xen-port-patches
  /* For reliability, we're prepared to waste bits here. */
  static DECLARE_BITMAP(backtrace_mask, NR_CPUS) __read_mostly;
  
-@@ -52,10 +56,14 @@ void arch_trigger_all_cpu_backtrace(bool
- 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
- 
+@@ -54,7 +58,11 @@ void arch_trigger_all_cpu_backtrace(bool
  	if (!cpumask_empty(to_cpumask(backtrace_mask))) {
-+#ifndef CONFIG_XEN
  		pr_info("sending NMI to %s CPUs:\n",
  			(include_self ? "all" : "other"));
++#ifndef CONFIG_XEN
  		apic->send_IPI_mask(to_cpumask(backtrace_mask), NMI_VECTOR);
- 	}
 +#else /* this works even without CONFIG_X86_LOCAL_APIC */
 +	xen_send_IPI_all(NMI_VECTOR);
 +#endif
+ 	}
  
  	/* Wait for up to 10 seconds for all CPUs to do the backtrace */
- 	for (i = 0; i < 10 * 1000; i++) {
 --- a/arch/x86/kernel/apic/io_apic-xen.c
 +++ b/arch/x86/kernel/apic/io_apic-xen.c
 @@ -69,6 +69,8 @@ unsigned long io_apic_irqs;
