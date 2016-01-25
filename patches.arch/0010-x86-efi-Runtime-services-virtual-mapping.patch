@@ -28,22 +28,20 @@ Also, add the UEFI RT VA space to Documentation/x86/x86_64/mm.txt.
 Signed-off-by: Borislav Petkov <bp@suse.de>
 Signed-off-by: Matt Fleming <matt.fleming@intel.com>
 ---
- Documentation/kernel-parameters.txt  |   6 ++
- Documentation/x86/x86_64/mm.txt      |   7 +++
- arch/x86/include/asm/efi.h           |  64 ++++++++++++++------
- arch/x86/include/asm/pgtable_types.h |   3 +-
- arch/x86/platform/efi/efi.c          |  94 +++++++++++++++++++++---------
- arch/x86/platform/efi/efi_32.c       |   9 ++-
- arch/x86/platform/efi/efi_64.c       | 109 +++++++++++++++++++++++++++++++++++
- arch/x86/platform/efi/efi_stub_64.S  |  54 +++++++++++++++++
- include/linux/efi.h                  |   3 +-
- 9 files changed, 301 insertions(+), 48 deletions(-)
+ Documentation/kernel-parameters.txt  |    6 +
+ Documentation/x86/x86_64/mm.txt      |    7 ++
+ arch/x86/include/asm/efi.h           |   64 +++++++++++++++-----
+ arch/x86/include/asm/pgtable_types.h |    3 
+ arch/x86/platform/efi/efi.c          |   94 +++++++++++++++++++++---------
+ arch/x86/platform/efi/efi_32.c       |    7 ++
+ arch/x86/platform/efi/efi_64.c       |  109 +++++++++++++++++++++++++++++++++++
+ arch/x86/platform/efi/efi_stub_64.S  |   54 +++++++++++++++++
+ include/linux/efi.h                  |    3 
+ 9 files changed, 300 insertions(+), 47 deletions(-)
 
-diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
-index 26d6fa3fd75f..01d6b8a92c9c 100644
 --- a/Documentation/kernel-parameters.txt
 +++ b/Documentation/kernel-parameters.txt
-@@ -892,6 +892,12 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+@@ -913,6 +913,12 @@ bytes respectively. Such letter suffixes
  	edd=		[EDD]
  			Format: {"off" | "on" | "skip[mbr]"}
  
@@ -56,11 +54,9 @@ index 26d6fa3fd75f..01d6b8a92c9c 100644
  	efi_no_storage_paranoia [EFI; X86]
  			Using this parameter you can use more than 50% of
  			your efi variable storage. Use this parameter only if
-diff --git a/Documentation/x86/x86_64/mm.txt b/Documentation/x86/x86_64/mm.txt
-index 881582f75c9c..c584a51add15 100644
 --- a/Documentation/x86/x86_64/mm.txt
 +++ b/Documentation/x86/x86_64/mm.txt
-@@ -28,4 +28,11 @@ reference.
+@@ -30,4 +30,11 @@ reference.
  Current X86-64 implementations only support 40 bits of address space,
  but we support up to 46 bits. This expands into MBZ space in the page tables.
  
@@ -72,8 +68,6 @@ index 881582f75c9c..c584a51add15 100644
 +0xffffffef00000000 - 0xffffffff00000000
 +
  -Andi Kleen, Jul 2004
-diff --git a/arch/x86/include/asm/efi.h b/arch/x86/include/asm/efi.h
-index 25f229e84cfd..5cb4ec1401d5 100644
 --- a/arch/x86/include/asm/efi.h
 +++ b/arch/x86/include/asm/efi.h
 @@ -1,6 +1,24 @@
@@ -101,7 +95,7 @@ index 25f229e84cfd..5cb4ec1401d5 100644
  #ifdef CONFIG_X86_32
  
  #define EFI_LOADER_SIGNATURE	"EL32"
-@@ -69,24 +87,31 @@ extern u64 efi_call6(void *fp, u64 arg1, u64 arg2, u64 arg3,
+@@ -69,24 +87,31 @@ extern u64 efi_call6(void *fp, u64 arg1,
  	efi_call6((f), (u64)(a1), (u64)(a2), (u64)(a3),		\
  		  (u64)(a4), (u64)(a5), (u64)(a6))
  
@@ -150,7 +144,7 @@ index 25f229e84cfd..5cb4ec1401d5 100644
  
  extern void __iomem *efi_ioremap(unsigned long addr, unsigned long size,
  				 u32 type, u64 attribute);
-@@ -95,12 +120,17 @@ extern void __iomem *efi_ioremap(unsigned long addr, unsigned long size,
+@@ -95,12 +120,17 @@ extern void __iomem *efi_ioremap(unsigne
  
  extern int add_efi_memmap;
  extern unsigned long x86_efi_facility;
@@ -168,11 +162,9 @@ index 25f229e84cfd..5cb4ec1401d5 100644
  
  #ifdef CONFIG_EFI
  
-diff --git a/arch/x86/include/asm/pgtable_types.h b/arch/x86/include/asm/pgtable_types.h
-index 0ecac257fb26..a83aa44bb1fb 100644
 --- a/arch/x86/include/asm/pgtable_types.h
 +++ b/arch/x86/include/asm/pgtable_types.h
-@@ -382,7 +382,8 @@ static inline void update_page_count(int level, unsigned long pages) { }
+@@ -383,7 +383,8 @@ static inline void update_page_count(int
   */
  extern pte_t *lookup_address(unsigned long address, unsigned int *level);
  extern phys_addr_t slow_virt_to_phys(void *__address);
@@ -182,8 +174,6 @@ index 0ecac257fb26..a83aa44bb1fb 100644
  #endif	/* !__ASSEMBLY__ */
  
  #endif /* _ASM_X86_PGTABLE_DEFS_H */
-diff --git a/arch/x86/platform/efi/efi.c b/arch/x86/platform/efi/efi.c
-index 9d2cb6f05ac7..991bd9c38ef5 100644
 --- a/arch/x86/platform/efi/efi.c
 +++ b/arch/x86/platform/efi/efi.c
 @@ -12,6 +12,8 @@
@@ -195,7 +185,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
   *
   * Copied from efi_32.c to eliminate the duplicated code between EFI
   * 32/64 support code. --ying 2007-10-26
-@@ -739,21 +741,56 @@ void efi_memory_uc(u64 addr, unsigned long size)
+@@ -746,21 +748,56 @@ void efi_memory_uc(u64 addr, unsigned lo
  	set_memory_uc(addr, npages);
  }
  
@@ -259,7 +249,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
  	int count = 0;
  
  	efi.systab = NULL;
-@@ -762,7 +799,6 @@ void __init efi_enter_virtual_mode(void)
+@@ -769,7 +806,6 @@ void __init efi_enter_virtual_mode(void)
  	 * We don't do virtual mode, since we don't do runtime services, on
  	 * non-native EFI
  	 */
@@ -267,7 +257,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
  	if (!efi_is_native()) {
  		efi_unmap_memmap();
  		return;
-@@ -793,6 +829,7 @@ void __init efi_enter_virtual_mode(void)
+@@ -800,6 +836,7 @@ void __init efi_enter_virtual_mode(void)
  			continue;
  		}
  		prev_md = md;
@@ -275,7 +265,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
  	}
  
  	for (p = memmap.map; p < memmap.map_end; p += memmap.desc_size) {
-@@ -805,33 +842,18 @@ void __init efi_enter_virtual_mode(void)
+@@ -812,33 +849,18 @@ void __init efi_enter_virtual_mode(void)
  				continue;
  		}
  
@@ -313,7 +303,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
  		new_memmap = krealloc(new_memmap,
  				      (count + 1) * memmap.desc_size,
  				      GFP_KERNEL);
-@@ -842,6 +864,9 @@ void __init efi_enter_virtual_mode(void)
+@@ -849,6 +871,9 @@ void __init efi_enter_virtual_mode(void)
  
  	BUG_ON(!efi.systab);
  
@@ -323,7 +313,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
  	status = phys_efi_set_virtual_address_map(
  		memmap.desc_size * count,
  		memmap.desc_size,
-@@ -874,7 +899,8 @@ void __init efi_enter_virtual_mode(void)
+@@ -881,7 +906,8 @@ void __init efi_enter_virtual_mode(void)
  	efi.query_variable_info = virt_efi_query_variable_info;
  	efi.update_capsule = virt_efi_update_capsule;
  	efi.query_capsule_caps = virt_efi_query_capsule_caps;
@@ -333,7 +323,7 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
  		runtime_code_page_mkexec();
  
  	kfree(new_memmap);
-@@ -1004,3 +1030,15 @@ efi_status_t efi_query_variable_store(u32 attributes, unsigned long size)
+@@ -1011,3 +1037,15 @@ efi_status_t efi_query_variable_store(u3
  	return EFI_SUCCESS;
  }
  EXPORT_SYMBOL_GPL(efi_query_variable_store);
@@ -349,16 +339,11 @@ index 9d2cb6f05ac7..991bd9c38ef5 100644
 +	return 0;
 +}
 +early_param("efi", parse_efi_cmdline);
-diff --git a/arch/x86/platform/efi/efi_32.c b/arch/x86/platform/efi/efi_32.c
-index 40e446941dd7..e94557cf5487 100644
 --- a/arch/x86/platform/efi/efi_32.c
 +++ b/arch/x86/platform/efi/efi_32.c
-@@ -37,9 +37,16 @@
-  * claim EFI runtime service handler exclusively and to duplicate a memory in
-  * low memory space say 0 - 3G.
+@@ -38,6 +38,13 @@
+  * say 0 - 3G.
   */
--
- static unsigned long efi_rt_eflags;
  
 +void efi_sync_low_kernel_mappings(void) {}
 +void efi_setup_page_tables(void) {}
@@ -367,22 +352,18 @@ index 40e446941dd7..e94557cf5487 100644
 +{
 +	old_map_region(md);
 +}
-+
+ 
  void efi_call_phys_prelog(void)
  {
- 	struct desc_ptr gdt_descr;
-diff --git a/arch/x86/platform/efi/efi_64.c b/arch/x86/platform/efi/efi_64.c
-index 39a0e7f1f0a3..bf286c386d33 100644
 --- a/arch/x86/platform/efi/efi_64.c
 +++ b/arch/x86/platform/efi/efi_64.c
-@@ -38,10 +38,28 @@
+@@ -38,9 +38,27 @@
  #include <asm/efi.h>
  #include <asm/cacheflush.h>
  #include <asm/fixmap.h>
 +#include <asm/realmode.h>
  
  static pgd_t *save_pgd __initdata;
- static unsigned long efi_flags __initdata;
  
 +/*
 + * We allocate runtime services regions bottom-up, starting from -4G, i.e.
@@ -404,7 +385,7 @@ index 39a0e7f1f0a3..bf286c386d33 100644
  static void __init early_code_mapping_set_exec(int executable)
  {
  	efi_memory_desc_t *md;
-@@ -65,6 +83,9 @@ void __init efi_call_phys_prelog(void)
+@@ -64,6 +82,9 @@ void __init efi_call_phys_prelog(void)
  	int pgd;
  	int n_pgds;
  
@@ -412,9 +393,9 @@ index 39a0e7f1f0a3..bf286c386d33 100644
 +		return;
 +
  	early_code_mapping_set_exec(1);
- 	local_irq_save(efi_flags);
  
-@@ -86,6 +107,10 @@ void __init efi_call_phys_epilog(void)
+ 	n_pgds = DIV_ROUND_UP((max_pfn << PAGE_SHIFT), PGDIR_SIZE);
+@@ -84,6 +105,10 @@ void __init efi_call_phys_epilog(void)
  	 */
  	int pgd;
  	int n_pgds = DIV_ROUND_UP((max_pfn << PAGE_SHIFT) , PGDIR_SIZE);
@@ -425,7 +406,7 @@ index 39a0e7f1f0a3..bf286c386d33 100644
  	for (pgd = 0; pgd < n_pgds; pgd++)
  		set_pgd(pgd_offset_k(pgd * PGDIR_SIZE), save_pgd[pgd]);
  	kfree(save_pgd);
-@@ -94,6 +119,90 @@ void __init efi_call_phys_epilog(void)
+@@ -91,6 +116,90 @@ void __init efi_call_phys_epilog(void)
  	early_code_mapping_set_exec(0);
  }
  
@@ -516,8 +497,6 @@ index 39a0e7f1f0a3..bf286c386d33 100644
  void __iomem *__init efi_ioremap(unsigned long phys_addr, unsigned long size,
  				 u32 type, u64 attribute)
  {
-diff --git a/arch/x86/platform/efi/efi_stub_64.S b/arch/x86/platform/efi/efi_stub_64.S
-index 4c07ccab8146..88073b140298 100644
 --- a/arch/x86/platform/efi/efi_stub_64.S
 +++ b/arch/x86/platform/efi/efi_stub_64.S
 @@ -34,10 +34,47 @@
@@ -634,11 +613,9 @@ index 4c07ccab8146..88073b140298 100644
 +ENTRY(efi_scratch)
 +	.fill 3,8,0
 +	.byte 0
-diff --git a/include/linux/efi.h b/include/linux/efi.h
-index 519ff26dd5a5..d7ea2bd7c504 100644
 --- a/include/linux/efi.h
 +++ b/include/linux/efi.h
-@@ -674,7 +674,8 @@ extern int __init efi_setup_pcdp_console(char *);
+@@ -688,7 +688,8 @@ extern int __init efi_setup_pcdp_console
  #define EFI_RUNTIME_SERVICES	3	/* Can we use runtime services? */
  #define EFI_MEMMAP		4	/* Can we use EFI memory map? */
  #define EFI_64BIT		5	/* Is the firmware 64-bit? */
@@ -648,6 +625,3 @@ index 519ff26dd5a5..d7ea2bd7c504 100644
  
  #ifdef CONFIG_EFI
  # ifdef CONFIG_X86
--- 
-1.8.5.2.192.g7794a68
-
