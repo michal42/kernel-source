@@ -1,0 +1,53 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: kernel: inadvertent free of the vector register save area
+Patch-mainline: Never, SLES 12 SP1 only
+References: bnc#961202, LTC#134657
+
+Description:  kernel: inadvertent free of the vector register save area
+Symptom:      Random user space and kernel crashes in out of memory situations
+              with user space processes utilizing vector registers
+Problem:      On fork the child task structure is created from the parents
+              task structure. The default arch_dup_tak_struct function makes
+              a 1:1 copy of the parents task structure, this includes the
+              pointer to the vector save area. Eventually the copy_thread
+              function resets the vector save area pointer to NULL.
+              The fork operation can fail for a number of reasons. It can
+              happen that the new task structure for the child process
+              is freed again before the copy_thread function has been
+              reached. In this case the vector save area of the parent
+              is freed but the memory is still required by the parent.
+Solution:     Provide an s390 specific version of the arch_dup_task_struct
+              function which resets the vector save area pointer.
+Reproduction: Run lots of user space processes utilizing vector registers
+              while short on memory.
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/process.c |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/arch/s390/kernel/process.c
++++ b/arch/s390/kernel/process.c
+@@ -111,6 +111,13 @@ void arch_release_task_struct(struct tas
+ }
+ #endif
+ 
++int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
++{
++	*dst = *src;
++	dst->thread.vxrs = NULL;
++	return 0;
++}
++
+ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
+ 		unsigned long arg, struct task_struct *p)
+ {
+@@ -185,7 +192,6 @@ int copy_thread(unsigned long clone_flag
+ 	save_fp_ctl(&p->thread.fp_regs.fpc);
+ 	save_fp_regs(p->thread.fp_regs.fprs);
+ 	p->thread.fp_regs.pad = 0;
+-	p->thread.vxrs = NULL;
+ 	/* Set a new TLS ?  */
+ 	if (clone_flags & CLONE_SETTLS) {
+ 		unsigned long tls = frame->childregs.gprs[6];
