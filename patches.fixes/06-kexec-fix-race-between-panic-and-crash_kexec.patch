@@ -1,0 +1,153 @@
+From: Hidehiro Kawai <hidehiro.kawai.ez@hitachi.com>
+Date: Mon, 14 Dec 2015 11:19:11 +0100
+Subject: kexec: Fix race between panic() and crash_kexec()
+Git-commit: 7bbee5ca3896f69f09c68be549cb8997abe6bca6
+Patch-mainline: v4.5-rc1
+References: bsc#940946, bsc#937444
+
+Currently, panic() and crash_kexec() can be called at the same time.
+For example (x86 case):
+
+CPU 0:
+  oops_end()
+    crash_kexec()
+      mutex_trylock() // acquired
+        nmi_shootdown_cpus() // stop other CPUs
+
+CPU 1:
+  panic()
+    crash_kexec()
+      mutex_trylock() // failed to acquire
+    smp_send_stop() // stop other CPUs
+    infinite loop
+
+If CPU 1 calls smp_send_stop() before nmi_shootdown_cpus(), kdump
+fails.
+
+In another case:
+
+CPU 0:
+  oops_end()
+    crash_kexec()
+      mutex_trylock() // acquired
+        <NMI>
+        io_check_error()
+          panic()
+            crash_kexec()
+              mutex_trylock() // failed to acquire
+            infinite loop
+
+Clearly, this is an undesirable result.
+
+To fix this problem, this patch changes crash_kexec() to exclude others
+by using the panic_cpu atomic.
+
+Signed-off-by: Hidehiro Kawai <hidehiro.kawai.ez@hitachi.com>
+Acked-by: Michal Hocko <mhocko@suse.com>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Baoquan He <bhe@redhat.com>
+Cc: Dave Young <dyoung@redhat.com>
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: HATAYAMA Daisuke <d.hatayama@jp.fujitsu.com>
+Cc: "H. Peter Anvin" <hpa@zytor.com>
+Cc: Ingo Molnar <mingo@kernel.org>
+Cc: Jonathan Corbet <corbet@lwn.net>
+Cc: kexec@lists.infradead.org
+Cc: linux-doc@vger.kernel.org
+Cc: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Cc: Masami Hiramatsu <masami.hiramatsu.pt@hitachi.com>
+Cc: Minfei Huang <mnfhuang@gmail.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Seth Jennings <sjenning@redhat.com>
+Cc: Steven Rostedt <rostedt@goodmis.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: Vitaly Kuznetsov <vkuznets@redhat.com>
+Cc: Vivek Goyal <vgoyal@redhat.com>
+Cc: x86-ml <x86@kernel.org>
+Link: http://lkml.kernel.org/r/20151210014630.25437.94161.stgit@softrs
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+---
+ include/linux/kexec.h |    2 ++
+ kernel/kexec.c        |   30 +++++++++++++++++++++++++++++-
+ kernel/panic.c        |    4 +++-
+ 3 files changed, 34 insertions(+), 2 deletions(-)
+
+--- a/include/linux/kexec.h
++++ b/include/linux/kexec.h
+@@ -139,6 +139,7 @@ extern asmlinkage long compat_sys_kexec_
+ #endif
+ extern struct page *kimage_alloc_control_pages(struct kimage *image,
+ 						unsigned int order);
++extern void __crash_kexec(struct pt_regs *);
+ extern void crash_kexec(struct pt_regs *);
+ int kexec_should_crash(struct task_struct *);
+ void crash_save_cpu(struct pt_regs *regs, int cpu);
+@@ -218,6 +219,7 @@ void crash_free_reserved_phys_range(unsi
+ #else /* !CONFIG_KEXEC */
+ struct pt_regs;
+ struct task_struct;
++static inline void __crash_kexec(struct pt_regs *regs) { }
+ static inline void crash_kexec(struct pt_regs *regs) { }
+ static inline int kexec_should_crash(struct task_struct *p) { return 0; }
+ #define kexec_in_progress false
+--- a/kernel/kexec.c
++++ b/kernel/kexec.c
+@@ -1084,7 +1084,12 @@ asmlinkage long compat_sys_kexec_load(un
+ }
+ #endif
+ 
+-void crash_kexec(struct pt_regs *regs)
++/*
++ * No panic_cpu check version of crash_kexec().  This function is called
++ * only when panic_cpu holds the current CPU number; this is the only CPU
++ * which processes crash_kexec routines.
++ */
++void __crash_kexec(struct pt_regs *regs)
+ {
+ 	/* Take the kexec_mutex here to prevent sys_kexec_load
+ 	 * running on one cpu from replacing the crash kernel
+@@ -1107,6 +1112,29 @@ void crash_kexec(struct pt_regs *regs)
+ 	}
+ }
+ 
++void crash_kexec(struct pt_regs *regs)
++{
++	int old_cpu, this_cpu;
++
++	/*
++	 * Only one CPU is allowed to execute the crash_kexec() code as with
++	 * panic().  Otherwise parallel calls of panic() and crash_kexec()
++	 * may stop each other.  To exclude them, we use panic_cpu here too.
++	 */
++	this_cpu = raw_smp_processor_id();
++	old_cpu = atomic_cmpxchg(&panic_cpu, PANIC_CPU_INVALID, this_cpu);
++	if (old_cpu == PANIC_CPU_INVALID) {
++		/* This is the 1st CPU which comes here, so go ahead. */
++		__crash_kexec(regs);
++
++		/*
++		 * Reset panic_cpu to allow another panic()/crash_kexec()
++		 * call.
++		 */
++		atomic_set(&panic_cpu, PANIC_CPU_INVALID);
++	}
++}
++
+ size_t crash_get_memory_size(void)
+ {
+ 	size_t size = 0;
+--- a/kernel/panic.c
++++ b/kernel/panic.c
+@@ -133,8 +133,10 @@ void panic(const char *fmt, ...)
+ 	 * If we have crashed and we have a crash kernel loaded let it handle
+ 	 * everything else.
+ 	 * Do we want to call this before we try to display a message?
++	 *
++	 * Bypass the panic_cpu check and call __crash_kexec directly.
+ 	 */
+-	crash_kexec(NULL);
++	__crash_kexec(NULL);
+ 
+ 	/*
+ 	 * Note smp_send_stop is the usual smp shutdown function, which

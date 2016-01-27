@@ -1,0 +1,76 @@
+From: Qiaowei Ren <qiaowei.ren@intel.com>
+Date: Thu, 5 Dec 2013 17:15:34 +0800
+Subject: x86, xsave: Support eager-only xsave features, add MPX support
+Git-commit: e7d820a5e549b3eb6c3f9467507566565646a669
+Patch-mainline: v3.14-rc1
+References: bsc#938577
+
+Some features, like Intel MPX, work only if the kernel uses eagerfpu
+model.  So we should force eagerfpu on unless the user has explicitly
+disabled it.
+
+Add definitions for Intel MPX and add it to the supported list.
+
+[ hpa: renamed XSTATE_FLEXIBLE to XSTATE_LAZY and added comments ]
+
+Signed-off-by: Qiaowei Ren <qiaowei.ren@intel.com>
+Link: http://lkml.kernel.org/r/9E0BE1322F2F2246BD820DA9FC397ADE014A6115@SHSMSX102.ccr.corp.intel.com
+Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+[ Drop changes to arch/x86/include/asm/processor.h as they're causing a kABI
+  breakage of struct xsave_struct changing layout and size. ]
+Acked-by: Borislav Petkov <bp@suse.de>
+---
+ arch/x86/include/asm/processor.h |   23 +++++++++++++++++++++++
+ arch/x86/include/asm/xsave.h     |   14 ++++++++++----
+ arch/x86/kernel/xsave.c          |   10 ++++++++++
+ 3 files changed, 43 insertions(+), 4 deletions(-)
+
+--- a/arch/x86/include/asm/xsave.h
++++ b/arch/x86/include/asm/xsave.h
+@@ -9,6 +9,8 @@
+ #define XSTATE_FP	0x1
+ #define XSTATE_SSE	0x2
+ #define XSTATE_YMM	0x4
++#define XSTATE_BNDREGS	0x8
++#define XSTATE_BNDCSR	0x10
+ 
+ #define XSTATE_FPSSE	(XSTATE_FP | XSTATE_SSE)
+ 
+@@ -20,10 +22,14 @@
+ #define XSAVE_YMM_SIZE	    256
+ #define XSAVE_YMM_OFFSET    (XSAVE_HDR_SIZE + XSAVE_HDR_OFFSET)
+ 
+-/*
+- * These are the features that the OS can handle currently.
+- */
+-#define XCNTXT_MASK	(XSTATE_FP | XSTATE_SSE | XSTATE_YMM)
++/* Supported features which support lazy state saving */
++#define XSTATE_LAZY	(XSTATE_FP | XSTATE_SSE | XSTATE_YMM)
++
++/* Supported features which require eager state saving */
++#define XSTATE_EAGER	(XSTATE_BNDREGS | XSTATE_BNDCSR)
++
++/* All currently supported features */
++#define XCNTXT_MASK	(XSTATE_LAZY | XSTATE_EAGER)
+ 
+ #ifdef CONFIG_X86_64
+ #define REX_PREFIX	"0x48, "
+--- a/arch/x86/kernel/xsave.c
++++ b/arch/x86/kernel/xsave.c
+@@ -564,6 +564,16 @@ static void __init xstate_enable_boot_cp
+ 	if (cpu_has_xsaveopt && eagerfpu != DISABLE)
+ 		eagerfpu = ENABLE;
+ 
++	if (pcntxt_mask & XSTATE_EAGER) {
++		if (eagerfpu == DISABLE) {
++			pr_err("eagerfpu not present, disabling some xstate features: 0x%llx\n",
++					pcntxt_mask & XSTATE_EAGER);
++			pcntxt_mask &= ~XSTATE_EAGER;
++		} else {
++			eagerfpu = ENABLE;
++		}
++	}
++
+ 	pr_info("enabled xstate_bv 0x%llx, cntxt size 0x%x\n",
+ 		pcntxt_mask, xstate_size);
+ }
