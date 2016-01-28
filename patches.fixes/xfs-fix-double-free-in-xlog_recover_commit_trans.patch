@@ -1,0 +1,31 @@
+From: Dave Chinner <dchinner@redhat.com>
+Date: Mon, 29 Sep 2014 09:45:32 +1000
+Subject: [PATCH] xfs: fix double free in xlog_recover_commit_trans
+References: bsc#947953
+Patch-mainline: v3.18
+Git-commit: 88b863db97a18a04c90ebd57d84e1b7863114dcb
+
+When an error occurs during buffer submission in
+xlog_recover_commit_trans(), we free the trans structure twice. Fix
+it by only freeing the structure in the caller regardless of the
+success or failure of the function.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+---
+ fs/xfs/xfs_log_recover.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+--- a/fs/xfs/xfs_log_recover.c
++++ b/fs/xfs/xfs_log_recover.c
+@@ -3530,8 +3530,6 @@ out:
+ 	if (!list_empty(&done_list))
+ 		list_splice_init(&done_list, &trans->r_itemq);
+ 
+-	xlog_recover_free_trans(trans);
+-
+ 	error2 = xfs_buf_delwri_submit(&buffer_list);
+ 	return error ? error : error2;
+ }
