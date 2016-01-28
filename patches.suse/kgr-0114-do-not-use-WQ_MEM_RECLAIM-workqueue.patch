@@ -1,0 +1,33 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Wed, 27 Jan 2016 10:51:18 +0100
+Subject: kgr: do not use WQ_MEM_RECLAIM workqueue
+Patch-mainline: not yet, kgraft
+References: bnc#963572
+
+We are flushing system_wq through ftrace and this can lead to
+deadlock. So allocate our kgraft workqueue as !WQ_MEM_RECLAIM.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ kernel/kgraft.c |   10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -1380,7 +1380,15 @@ static int __init kgr_init(void)
+ 	if (ret)
+ 		return ret;
+ 
+-	kgr_wq = create_singlethread_workqueue("kgraft");
++	/*
++	 * This callchain:
++	 * kgr_work_fn->kgr_finalize->kgr_patch_code->kgr_switch_fops->
++	 *   kgr_ftrace_disable->unregister_ftrace_function->ftrace_shutdown->
++	 *   schedule_on_each_cpu->flush_work
++	 * triggers a warning that WQ_MEM_RECLAIM is flushing !WQ_MEM_RECLAIM
++	 * workqueue. So we have to allocate a !WQ_MEM_RECLAIM workqueue.
++	 */
++	kgr_wq = alloc_ordered_workqueue("kgraft", 0);
+ 	if (!kgr_wq) {
+ 		pr_err("kgr: cannot allocate a work queue, aborting!\n");
+ 		ret = -ENOMEM;
