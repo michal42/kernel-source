@@ -1,0 +1,85 @@
+From 28b5d86f37086bac3bf4aec9751a2d6b4f1d5a5e Mon Sep 17 00:00:00 2001
+From: Waiman Long <Waiman.Long@hpe.com>
+Date: Mon, 14 Dec 2015 13:20:46 -0500
+Subject: [PATCH 1/2] sched/fair: Move cache hot load_avg/runnable_avg into separate cacheline
+Git-commit: b0367629acf62a78404c467cd09df447c2fea804
+Patch-mainline: v4.5-rc1
+References: bnc#960227
+
+When running a java benchmark on a 16-socket IvyBridge-EX system with
+SLES 12 SP1 kernel, the benchmark results were:
+
+	Max-jOPs: 941987    Critical-jOps: 126719
+
+The Max-jOPs result was about 6% less than what we could get with
+SLES 11 sp3. The Critical-jOPs result was about half of SLES 11 sp3.
+
+The performance degradation was found to be caused by cacheline
+contention in the update_cfs_rq_blocked_load() and update_cfs_shares()
+function. The contention was caused by false cacheline sharing of
+the following fields in the task_group structure:
+
+        struct sched_entity **se;       (read-only)
+        atomic64_t load_avg;            (write-mostly)
+        atomic_t runnable_avg           (write-mostly)
+
+This patch attempts to reduce the cacheline contention by moving the
+hot load_avg and runnable_avg fields into another cacheline separated
+from the se field. With the change, the size of the task_group
+structure will be a multiple of the cachline size.  The kzalloc()
+function in sched_create_group() should returns objects properly
+aligned on the cacheline boundary unless debugging is turned on.
+
+Backward compatibility will be maintained unless the kernel modules
+attempt to access load_avg and runnable_avg values where 0 will
+be returned instead.
+
+With this patch applied, the benchmark results became:
+
+      Max-jOPs: 1009346    Critical-jOps: 247276
+
+This patch is a backport of the upstream commit:
+
+	b0367629acf62a78404c467cd09df447c2fea804
+	sched/fair: Move the cache-hot 'load_avg' variable into its
+	own cacheline
+
+Signed-off-by: Waiman Long <Waiman.Long@hpe.com>
+Acked-by: Mike Galbraith <mgalbraith@suse.de>
+---
+ kernel/sched/sched.h |   15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -150,8 +150,13 @@ struct task_group {
+ 	unsigned long shares;
+ 
+ #ifdef	CONFIG_SMP
++#ifdef	__GENKSYMS__
+ 	atomic_long_t load_avg;
+ 	atomic_t runnable_avg;
++#else
++	atomic_long_t __load_avg;	/* Unused */
++	atomic_t __runnable_avg;	/* Unused */
++#endif
+ #endif
+ #endif
+ 
+@@ -174,6 +179,16 @@ struct task_group {
+ #endif
+ 
+ 	struct cfs_bandwidth cfs_bandwidth;
++
++#if defined(CONFIG_FAIR_GROUP_SCHED) && defined(CONFIG_SMP) && \
++   !defined(__GENKSYMS__)
++	/*
++	 *  Put load_avg/runnable_avg in its own cacheline to avoid
++	 *  interfering with the other fields in this structure.
++	 */
++	atomic_long_t load_avg ____cacheline_aligned;
++	atomic_t runnable_avg;
++#endif
+ };
+ 
+ #ifdef CONFIG_FAIR_GROUP_SCHED
