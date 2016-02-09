@@ -1,0 +1,80 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/vtime: limit MT scaling value updates
+Patch-mainline: v4.3-rc1
+Git-commit: f341b8dff9823a969be5fb3c958e5cb305ac67e8
+References: bnc#964230, LTC#136047
+
+Description:  kernel: correct cputime for SMT enabled systems
+Symptom:      The cputime calculation on systems with enabled SMT
+              is incorrect.
+Problem:      The formula to calculate the scaling factors for the
+              hardware threads of a core is incorrect. It fails to
+              take partially idle cores into account. Further the
+              scaling factors are updated to frequently, causing
+              performance degradations.
+Solution:     Fix the formula to calculate the SMT scaling factors
+              and limit the frequency of updates to once per jiffy.
+Reproduction: Run a test case that alters between two vs. one thread
+              busy, force the two threads to the logical CPUs of a
+              core and log the measured cputime.
+
+Upstream-Description:
+
+              s390/vtime: limit MT scaling value updates
+
+              The MT scaling values are updated on each calll to do_account_vtime.
+              This function is called for each HZ interrupt and for each context
+              switch. Context switch can happen often, the STCCTM instruction
+              on this path is noticeable. Limit the updates to once per jiffy.
+
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.com>
+---
+ arch/s390/kernel/vtime.c |   12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+--- a/arch/s390/kernel/vtime.c
++++ b/arch/s390/kernel/vtime.c
+@@ -37,6 +37,7 @@ static atomic64_t virt_timer_elapsed;
+ static DEFINE_PER_CPU(u64, mt_cycles[32]);
+ static DEFINE_PER_CPU(u64, mt_scaling_mult) = { 1 };
+ static DEFINE_PER_CPU(u64, mt_scaling_div) = { 1 };
++static DEFINE_PER_CPU(u64, mt_scaling_jiffies);
+ 
+ static inline u64 get_vtimer(void)
+ {
+@@ -94,7 +95,8 @@ static int do_account_vtime(struct task_
+ 	S390_lowcore.steal_timer += S390_lowcore.last_update_clock - clock;
+ 
+ 	/* Do MT utilization calculation */
+-	if (smp_cpu_mtid) {
++	if (smp_cpu_mtid &&
++	    time_after64(jiffies_64, __this_cpu_read(mt_scaling_jiffies))) {
+ 		u64 cycles_new[32], *cycles_old;
+ 		u64 delta, mult, div;
+ 
+@@ -114,6 +116,7 @@ static int do_account_vtime(struct task_
+ 				       sizeof(u64) * (smp_cpu_mtid + 1));
+ 			}
+ 		}
++		__this_cpu_write(mt_scaling_jiffies, jiffies_64);
+ 	}
+ 
+ 	user = S390_lowcore.user_timer - ti->user_timer;
+@@ -430,6 +433,13 @@ void init_cpu_vtimer(void)
+ {
+ 	/* set initial cpu timer */
+ 	set_vtimer(VTIMER_MAX_SLICE);
++	/* Setup initial MT scaling values */
++	if (smp_cpu_mtid) {
++		__this_cpu_write(mt_scaling_jiffies, jiffies);
++		__this_cpu_write(mt_scaling_mult, 1);
++		__this_cpu_write(mt_scaling_div, 1);
++		stcctm5(smp_cpu_mtid + 1, this_cpu_ptr(mt_cycles));
++	}
+ }
+ 
+ static int s390_nohz_notify(struct notifier_block *self, unsigned long action,
