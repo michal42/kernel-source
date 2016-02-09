@@ -11,7 +11,7 @@ remove the duplicated _MAT evaluation.
 Signed-off-by: Jiang Liu <jiang.liu@huawei.com>
 Signed-off-by: Hanjun Guo <hanjun.guo@linaro.org>
 Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
-Acked-by: Joerg Roedel <jroedel@suse.de>
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
 ---
  arch/ia64/kernel/acpi.c       | 38 ++++----------------------------------
  arch/x86/kernel/acpi/boot.c   | 38 +++-----------------------------------
@@ -19,87 +19,75 @@ Acked-by: Joerg Roedel <jroedel@suse.de>
  include/linux/acpi.h          |  2 +-
  4 files changed, 9 insertions(+), 71 deletions(-)
 
+diff --git a/arch/ia64/kernel/acpi.c b/arch/ia64/kernel/acpi.c
+index 5eb71d22c3d5..59d52e3aef12 100644
 --- a/arch/ia64/kernel/acpi.c
 +++ b/arch/ia64/kernel/acpi.c
-@@ -882,13 +882,34 @@
+@@ -882,40 +882,10 @@ __init void prefill_possible_map(void)
  		set_cpu_possible(i, true);
  }
  
-+static int _acpi_map_lsapic2(acpi_handle handle, int physid, int *pcpu)
-+{
-+	cpumask_t tmp_map;
-+	int cpu;
-+
-+	cpumask_complement(&tmp_map, cpu_present_mask);
-+	cpu = cpumask_first(&tmp_map);
-+	if (cpu >= nr_cpu_ids)
-+		return -EINVAL;
-+
-+	acpi_map_cpu2node(handle, cpu, physid);
-+
-+	set_cpu_present(cpu, true);
-+	ia64_cpu_to_sapicid[cpu] = physid;
-+
-+	acpi_processor_set_pdc(handle);
-+
-+	*pcpu = cpu;
-+	return (0);
-+}
-+
- static int _acpi_map_lsapic(acpi_handle handle, int *pcpu)
+-static int _acpi_map_lsapic(acpi_handle handle, int *pcpu)
++static int _acpi_map_lsapic(acpi_handle handle, int physid, int *pcpu)
  {
- 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
- 	union acpi_object *obj;
- 	struct acpi_madt_local_sapic *lsapic;
+-	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+-	union acpi_object *obj;
+-	struct acpi_madt_local_sapic *lsapic;
  	cpumask_t tmp_map;
 -	int cpu, physid;
-+	int physid;
- 
- 	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
- 		return -EINVAL;
-@@ -917,20 +938,7 @@
- 	buffer.length = ACPI_ALLOCATE_BUFFER;
- 	buffer.pointer = NULL;
- 
--	cpumask_complement(&tmp_map, cpu_present_mask);
--	cpu = cpumask_first(&tmp_map);
--	if (cpu >= nr_cpu_ids)
+-
+-	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
 -		return -EINVAL;
 -
--	acpi_map_cpu2node(handle, cpu, physid);
+-	if (!buffer.length || !buffer.pointer)
+-		return -EINVAL;
 -
--	set_cpu_present(cpu, true);
--	ia64_cpu_to_sapicid[cpu] = physid;
+-	obj = buffer.pointer;
+-	if (obj->type != ACPI_TYPE_BUFFER)
+-	{
+-		kfree(buffer.pointer);
+-		return -EINVAL;
+-	}
 -
--	acpi_processor_set_pdc(handle);
+-	lsapic = (struct acpi_madt_local_sapic *)obj->buffer.pointer;
 -
--	*pcpu = cpu;
--	return (0);
-+	return _acpi_map_lsapic2(handle, physid, pcpu);
+-	if ((lsapic->header.type != ACPI_MADT_TYPE_LOCAL_SAPIC) ||
+-	    (!(lsapic->lapic_flags & ACPI_MADT_ENABLED))) {
+-		kfree(buffer.pointer);
+-		return -EINVAL;
+-	}
+-
+-	physid = ((lsapic->id << 8) | (lsapic->eid));
+-
+-	kfree(buffer.pointer);
+-	buffer.length = ACPI_ALLOCATE_BUFFER;
+-	buffer.pointer = NULL;
++	int cpu;
+ 
+ 	cpumask_complement(&tmp_map, cpu_present_mask);
+ 	cpu = cpumask_first(&tmp_map);
+@@ -934,9 +904,9 @@ static int _acpi_map_lsapic(acpi_handle handle, int *pcpu)
  }
  
  /* wrapper to silence section mismatch warning */
-@@ -940,6 +948,12 @@
+-int __ref acpi_map_lsapic(acpi_handle handle, int *pcpu)
++int __ref acpi_map_lsapic(acpi_handle handle, int physid, int *pcpu)
+ {
+-	return _acpi_map_lsapic(handle, pcpu);
++	return _acpi_map_lsapic(handle, physid, pcpu);
  }
  EXPORT_SYMBOL(acpi_map_lsapic);
  
-+int __ref acpi_map_lsapic2(acpi_handle handle, int physid, int *pcpu)
-+{
-+	return _acpi_map_lsapic2(handle, physid, pcpu);
-+}
-+EXPORT_SYMBOL(acpi_map_lsapic);
-+
- int acpi_unmap_lsapic(int cpu)
- {
- 	ia64_cpu_to_sapicid[cpu] = -1;
+diff --git a/arch/x86/kernel/acpi/boot.c b/arch/x86/kernel/acpi/boot.c
+index 40c76604199f..f6dbb2f5e39f 100644
 --- a/arch/x86/kernel/acpi/boot.c
 +++ b/arch/x86/kernel/acpi/boot.c
-@@ -614,44 +614,12 @@
+@@ -614,44 +614,12 @@ static void acpi_map_cpu2node(acpi_handle handle, int cpu, int physid)
  #endif
  }
  
 -static int _acpi_map_lsapic(acpi_handle handle, int *pcpu)
-+static int _acpi_map_lsapic2(acpi_handle handle, int physid, int *pcpu)
++static int _acpi_map_lsapic(acpi_handle handle, int physid, int *pcpu)
  {
 -	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 -	union acpi_object *obj;
@@ -140,104 +128,42 @@ Acked-by: Joerg Roedel <jroedel@suse.de>
  	if (!alloc_cpumask_var(&tmp_map, GFP_KERNEL))
  		goto out;
  
-@@ -688,6 +656,50 @@
- 	return retval;
+@@ -689,9 +657,9 @@ static int _acpi_map_lsapic(acpi_handle handle, int *pcpu)
  }
  
-+static int _acpi_map_lsapic(acpi_handle handle, int *pcpu)
-+{
-+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-+	union acpi_object *obj;
-+	struct acpi_madt_local_apic *lapic;
-+	u8 physid;
-+
-+	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
-+		return -EINVAL;
-+
-+	if (!buffer.length || !buffer.pointer)
-+		return -EINVAL;
-+
-+	obj = buffer.pointer;
-+	if (obj->type != ACPI_TYPE_BUFFER ||
-+			obj->buffer.length < sizeof(*lapic)) {
-+		kfree(buffer.pointer);
-+		return -EINVAL;
-+	}
-+
-+	lapic = (struct acpi_madt_local_apic *)obj->buffer.pointer;
-+
-+	if (lapic->header.type != ACPI_MADT_TYPE_LOCAL_APIC ||
-+			!(lapic->lapic_flags & ACPI_MADT_ENABLED)) {
-+		kfree(buffer.pointer);
-+		return -EINVAL;
-+	}
-+
-+	physid = lapic->id;
-+
-+	kfree(buffer.pointer);
-+	buffer.length = ACPI_ALLOCATE_BUFFER;
-+	buffer.pointer = NULL;
-+	lapic = NULL;
-+
-+	return _acpi_map_lsapic2(handle, physid, pcpu);
-+}
-+
-+int __ref acpi_map_lsapic2(acpi_handle handle, int physid, int *pcpu)
-+{
-+	return _acpi_map_lsapic2(handle, physid, pcpu);
-+}
-+EXPORT_SYMBOL(acpi_map_lsapic2);
-+
  /* wrapper to silence section mismatch warning */
- int __ref acpi_map_lsapic(acpi_handle handle, int *pcpu)
+-int __ref acpi_map_lsapic(acpi_handle handle, int *pcpu)
++int __ref acpi_map_lsapic(acpi_handle handle, int physid, int *pcpu)
  {
+-	return _acpi_map_lsapic(handle, pcpu);
++	return _acpi_map_lsapic(handle, physid, pcpu);
+ }
+ EXPORT_SYMBOL(acpi_map_lsapic);
+ 
+diff --git a/drivers/acpi/acpi_processor.c b/drivers/acpi/acpi_processor.c
+index f89f914cb97e..66c9b702894b 100644
 --- a/drivers/acpi/acpi_processor.c
 +++ b/drivers/acpi/acpi_processor.c
-@@ -168,7 +168,7 @@
-    -------------------------------------------------------------------------- */
- 
- #ifdef CONFIG_ACPI_HOTPLUG_CPU
--static int acpi_processor_hotadd_init(struct acpi_processor *pr)
-+static int acpi_processor_hotadd_init(struct acpi_processor *pr, int dd)
- {
- 	unsigned long long sta;
- 	acpi_status status;
-@@ -181,7 +181,9 @@
+@@ -181,7 +181,7 @@ static int acpi_processor_hotadd_init(struct acpi_processor *pr)
  	cpu_maps_update_begin();
  	cpu_hotplug_begin();
  
 -	ret = acpi_map_lsapic(pr->handle, &pr->id);
-+	ret = acpi_map_lsapic2(pr->handle,
-+			       acpi_get_apicid(pr->handle, dd, pr->acpi_id),
-+			       &pr->id);
++	ret = acpi_map_lsapic(pr->handle, pr->apic_id, &pr->id);
  	if (ret)
  		goto out;
  
-@@ -205,7 +207,7 @@
- 	return ret;
- }
- #else
--static inline int acpi_processor_hotadd_init(struct acpi_processor *pr)
-+static inline int acpi_processor_hotadd_init(struct acpi_processor *pr, int dd)
- {
- 	return -ENODEV;
- }
-@@ -288,7 +290,7 @@
- 	 *  they are physically not present.
- 	 */
- 	if (pr->id == -1) {
--		int ret = acpi_processor_hotadd_init(pr);
-+		int ret = acpi_processor_hotadd_init(pr, device_declaration);
- 		if (ret)
- 			return ret;
- 	}
+diff --git a/include/linux/acpi.h b/include/linux/acpi.h
+index a5db4aeefa36..3bc74141453f 100644
 --- a/include/linux/acpi.h
 +++ b/include/linux/acpi.h
-@@ -125,6 +125,7 @@
+@@ -116,7 +116,7 @@ void acpi_numa_arch_fixup(void);
  
  #ifdef CONFIG_ACPI_HOTPLUG_CPU
  /* Arch dependent functions for cpu hotplug support */
-+int acpi_map_lsapic2(acpi_handle handle, int physid, int *pcpu);
- int acpi_map_lsapic(acpi_handle handle, int *pcpu);
+-int acpi_map_lsapic(acpi_handle handle, int *pcpu);
++int acpi_map_lsapic(acpi_handle handle, int physid, int *pcpu);
  int acpi_unmap_lsapic(int cpu);
  #endif /* CONFIG_ACPI_HOTPLUG_CPU */
+ 
+
