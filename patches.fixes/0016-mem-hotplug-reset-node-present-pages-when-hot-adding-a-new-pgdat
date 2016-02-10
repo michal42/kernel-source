@@ -1,0 +1,74 @@
+From: Tang Chen <tangchen@cn.fujitsu.com>
+Date: Thu, 13 Nov 2014 15:19:41 -0800
+Subject: mem-hotplug: reset node present pages when hot-adding a new pgdat
+Git-commit: 0bd854200873894a76f32603ff2c4c988ad6b5b5
+Patch-mainline: v3.18-rc5
+References: bsc#959463
+
+When memory is hot-added, all the memory is in offline state.  So clear
+all zones' present_pages because they will be updated in online_pages()
+and offline_pages().  Otherwise, /proc/zoneinfo will corrupt:
+
+When the memory of node2 is offline:
+
+  # cat /proc/zoneinfo
+  ......
+  Node 2, zone   Movable
+  ......
+        spanned  8388608
+        present  8388608
+        managed  0
+
+When we online memory on node2:
+
+  # cat /proc/zoneinfo
+  ......
+  Node 2, zone   Movable
+  ......
+        spanned  8388608
+        present  16777216
+        managed  8388608
+
+Signed-off-by: Tang Chen <tangchen@cn.fujitsu.com>
+Reviewed-by: Yasuaki Ishimatsu <isimatu.yasuaki@jp.fujitsu.com>
+Cc: <stable@vger.kernel.org>	[3.16+]
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ mm/memory_hotplug.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+--- a/mm/memory_hotplug.c
++++ b/mm/memory_hotplug.c
+@@ -1004,6 +1004,16 @@
+ }
+ #endif /* CONFIG_MEMORY_HOTPLUG_SPARSE */
+ 
++static void reset_node_present_pages(pg_data_t *pgdat)
++{
++	struct zone *z;
++
++	for (z = pgdat->node_zones; z < pgdat->node_zones + MAX_NR_ZONES; z++)
++		z->present_pages = 0;
++
++	pgdat->node_present_pages = 0;
++}
++
+ /* we are OK calling __meminit stuff here - we have CONFIG_MEMORY_HOTPLUG */
+ static pg_data_t __ref *hotadd_new_pgdat(int nid, u64 start)
+ {
+@@ -1046,6 +1056,13 @@
+ 	 */
+ 	reset_node_managed_pages(pgdat);
+ 
++	/*
++	 * When memory is hot-added, all the memory is in offline state. So
++	 * clear all zones' present_pages because they will be updated in
++	 * online_pages() and offline_pages().
++	 */
++	reset_node_present_pages(pgdat);
++
+ 	return pgdat;
+ }
+ 
