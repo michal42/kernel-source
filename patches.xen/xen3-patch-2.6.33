@@ -992,7 +992,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  static void ack_apic_level(unsigned int irq)
  {
  	struct irq_desc *desc = irq_to_desc(irq);
-@@ -2600,6 +2671,19 @@ static void ack_apic_level(unsigned int 
+@@ -2600,6 +2671,19 @@ static void ack_apic_level(unsigned int
  	 * level-triggered interrupt.  We mask the source for the time of the
  	 * operation to prevent an edge-triggered interrupt escaping meanwhile.
  	 * The idea is from Manfred Spraul.  --macro
@@ -1012,7 +1012,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	 */
  	cfg = desc->chip_data;
  	i = cfg->vector;
-@@ -2611,6 +2695,19 @@ static void ack_apic_level(unsigned int 
+@@ -2611,6 +2695,19 @@ static void ack_apic_level(unsigned int
  	 */
  	ack_APIC_irq();
  
@@ -1032,7 +1032,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	/* Now we can move and renable the irq */
  	if (unlikely(do_unmask_irq)) {
  		/* Only migrate the irq if the ack has been received.
-@@ -2644,41 +2741,9 @@ static void ack_apic_level(unsigned int 
+@@ -2644,41 +2741,9 @@ static void ack_apic_level(unsigned int
  			move_masked_irq(irq);
  		unmask_IO_APIC_irq_desc(desc);
  	}
@@ -1074,7 +1074,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  static void ir_ack_apic_edge(unsigned int irq)
  {
  	ack_APIC_irq();
-@@ -3256,6 +3321,7 @@ unsigned int create_irq_nr(unsigned int 
+@@ -3256,6 +3321,7 @@ unsigned int create_irq_nr(unsigned int
  			continue;
  
  		desc_new = move_irq_desc(desc_new, node);
@@ -1124,7 +1124,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		return -1;
  
  	irte.vector = cfg->vector;
-@@ -3510,7 +3578,7 @@ static int setup_msi_irq(struct pci_dev 
+@@ -3510,7 +3578,7 @@ static int setup_msi_irq(struct pci_dev
  	int ret;
  	struct msi_msg msg;
  
@@ -1223,7 +1223,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  	return 0;
  }
-@@ -3741,8 +3836,7 @@ static int set_ht_irq_affinity(unsigned 
+@@ -3741,8 +3836,7 @@ static int set_ht_irq_affinity(unsigned
  	struct irq_cfg *cfg;
  	unsigned int dest;
  
@@ -1233,7 +1233,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  		return -1;
  
  	cfg = desc->chip_data;
-@@ -3808,75 +3902,6 @@ int arch_setup_ht_irq(unsigned int irq, 
+@@ -3808,75 +3902,6 @@ int arch_setup_ht_irq(unsigned int irq,
  }
  #endif /* CONFIG_HT_IRQ */
  
@@ -1710,16 +1710,33 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  
  #include <asm/setup.h>
  #ifndef CONFIG_XEN
-@@ -109,6 +110,8 @@ void __init xen_start_kernel(void)
+@@ -84,6 +85,7 @@ void __init xen_start_kernel(void)
+ {
+ 	unsigned int i;
+ 	struct xen_machphys_mapping mapping;
++	u64 efer;
+ 
+ 	xen_setup_features();
+ 
+@@ -109,6 +111,17 @@ void __init xen_start_kernel(void)
  		      + PFN_PHYS(xen_start_info->nr_pt_frames),
  		      "Xen provided");
  
++#if defined(CONFIG_X86_32) && CONFIG_XEN_COMPAT < 0x040300
++	efer = 0;
++	if ((cpuid_eax(0x80000000) & 0xffff0000) == 0x80000000 &&
++	    cpuid_eax(0x80000000) > 0x80000000 &&
++	    cpuid_edx(0x80000001) & (1U << (X86_FEATURE_NX % 32)))
++#endif
++		rdmsrl(MSR_EFER, efer);
++	if (efer & EFER_NX)
++		set_cpu_cap(&boot_cpu_data, X86_FEATURE_NX);
 +	x86_configure_nx();
 +
  #ifdef CONFIG_X86_32
  {
  	extern pte_t swapper_pg_fixmap[PTRS_PER_PTE];
-@@ -123,7 +126,6 @@ void __init xen_start_kernel(void)
+@@ -123,7 +136,6 @@ void __init xen_start_kernel(void)
  		__pmd(__pa_symbol(swapper_pg_fixmap) | _PAGE_TABLE));
  }
  #else
@@ -1727,7 +1744,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  	xen_init_pt();
  #endif
  
-@@ -151,8 +153,11 @@ void __init xen_start_kernel(void)
+@@ -151,8 +163,11 @@ void __init xen_start_kernel(void)
  				     virt_to_machine(empty_zero_page),
  				     PAGE_KERNEL_RO);
  
@@ -4512,7 +4529,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  #endif	/* CONFIG_XEN_DOM0 */
 --- a/kernel/kexec.c
 +++ b/kernel/kexec.c
-@@ -1556,6 +1556,7 @@ size_t crash_get_memory_size(void)
+@@ -1584,6 +1584,7 @@ size_t crash_get_memory_size(void)
  	return size;
  }
  
@@ -4520,7 +4537,7 @@ Automatically created from "patches.kernel.org/patch-2.6.33" by xen-port-patches
  void __weak crash_free_reserved_phys_range(unsigned long begin,
  					   unsigned long end)
  {
-@@ -1615,6 +1616,7 @@ unlock:
+@@ -1643,6 +1644,7 @@ unlock:
  	mutex_unlock(&kexec_mutex);
  	return ret;
  }

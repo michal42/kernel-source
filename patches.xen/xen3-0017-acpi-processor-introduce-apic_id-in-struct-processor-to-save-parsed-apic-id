@@ -1,0 +1,36 @@
+From: Jiang Liu <jiang.liu@huawei.com>
+Date: Mon, 2 Sep 2013 11:57:34 +0800
+Subject: ACPI / processor: Introduce apic_id in struct processor to save
+ parsed APIC id
+Patch-mainline: Never, SUSE-Xen specific
+References: bsc#959463
+
+For cpu hot add, we evaluate _MAT or parse MADT twice to get APIC id,
+here is the code logic:
+acpi_processor_add()
+	acpi_processor_get_info()
+		acpi_get_cpuid() will evaluate _MAT or parse MADT;
+	acpi_processor_hotadd_init()
+		acpi_map_lsapic() will evaluate _MAT again;
+
+This can be done more effectively, this patch introduces apic_id in struct
+processor to save parsed APIC id, and then we can use it and remove the
+duplicated _MAT evaluation.
+
+Signed-off-by: Jiang Liu <jiang.liu@huawei.com>
+Signed-off-by: Hanjun Guo <hanjun.guo@linaro.org>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Signed-off-by: Vlastimil Babka <vbabka@suse.cz>
+Automatically created from "patches.fixes/0017-acpi-processor-introduce-apic_id-in-struct-processor-to-save-parsed-apic-id" by xen-port-patches.py
+
+--- a/drivers/acpi/processor_core.c
++++ b/drivers/acpi/processor_core.c
+@@ -215,7 +215,7 @@ int acpi_get_apicid(acpi_handle handle,
+ 
+ int acpi_map_cpuid(int apic_id, u32 acpi_id)
+ {
+-#ifdef CONFIG_SMP
++#if defined(CONFIG_SMP) && !defined(CONFIG_PROCESSOR_EXTERNAL_CONTROL)
+ 	int i;
+ #endif
+ 
