@@ -1,0 +1,81 @@
+From fd9c05ec83d1f9b5edc2fb27abce35638d8b7b0e Mon Sep 17 00:00:00 2001
+From: Don Zickus <dzickus@redhat.com>
+Date: Thu, 3 Dec 2015 17:26:27 -0500
+Subject: [PATCH] usb: Quiet down false peer failure messages
+Git-Commit: 6406eeb3f5bb376c7d9674e61f8da34ce7f05e8d
+Patch-Mainline: v4.4
+References: bnc#960629
+
+My recent Intel box is spewing these messages:
+
+xhci_hcd 0000:00:14.0: xHCI Host Controller
+xhci_hcd 0000:00:14.0: new USB bus registered, assigned bus number 2
+usb usb2: New USB device found, idVendor=1d6b, idProduct=0003
+usb usb2: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+usb usb2: Product: xHCI Host Controller
+usb usb2: Manufacturer: Linux 4.3.0+ xhci-hcd
+usb usb2: SerialNumber: 0000:00:14.0
+hub 2-0:1.0: USB hub found
+hub 2-0:1.0: 6 ports detected
+usb: failed to peer usb2-port2 and usb1-port1 by location (usb2-port2:none) (usb1-port1:usb2-port1)
+usb usb2-port2: failed to peer to usb1-port1 (-16)
+usb: port power management may be unreliable
+usb: failed to peer usb2-port3 and usb1-port1 by location (usb2-port3:none) (usb1-port1:usb2-port1)
+usb usb2-port3: failed to peer to usb1-port1 (-16)
+usb: failed to peer usb2-port5 and usb1-port1 by location (usb2-port5:none) (usb1-port1:usb2-port1)
+usb usb2-port5: failed to peer to usb1-port1 (-16)
+usb: failed to peer usb2-port6 and usb1-port1 by location (usb2-port6:none) (usb1-port1:usb2-port1)
+usb usb2-port6: failed to peer to usb1-port1 (-16)
+
+Diving into the acpi tables, I noticed the EHCI hub has 12 ports while the XHCI
+hub has 8 ports.  Most of those ports are of connect type USB_PORT_NOT_USED
+(including port 1 of the EHCI hub).
+
+Further the unused ports have location data initialized to 0x80000000.
+
+Now each unused port on the xhci hub walks the port list and finds a matching
+peer with port1 of the EHCI hub because the zero'd out group id bits falsely match.
+After port1 of the XHCI hub, each following matching peer will generate the
+above warning.
+
+These warnings seem to be harmless for this scenario as I don't think it
+matters that unused ports could not create a peer link.
+
+The attached patch utilizes that assumption and just turns the pr_warn into
+pr_debug to quiet things down.
+
+Tested on my Intel box.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+Acked-by: Dan Williams <dan.j.williams@intel.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/usb/core/port.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/core/port.c b/drivers/usb/core/port.c
+index fe1b6d0..3a9567b 100644
+--- a/drivers/usb/core/port.c
++++ b/drivers/usb/core/port.c
+@@ -203,7 +203,7 @@ static int link_peers(struct usb_port *left, struct usb_port *right)
+ 		else
+ 			method = "default";
+ 
+-		pr_warn("usb: failed to peer %s and %s by %s (%s:%s) (%s:%s)\n",
++		pr_debug("usb: failed to peer %s and %s by %s (%s:%s) (%s:%s)\n",
+ 			dev_name(&left->dev), dev_name(&right->dev), method,
+ 			dev_name(&left->dev),
+ 			lpeer ? dev_name(&lpeer->dev) : "none",
+@@ -262,7 +262,7 @@ static void link_peers_report(struct usb_port *left, struct usb_port *right)
+ 	if (rc == 0) {
+ 		dev_dbg(&left->dev, "peered to %s\n", dev_name(&right->dev));
+ 	} else {
+-		dev_warn(&left->dev, "failed to peer to %s (%d)\n",
++		dev_dbg(&left->dev, "failed to peer to %s (%d)\n",
+ 				dev_name(&right->dev), rc);
+ 		pr_warn_once("usb: port power management may be unreliable\n");
+ 		usb_port_block_power_off = 1;
+-- 
+2.1.4
+
