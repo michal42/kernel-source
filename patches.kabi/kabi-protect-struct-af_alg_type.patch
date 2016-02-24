@@ -1,0 +1,84 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct af_alg_type
+Patch-mainline: never, kabi
+
+In 3.12.55, commit 1e3f8a31f01e5967fcf413d72832ce41aa4efd1d (crypto:
+af_alg - Add nokey compatibility path), upstream commit
+37766586c965d63758ad542325a96d5384f4a8c9 added two members to struct
+af_alg_type. It indeed changed the layout of that structure.
+
+Move them to the end of the structure and use them iff we are sure the
+members are there. This is done by storing a special "flag" into the
+name field for the respective algos. And protect the members by #ifdef
+__GENKSYMS__, of course.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ crypto/af_alg.c         |    4 ++--
+ crypto/algif_hash.c     |    2 +-
+ crypto/algif_skcipher.c |    2 +-
+ include/crypto/if_alg.h |    7 +++++--
+ 4 files changed, 9 insertions(+), 6 deletions(-)
+
+--- a/crypto/af_alg.c
++++ b/crypto/af_alg.c
+@@ -76,7 +76,7 @@ int af_alg_register_type(const struct af
+ 		goto unlock;
+ 
+ 	type->ops->owner = THIS_MODULE;
+-	if (type->ops_nokey)
++	if (type->name[12] == 1 && type->ops_nokey)
+ 		type->ops_nokey->owner = THIS_MODULE;
+ 	node->type = type;
+ 	list_add(&node->list, &alg_types);
+@@ -279,7 +279,7 @@ int af_alg_accept(struct sock *sk, struc
+ 
+ 	err = type->accept(ask->private, sk2);
+ 
+-	nokey = err == -ENOKEY;
++	nokey = err == -ENOKEY && type->name[12] == 1;
+ 	if (nokey && type->accept_nokey)
+ 		err = type->accept_nokey(ask->private, sk2);
+ 
+--- a/crypto/algif_hash.c
++++ b/crypto/algif_hash.c
+@@ -499,7 +499,7 @@ static const struct af_alg_type algif_ty
+ 	.accept_nokey	=	hash_accept_parent_nokey,
+ 	.ops		=	&algif_hash_ops,
+ 	.ops_nokey	=	&algif_hash_ops_nokey,
+-	.name		=	"hash",
++	.name		=	"hash\0005678901\1",
+ 	.owner		=	THIS_MODULE
+ };
+ 
+--- a/crypto/algif_skcipher.c
++++ b/crypto/algif_skcipher.c
+@@ -788,7 +788,7 @@ static const struct af_alg_type algif_ty
+ 	.accept_nokey	=	skcipher_accept_parent_nokey,
+ 	.ops		=	&algif_skcipher_ops,
+ 	.ops_nokey	=	&algif_skcipher_ops_nokey,
+-	.name		=	"skcipher",
++	.name		=	"skcipher\000901\1",
+ 	.owner		=	THIS_MODULE
+ };
+ 
+--- a/include/crypto/if_alg.h
++++ b/include/crypto/if_alg.h
+@@ -51,12 +51,15 @@ struct af_alg_type {
+ 	void (*release)(void *private);
+ 	int (*setkey)(void *private, const u8 *key, unsigned int keylen);
+ 	int (*accept)(void *private, struct sock *sk);
+-	int (*accept_nokey)(void *private, struct sock *sk);
+ 
+ 	struct proto_ops *ops;
+-	struct proto_ops *ops_nokey;
+ 	struct module *owner;
+ 	char name[14];
++
++#ifndef __GENKSYMS__
++	int (*accept_nokey)(void *private, struct sock *sk);
++	struct proto_ops *ops_nokey;
++#endif
+ };
+ 
+ struct af_alg_sgl {
