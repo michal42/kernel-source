@@ -28,8 +28,6 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  fs/xfs/xfs_symlink_remote.c |    5 ++---
  9 files changed, 24 insertions(+), 17 deletions(-)
 
-diff --git a/fs/xfs/xfs_ag.h b/fs/xfs/xfs_ag.h
-index 1cb740a..f475369 100644
 --- a/fs/xfs/xfs_ag.h
 +++ b/fs/xfs/xfs_ag.h
 @@ -89,6 +89,8 @@ typedef struct xfs_agf {
@@ -52,15 +50,13 @@ index 1cb740a..f475369 100644
  #define	XFS_AGI_SEQNO		0x00000004
 @@ -226,6 +230,8 @@ typedef struct xfs_agfl {
  	__be32		agfl_bno[];	/* actually XFS_AGFL_SIZE(mp) */
- } xfs_agfl_t;
+ } __attribute__((packed)) xfs_agfl_t;
  
 +#define XFS_AGFL_CRC_OFF	offsetof(struct xfs_agfl, agfl_crc)
 +
  /*
   * tags for inode radix tree
   */
-diff --git a/fs/xfs/xfs_alloc.c b/fs/xfs/xfs_alloc.c
-index 11eb81c..61add23 100644
 --- a/fs/xfs/xfs_alloc.c
 +++ b/fs/xfs/xfs_alloc.c
 @@ -486,7 +486,7 @@ xfs_agfl_read_verify(
@@ -101,8 +97,6 @@ index 11eb81c..61add23 100644
  }
  
  const struct xfs_buf_ops xfs_agf_buf_ops = {
-diff --git a/fs/xfs/xfs_dinode.h b/fs/xfs/xfs_dinode.h
-index e5869b5..623bbe8 100644
 --- a/fs/xfs/xfs_dinode.h
 +++ b/fs/xfs/xfs_dinode.h
 @@ -89,6 +89,8 @@ typedef struct xfs_dinode {
@@ -114,8 +108,6 @@ index e5869b5..623bbe8 100644
  #define DI_MAX_FLUSH 0xffff
  
  /*
-diff --git a/fs/xfs/xfs_format.h b/fs/xfs/xfs_format.h
-index 35c08ff..b60e6c6 100644
 --- a/fs/xfs/xfs_format.h
 +++ b/fs/xfs/xfs_format.h
 @@ -145,6 +145,8 @@ struct xfs_dsymlink_hdr {
@@ -127,8 +119,6 @@ index 35c08ff..b60e6c6 100644
  /*
   * The maximum pathlen is 1024 bytes. Since the minimum file system
   * blocksize is 512 bytes, we can get a max of 3 extents back from
-diff --git a/fs/xfs/xfs_ialloc.c b/fs/xfs/xfs_ialloc.c
-index a799ce3..b5f272d 100644
 --- a/fs/xfs/xfs_ialloc.c
 +++ b/fs/xfs/xfs_ialloc.c
 @@ -1580,7 +1580,7 @@ xfs_agi_read_verify(
@@ -150,11 +140,9 @@ index a799ce3..b5f272d 100644
  }
  
  const struct xfs_buf_ops xfs_agi_buf_ops = {
-diff --git a/fs/xfs/xfs_inode_buf.c b/fs/xfs/xfs_inode_buf.c
-index 63382d3..979bd8b 100644
 --- a/fs/xfs/xfs_inode_buf.c
 +++ b/fs/xfs/xfs_inode_buf.c
-@@ -306,7 +306,7 @@ xfs_dinode_verify(
+@@ -308,7 +308,7 @@ xfs_dinode_verify(
  	if (!xfs_sb_version_hascrc(&mp->m_sb))
  		return false;
  	if (!xfs_verify_cksum((char *)dip, mp->m_sb.sb_inodesize,
@@ -163,7 +151,7 @@ index 63382d3..979bd8b 100644
  		return false;
  	if (be64_to_cpu(dip->di_ino) != ip->i_ino)
  		return false;
-@@ -327,7 +327,7 @@ xfs_dinode_calc_crc(
+@@ -329,7 +329,7 @@ xfs_dinode_calc_crc(
  
  	ASSERT(xfs_sb_version_hascrc(&mp->m_sb));
  	crc = xfs_start_cksum((char *)dip, mp->m_sb.sb_inodesize,
@@ -172,11 +160,9 @@ index 63382d3..979bd8b 100644
  	dip->di_crc = xfs_end_cksum(crc);
  }
  
-diff --git a/fs/xfs/xfs_sb.c b/fs/xfs/xfs_sb.c
-index 1cd9ae0..4525dcf 100644
 --- a/fs/xfs/xfs_sb.c
 +++ b/fs/xfs/xfs_sb.c
-@@ -620,7 +620,7 @@ xfs_sb_read_verify(
+@@ -636,7 +636,7 @@ xfs_sb_read_verify(
  	     dsb->sb_crc != 0)) {
  
  		if (!xfs_verify_cksum(bp->b_addr, BBTOB(bp->b_length),
@@ -185,7 +171,7 @@ index 1cd9ae0..4525dcf 100644
  			/* Only fail bad secondaries on a known V5 filesystem */
  			if (bp->b_bn == XFS_SB_DADDR ||
  			    xfs_sb_version_hascrc(&mp->m_sb)) {
-@@ -683,8 +683,7 @@ xfs_sb_write_verify(
+@@ -699,8 +699,7 @@ xfs_sb_write_verify(
  	if (bip)
  		XFS_BUF_TO_SBP(bp)->sb_lsn = cpu_to_be64(bip->bli_item.li_lsn);
  
@@ -195,8 +181,6 @@ index 1cd9ae0..4525dcf 100644
  }
  
  const struct xfs_buf_ops xfs_sb_buf_ops = {
-diff --git a/fs/xfs/xfs_sb.h b/fs/xfs/xfs_sb.h
-index 6835b44..d0c88e8 100644
 --- a/fs/xfs/xfs_sb.h
 +++ b/fs/xfs/xfs_sb.h
 @@ -182,6 +182,8 @@ typedef struct xfs_sb {
@@ -208,8 +192,6 @@ index 6835b44..d0c88e8 100644
  /*
   * Superblock - on disk version.  Must match the in core version above.
   * Must be padded to 64 bit alignment.
-diff --git a/fs/xfs/xfs_symlink_remote.c b/fs/xfs/xfs_symlink_remote.c
-index 01c85e3..2fd52c7 100644
 --- a/fs/xfs/xfs_symlink_remote.c
 +++ b/fs/xfs/xfs_symlink_remote.c
 @@ -132,7 +132,7 @@ xfs_symlink_read_verify(
@@ -231,6 +213,3 @@ index 01c85e3..2fd52c7 100644
  }
  
  const struct xfs_buf_ops xfs_symlink_buf_ops = {
--- 
-1.6.0.2
-
