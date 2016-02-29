@@ -1,0 +1,47 @@
+From: Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
+Subject: pciback: Save the number of MSI-X entries to be copied later
+Patch-mainline: Never, SUSE-Xen specific
+
+c/s  8135cf8b092723dbfcc611fe6fdcb3a36c9951c5
+"xen/pciback: Save xen_pci_op commands before processing it"
+would copyback the processed values - which was great.
+
+However it missed the case that xen_pcibk_enable_msix - when
+completing would overwrite op->value (which had the number
+of MSI-X vectors requested) with the return value (which for
+success was zero). Hence the copy-back routine (which would use
+op->value) would copy exactly zero MSI-X vectors back.
+
+CC: stable@vger.kernel.org 
+Signed-off-by: Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
+Reviewed-by: Jan Beulich <jbeulich@suse.com>
+
+--- a/drivers/xen/xen-pciback/pciback_ops.c
++++ b/drivers/xen/xen-pciback/pciback_ops.c
+@@ -343,6 +343,9 @@ void xen_pcibk_do_op(struct work_struct
+ 	struct xen_pcibk_dev_data *dev_data = NULL;
+ 	struct xen_pci_op *op = &pdev->op;
+ 	int test_intx = 0;
++#ifdef CONFIG_PCI_MSI
++	unsigned int nr = 0;
++#endif
+ 
+ 	*op = pdev->sh_info->op;
+ 	barrier();
+@@ -380,6 +383,7 @@ void xen_pcibk_do_op(struct work_struct
+ 			op->err = xen_pcibk_disable_msi(pdev, dev, op);
+ 			break;
+ 		case XEN_PCI_OP_enable_msix:
++			nr = op->value;
+ 			op->err = xen_pcibk_enable_msix(pdev, dev, op);
+ 			break;
+ 		case XEN_PCI_OP_disable_msix:
+@@ -404,7 +408,7 @@ void xen_pcibk_do_op(struct work_struct
+ 	if (op->cmd == XEN_PCI_OP_enable_msix && op->err == 0) {
+ 		unsigned int i;
+ 
+-		for (i = 0; i < op->value; i++)
++		for (i = 0; i < nr; i++)
+ 			pdev->sh_info->op.msix_entries[i].vector =
+ 				op->msix_entries[i].vector;
+ 	}
