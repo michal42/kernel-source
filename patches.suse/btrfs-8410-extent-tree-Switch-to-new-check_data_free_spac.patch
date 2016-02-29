@@ -1,0 +1,140 @@
+Patch-mainline: v4.4
+Git-commit: d9d8b2a51a404c2d45b9dc4c755f62cb3ddb7c79
+From: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Date: Tue, 8 Sep 2015 17:22:43 +0800
+References: bsc#963193
+Subject: [PATCH 11/20] btrfs: extent-tree: Switch to new check_data_free_space
+ and free_reserved_data_space
+
+Use new reserve/free for buffered write and inode cache.
+
+For buffered write case, as nodatacow write won't increase quota account,
+so unlike old behavior which does reserve before check nocow, now we
+check nocow first and then only reserve data if we can't do nocow write.
+
+Signed-off-by: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+---
+ fs/btrfs/extent-tree.c |  4 ++--
+ fs/btrfs/file.c        | 34 +++++++++++++++++++++-------------
+ fs/btrfs/relocation.c  |  8 ++++----
+ 3 files changed, 27 insertions(+), 19 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -3171,7 +3171,7 @@ again:
+ 	num_pages *= 16;
+ 	num_pages *= PAGE_CACHE_SIZE;
+ 
+-	ret = btrfs_check_data_free_space(inode, num_pages);
++	ret = __btrfs_check_data_free_space(inode, 0, num_pages);
+ 	if (ret)
+ 		goto out_put;
+ 
+@@ -3180,7 +3180,7 @@ again:
+ 					      &alloc_hint);
+ 	if (!ret)
+ 		dcs = BTRFS_DC_SETUP;
+-	btrfs_free_reserved_data_space(inode, num_pages);
++	__btrfs_free_reserved_data_space(inode, 0, num_pages);
+ 
+ out_put:
+ 	iput(inode);
+--- a/fs/btrfs/file.c
++++ b/fs/btrfs/file.c
+@@ -1510,12 +1510,16 @@ static noinline ssize_t __btrfs_buffered
+ 		}
+ 
+ 		reserve_bytes = num_pages << PAGE_CACHE_SHIFT;
+-		ret = btrfs_check_data_free_space(inode, reserve_bytes);
+-		if (ret == -ENOSPC &&
+-		    (BTRFS_I(inode)->flags & (BTRFS_INODE_NODATACOW |
+-					      BTRFS_INODE_PREALLOC))) {
++		if (BTRFS_I(inode)->flags & (BTRFS_INODE_NODATACOW |
++					     BTRFS_INODE_PREALLOC)) {
+ 			ret = check_can_nocow(inode, pos, &write_bytes);
++			if (ret < 0)
++				break;
+ 			if (ret > 0) {
++				/*
++				 * For nodata cow case, no need to reserve
++				 * data space.
++				 */
+ 				only_release_metadata = true;
+ 				/*
+ 				 * our prealloc extent may be smaller than
+@@ -1525,20 +1529,19 @@ static noinline ssize_t __btrfs_buffered
+ 					     PAGE_CACHE_SIZE - 1) >>
+ 					PAGE_CACHE_SHIFT;
+ 				reserve_bytes = num_pages << PAGE_CACHE_SHIFT;
+-				ret = 0;
+-			} else {
+-				ret = -ENOSPC;
++				goto reserve_metadata;
+ 			}
+ 		}
+-
+-		if (ret)
++		ret = __btrfs_check_data_free_space(inode, pos, write_bytes);
++		if (ret < 0)
+ 			break;
+ 
++reserve_metadata:
+ 		ret = btrfs_delalloc_reserve_metadata(inode, reserve_bytes);
+ 		if (ret) {
+ 			if (!only_release_metadata)
+-				btrfs_free_reserved_data_space(inode,
+-							       reserve_bytes);
++				__btrfs_free_reserved_data_space(inode, pos,
++							         write_bytes);
+ 			else
+ 				btrfs_end_nocow_write(root);
+ 			break;
+@@ -2494,8 +2497,11 @@ static long btrfs_fallocate(struct file
+ 	/*
+ 	 * Make sure we have enough space before we do the
+ 	 * allocation.
++	 * XXX: The behavior must be changed to do accurate check first
++	 * and then check data reserved space.
+ 	 */
+-	ret = btrfs_check_data_free_space(inode, alloc_end - alloc_start);
++	ret = btrfs_check_data_free_space(inode, alloc_start,
++					  alloc_end - alloc_start);
+ 	if (ret)
+ 		return ret;
+ 	if (root->fs_info->quota_enabled) {
+@@ -2635,7 +2641,8 @@ out:
+ 		btrfs_qgroup_free(root, alloc_end - alloc_start);
+ out_reserve_fail:
+ 	/* Let go of our reservation. */
+-	btrfs_free_reserved_data_space(inode, alloc_end - alloc_start);
++	__btrfs_free_reserved_data_space(inode, alloc_start,
++					 alloc_end - alloc_start);
+ 	return ret;
+ }
+ 
+--- a/fs/btrfs/relocation.c
++++ b/fs/btrfs/relocation.c
+@@ -3042,8 +3042,8 @@ int prealloc_file_extent_cluster(struct
+ 	BUG_ON(cluster->start != cluster->boundary[0]);
+ 	mutex_lock(&inode->i_mutex);
+ 
+-	ret = btrfs_check_data_free_space(inode, cluster->end +
+-					  1 - cluster->start);
++	ret = __btrfs_check_data_free_space(inode, cluster->start,
++					    cluster->end + 1 - cluster->start);
+ 	if (ret)
+ 		goto out;
+ 
+@@ -3064,8 +3064,8 @@ int prealloc_file_extent_cluster(struct
+ 			break;
+ 		nr++;
+ 	}
+-	btrfs_free_reserved_data_space(inode, cluster->end +
+-				       1 - cluster->start);
++	__btrfs_free_reserved_data_space(inode, cluster->start,
++					 cluster->end + 1 - cluster->start);
+ out:
+ 	mutex_unlock(&inode->i_mutex);
+ 	return ret;
