@@ -70,18 +70,15 @@ entire locking process until no overlapping ordered extents are found.
 
 Cc: stable@vger.kernel.org   # 4.2+
 Signed-off-by: Filipe Manana <fdmanana@suse.com>
-
-Conflicts:
-	fs/btrfs/ioctl.c
-
-Signed-off-by: Filipe Manana <fdmanana@suse.com>
 ---
- fs/btrfs/ioctl.c |   84 +++++++++++++++++++++++++++++++++++++++++++++----------
- 1 file changed, 70 insertions(+), 14 deletions(-)
+ fs/btrfs/ioctl.c | 90 +++++++++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 76 insertions(+), 14 deletions(-)
 
+diff --git a/fs/btrfs/ioctl.c b/fs/btrfs/ioctl.c
+index 44116c9..6393a0e 100644
 --- a/fs/btrfs/ioctl.c
 +++ b/fs/btrfs/ioctl.c
-@@ -2605,7 +2605,6 @@ static struct page *extent_same_get_page
+@@ -2587,7 +2587,6 @@ static struct page *extent_same_get_page(struct inode *inode, pgoff_t index)
  			return NULL;
  		}
  	}
@@ -89,7 +86,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  
  	return page;
  }
-@@ -2624,10 +2623,17 @@ static int gather_extent_pages(struct in
+@@ -2606,10 +2605,17 @@ static int gather_extent_pages(struct inode *inode, struct page **pages,
  	return 0;
  }
  
@@ -110,7 +107,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  	while (1) {
  		struct btrfs_ordered_extent *ordered;
  		lock_extent(&BTRFS_I(inode)->io_tree, off, off + len - 1);
-@@ -2645,8 +2651,11 @@ static inline void lock_extent_range(str
+@@ -2627,8 +2633,11 @@ static inline void lock_extent_range(struct inode *inode, u64 off, u64 len)
  		unlock_extent(&BTRFS_I(inode)->io_tree, off, off + len - 1);
  		if (ordered)
  			btrfs_put_ordered_extent(ordered);
@@ -122,7 +119,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  }
  
  static void btrfs_double_inode_unlock(struct inode *inode1, struct inode *inode2)
-@@ -2671,15 +2680,24 @@ static void btrfs_double_extent_unlock(s
+@@ -2653,15 +2662,24 @@ static void btrfs_double_extent_unlock(struct inode *inode1, u64 loff1,
  	unlock_extent(&BTRFS_I(inode2)->io_tree, loff2, loff2 + len - 1);
  }
  
@@ -151,7 +148,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  }
  
  struct cmp_pages {
-@@ -2695,11 +2713,15 @@ static void btrfs_cmp_data_free(struct c
+@@ -2677,11 +2695,15 @@ static void btrfs_cmp_data_free(struct cmp_pages *cmp)
  
  	for (i = 0; i < cmp->num_pages; i++) {
  		pg = cmp->src_pages[i];
@@ -169,7 +166,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  	}
  	kfree(cmp->src_pages);
  	kfree(cmp->dst_pages);
-@@ -2760,6 +2782,8 @@ static int btrfs_cmp_data(struct inode *
+@@ -2742,6 +2764,8 @@ static int btrfs_cmp_data(struct inode *src, u64 loff, struct inode *dst,
  
  		src_page = cmp->src_pages[i];
  		dst_page = cmp->dst_pages[i];
@@ -178,7 +175,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  
  		addr = kmap_atomic(src_page);
  		dst_addr = kmap_atomic(dst_page);
-@@ -2872,14 +2896,41 @@ static int btrfs_extent_same(struct inod
+@@ -2854,14 +2878,46 @@ static int btrfs_extent_same(struct inode *src, u64 loff, u64 olen,
  		goto out_unlock;
  	}
  
@@ -209,8 +206,13 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
 +		 * pages before waiting for all IO to complete.
 +		 */
 +		btrfs_cmp_data_free(&cmp);
-+		btrfs_wait_ordered_range(src, loff, len);
-+		btrfs_wait_ordered_range(dst, dst_loff, len);
++		if (same_inode) {
++			btrfs_wait_ordered_range(src, same_lock_start,
++						 same_lock_len);
++		} else {
++			btrfs_wait_ordered_range(src, loff, len);
++			btrfs_wait_ordered_range(dst, dst_loff, len);
++		}
 +		goto again;
 +	}
 +	ASSERT(ret == 0);
@@ -222,7 +224,7 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  
  	/* pass original length for comparison so we stay within i_size */
  	ret = btrfs_cmp_data(src, loff, dst, dst_loff, olen, &cmp);
-@@ -3761,9 +3811,15 @@ static noinline long btrfs_ioctl_clone(s
+@@ -3683,9 +3739,15 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
  		u64 lock_start = min_t(u64, off, destoff);
  		u64 lock_len = max_t(u64, off, destoff) + len - lock_start;
  
@@ -240,3 +242,6 @@ Signed-off-by: Filipe Manana <fdmanana@suse.com>
  	}
  
  	ret = btrfs_clone(src, inode, off, olen, len, destoff, 0);
+-- 
+1.8.4.5
+
