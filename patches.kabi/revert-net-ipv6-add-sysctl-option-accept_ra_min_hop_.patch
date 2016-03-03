@@ -1,0 +1,141 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Thu, 3 Mar 2016 17:03:33 +0100
+Subject: Revert "net/ipv6: add sysctl option accept_ra_min_hop_limit"
+Patch-mainline: never, kabi
+
+This reverts commit e16f537864eb9cf68683d9e107706d1b31fcaa76, upstream
+commit 8013d1d7eafb0589ca766db6b74026f76b7f5cb4. It breaks kABI of
+struct ipv6_devconf -> struct inet6_dev -> everything.
+
+Given struct ipv6_devconf is embedded into struct inet6_dev directly,
+I see no easy way to workaround the kABI breakage. So revert the
+offending commit instead.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ Documentation/networking/ip-sysctl.txt |  8 --------
+ include/linux/ipv6.h                   |  1 -
+ include/uapi/linux/ipv6.h              |  2 --
+ net/ipv6/addrconf.c                    | 10 ----------
+ net/ipv6/ndisc.c                       | 16 +++++++++-------
+ 5 files changed, 9 insertions(+), 28 deletions(-)
+
+diff --git a/Documentation/networking/ip-sysctl.txt b/Documentation/networking/ip-sysctl.txt
+index 3e5b1b5466e5..7d8dc93fe2eb 100644
+--- a/Documentation/networking/ip-sysctl.txt
++++ b/Documentation/networking/ip-sysctl.txt
+@@ -1156,14 +1156,6 @@ accept_ra_defrtr - BOOLEAN
+ 	Functional default: enabled if accept_ra is enabled.
+ 			    disabled if accept_ra is disabled.
+ 
+-accept_ra_min_hop_limit - INTEGER
+-	Minimum hop limit Information in Router Advertisement.
+-
+-	Hop limit Information in Router Advertisement less than this
+-	variable shall be ignored.
+-
+-	Default: 1
+-
+ accept_ra_pinfo - BOOLEAN
+ 	Learn Prefix Information in Router Advertisement.
+ 
+diff --git a/include/linux/ipv6.h b/include/linux/ipv6.h
+index 167c976554fa..88c0cf0079ad 100644
+--- a/include/linux/ipv6.h
++++ b/include/linux/ipv6.h
+@@ -30,7 +30,6 @@ struct ipv6_devconf {
+ #endif
+ 	__s32		max_addresses;
+ 	__s32		accept_ra_defrtr;
+-	__s32		accept_ra_min_hop_limit;
+ 	__s32		accept_ra_pinfo;
+ #ifdef CONFIG_IPV6_ROUTER_PREF
+ 	__s32		accept_ra_rtr_pref;
+diff --git a/include/uapi/linux/ipv6.h b/include/uapi/linux/ipv6.h
+index 25955206757a..593b0e32d956 100644
+--- a/include/uapi/linux/ipv6.h
++++ b/include/uapi/linux/ipv6.h
+@@ -163,8 +163,6 @@ enum {
+ 	DEVCONF_MLDV1_UNSOLICITED_REPORT_INTERVAL,
+ 	DEVCONF_MLDV2_UNSOLICITED_REPORT_INTERVAL,
+ 	DEVCONF_SUPPRESS_FRAG_NDISC,
+-	DEVCONF_USE_OIF_ADDRS_ONLY,
+-	DEVCONF_ACCEPT_RA_MIN_HOP_LIMIT,
+ 	DEVCONF_MAX
+ };
+ 
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index bbf35875e4ef..e48c84cbcd92 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -192,7 +192,6 @@ static struct ipv6_devconf ipv6_devconf __read_mostly = {
+ #endif
+ 	.max_addresses		= IPV6_MAX_ADDRESSES,
+ 	.accept_ra_defrtr	= 1,
+-	.accept_ra_min_hop_limit= 1,
+ 	.accept_ra_pinfo	= 1,
+ #ifdef CONFIG_IPV6_ROUTER_PREF
+ 	.accept_ra_rtr_pref	= 1,
+@@ -231,7 +230,6 @@ static struct ipv6_devconf ipv6_devconf_dflt __read_mostly = {
+ #endif
+ 	.max_addresses		= IPV6_MAX_ADDRESSES,
+ 	.accept_ra_defrtr	= 1,
+-	.accept_ra_min_hop_limit= 1,
+ 	.accept_ra_pinfo	= 1,
+ #ifdef CONFIG_IPV6_ROUTER_PREF
+ 	.accept_ra_rtr_pref	= 1,
+@@ -4152,7 +4150,6 @@ static inline void ipv6_store_devconf(struct ipv6_devconf *cnf,
+ #endif
+ 	array[DEVCONF_MAX_ADDRESSES] = cnf->max_addresses;
+ 	array[DEVCONF_ACCEPT_RA_DEFRTR] = cnf->accept_ra_defrtr;
+-	array[DEVCONF_ACCEPT_RA_MIN_HOP_LIMIT] = cnf->accept_ra_min_hop_limit;
+ 	array[DEVCONF_ACCEPT_RA_PINFO] = cnf->accept_ra_pinfo;
+ #ifdef CONFIG_IPV6_ROUTER_PREF
+ 	array[DEVCONF_ACCEPT_RA_RTR_PREF] = cnf->accept_ra_rtr_pref;
+@@ -4911,13 +4908,6 @@ static struct addrconf_sysctl_table
+ 			.proc_handler	= proc_dointvec,
+ 		},
+ 		{
+-			.procname	= "accept_ra_min_hop_limit",
+-			.data		= &ipv6_devconf.accept_ra_min_hop_limit,
+-			.maxlen		= sizeof(int),
+-			.mode		= 0644,
+-			.proc_handler	= proc_dointvec,
+-		},
+-		{
+ 			.procname	= "accept_ra_pinfo",
+ 			.data		= &ipv6_devconf.accept_ra_pinfo,
+ 			.maxlen		= sizeof(int),
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index e34a6b3520c6..fda5d95e39f4 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -1190,16 +1190,18 @@ static void ndisc_router_discovery(struct sk_buff *skb)
+ 
+ 	if (rt)
+ 		rt6_set_expires(rt, jiffies + (HZ * lifetime));
+-	if (in6_dev->cnf.accept_ra_min_hop_limit < 256 &&
+-	    ra_msg->icmph.icmp6_hop_limit) {
+-		if (in6_dev->cnf.accept_ra_min_hop_limit <= ra_msg->icmph.icmp6_hop_limit) {
++	if (ra_msg->icmph.icmp6_hop_limit) {
++		/* Only set hop_limit on the interface if it is higher than
++		 * the current hop_limit.
++		 */
++		if (in6_dev->cnf.hop_limit < ra_msg->icmph.icmp6_hop_limit) {
+ 			in6_dev->cnf.hop_limit = ra_msg->icmph.icmp6_hop_limit;
+-			if (rt)
+-				dst_metric_set(&rt->dst, RTAX_HOPLIMIT,
+-					       ra_msg->icmph.icmp6_hop_limit);
+ 		} else {
+-			ND_PRINTK(2, warn, "RA: Got route advertisement with lower hop_limit than minimum\n");
++			ND_PRINTK(2, warn, "RA: Got route advertisement with lower hop_limit than current\n");
+ 		}
++		if (rt)
++			dst_metric_set(&rt->dst, RTAX_HOPLIMIT,
++				       ra_msg->icmph.icmp6_hop_limit);
+ 	}
+ 
+ skip_defrtr:
+-- 
+2.7.2
+
