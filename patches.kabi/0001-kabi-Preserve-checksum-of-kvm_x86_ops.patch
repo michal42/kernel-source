@@ -1,0 +1,88 @@
+From 14c6eed64ab3c8a06a03f2d2e624cc20796667a8 Mon Sep 17 00:00:00 2001
+From: Michal Marek <mmarek@suse.cz>
+Date: Thu, 3 Mar 2016 10:28:40 +0100
+Subject: [PATCH] kabi: Preserve checksum of kvm_x86_ops
+References: bsc#969112
+Patch-mainline: Never, kabi
+
+We need to preserve kvm_x86_ops, because lttng-modules needs it.
+Luckily, the changes are safe for the usage by lttng-modules. Ideally,
+we would limit the __GENKSYMS__ hack to kvm_x86_ops only, but this is
+not feasible. Limit it to arch/x86/kvm/x86.c at least.
+
+Signed-off-by: Michal Marek <mmarek@suse.cz>
+---
+ arch/x86/include/asm/kvm_host.h | 6 ++++++
+ arch/x86/kvm/x86.c              | 3 +++
+ virt/kvm/ioapic.h               | 7 +++++++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 5a7684c4d605..6af6722532d1 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -352,7 +352,9 @@ struct kvm_vcpu_arch {
+ 	u64 efer;
+ 	u64 apic_base;
+ 	struct kvm_lapic *apic;    /* kernel irqchip context */
++#if !defined(__GENKSYMS__) || !defined(__KVM_X86_C)
+ 	u64 eoi_exit_bitmap[4];
++#endif
+ 	unsigned long apic_attention;
+ 	int32_t apic_arb_prio;
+ 	int mp_state;
+@@ -726,7 +728,11 @@ struct kvm_x86_ops {
+ 	int (*vm_has_apicv)(struct kvm *kvm);
+ 	void (*hwapic_irr_update)(struct kvm_vcpu *vcpu, int max_irr);
+ 	void (*hwapic_isr_update)(struct kvm *kvm, int isr);
++#if defined(__GENKSYMS__) && defined(__KVM_X86_C)
++	void (*load_eoi_exitmap)(struct kvm_vcpu *vcpu, u64 *eoi_exit_bitmap);
++#else
+ 	void (*load_eoi_exitmap)(struct kvm_vcpu *vcpu);
++#endif
+ 	void (*set_virtual_x2apic_mode)(struct kvm_vcpu *vcpu, bool set);
+ 	void (*deliver_posted_interrupt)(struct kvm_vcpu *vcpu, int vector);
+ 	void (*sync_pir_to_irr)(struct kvm_vcpu *vcpu);
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index e73d7d1aa0b0..8755925fed37 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -19,6 +19,9 @@
+  *
+  */
+ 
++/* kabi hack */
++#define __KVM_X86_C
++
+ #include <linux/kvm_host.h>
+ #include "irq.h"
+ #include "mmu.h"
+diff --git a/virt/kvm/ioapic.h b/virt/kvm/ioapic.h
+index aec9033c59d1..45d3675e51fb 100644
+--- a/virt/kvm/ioapic.h
++++ b/virt/kvm/ioapic.h
+@@ -54,7 +54,11 @@ struct dest_map {
+ 
+ struct rtc_status {
+ 	int pending_eoi;
++#if defined(__GENKSYMS__) && defined(__KVM_X86_C)
++	DECLARE_BITMAP(dest_map, KVM_MAX_VCPUS);
++#else
+ 	struct dest_map dest_map;
++#endif
+ };
+ 
+ struct kvm_ioapic {
+@@ -69,6 +73,9 @@ struct kvm_ioapic {
+ 	struct kvm *kvm;
+ 	void (*ack_notifier)(void *opaque, int irq);
+ 	spinlock_t lock;
++#if defined(__GENKSYMS__) && defined(__KVM_X86_C)
++	DECLARE_BITMAP(handled_vectors, 256);
++#endif
+ 	struct rtc_status rtc_status;
+ };
+ 
+-- 
+2.1.4
+
