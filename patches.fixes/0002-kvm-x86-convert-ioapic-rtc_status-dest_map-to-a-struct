@@ -1,0 +1,175 @@
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 19 Feb 2016 11:39:59 +0100
+Subject: kvm: x86: Convert ioapic->rtc_status.dest_map to a struct
+Patch-mainline: not yet, needs to be sumitted
+References: bsc#966471
+
+Currently this is a bitmap which tracks which CPUs we expect
+an EOI from. Move this bitmap to a struct so that we can
+track additional information there.
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+---
+ virt/kvm/ioapic.c       | 13 +++++++------
+ virt/kvm/ioapic.h       | 10 ++++++++--
+ virt/kvm/irq_comm.c     |  2 +-
+ arch/x86/kvm/lapic.c    | 10 +++++-----
+ arch/x86/kvm/lapic.h    |  7 +++++--
+ 5 files changed, 26 insertions(+), 16 deletions(-)
+
+--- a/virt/kvm/ioapic.c
++++ b/virt/kvm/ioapic.c
+@@ -94,7 +94,7 @@ static unsigned long ioapic_read_indirec
+ static void rtc_irq_eoi_tracking_reset(struct kvm_ioapic *ioapic)
+ {
+ 	ioapic->rtc_status.pending_eoi = 0;
+-	bitmap_zero(ioapic->rtc_status.dest_map, KVM_MAX_VCPUS);
++	bitmap_zero(ioapic->rtc_status.dest_map.map, KVM_MAX_VCPUS);
+ }
+ 
+ static void __rtc_irq_eoi_tracking_restore_one(struct kvm_vcpu *vcpu)
+@@ -109,16 +109,16 @@ static void __rtc_irq_eoi_tracking_resto
+ 		return;
+ 
+ 	new_val = kvm_apic_pending_eoi(vcpu, e->fields.vector);
+-	old_val = test_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map);
++	old_val = test_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map.map);
+ 
+ 	if (new_val == old_val)
+ 		return;
+ 
+ 	if (new_val) {
+-		__set_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map);
++		__set_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map.map);
+ 		ioapic->rtc_status.pending_eoi++;
+ 	} else {
+-		__clear_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map);
++		__clear_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map.map);
+ 		ioapic->rtc_status.pending_eoi--;
+ 	}
+ 
+@@ -149,7 +149,7 @@ static void kvm_rtc_eoi_tracking_restore
+ 
+ static void rtc_irq_eoi(struct kvm_ioapic *ioapic, struct kvm_vcpu *vcpu)
+ {
+-	if (test_and_clear_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map))
++	if (test_and_clear_bit(vcpu->vcpu_id, ioapic->rtc_status.dest_map.map))
+ 		--ioapic->rtc_status.pending_eoi;
+ 
+ 	WARN_ON(ioapic->rtc_status.pending_eoi < 0);
+@@ -290,7 +290,7 @@ static int ioapic_deliver(struct kvm_ioa
+ 	if (irq == RTC_GSI && line_status) {
+ 		BUG_ON(ioapic->rtc_status.pending_eoi != 0);
+ 		ret = kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe,
+-				ioapic->rtc_status.dest_map);
++					       &ioapic->rtc_status.dest_map);
+ 		ioapic->rtc_status.pending_eoi = (ret < 0 ? 0 : ret);
+ 	} else
+ 		ret = kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe, NULL);
+--- a/virt/kvm/ioapic.h
++++ b/virt/kvm/ioapic.h
+@@ -40,9 +40,14 @@ struct kvm_vcpu;
+ #define RTC_GSI -1U
+ #endif
+ 
++struct dest_map {
++	DECLARE_BITMAP(map, KVM_MAX_VCPUS);
++};
++
++
+ struct rtc_status {
+ 	int pending_eoi;
+-	DECLARE_BITMAP(dest_map, KVM_MAX_VCPUS);
++	struct dest_map dest_map;
+ };
+ 
+ struct kvm_ioapic {
+@@ -91,7 +96,8 @@ int kvm_ioapic_set_irq(struct kvm_ioapic
+ void kvm_ioapic_clear_all(struct kvm_ioapic *ioapic, int irq_source_id);
+ void kvm_ioapic_reset(struct kvm_ioapic *ioapic);
+ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
+-		struct kvm_lapic_irq *irq, unsigned long *dest_map);
++			     struct kvm_lapic_irq *irq,
++			     struct dest_map *dest_map);
+ int kvm_get_ioapic(struct kvm *kvm, struct kvm_ioapic_state *state);
+ int kvm_set_ioapic(struct kvm *kvm, struct kvm_ioapic_state *state);
+ void kvm_vcpu_request_scan_ioapic(struct kvm *kvm);
+--- a/virt/kvm/irq_comm.c
++++ b/virt/kvm/irq_comm.c
+@@ -66,7 +66,7 @@ inline static bool kvm_is_dm_lowest_prio
+ }
+ 
+ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
+-		struct kvm_lapic_irq *irq, unsigned long *dest_map)
++		struct kvm_lapic_irq *irq, struct dest_map *dest_map)
+ {
+ 	int i, r = -1;
+ 	struct kvm_vcpu *vcpu, *lowest = NULL;
+--- a/arch/x86/kvm/lapic.c
++++ b/arch/x86/kvm/lapic.c
+@@ -435,10 +435,10 @@ int kvm_lapic_find_highest_irr(struct kv
+ 
+ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
+ 			     int vector, int level, int trig_mode,
+-			     unsigned long *dest_map);
++			     struct dest_map *dest_map);
+ 
+ int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
+-		unsigned long *dest_map)
++		     struct dest_map *dest_map)
+ {
+ 	struct kvm_lapic *apic = vcpu->arch.apic;
+ 
+@@ -609,7 +609,7 @@ int kvm_apic_match_dest(struct kvm_vcpu
+ }
+ 
+ bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
+-		struct kvm_lapic_irq *irq, int *r, unsigned long *dest_map)
++		struct kvm_lapic_irq *irq, int *r, struct dest_map *dest_map)
+ {
+ 	struct kvm_apic_map *map;
+ 	unsigned long bitmap = 1;
+@@ -680,7 +680,7 @@ out:
+  */
+ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
+ 			     int vector, int level, int trig_mode,
+-			     unsigned long *dest_map)
++			     struct dest_map *dest_map)
+ {
+ 	int result = 0;
+ 	struct kvm_vcpu *vcpu = apic->vcpu;
+@@ -696,7 +696,7 @@ static int __apic_accept_irq(struct kvm_
+ 		result = 1;
+ 
+ 		if (dest_map)
+-			__set_bit(vcpu->vcpu_id, dest_map);
++			__set_bit(vcpu->vcpu_id, dest_map->map);
+ 
+ 		if (kvm_x86_ops->deliver_posted_interrupt)
+ 			kvm_x86_ops->deliver_posted_interrupt(vcpu, vector);
+--- a/arch/x86/kvm/lapic.h
++++ b/arch/x86/kvm/lapic.h
+@@ -38,6 +38,9 @@ struct kvm_lapic {
+ 	unsigned long pending_events;
+ 	unsigned int sipi_vector;
+ };
++
++struct dest_map;
++
+ int kvm_create_lapic(struct kvm_vcpu *vcpu);
+ void kvm_free_lapic(struct kvm_vcpu *vcpu);
+ 
+@@ -58,11 +61,11 @@ void kvm_apic_update_irr(struct kvm_vcpu
+ int kvm_apic_match_physical_addr(struct kvm_lapic *apic, u16 dest);
+ int kvm_apic_match_logical_addr(struct kvm_lapic *apic, u8 mda);
+ int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
+-		unsigned long *dest_map);
++		     struct dest_map *dest_map);
+ int kvm_apic_local_deliver(struct kvm_lapic *apic, int lvt_type);
+ 
+ bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
+-		struct kvm_lapic_irq *irq, int *r, unsigned long *dest_map);
++		struct kvm_lapic_irq *irq, int *r, struct dest_map *dest_map);
+ 
+ u64 kvm_get_apic_base(struct kvm_vcpu *vcpu);
+ void kvm_set_apic_base(struct kvm_vcpu *vcpu, u64 data);
