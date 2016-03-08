@@ -31,7 +31,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -3355,11 +3355,9 @@ enum btrfs_reserve_flush_enum {
+@@ -3354,11 +3354,9 @@ enum btrfs_reserve_flush_enum {
  	BTRFS_RESERVE_FLUSH_ALL,
  };
  
@@ -45,7 +45,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  void btrfs_trans_release_metadata(struct btrfs_trans_handle *trans,
  				struct btrfs_root *root);
  int btrfs_orphan_reserve_metadata(struct btrfs_trans_handle *trans,
-@@ -3374,10 +3372,8 @@ void btrfs_subvolume_release_metadata(st
+@@ -3373,10 +3371,8 @@ void btrfs_subvolume_release_metadata(st
  				      u64 qgroup_reserved);
  int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes);
  void btrfs_delalloc_release_metadata(struct inode *inode, u64 num_bytes);
@@ -78,7 +78,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  
  out_put:
  	iput(inode);
-@@ -3679,27 +3679,11 @@ commit_trans:
+@@ -3683,27 +3683,11 @@ out:
  }
  
  /*
@@ -107,7 +107,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  {
  	struct btrfs_root *root = BTRFS_I(inode)->root;
  	int ret;
-@@ -3719,33 +3703,13 @@ int __btrfs_check_data_free_space(struct
+@@ -3723,34 +3707,13 @@ int __btrfs_check_data_free_space(struct
  }
  
  /*
@@ -124,6 +124,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 -	data_sinfo = root->fs_info->data_sinfo;
 -	spin_lock(&data_sinfo->lock);
 -	WARN_ON(data_sinfo->bytes_may_use < bytes);
+-	btrfs_qgroup_free(root, bytes);
 -	data_sinfo->bytes_may_use -= bytes;
 -	trace_btrfs_space_reservation(root->fs_info, "space_info",
 -				      data_sinfo->flags, bytes, 0);
@@ -142,7 +143,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  {
  	struct btrfs_root *root = BTRFS_I(inode)->root;
  	struct btrfs_space_info *data_sinfo;
-@@ -4890,8 +4854,6 @@ void btrfs_subvolume_release_metadata(st
+@@ -4895,8 +4858,6 @@ void btrfs_subvolume_release_metadata(st
  				      u64 qgroup_reserved)
  {
  	btrfs_block_rsv_release(root, rsv, (u64)-1);
@@ -151,13 +152,12 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  }
  
  /**
-@@ -5167,17 +5129,13 @@ void btrfs_delalloc_release_metadata(str
+@@ -5172,16 +5133,13 @@ void btrfs_delalloc_release_metadata(str
  
  	trace_btrfs_space_reservation(root->fs_info, "delalloc",
  				      btrfs_ino(inode), to_free, 0);
 -	if (root->fs_info->quota_enabled) {
--		btrfs_qgroup_free(root, num_bytes +
--					dropped * root->leafsize);
+-		btrfs_qgroup_free(root, dropped * root->leafsize);
 -	}
  
  	btrfs_block_rsv_release(root, &root->fs_info->delalloc_block_rsv,
@@ -170,7 +170,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
   * delalloc
   * @inode: inode we're writing to
   * @start: start range we are writing to
-@@ -5201,53 +5159,21 @@ void btrfs_delalloc_release_metadata(str
+@@ -5205,53 +5163,21 @@ void btrfs_delalloc_release_metadata(str
   * Return 0 for success
   * Return <0 for error(-ENOSPC or -EQUOT)
   */
@@ -228,7 +228,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
   * @inode: inode we're releasing space for
   * @start: start position of the space already reserved
   * @len: the len of the space already reserved
-@@ -5261,29 +5187,10 @@ int btrfs_delalloc_reserve_space(struct
+@@ -5265,29 +5191,10 @@ int btrfs_delalloc_reserve_space(struct
   * list if there are no delalloc bytes left.
   * Also it will handle the qgroup reserved space.
   */
@@ -262,7 +262,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  static int update_block_group(struct btrfs_root *root,
 --- a/fs/btrfs/file.c
 +++ b/fs/btrfs/file.c
-@@ -1532,7 +1532,7 @@ static noinline ssize_t __btrfs_buffered
+@@ -1542,7 +1542,7 @@ static noinline ssize_t __btrfs_buffered
  				goto reserve_metadata;
  			}
  		}
@@ -271,7 +271,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  		if (ret < 0)
  			break;
  
-@@ -1540,8 +1540,8 @@ reserve_metadata:
+@@ -1550,8 +1550,8 @@ reserve_metadata:
  		ret = btrfs_delalloc_reserve_metadata(inode, reserve_bytes);
  		if (ret) {
  			if (!only_release_metadata)
@@ -282,7 +282,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  			else
  				btrfs_end_nocow_write(root);
  			break;
-@@ -1612,7 +1612,7 @@ again:
+@@ -1622,7 +1622,7 @@ again:
  				btrfs_delalloc_release_metadata(inode,
  								release_bytes);
  			else
@@ -291,7 +291,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  							     release_bytes);
  		}
  
-@@ -1665,8 +1665,7 @@ again:
+@@ -1675,8 +1675,7 @@ again:
  			btrfs_end_nocow_write(root);
  			btrfs_delalloc_release_metadata(inode, release_bytes);
  		} else {
@@ -301,25 +301,9 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  		}
  	}
  
-@@ -2505,11 +2504,6 @@ static long btrfs_fallocate(struct file
- 					  alloc_end - alloc_start);
- 	if (ret)
- 		return ret;
--	if (root->fs_info->quota_enabled) {
--		ret = btrfs_qgroup_reserve(root, alloc_end - alloc_start);
--		if (ret)
--			goto out_reserve_fail;
--	}
- 
- 	mutex_lock(&inode->i_mutex);
- 	ret = inode_newsize_ok(inode, alloc_end);
-@@ -2638,12 +2632,10 @@ static long btrfs_fallocate(struct file
- 			     &cached_state, GFP_NOFS);
+@@ -2644,8 +2643,8 @@ static long btrfs_fallocate(struct file
  out:
  	mutex_unlock(&inode->i_mutex);
--	if (root->fs_info->quota_enabled)
--		btrfs_qgroup_free(root, alloc_end - alloc_start);
- out_reserve_fail:
  	/* Let go of our reservation. */
 -	__btrfs_free_reserved_data_space(inode, alloc_start,
 -					 alloc_end - alloc_start);
@@ -404,7 +388,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  	unlock_page(page);
  	page_cache_release(page);
  out:
-@@ -7643,7 +7643,7 @@ static ssize_t btrfs_direct_IO(int rw, s
+@@ -7651,7 +7651,7 @@ static ssize_t btrfs_direct_IO(int rw, s
  			mutex_unlock(&inode->i_mutex);
  			relock = true;
  		}
@@ -413,7 +397,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  		if (ret)
  			goto out;
  	} else if (unlikely(test_bit(BTRFS_INODE_READDIO_NEED_LOCK,
-@@ -7659,10 +7659,10 @@ static ssize_t btrfs_direct_IO(int rw, s
+@@ -7667,10 +7667,10 @@ static ssize_t btrfs_direct_IO(int rw, s
  			btrfs_submit_direct, flags);
  	if (rw & WRITE) {
  		if (ret < 0 && ret != -EIOCBQUEUED)
@@ -427,7 +411,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  		else
  			btrfs_delalloc_release_metadata(inode, 0);
  	}
-@@ -7875,8 +7875,8 @@ int btrfs_page_mkwrite(struct vm_area_st
+@@ -7883,8 +7883,8 @@ int btrfs_page_mkwrite(struct vm_area_st
  	page_start = page_offset(page);
  	page_end = page_start + PAGE_CACHE_SIZE - 1;
  
@@ -438,7 +422,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  	if (!ret) {
  		ret = file_update_time(vma->vm_file);
  		reserved = 1;
-@@ -7971,7 +7971,7 @@ out_unlock:
+@@ -7979,7 +7979,7 @@ out_unlock:
  	}
  	unlock_page(page);
  out:
@@ -449,7 +433,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  	return ret;
 --- a/fs/btrfs/ioctl.c
 +++ b/fs/btrfs/ioctl.c
-@@ -1092,7 +1092,7 @@ static int cluster_pages_for_defrag(stru
+@@ -1107,7 +1107,7 @@ static int cluster_pages_for_defrag(stru
  
  	page_cnt = min_t(u64, (u64)num_pages, (u64)file_end - start_index + 1);
  
@@ -458,7 +442,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  			start_index << PAGE_CACHE_SHIFT,
  			page_cnt << PAGE_CACHE_SHIFT);
  	if (ret)
-@@ -1183,7 +1183,7 @@ again:
+@@ -1198,7 +1198,7 @@ again:
  		spin_lock(&BTRFS_I(inode)->lock);
  		BTRFS_I(inode)->outstanding_extents++;
  		spin_unlock(&BTRFS_I(inode)->lock);
@@ -467,7 +451,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  				start_index << PAGE_CACHE_SHIFT,
  				(page_cnt - i_done) << PAGE_CACHE_SHIFT);
  	}
-@@ -1210,7 +1210,7 @@ out:
+@@ -1225,7 +1225,7 @@ out:
  		unlock_page(pages[i]);
  		page_cache_release(pages[i]);
  	}
