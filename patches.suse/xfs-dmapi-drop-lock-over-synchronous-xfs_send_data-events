@@ -1,0 +1,70 @@
+From: Jeff Mahoney <jeffm@suse.com>
+Subject: xfs/dmapi: drop lock over synchronous XFS_SEND_DATA events
+References: bsc#969993
+Patch-mainline: Never, depends on DMAPI
+
+There are several places where XFS_SEND_DATA is called with the iolock
+held and not dropped.  The HSM may sleep and/or attempt to take the lock
+itself, which will get us stuck.
+
+Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+---
+ fs/xfs/xfs_bmap_util.c |   11 +++++++----
+ fs/xfs/xfs_iops.c      |    3 ++-
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -1064,12 +1064,13 @@ xfs_alloc_file_space(
+ 			(attr_flags & XFS_ATTR_DMI) == 0  &&
+ 			DM_EVENT_ENABLED(ip, DM_EVENT_WRITE)) {
+ 		xfs_off_t           end_dmi_offset;
++		int iolock = XFS_IOLOCK_EXCL;
+ 
+ 		end_dmi_offset = offset+len;
+ 		if (end_dmi_offset > XFS_ISIZE(ip))
+ 			end_dmi_offset = XFS_ISIZE(ip);
+ 		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip, offset,
+-				      end_dmi_offset - offset, 0, NULL);
++				      end_dmi_offset - offset, 0, &iolock);
+ 		if (error)
+ 			return error;
+ 	}
+@@ -1348,19 +1349,21 @@ xfs_free_file_space(
+ 	end_dmi_offset = offset + len;
+ 	endoffset_fsb = XFS_B_TO_FSBT(mp, end_dmi_offset);
+ 
++	if (attr_flags & XFS_ATTR_NOLOCK)
++		need_iolock = 0;
++
+ 	if (offset < XFS_ISIZE(ip) && (attr_flags & XFS_ATTR_DMI) == 0 &&
+ 	    DM_EVENT_ENABLED(ip, DM_EVENT_WRITE)) {
++		int iolock = need_iolock ? 0 : XFS_IOLOCK_EXCL;
+ 		if (end_dmi_offset > XFS_ISIZE(ip))
+ 			end_dmi_offset = XFS_ISIZE(ip);
+ 		error = XFS_SEND_DATA(mp, DM_EVENT_WRITE, ip,
+ 				offset, end_dmi_offset - offset,
+-				AT_DELAY_FLAG(attr_flags), NULL);
++				AT_DELAY_FLAG(attr_flags), &iolock);
+ 		if (error)
+ 			return error;
+ 	}
+ 
+-	if (attr_flags & XFS_ATTR_NOLOCK)
+-		need_iolock = 0;
+ 	if (need_iolock) {
+ 		xfs_ilock(ip, XFS_IOLOCK_EXCL);
+ 		/* wait for the completion of any pending DIOs */
+--- a/fs/xfs/xfs_iops.c
++++ b/fs/xfs/xfs_iops.c
+@@ -761,8 +761,9 @@ xfs_setattr_size(
+ 	if (DM_EVENT_ENABLED(ip, DM_EVENT_TRUNCATE) &&
+ 	    !(flags & XFS_ATTR_DMI)) {
+ 		int dmflags = AT_DELAY_FLAG(flags) | DM_SEM_FLAG_WR;
++		int iolock = (flags & XFS_ATTR_NOLOCK) ? XFS_IOLOCK_EXCL : 0;
+ 		error = XFS_SEND_DATA(mp, DM_EVENT_TRUNCATE, ip,
+-			iattr->ia_size, 0, dmflags, NULL);
++			iattr->ia_size, 0, dmflags, &iolock);
+ 		if (error) {
+ 			lock_flags = 0;
+ 			goto out_unlock;
