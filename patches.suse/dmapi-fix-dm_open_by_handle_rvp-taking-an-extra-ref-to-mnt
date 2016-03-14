@@ -1,0 +1,30 @@
+From: Jeff Mahoney <jeffm@suse.com>
+Subject: dmapi: fix dm_open_by_handle_rvp taking an extra ref to mnt
+References: bsc#967292
+Patch-mainline: Never, depends on DMAPI
+
+Since v3.6[1], dentry_open has taken its own references.  Taking a reference
+in dm_open_by_handle_rvp results in an elevated mount count and a file
+system that can't be unmounted.
+
+[1] 765927b2d50 (switch dentry_open() to struct path, make it grab
+    references itself)
+
+Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+---
+ fs/dmapi/dmapi_register.c |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+--- a/fs/dmapi/dmapi_register.c
++++ b/fs/dmapi/dmapi_register.c
+@@ -1558,9 +1558,7 @@ dm_open_by_handle_rvp(
+ 		return(-EBADF);
+ 	}
+ 
+-	mntget(mfilp->f_path.mnt);
+-
+-	/* Create file pointer */
++	/* Create file pointer; dentry_open takes its own references. */
+ 	path.mnt = mfilp->f_path.mnt;
+ 	path.dentry = dentry;
+ 
