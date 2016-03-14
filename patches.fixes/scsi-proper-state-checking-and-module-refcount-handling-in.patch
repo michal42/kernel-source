@@ -1,0 +1,61 @@
+From: Christoph Hellwig <hch@lst.de>
+Date: Mon, 2 Feb 2015 14:01:26 +0100
+Subject: scsi: proper state checking and module refcount handling in
+ scsi_device_get
+Git-commit: cff549e4860fcdea6b22510defdc8c8a0f82455a
+Patch-mainline: v4.1-rc1
+References: boo#966831
+
+This effectively reverts commits 85b6c7 ("[SCSI] sd: fix cache flushing on
+module removal (and individual device removal)" and dc4515ea ("scsi: always
+increment reference count").
+
+We now never call scsi_device_get from the shutdown path, and the fact
+that we started grabbing reference there in commit 85b6c7 turned out
+turned out to create more problems than it solves, and required
+workarounds for workarounds for workarounds. Move back to properly checking
+the device state and carefully handle module refcounting.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: James Bottomley <JBottomley@Parallels.com>
+Acked-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/scsi.c |   19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+--- a/drivers/scsi/scsi.c
++++ b/drivers/scsi/scsi.c
+@@ -1170,18 +1170,25 @@ EXPORT_SYMBOL(scsi_report_opcode);
+  * Description: Gets a reference to the scsi_device and increments the use count
+  * of the underlying LLDD module.  You must hold host_lock of the
+  * parent Scsi_Host or already have a reference when calling this.
++ *
++ * This will fail if a device is deleted or cancelled, or when the LLD module
++ * is in the process of being unloaded.
+  */
+ int scsi_device_get(struct scsi_device *sdev)
+ {
+-	if (sdev->sdev_state == SDEV_DEL)
+-		return -ENXIO;
++	if (sdev->sdev_state == SDEV_DEL || sdev->sdev_state == SDEV_CANCEL)
++		goto fail;
+ 	if (!get_device(&sdev->sdev_gendev))
+-		return -ENXIO;
+-	/* We can fail this if we're doing SCSI operations
+-	 * from module exit (like cache flush) */
+-	try_module_get(sdev->host->hostt->module);
++		goto fail;
++	if (!try_module_get(sdev->host->hostt->module))
++		goto fail_put_device;
+ 
+ 	return 0;
++
++fail_put_device:
++	put_device(&sdev->sdev_gendev);
++fail:
++	return -ENXIO;
+ }
+ EXPORT_SYMBOL(scsi_device_get);
+ 
