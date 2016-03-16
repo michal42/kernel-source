@@ -1,0 +1,37 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct module
+Patch-mainline: never, kabi
+
+In 3.12.57, commit a801fe8935d78c2d900b0d8a422ee3bef2ea7bf2 (modules:
+fix longstanding /proc/kallsyms vs module insertion race.), upstream
+commit 8244062ef1e54502ef55f54cced659913f244c3e shuffled with members
+of struct module. Some of them were moved to a separate structure.  It
+indeed changed the layout of struct module.
+
+But given this is only shuffling inside the structure and adding a
+pointer to a new one, protect the change the usual way, by #ifdef
+__GENKSYMS__ and add a proper padding.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/module.h |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -318,8 +318,15 @@ struct module
+ 
+ #ifdef CONFIG_KALLSYMS
+ 	/* Protected by RCU and/or module_mutex: use rcu_dereference() */
++#ifdef __GENKSYMS__
++	Elf_Sym *symtab, *core_symtab;
++	unsigned int num_symtab, core_num_syms;
++	char *strtab, *core_strtab;
++#else
+ 	struct mod_kallsyms *kallsyms;
+ 	struct mod_kallsyms core_kallsyms;
++	char dummy_kabi[8];
++#endif
+ 
+ 	/* Section attributes */
+ 	struct module_sect_attrs *sect_attrs;

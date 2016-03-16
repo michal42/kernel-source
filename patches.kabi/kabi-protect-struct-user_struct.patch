@@ -1,0 +1,38 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct user_struct
+Patch-mainline: never, kabi
+
+In 3.12.57, commit 3d024dcef2548028e9f9b7876a544e6e0af00175 (unix:
+properly account for FDs passed over unix sockets), upstream commit
+712f4aad406bb1ed67f3f98d04c044191f0ff593 added one member to struct
+user_struct. It indeed changed the layout of that structure.
+
+But given this structure is allocated internally and is not a part of
+any other struct, we can just move the member at the end and protect
+the change the usual way, by #ifdef __GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/sched.h |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -665,7 +665,6 @@ struct user_struct {
+ 	unsigned long mq_bytes;	/* How many bytes can be allocated to mqueue? */
+ #endif
+ 	unsigned long locked_shm; /* How many pages of mlocked shm ? */
+-	unsigned long unix_inflight;	/* How many files in flight in unix sockets */
+ 
+ #ifdef CONFIG_KEYS
+ 	struct key *uid_keyring;	/* UID specific keyring */
+@@ -679,6 +678,9 @@ struct user_struct {
+ #ifdef CONFIG_PERF_EVENTS
+ 	atomic_long_t locked_vm;
+ #endif
++#ifndef __GENKSYMS__
++	unsigned long unix_inflight;	/* How many files in flight in unix sockets */
++#endif
+ };
+ 
+ extern int uids_sysfs_init(void);
