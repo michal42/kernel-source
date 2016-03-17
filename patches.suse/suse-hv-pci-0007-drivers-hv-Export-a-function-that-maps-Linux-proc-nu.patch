@@ -1,0 +1,62 @@
+From: Jake Oshins <jakeo@microsoft.com>
+Date: Wed, 17 Jun 2015 17:14:56 +0000
+Patch-mainline: submitted (lkml - https://www.mail-archive.com/linux-kernel@vger.kernel.org/msg1097523.html)
+Subject: drivers:hv: Export a function that maps Linux CPU num onto Hyper-V
+ proc num
+References: bnc#965924
+
+This patch exports a function which maps Linux CPU number onto Hyper-V
+virtual processor number.  This is necessary in order to map message-
+signaled interrupts (MSIs) into a VM, as the hypervisor needs to know the
+right target VP.
+
+For SLE12-SP1
+
+Signed-off-by: Jake Oshins <jakeo@microsoft.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/vmbus_drv.c | 17 +++++++++++++++++
+ include/linux/hyperv.h |  2 ++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index dfb0506..2b5869c 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -1229,6 +1229,23 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
+ }
+ EXPORT_SYMBOL_GPL(vmbus_allocate_mmio);
+ 
++/**
++ * vmbus_cpu_number_to_vp_number() - Map CPU to VP.
++ * @cpu_number: CPU number in Linux terms
++ *
++ * This function returns the mapping between the Linux processor
++ * number and the hypervisor's virtual processor number, useful
++ * in making hypercalls and such that talk about specific
++ * processors.
++ *
++ * Return: Virtual processor number in Hyper-V terms
++ */
++int vmbus_cpu_number_to_vp_number(int cpu_number)
++{
++	return hv_context.vp_index[cpu_number];
++}
++EXPORT_SYMBOL_GPL(vmbus_cpu_number_to_vp_number);
++
+ static int vmbus_acpi_add(struct acpi_device *device)
+ {
+ 	acpi_status result;
+diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
+index d63139f..d655494 100644
+--- a/include/linux/hyperv.h
++++ b/include/linux/hyperv.h
+@@ -985,6 +985,8 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
+ 			resource_size_t size, resource_size_t align,
+ 			bool fb_overlap_ok);
+ 
++int vmbus_cpu_number_to_vp_number(int cpu_number);
++
+ /**
+  * VMBUS_DEVICE - macro used to describe a specific hyperv vmbus device
+  *
