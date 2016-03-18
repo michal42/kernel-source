@@ -1,0 +1,33 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 10 Dec 2014 16:17:31 +0800
+Subject: [PATCH] ceph: fix mksnap crash
+Git-commit: 275dd19ea4e84c34f985ba097f9cddb539f54a50
+Patch-mainline: v3.19
+References: Fate#318586
+
+
+mksnap reply only contain 'target', does not contain 'dentry'. So
+it's wrong to use req->r_reply_info.head->is_dentry to detect traceless
+reply.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Reviewed-by: Sage Weil <sage@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -792,7 +792,9 @@ static int ceph_mkdir(struct inode *dir,
+ 	req->r_dentry_drop = CEPH_CAP_FILE_SHARED;
+ 	req->r_dentry_unless = CEPH_CAP_FILE_EXCL;
+ 	err = ceph_mdsc_do_request(mdsc, dir, req);
+-	if (!err && !req->r_reply_info.head->is_dentry)
++	if (!err &&
++	    !req->r_reply_info.head->is_target &&
++	    !req->r_reply_info.head->is_dentry)
+ 		err = ceph_handle_notrace_create(dir, dentry);
+ 	ceph_mdsc_put_request(req);
+ out:

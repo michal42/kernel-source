@@ -1,0 +1,41 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Thu, 22 Oct 2015 16:44:15 +0200
+Subject: [PATCH] rbd: remove duplicate calls to rbd_dev_mapping_clear()
+Git-commit: 4afb04c0c88e21f37e5ef4776e432907d7b12838
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+Commit d1cf5788450e ("rbd: set mapping info earlier") defined
+rbd_dev_mapping_clear(), but, just a few days after, commit
+f35a4dee14c3 ("rbd: set the mapping size and features later") moved
+rbd_dev_mapping_set() calls and added another rbd_dev_mapping_clear()
+call instead of moving the old one.  Around the same time, another
+duplicate was introduced in rbd_dev_device_release() - kill both.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/block/rbd.c |    3 ---
+ 1 file changed, 3 deletions(-)
+
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -5800,8 +5800,6 @@ err_out_blkdev:
+ 		unregister_blkdev(rbd_dev->major, rbd_dev->name);
+ err_out_id:
+ 	rbd_dev_id_put(rbd_dev);
+-	rbd_dev_mapping_clear(rbd_dev);
+-
+ 	return ret;
+ }
+ 
+@@ -6056,7 +6054,6 @@ static void rbd_dev_device_release(struc
+ 	if (!single_major)
+ 		unregister_blkdev(rbd_dev->major, rbd_dev->name);
+ 	rbd_dev_id_put(rbd_dev);
+-	rbd_dev_mapping_clear(rbd_dev);
+ }
+ 
+ static void rbd_dev_remove_parent(struct rbd_device *rbd_dev)

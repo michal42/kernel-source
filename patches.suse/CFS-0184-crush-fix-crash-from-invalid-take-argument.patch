@@ -1,0 +1,40 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Fri, 12 Jun 2015 11:20:03 +0300
+Subject: [PATCH] crush: fix crash from invalid 'take' argument
+Git-commit: 8f529795bace5d6263b134f4ff3adccfc0a0cce6
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+Verify that the 'take' argument is a valid device or bucket.
+Otherwise ignore it (do not add the value to the working vector).
+
+Reflects ceph.git commit 9324d0a1af61e1c234cc48e2175b4e6320fff8f4.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/ceph/crush/mapper.c |   11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+--- a/net/ceph/crush/mapper.c
++++ b/net/ceph/crush/mapper.c
+@@ -790,8 +790,15 @@ int crush_do_rule(const struct crush_map
+ 
+ 		switch (curstep->op) {
+ 		case CRUSH_RULE_TAKE:
+-			w[0] = curstep->arg1;
+-			wsize = 1;
++			if ((curstep->arg1 >= 0 &&
++			     curstep->arg1 < map->max_devices) ||
++			    (-1-curstep->arg1 < map->max_buckets &&
++			     map->buckets[-1-curstep->arg1])) {
++				w[0] = curstep->arg1;
++				wsize = 1;
++			} else {
++				dprintk(" bad take value %d\n", curstep->arg1);
++			}
+ 			break;
+ 
+ 		case CRUSH_RULE_SET_CHOOSE_TRIES:

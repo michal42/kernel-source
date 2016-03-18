@@ -1,0 +1,99 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 19 May 2015 18:54:40 +0800
+Subject: [PATCH] ceph: exclude setfilelock requests when calculating oldest
+ tid
+Git-commit: e8a7b8b12b13831467c6158c1e82801e25b5dd98
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+setfilelock requests can block for a long time, which can prevent
+client from advancing its oldest tid.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |   30 +++++++++++++++++++++++-------
+ fs/ceph/mds_client.h |    2 ++
+ 2 files changed, 25 insertions(+), 7 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -629,6 +629,9 @@ static void __register_request(struct ce
+ 	req->r_uid = current_fsuid();
+ 	req->r_gid = current_fsgid();
+ 
++	if (mdsc->oldest_tid == 0 && req->r_op != CEPH_MDS_OP_SETFILELOCK)
++		mdsc->oldest_tid = req->r_tid;
++
+ 	if (dir) {
+ 		struct ceph_inode_info *ci = ceph_inode(dir);
+ 
+@@ -644,6 +647,21 @@ static void __unregister_request(struct
+ 				 struct ceph_mds_request *req)
+ {
+ 	dout("__unregister_request %p tid %lld\n", req, req->r_tid);
++
++	if (req->r_tid == mdsc->oldest_tid) {
++		struct rb_node *p = rb_next(&req->r_node);
++		mdsc->oldest_tid = 0;
++		while (p) {
++			struct ceph_mds_request *next_req =
++				rb_entry(p, struct ceph_mds_request, r_node);
++			if (next_req->r_op != CEPH_MDS_OP_SETFILELOCK) {
++				mdsc->oldest_tid = next_req->r_tid;
++				break;
++			}
++			p = rb_next(p);
++		}
++	}
++
+ 	rb_erase(&req->r_node, &mdsc->request_tree);
+ 	RB_CLEAR_NODE(&req->r_node);
+ 
+@@ -1684,13 +1702,9 @@ static struct ceph_mds_request *__get_ol
+ 			struct ceph_mds_request, r_node);
+ }
+ 
+-static u64 __get_oldest_tid(struct ceph_mds_client *mdsc)
++static inline  u64 __get_oldest_tid(struct ceph_mds_client *mdsc)
+ {
+-	struct ceph_mds_request *req = __get_oldest_req(mdsc);
+-
+-	if (req)
+-		return req->r_tid;
+-	return 0;
++	return mdsc->oldest_tid;
+ }
+ 
+ /*
+@@ -3380,6 +3394,7 @@ int ceph_mdsc_init(struct ceph_fs_client
+ 	INIT_LIST_HEAD(&mdsc->snap_empty);
+ 	spin_lock_init(&mdsc->snap_empty_lock);
+ 	mdsc->last_tid = 0;
++	mdsc->oldest_tid = 0;
+ 	mdsc->request_tree = RB_ROOT;
+ 	INIT_DELAYED_WORK(&mdsc->delayed_work, delayed_work);
+ 	mdsc->last_renew_caps = jiffies;
+@@ -3473,7 +3488,8 @@ restart:
+ 			nextreq = rb_entry(n, struct ceph_mds_request, r_node);
+ 		else
+ 			nextreq = NULL;
+-		if ((req->r_op & CEPH_MDS_OP_WRITE)) {
++		if (req->r_op != CEPH_MDS_OP_SETFILELOCK &&
++		    (req->r_op & CEPH_MDS_OP_WRITE)) {
+ 			/* write op */
+ 			ceph_mdsc_get_request(req);
+ 			if (nextreq)
+--- a/fs/ceph/mds_client.h
++++ b/fs/ceph/mds_client.h
+@@ -296,6 +296,8 @@ struct ceph_mds_client {
+ 	spinlock_t              snap_empty_lock;  /* protect snap_empty */
+ 
+ 	u64                    last_tid;      /* most recent mds request */
++	u64                    oldest_tid;    /* oldest incomplete mds request,
++						 excluding setfilelock requests */
+ 	struct rb_root         request_tree;  /* pending mds requests */
+ 	struct delayed_work    delayed_work;  /* delayed work */
+ 	unsigned long    last_renew_caps;  /* last time we renewed our caps */

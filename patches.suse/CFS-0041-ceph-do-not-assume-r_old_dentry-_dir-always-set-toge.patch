@@ -1,0 +1,63 @@
+From: Sage Weil <sage@inktank.com>
+Date: Tue, 5 Feb 2013 13:40:09 -0800
+Subject: [PATCH] ceph: do not assume r_old_dentry[_dir] always set together
+Git-commit: 844d87c3329980e2b1849cf53205d7fa965d8995
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+Do not assume that r_old_dentry implies that r_old_dentry_dir is also
+true.  Separate out the ref cleanup and make the debugs dump behave when
+it is NULL.
+
+Signed-off-by: Sage Weil <sage@inktank.com>
+Reviewed-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/debugfs.c    |    3 ++-
+ fs/ceph/mds_client.c |    7 ++++---
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+--- a/fs/ceph/debugfs.c
++++ b/fs/ceph/debugfs.c
+@@ -102,7 +102,8 @@ static int mdsc_show(struct seq_file *s,
+ 				path = NULL;
+ 			spin_lock(&req->r_old_dentry->d_lock);
+ 			seq_printf(s, " #%llx/%.*s (%s)",
+-			   ceph_ino(req->r_old_dentry_dir),
++				   req->r_old_dentry_dir ?
++				   ceph_ino(req->r_old_dentry_dir) : 0,
+ 				   req->r_old_dentry->d_name.len,
+ 				   req->r_old_dentry->d_name.name,
+ 				   path ? path : "");
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -528,7 +528,9 @@ void ceph_mdsc_release_request(struct kr
+ 		iput(req->r_target_inode);
+ 	if (req->r_dentry)
+ 		dput(req->r_dentry);
+-	if (req->r_old_dentry) {
++	if (req->r_old_dentry)
++		dput(req->r_old_dentry);
++	if (req->r_old_dentry_dir) {
+ 		/*
+ 		 * track (and drop pins for) r_old_dentry_dir
+ 		 * separately, since r_old_dentry's d_parent may have
+@@ -537,7 +539,6 @@ void ceph_mdsc_release_request(struct kr
+ 		 */
+ 		ceph_put_cap_refs(ceph_inode(req->r_old_dentry_dir),
+ 				  CEPH_CAP_PIN);
+-		dput(req->r_old_dentry);
+ 		iput(req->r_old_dentry_dir);
+ 	}
+ 	kfree(req->r_path1);
+@@ -2058,7 +2059,7 @@ int ceph_mdsc_do_request(struct ceph_mds
+ 		ceph_get_cap_refs(ceph_inode(req->r_inode), CEPH_CAP_PIN);
+ 	if (req->r_locked_dir)
+ 		ceph_get_cap_refs(ceph_inode(req->r_locked_dir), CEPH_CAP_PIN);
+-	if (req->r_old_dentry)
++	if (req->r_old_dentry_dir)
+ 		ceph_get_cap_refs(ceph_inode(req->r_old_dentry_dir),
+ 				  CEPH_CAP_PIN);
+ 

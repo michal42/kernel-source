@@ -1,0 +1,41 @@
+From: Jianpeng Ma <jianpeng.ma@intel.com>
+Date: Tue, 18 Aug 2015 10:25:35 +0800
+Subject: [PATCH] ceph: no need to get parent inode in ceph_open
+Git-commit: e36d571d70c7f46b20c28d81025fd5fc044a8e22
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+parent inode is needed in creating new inode case.  For ceph_open,
+the target inode already exists.
+
+Signed-off-by: Jianpeng Ma <jianpeng.ma@intel.com>
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/file.c |    6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -137,7 +137,6 @@ int ceph_open(struct inode *inode, struc
+ 	struct ceph_mds_client *mdsc = fsc->mdsc;
+ 	struct ceph_mds_request *req;
+ 	struct ceph_file_info *cf = file->private_data;
+-	struct inode *parent_inode = NULL;
+ 	int err;
+ 	int flags, fmode, wanted;
+ 
+@@ -211,10 +210,7 @@ int ceph_open(struct inode *inode, struc
+ 	ihold(inode);
+ 
+ 	req->r_num_caps = 1;
+-	if (flags & O_CREAT)
+-		parent_inode = ceph_get_dentry_parent_inode(file->f_dentry);
+-	err = ceph_mdsc_do_request(mdsc, parent_inode, req);
+-	iput(parent_inode);
++	err = ceph_mdsc_do_request(mdsc, NULL, req);
+ 	if (!err)
+ 		err = ceph_init_file(inode, file, req->r_fmode);
+ 	ceph_mdsc_put_request(req);

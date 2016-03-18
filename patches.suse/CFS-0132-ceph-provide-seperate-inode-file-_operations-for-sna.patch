@@ -1,0 +1,84 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 14 Jan 2015 13:46:04 +0800
+Subject: [PATCH] ceph: provide seperate {inode,file}_operations for snapdir
+Git-commit: 38c48b5f0a7fd5ed9fdab6da4d208aa23cc5391a
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+remove all unsupported operations from {inode,file}_operations.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c   |   17 +++++++++++++++--
+ fs/ceph/inode.c |    4 ++--
+ fs/ceph/super.h |    2 ++
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -26,8 +26,6 @@
+  * point by name.
+  */
+ 
+-const struct inode_operations ceph_dir_iops;
+-const struct file_operations ceph_dir_fops;
+ const struct dentry_operations ceph_dentry_ops;
+ 
+ /*
+@@ -1319,6 +1317,13 @@ const struct file_operations ceph_dir_fo
+ 	.fsync = ceph_dir_fsync,
+ };
+ 
++const struct file_operations ceph_snapdir_fops = {
++	.iterate = ceph_readdir,
++	.llseek = ceph_dir_llseek,
++	.open = ceph_open,
++	.release = ceph_release,
++};
++
+ const struct inode_operations ceph_dir_iops = {
+ 	.lookup = ceph_lookup,
+ 	.permission = ceph_permission,
+@@ -1340,6 +1345,14 @@ const struct inode_operations ceph_dir_i
+ 	.atomic_open = ceph_atomic_open,
+ };
+ 
++const struct inode_operations ceph_snapdir_iops = {
++	.lookup = ceph_lookup,
++	.permission = ceph_permission,
++	.getattr = ceph_getattr,
++	.mkdir = ceph_mkdir,
++	.rmdir = ceph_unlink,
++};
++
+ const struct dentry_operations ceph_dentry_ops = {
+ 	.d_revalidate = ceph_d_revalidate,
+ 	.d_release = ceph_d_release,
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -81,8 +81,8 @@ struct inode *ceph_get_snapdir(struct in
+ 	inode->i_mode = parent->i_mode;
+ 	inode->i_uid = parent->i_uid;
+ 	inode->i_gid = parent->i_gid;
+-	inode->i_op = &ceph_dir_iops;
+-	inode->i_fop = &ceph_dir_fops;
++	inode->i_op = &ceph_snapdir_iops;
++	inode->i_fop = &ceph_snapdir_fops;
+ 	ci->i_snap_caps = CEPH_CAP_PIN; /* so we can open */
+ 	ci->i_rbytes = 0;
+ 	return inode;
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -880,7 +880,9 @@ extern void ceph_fill_inline_data(struct
+ int ceph_uninline_data(struct file *filp, struct page *locked_page);
+ /* dir.c */
+ extern const struct file_operations ceph_dir_fops;
++extern const struct file_operations ceph_snapdir_fops;
+ extern const struct inode_operations ceph_dir_iops;
++extern const struct inode_operations ceph_snapdir_iops;
+ extern const struct dentry_operations ceph_dentry_ops, ceph_snap_dentry_ops,
+ 	ceph_snapdir_dentry_ops;
+ 

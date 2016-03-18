@@ -1,0 +1,59 @@
+From: =?UTF-8?q?Beno=C3=AEt=20Canet?= <benoit.canet@nodalink.com>
+Date: Thu, 25 Jun 2015 21:02:57 +0200
+Subject: [PATCH] libceph: Avoid holding the zero page on ceph_msgr_slab_init
+ errors
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: d920ff6fc7c1ec3d7bd80432bff5575c0ebe426c
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+ceph_msgr_slab_init may fail due to a temporary ENOMEM.
+
+Delay a bit the initialization of zero_page in ceph_msgr_init and
+reorder its cleanup in _ceph_msgr_exit so it's done in reverse
+order of setup.
+
+BUG_ON() will not suffer to be postponed in case it is triggered.
+
+Signed-off-by: Benoît Canet <benoit.canet@nodalink.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/ceph/messenger.c |   10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+--- a/net/ceph/messenger.c
++++ b/net/ceph/messenger.c
+@@ -275,22 +275,22 @@ static void _ceph_msgr_exit(void)
+ 		ceph_msgr_wq = NULL;
+ 	}
+ 
+-	ceph_msgr_slab_exit();
+-
+ 	BUG_ON(zero_page == NULL);
+ 	page_cache_release(zero_page);
+ 	zero_page = NULL;
++
++	ceph_msgr_slab_exit();
+ }
+ 
+ int ceph_msgr_init(void)
+ {
++	if (ceph_msgr_slab_init())
++		return -ENOMEM;
++
+ 	BUG_ON(zero_page != NULL);
+ 	zero_page = ZERO_PAGE(0);
+ 	page_cache_get(zero_page);
+ 
+-	if (ceph_msgr_slab_init())
+-		return -ENOMEM;
+-
+ 	/*
+ 	 * The number of active work items is limited by the number of
+ 	 * connections, so leave @max_active at default.

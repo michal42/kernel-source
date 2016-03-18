@@ -1,0 +1,96 @@
+From: Sage Weil <sage@inktank.com>
+Date: Sun, 16 Feb 2014 10:05:29 -0800
+Subject: [PATCH] ceph: add acl, noacl options for cephfs mount
+Git-commit: 45195e42c78ea91135108207dbcaf75e5556a309
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+Make the 'acl' option dependent on having ACL support compiled in.  Make
+the 'noacl' option work even without it so that one can always ask it to
+be off and not error out on mount when it is not supported.
+
+Signed-off-by: Guangliang Zhao <lucienchao@gmail.com>
+Signed-off-by: Sage Weil <sage@inktank.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/super.c |   32 ++++++++++++++++++++++++++++----
+ 1 file changed, 28 insertions(+), 4 deletions(-)
+
+--- a/fs/ceph/super.c
++++ b/fs/ceph/super.c
+@@ -144,7 +144,11 @@ enum {
+ 	Opt_ino32,
+ 	Opt_noino32,
+ 	Opt_fscache,
+-	Opt_nofscache
++	Opt_nofscache,
++#ifdef CONFIG_CEPH_FS_POSIX_ACL
++	Opt_acl,
++#endif
++	Opt_noacl
+ };
+ 
+ static match_table_t fsopt_tokens = {
+@@ -172,6 +176,10 @@ static match_table_t fsopt_tokens = {
+ 	{Opt_noino32, "noino32"},
+ 	{Opt_fscache, "fsc"},
+ 	{Opt_nofscache, "nofsc"},
++#ifdef CONFIG_CEPH_FS_POSIX_ACL
++	{Opt_acl, "acl"},
++#endif
++	{Opt_noacl, "noacl"},
+ 	{-1, NULL}
+ };
+ 
+@@ -271,6 +279,14 @@ static int parse_fsopt_token(char *c, vo
+ 	case Opt_nofscache:
+ 		fsopt->flags &= ~CEPH_MOUNT_OPT_FSCACHE;
+ 		break;
++#ifdef CONFIG_CEPH_FS_POSIX_ACL
++	case Opt_acl:
++		fsopt->sb_flags |= MS_POSIXACL;
++		break;
++#endif
++	case Opt_noacl:
++		fsopt->sb_flags &= ~MS_POSIXACL;
++		break;
+ 	default:
+ 		BUG_ON(token);
+ 	}
+@@ -438,6 +454,13 @@ static int ceph_show_options(struct seq_
+ 	else
+ 		seq_puts(m, ",nofsc");
+ 
++#ifdef CONFIG_CEPH_FS_POSIX_ACL
++	if (fsopt->sb_flags & MS_POSIXACL)
++		seq_puts(m, ",acl");
++	else
++		seq_puts(m, ",noacl");
++#endif
++
+ 	if (fsopt->wsize)
+ 		seq_printf(m, ",wsize=%d", fsopt->wsize);
+ 	if (fsopt->rsize != CEPH_RSIZE_DEFAULT)
+@@ -819,9 +842,6 @@ static int ceph_set_super(struct super_b
+ 
+ 	s->s_flags = fsc->mount_options->sb_flags;
+ 	s->s_maxbytes = 1ULL << 40;  /* temp value until we get mdsmap */
+-#ifdef CONFIG_CEPH_FS_POSIX_ACL
+-	s->s_flags |= MS_POSIXACL;
+-#endif
+ 
+ 	s->s_xattr = ceph_xattr_handlers;
+ 	s->s_fs_info = fsc;
+@@ -911,6 +931,10 @@ static struct dentry *ceph_mount(struct
+ 	struct ceph_options *opt = NULL;
+ 
+ 	dout("ceph_mount\n");
++
++#ifdef CONFIG_CEPH_FS_POSIX_ACL
++	flags |= MS_POSIXACL;
++#endif
+ 	err = parse_mount_options(&fsopt, &opt, flags, data, dev_name, &path);
+ 	if (err < 0) {
+ 		res = ERR_PTR(err);

@@ -1,0 +1,32 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Tue, 1 Apr 2014 20:20:17 +0800
+Subject: [PATCH] ceph: drop extra open file reference in ceph_atomic_open()
+Git-commit: ab866549b3da3eef88e51696bcb24e79f1cc3745
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+ceph_atomic_open() calls ceph_open() after receiving the MDS reply.
+ceph_open() grabs an extra open file reference. (The open request
+already holds an open file reference)
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/file.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -291,8 +291,9 @@ int ceph_atomic_open(struct inode *dir,
+ 		}
+ 		err = finish_open(file, dentry, ceph_open, opened);
+ 	}
+-
+ out_err:
++	if (!req->r_err && req->r_target_inode)
++		ceph_put_fmode(ceph_inode(req->r_target_inode), req->r_fmode);
+ 	ceph_mdsc_put_request(req);
+ 	dout("atomic_open result=%d\n", err);
+ 	return err;

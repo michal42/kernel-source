@@ -1,0 +1,49 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 17 Dec 2014 21:26:47 +0800
+Subject: [PATCH] ceph: fix setting empty extended attribute
+Git-commit: 0aeff37abada9f8c08d2b10481a43d3ae406c823
+Patch-mainline: v3.19
+References: Fate#318586
+
+
+make sure 'value' is not null. otherwise __ceph_setxattr will remove
+the extended attribute.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Reviewed-by: Sage Weil <sage@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/xattr.c |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+--- a/fs/ceph/xattr.c
++++ b/fs/ceph/xattr.c
+@@ -853,7 +853,7 @@ static int ceph_sync_setxattr(struct den
+ 	struct ceph_pagelist *pagelist = NULL;
+ 	int err;
+ 
+-	if (value) {
++	if (size > 0) {
+ 		/* copy value into pagelist */
+ 		pagelist = kmalloc(sizeof(*pagelist), GFP_NOFS);
+ 		if (!pagelist)
+@@ -863,7 +863,7 @@ static int ceph_sync_setxattr(struct den
+ 		err = ceph_pagelist_append(pagelist, value, size);
+ 		if (err)
+ 			goto out;
+-	} else {
++	} else if (!value) {
+ 		flags |= CEPH_XATTR_REMOVE;
+ 	}
+ 
+@@ -1003,6 +1003,9 @@ int ceph_setxattr(struct dentry *dentry,
+ 	if (!strncmp(name, XATTR_SYSTEM_PREFIX, XATTR_SYSTEM_PREFIX_LEN))
+ 		return generic_setxattr(dentry, name, value, size, flags);
+ 
++	if (size == 0)
++		value = "";  /* empty EA, do not remove */
++
+ 	return __ceph_setxattr(dentry, name, value, size, flags);
+ }
+ 

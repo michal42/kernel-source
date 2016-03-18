@@ -1,0 +1,207 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Fri, 1 May 2015 17:49:16 +0800
+Subject: [PATCH] ceph: take snap_rwsem when accessing snap realm's
+ cached_context
+Git-commit: 604d1b0245b97738cde4341944ad93edff4b2827
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+When ceph inode's i_head_snapc is NULL, __ceph_mark_dirty_caps()
+accesses snap realm's cached_context. So we need take read lock
+of snap_rwsem.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c  |    4 +++-
+ fs/ceph/inode.c |   15 +++++++++++++++
+ fs/ceph/xattr.c |   45 +++++++++++++++++++++++++++++++++++++++------
+ 3 files changed, 57 insertions(+), 7 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1413,9 +1413,11 @@ int __ceph_mark_dirty_caps(struct ceph_i
+ 	     ceph_cap_string(was | mask));
+ 	ci->i_dirty_caps |= mask;
+ 	if (was == 0) {
+-		if (!ci->i_head_snapc)
++		if (!ci->i_head_snapc) {
++			WARN_ON_ONCE(!rwsem_is_locked(&mdsc->snap_rwsem));
+ 			ci->i_head_snapc = ceph_get_snap_context(
+ 				ci->i_snap_realm->cached_context);
++		}
+ 		dout(" inode %p now dirty snapc %p auth cap %p\n",
+ 		     &ci->vfs_inode, ci->i_head_snapc, ci->i_auth_cap);
+ 		BUG_ON(!list_empty(&ci->i_dirty_item));
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -1730,6 +1730,7 @@ int ceph_setattr(struct dentry *dentry,
+ 	int mask = 0;
+ 	int err = 0;
+ 	int inode_dirty_flags = 0;
++	bool lock_snap_rwsem = false;
+ 
+ 	if (ceph_snap(inode) != CEPH_NOSNAP)
+ 		return -EROFS;
+@@ -1745,6 +1746,18 @@ int ceph_setattr(struct dentry *dentry,
+ 
+ 	spin_lock(&ci->i_ceph_lock);
+ 	issued = __ceph_caps_issued(ci, NULL);
++
++	if (!ci->i_head_snapc &&
++	    (issued & (CEPH_CAP_ANY_EXCL | CEPH_CAP_FILE_WR))) {
++		lock_snap_rwsem = true;
++		if (!down_read_trylock(&mdsc->snap_rwsem)) {
++			spin_unlock(&ci->i_ceph_lock);
++			down_read(&mdsc->snap_rwsem);
++			spin_lock(&ci->i_ceph_lock);
++			issued = __ceph_caps_issued(ci, NULL);
++		}
++	}
++
+ 	dout("setattr %p issued %s\n", inode, ceph_cap_string(issued));
+ 
+ 	if (ia_valid & ATTR_UID) {
+@@ -1893,6 +1906,8 @@ int ceph_setattr(struct dentry *dentry,
+ 
+ 	release &= issued;
+ 	spin_unlock(&ci->i_ceph_lock);
++	if (lock_snap_rwsem)
++		up_read(&mdsc->snap_rwsem);
+ 
+ 	if (inode_dirty_flags)
+ 		__mark_inode_dirty(inode, inode_dirty_flags);
+--- a/fs/ceph/xattr.c
++++ b/fs/ceph/xattr.c
+@@ -913,6 +913,7 @@ int __ceph_setxattr(struct dentry *dentr
+ 	struct inode *inode = dentry->d_inode;
+ 	struct ceph_vxattr *vxattr;
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
++	struct ceph_mds_client *mdsc = ceph_sb_to_client(dentry->d_sb)->mdsc;
+ 	int issued;
+ 	int err;
+ 	int dirty = 0;
+@@ -922,6 +923,7 @@ int __ceph_setxattr(struct dentry *dentr
+ 	char *newval = NULL;
+ 	struct ceph_inode_xattr *xattr = NULL;
+ 	int required_blob_size;
++	bool lock_snap_rwsem = false;
+ 
+ 	if (!ceph_is_valid_xattr(name))
+ 		return -EOPNOTSUPP;
+@@ -953,9 +955,20 @@ int __ceph_setxattr(struct dentry *dentr
+ 	spin_lock(&ci->i_ceph_lock);
+ retry:
+ 	issued = __ceph_caps_issued(ci, NULL);
+-	dout("setxattr %p issued %s\n", inode, ceph_cap_string(issued));
+ 	if (ci->i_xattrs.version == 0 || !(issued & CEPH_CAP_XATTR_EXCL))
+ 		goto do_sync;
++
++	if (!lock_snap_rwsem && !ci->i_head_snapc) {
++		lock_snap_rwsem = true;
++		if (!down_read_trylock(&mdsc->snap_rwsem)) {
++			spin_unlock(&ci->i_ceph_lock);
++			down_read(&mdsc->snap_rwsem);
++			spin_lock(&ci->i_ceph_lock);
++			goto retry;
++		}
++	}
++
++	dout("setxattr %p issued %s\n", inode, ceph_cap_string(issued));
+ 	__build_xattrs(inode);
+ 
+ 	required_blob_size = __get_required_blob_size(ci, name_len, val_len);
+@@ -968,7 +981,7 @@ retry:
+ 		dout(" preaallocating new blob size=%d\n", required_blob_size);
+ 		blob = ceph_buffer_new(required_blob_size, GFP_NOFS);
+ 		if (!blob)
+-			goto out;
++			goto do_sync_unlocked;
+ 		spin_lock(&ci->i_ceph_lock);
+ 		if (ci->i_xattrs.prealloc_blob)
+ 			ceph_buffer_put(ci->i_xattrs.prealloc_blob);
+@@ -986,6 +999,8 @@ retry:
+ 	}
+ 
+ 	spin_unlock(&ci->i_ceph_lock);
++	if (lock_snap_rwsem)
++		up_read(&mdsc->snap_rwsem);
+ 	if (dirty)
+ 		__mark_inode_dirty(inode, dirty);
+ 	return err;
+@@ -993,6 +1008,8 @@ retry:
+ do_sync:
+ 	spin_unlock(&ci->i_ceph_lock);
+ do_sync_unlocked:
++	if (lock_snap_rwsem)
++		up_read(&mdsc->snap_rwsem);
+ 	err = ceph_sync_setxattr(dentry, name, value, size, flags);
+ out:
+ 	kfree(newname);
+@@ -1046,10 +1063,12 @@ int __ceph_removexattr(struct dentry *de
+ 	struct inode *inode = dentry->d_inode;
+ 	struct ceph_vxattr *vxattr;
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
++	struct ceph_mds_client *mdsc = ceph_sb_to_client(dentry->d_sb)->mdsc;
+ 	int issued;
+ 	int err;
+ 	int required_blob_size;
+ 	int dirty;
++	bool lock_snap_rwsem = false;
+ 
+ 	if (!ceph_is_valid_xattr(name))
+ 		return -EOPNOTSUPP;
+@@ -1066,10 +1085,21 @@ int __ceph_removexattr(struct dentry *de
+ 	spin_lock(&ci->i_ceph_lock);
+ retry:
+ 	issued = __ceph_caps_issued(ci, NULL);
+-	dout("removexattr %p issued %s\n", inode, ceph_cap_string(issued));
+-
+ 	if (ci->i_xattrs.version == 0 || !(issued & CEPH_CAP_XATTR_EXCL))
+ 		goto do_sync;
++
++	if (!lock_snap_rwsem && !ci->i_head_snapc) {
++		lock_snap_rwsem = true;
++		if (!down_read_trylock(&mdsc->snap_rwsem)) {
++			spin_unlock(&ci->i_ceph_lock);
++			down_read(&mdsc->snap_rwsem);
++			spin_lock(&ci->i_ceph_lock);
++			goto retry;
++		}
++	}
++
++	dout("removexattr %p issued %s\n", inode, ceph_cap_string(issued));
++
+ 	__build_xattrs(inode);
+ 
+ 	required_blob_size = __get_required_blob_size(ci, 0, 0);
+@@ -1082,7 +1112,7 @@ retry:
+ 		dout(" preaallocating new blob size=%d\n", required_blob_size);
+ 		blob = ceph_buffer_new(required_blob_size, GFP_NOFS);
+ 		if (!blob)
+-			goto out;
++			goto do_sync_unlocked;
+ 		spin_lock(&ci->i_ceph_lock);
+ 		if (ci->i_xattrs.prealloc_blob)
+ 			ceph_buffer_put(ci->i_xattrs.prealloc_blob);
+@@ -1096,14 +1126,17 @@ retry:
+ 	ci->i_xattrs.dirty = true;
+ 	inode->i_ctime = CURRENT_TIME;
+ 	spin_unlock(&ci->i_ceph_lock);
++	if (lock_snap_rwsem)
++		up_read(&mdsc->snap_rwsem);
+ 	if (dirty)
+ 		__mark_inode_dirty(inode, dirty);
+ 	return err;
+ do_sync:
+ 	spin_unlock(&ci->i_ceph_lock);
+ do_sync_unlocked:
++	if (lock_snap_rwsem)
++		up_read(&mdsc->snap_rwsem);
+ 	err = ceph_send_removexattr(dentry, name);
+-out:
+ 	return err;
+ }
+ 

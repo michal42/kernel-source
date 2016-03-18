@@ -1,0 +1,34 @@
+From: Sage Weil <sage@inktank.com>
+Date: Tue, 5 Feb 2013 13:41:23 -0800
+Subject: [PATCH] ceph: do not set r_old_dentry_dir on link()
+Git-commit: 4b58c9b19bddb47a1961608bc62d0c2f3dc9705e
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+This is racy--we do not know whather d_parent has changed out from
+underneath us because i_mutex is not held on the source inode's directory.
+
+Also, taking this reference is useless.
+
+Reported-by: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Sage Weil <sage@inktank.com>
+Reviewed-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -812,8 +812,7 @@ static int ceph_link(struct dentry *old_
+ 	}
+ 	req->r_dentry = dget(dentry);
+ 	req->r_num_caps = 2;
+-	req->r_old_dentry = dget(old_dentry); /* or inode? hrm. */
+-	req->r_old_dentry_dir = ceph_get_dentry_parent_inode(old_dentry);
++	req->r_old_dentry = dget(old_dentry);
+ 	req->r_locked_dir = dir;
+ 	req->r_dentry_drop = CEPH_CAP_FILE_SHARED;
+ 	req->r_dentry_unless = CEPH_CAP_FILE_EXCL;

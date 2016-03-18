@@ -1,0 +1,53 @@
+From: Linus Torvalds <torvalds@linux-foundation.org>
+Date: Sat, 12 Apr 2014 15:39:53 -0700
+Subject: [PATCH] ceph: fix pr_fmt() redefinition
+Git-commit: 96c57ade7e9ba2d1deba635a5989cc111f185dca
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+The vfs merge caused a latent bug to show up:
+
+   In file included from fs/ceph/super.h:4:0,
+                    from fs/ceph/ioctl.c:3:
+   include/linux/ceph/ceph_debug.h:4:0: warning: "pr_fmt" redefined [enabled by default]
+    #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+    ^
+   In file included from include/linux/kernel.h:13:0,
+                    from include/linux/uio.h:12,
+                    from include/linux/socket.h:7,
+                    from include/uapi/linux/in.h:22,
+                    from include/linux/in.h:23,
+                    from fs/ceph/ioctl.c:1:
+   include/linux/printk.h:214:0: note: this is the location of the previous definition
+    #define pr_fmt(fmt) fmt
+    ^
+
+where the reason is that <linux/ceph_debug.h> is included much too late
+for the "pr_fmt()" define.
+
+The include of <linux/ceph_debug.h> needs to be the first include in the
+file, but fs/ceph/ioctl.c had for some reason missed that, and it wasn't
+noticeable until some unrelated header file changes brought in an
+indirect earlier include of <linux/kernel.h>.
+
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/ioctl.c |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+--- a/fs/ceph/ioctl.c
++++ b/fs/ceph/ioctl.c
+@@ -1,9 +1,8 @@
++#include <linux/ceph/ceph_debug.h>
+ #include <linux/in.h>
+ 
+ #include "super.h"
+ #include "mds_client.h"
+-#include <linux/ceph/ceph_debug.h>
+-
+ #include "ioctl.h"
+ 
+ 

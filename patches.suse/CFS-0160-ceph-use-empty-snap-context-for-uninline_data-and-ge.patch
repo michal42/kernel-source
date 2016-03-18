@@ -1,0 +1,126 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Fri, 1 May 2015 10:03:40 +0800
+Subject: [PATCH] ceph: use empty snap context for uninline_data and
+ get_pool_perm
+Git-commit: 7b06a826e7c52d77ce801e5960ecf0338eafe886
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+Cached_context in ceph_snap_realm is directly accessed by
+uninline_data() and get_pool_perm(). This is racy in theory.
+both uninline_data() and get_pool_perm() do not modify existing
+object, they only create new object. So we can pass the empty
+snap context to them.  Unlike cached_context in ceph_snap_realm,
+we do not need to protect the empty snap context.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c  |    9 ++++-----
+ fs/ceph/snap.c  |   18 +++++++++---------
+ fs/ceph/super.h |    1 +
+ 3 files changed, 14 insertions(+), 14 deletions(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -1511,8 +1511,7 @@ int ceph_uninline_data(struct file *filp
+ 				    ceph_vino(inode), 0, &len, 0, 1,
+ 				    CEPH_OSD_OP_CREATE,
+ 				    CEPH_OSD_FLAG_ONDISK | CEPH_OSD_FLAG_WRITE,
+-				    ci->i_snap_realm->cached_context,
+-				    0, 0, false);
++				    ceph_empty_snapc, 0, 0, false);
+ 	if (IS_ERR(req)) {
+ 		err = PTR_ERR(req);
+ 		goto out;
+@@ -1530,7 +1529,7 @@ int ceph_uninline_data(struct file *filp
+ 				    ceph_vino(inode), 0, &len, 1, 3,
+ 				    CEPH_OSD_OP_WRITE,
+ 				    CEPH_OSD_FLAG_ONDISK | CEPH_OSD_FLAG_WRITE,
+-				    ci->i_snap_realm->cached_context,
++				    ceph_empty_snapc,
+ 				    ci->i_truncate_seq, ci->i_truncate_size,
+ 				    false);
+ 	if (IS_ERR(req)) {
+@@ -1655,7 +1654,7 @@ static int __ceph_pool_perm_get(struct c
+ 	}
+ 
+ 	rd_req = ceph_osdc_alloc_request(&fsc->client->osdc,
+-					 ci->i_snap_realm->cached_context,
++					 ceph_empty_snapc,
+ 					 1, false, GFP_NOFS);
+ 	if (!rd_req) {
+ 		err = -ENOMEM;
+@@ -1670,7 +1669,7 @@ static int __ceph_pool_perm_get(struct c
+ 	rd_req->r_base_oid.name_len = strlen(rd_req->r_base_oid.name);
+ 
+ 	wr_req = ceph_osdc_alloc_request(&fsc->client->osdc,
+-					 ci->i_snap_realm->cached_context,
++					 ceph_empty_snapc,
+ 					 1, false, GFP_NOFS);
+ 	if (!wr_req) {
+ 		err = -ENOMEM;
+--- a/fs/ceph/snap.c
++++ b/fs/ceph/snap.c
+@@ -296,7 +296,7 @@ static int cmpu64_rev(const void *a, con
+ }
+ 
+ 
+-static struct ceph_snap_context *empty_snapc;
++struct ceph_snap_context *ceph_empty_snapc;
+ 
+ /*
+  * build the snap context for a given realm.
+@@ -338,9 +338,9 @@ static int build_snap_context(struct cep
+ 		return 0;
+ 	}
+ 
+-	if (num == 0 && realm->seq == empty_snapc->seq) {
+-		ceph_get_snap_context(empty_snapc);
+-		snapc = empty_snapc;
++	if (num == 0 && realm->seq == ceph_empty_snapc->seq) {
++		ceph_get_snap_context(ceph_empty_snapc);
++		snapc = ceph_empty_snapc;
+ 		goto done;
+ 	}
+ 
+@@ -483,7 +483,7 @@ void ceph_queue_cap_snap(struct ceph_ino
+ 		   cap_snap.  lucky us. */
+ 		dout("queue_cap_snap %p already pending\n", inode);
+ 		kfree(capsnap);
+-	} else if (ci->i_snap_realm->cached_context == empty_snapc) {
++	} else if (ci->i_snap_realm->cached_context == ceph_empty_snapc) {
+ 		dout("queue_cap_snap %p empty snapc\n", inode);
+ 		kfree(capsnap);
+ 	} else if (dirty & (CEPH_CAP_AUTH_EXCL|CEPH_CAP_XATTR_EXCL|
+@@ -967,14 +967,14 @@ out:
+ 
+ int __init ceph_snap_init(void)
+ {
+-	empty_snapc = ceph_create_snap_context(0, GFP_NOFS);
+-	if (!empty_snapc)
++	ceph_empty_snapc = ceph_create_snap_context(0, GFP_NOFS);
++	if (!ceph_empty_snapc)
+ 		return -ENOMEM;
+-	empty_snapc->seq = 1;
++	ceph_empty_snapc->seq = 1;
+ 	return 0;
+ }
+ 
+ void ceph_snap_exit(void)
+ {
+-	ceph_put_snap_context(empty_snapc);
++	ceph_put_snap_context(ceph_empty_snapc);
+ }
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -692,6 +692,7 @@ static inline int default_congestion_kb(
+ 
+ 
+ /* snap.c */
++extern struct ceph_snap_context *ceph_empty_snapc;
+ struct ceph_snap_realm *ceph_lookup_snap_realm(struct ceph_mds_client *mdsc,
+ 					       u64 ino);
+ extern void ceph_get_snap_realm(struct ceph_mds_client *mdsc,

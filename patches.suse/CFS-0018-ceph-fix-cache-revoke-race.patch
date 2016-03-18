@@ -1,0 +1,76 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Fri, 22 Nov 2013 13:50:45 +0800
+Subject: [PATCH] ceph: fix cache revoke race
+Git-commit: 9563f88c1fa01341d125e396edc654a8dbcab2d2
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+handle following sequence of events:
+
+- non-auth MDS revokes Fc cap. queue invalidate work
+- auth MDS issues Fc cap through request reply. i_rdcache_gen gets
+  increased.
+- invalidate work runs. it finds i_rdcache_revoking != i_rdcache_gen,
+  so it does nothing.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c  |    2 +-
+ fs/ceph/inode.c |    8 +++++---
+ fs/ceph/super.h |    2 ++
+ 3 files changed, 8 insertions(+), 4 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -816,7 +816,7 @@ int __ceph_caps_revoking_other(struct ce
+ 
+ 	for (p = rb_first(&ci->i_caps); p; p = rb_next(p)) {
+ 		cap = rb_entry(p, struct ceph_cap, ci_node);
+-		if (cap != ocap && __cap_is_valid(cap) &&
++		if (cap != ocap &&
+ 		    (cap->implemented & ~cap->issued & mask))
+ 			return 1;
+ 	}
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -1466,7 +1466,8 @@ static void ceph_invalidate_work(struct
+ 	dout("invalidate_pages %p gen %d revoking %d\n", inode,
+ 	     ci->i_rdcache_gen, ci->i_rdcache_revoking);
+ 	if (ci->i_rdcache_revoking != ci->i_rdcache_gen) {
+-		/* nevermind! */
++		if (__ceph_caps_revoking_other(ci, NULL, CEPH_CAP_FILE_CACHE))
++			check = 1;
+ 		spin_unlock(&ci->i_ceph_lock);
+ 		mutex_unlock(&ci->i_truncate_mutex);
+ 		goto out;
+@@ -1487,13 +1488,14 @@ static void ceph_invalidate_work(struct
+ 		dout("invalidate_pages %p gen %d raced, now %d revoking %d\n",
+ 		     inode, orig_gen, ci->i_rdcache_gen,
+ 		     ci->i_rdcache_revoking);
++		if (__ceph_caps_revoking_other(ci, NULL, CEPH_CAP_FILE_CACHE))
++			check = 1;
+ 	}
+ 	spin_unlock(&ci->i_ceph_lock);
+ 	mutex_unlock(&ci->i_truncate_mutex);
+-
++out:
+ 	if (check)
+ 		ceph_check_caps(ci, 0, NULL);
+-out:
+ 	iput(inode);
+ }
+ 
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -528,6 +528,8 @@ static inline int __ceph_caps_dirty(stru
+ }
+ extern int __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask);
+ 
++extern int __ceph_caps_revoking_other(struct ceph_inode_info *ci,
++				      struct ceph_cap *ocap, int mask);
+ extern int ceph_caps_revoking(struct ceph_inode_info *ci, int mask);
+ extern int __ceph_caps_used(struct ceph_inode_info *ci);
+ 

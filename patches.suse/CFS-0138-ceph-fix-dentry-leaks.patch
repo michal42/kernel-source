@@ -1,0 +1,46 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 2 Feb 2015 11:27:56 +0800
+Subject: [PATCH] ceph: fix dentry leaks
+Git-commit: 5cba372c0fe78d24e83d9e0556ecbeb219625c15
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c   |    1 +
+ fs/ceph/inode.c |    8 +++++---
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -676,6 +676,7 @@ int ceph_handle_notrace_create(struct in
+ 		 */
+ 		BUG_ON(!result->d_inode);
+ 		d_instantiate(dentry, result->d_inode);
++		d_drop(result);
+ 		return 0;
+ 	}
+ 	return PTR_ERR(result);
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -1449,12 +1449,14 @@ retry_lookup:
+ 		}
+ 
+ 		if (!dn->d_inode) {
+-			dn = splice_dentry(dn, in, NULL);
+-			if (IS_ERR(dn)) {
+-				err = PTR_ERR(dn);
++			struct dentry *realdn = splice_dentry(dn, in, NULL);
++			if (IS_ERR(realdn)) {
++				err = PTR_ERR(realdn);
++				d_drop(dn);
+ 				dn = NULL;
+ 				goto next_item;
+ 			}
++			dn = realdn;
+ 		}
+ 
+ 		di = dn->d_fsdata;
