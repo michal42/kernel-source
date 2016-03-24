@@ -1,0 +1,62 @@
+From: Johannes Thumshirn <jthumshirn@suse.de>
+Date: Mon, 21 Mar 2016 12:34:40 +0100
+Subject: [PATCH] scsi: Add intermediate STARGET_REMOVE state to scsi_target_state
+References: bsc#970609
+Patch-mainline: Submitted to linux-scsi 24 Mar. 2016
+
+The target state machine only knows 'STARGET_DEL', which is set once
+scsi_target_destroy() is called.
+However, by that time the structure is still part of the __stargets
+list of the SCSI host, so any concurrent invocation will see this as
+a valid target, causing an access to freed memory.
+
+This patch adds an intermediate state 'STARGET_REMOVE', which is set
+as soon as the target is scheduled to be removed.
+With this any concurrent invocation will be able to skip these
+targets and avoid the above scenario.
+
+Signed-off-by: Johannes Thumshirn <jthumshirn@suse.de>
+Fixes: 90a88d6ef 'scsi: fix soft lockup in scsi_remove_target() on module removal'
+Cc: stable@vger.kernel.org
+---
+ drivers/scsi/scsi_scan.c   |    1 +
+ drivers/scsi/scsi_sysfs.c  |    2 ++
+ include/scsi/scsi_device.h |    1 +
+ 3 files changed, 4 insertions(+)
+
+--- a/drivers/scsi/scsi_scan.c
++++ b/drivers/scsi/scsi_scan.c
+@@ -327,6 +327,7 @@ static void scsi_target_destroy(struct s
+ 	struct Scsi_Host *shost = dev_to_shost(dev->parent);
+ 	unsigned long flags;
+ 
++	BUG_ON(starget->state != STARGET_REMOVE);
+ 	starget->state = STARGET_DEL;
+ 	transport_destroy_device(dev);
+ 	spin_lock_irqsave(shost->host_lock, flags);
+--- a/drivers/scsi/scsi_sysfs.c
++++ b/drivers/scsi/scsi_sysfs.c
+@@ -1164,11 +1164,13 @@ restart:
+ 	spin_lock_irqsave(shost->host_lock, flags);
+ 	list_for_each_entry(starget, &shost->__targets, siblings) {
+ 		if (starget->state == STARGET_DEL ||
++		    starget->state == STARGET_REMOVE ||
+ 		    starget == last_target)
+ 			continue;
+ 		if (starget->dev.parent == dev || &starget->dev == dev) {
+ 			kref_get(&starget->reap_ref);
+ 			last_target = starget;
++			starget->state = STARGET_REMOVE;
+ 			spin_unlock_irqrestore(shost->host_lock, flags);
+ 			__scsi_remove_target(starget);
+ 			scsi_target_reap(starget);
+--- a/include/scsi/scsi_device.h
++++ b/include/scsi/scsi_device.h
+@@ -254,6 +254,7 @@ enum scsi_target_state {
+ 	STARGET_CREATED = 1,
+ 	STARGET_RUNNING,
+ 	STARGET_DEL,
++	STARGET_REMOVE,
+ };
+ 
+ /*
