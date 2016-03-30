@@ -1,0 +1,48 @@
+From e8576033dada040ab7f0876d9f066ca452a7c187 Mon Sep 17 00:00:00 2001
+From: Romain Izard <romain.izard.pro@gmail.com>
+Date: Fri, 27 Jun 2014 10:51:07 +0200
+Subject: [PATCH] mmc: Allow forward compatibility for eMMC
+References: bnc#966054
+Git-Commit: 03a59437ef6b6ad7fb0165cb9b96c08d6bf057fc
+Patch-Mainline: v3.17
+
+As stated by the eMMC 5.0 specification, a chip should not be rejected
+only because of the revision stated in the EXT_CSD_REV field of the
+EXT_CSD register.
+
+Remove the control on this value, the control of the CSD_STRUCTURE field
+should be sufficient to reject future incompatible changes.
+
+Signed-off-by: Romain Izard <romain.izard.pro@gmail.com>
+Signed-off-by: Ulf Hansson <ulf.hansson@linaro.org>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/mmc/core/mmc.c | 11 +++++------
+ 1 file changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index 6d02012..36d6701 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -292,13 +292,12 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
+ 		}
+ 	}
+ 
++	/*
++	 * The EXT_CSD format is meant to be forward compatible. As long
++	 * as CSD_STRUCTURE does not change, all values for EXT_CSD_REV
++	 * are authorized, see JEDEC JESD84-B50 section B.8.
++	 */
+ 	card->ext_csd.rev = ext_csd[EXT_CSD_REV];
+-	if (card->ext_csd.rev > 7) {
+-		pr_err("%s: unrecognised EXT_CSD revision %d\n",
+-			mmc_hostname(card->host), card->ext_csd.rev);
+-		err = -EINVAL;
+-		goto out;
+-	}
+ 
+ 	card->ext_csd.raw_sectors[0] = ext_csd[EXT_CSD_SEC_CNT + 0];
+ 	card->ext_csd.raw_sectors[1] = ext_csd[EXT_CSD_SEC_CNT + 1];
+-- 
+2.1.4
+
