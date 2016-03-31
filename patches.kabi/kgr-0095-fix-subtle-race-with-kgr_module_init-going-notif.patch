@@ -1,0 +1,44 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: kgr: fix subtle race with kgr_module_init(), going notifier
+	and kgr_modify_kernel()
+Patch-mainline: never, kabi
+
+This patch:
+patches.suse/kgr-0095-fix-subtle-race-with-kgr_module_init-going-notif.patch
+added kgr_alive to struct module. It indeed broke kABI.
+
+But since we have some spare space in struct module, let's use the
+space now.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/module.h |   11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -334,7 +334,12 @@ struct module
+ #else
+ 	struct mod_kallsyms *kallsyms;
+ 	struct mod_kallsyms core_kallsyms;
+-	char dummy_kabi[8];
++	union {
++#ifdef CONFIG_KGRAFT
++		bool kgr_alive;
++#endif
++		char dummy_kabi[8];
++	};
+ #endif
+ 
+ 	/* Section attributes */
+@@ -375,10 +380,6 @@ struct module
+ 	unsigned long *ftrace_callsites;
+ #endif
+ 
+-#ifdef CONFIG_KGRAFT
+-	bool kgr_alive;
+-#endif
+-
+ #ifdef CONFIG_MODULE_UNLOAD
+ 	/* What modules depend on me? */
+ 	struct list_head source_list;
