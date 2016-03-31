@@ -104,15 +104,15 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	read_unlock(&tasklist_lock);
  }
  
--static unsigned long kgr_get_fentry_loc(const struct kgr_patch_fun *pf)
-+static unsigned long kgr_get_function_address(const struct kgr_patch_fun *pf)
+-static unsigned long kgr_get_fentry_loc(const char *f_name)
++static unsigned long kgr_get_function_address(const char *f_name)
  {
 -	unsigned long orig_addr, fentry_loc;
 +	unsigned long orig_addr;
  	const char *check_name;
  	char check_buf[KSYM_SYMBOL_LEN];
  
-@@ -385,20 +385,14 @@ static unsigned long kgr_get_fentry_loc(
+@@ -384,20 +384,14 @@ static unsigned long kgr_get_fentry_loc(
  		return -ENOENT;
  	}
  
@@ -124,9 +124,9 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 -
 -	check_name = kallsyms_lookup(fentry_loc, NULL, NULL, NULL, check_buf);
 +	check_name = kallsyms_lookup(orig_addr, NULL, NULL, NULL, check_buf);
- 	if (strcmp(check_name, pf->name)) {
+ 	if (strcmp(check_name, f_name)) {
  		pr_err("kgr: we got out of bounds the intended function (%s -> %s)\n",
- 				pf->name, check_name);
+ 				f_name, check_name);
  		return -EINVAL;
  	}
  
@@ -135,7 +135,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  }
  
  static void kgr_handle_irq_cpu(struct work_struct *work)
-@@ -524,7 +518,7 @@ static unsigned long kgr_get_old_fun(con
+@@ -523,7 +517,7 @@ static unsigned long kgr_get_old_fun(con
  	struct kgr_patch_fun *pf = kgr_get_patch_fun(patch_fun, KGR_PREVIOUS);
  
  	if (pf)
@@ -144,7 +144,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  
  	return patch_fun->loc_name;
  }
-@@ -581,41 +575,26 @@ static int kgr_switch_fops(struct kgr_pa
+@@ -580,41 +574,26 @@ static int kgr_switch_fops(struct kgr_pa
  static int kgr_init_ftrace_ops(struct kgr_patch_fun *patch_fun)
  {
  	struct ftrace_ops *fops;
@@ -168,11 +168,11 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
 -			fentry_loc, patch_fun->new_fun);
 -	patch_fun->loc_new = fentry_loc;
 -
--	fentry_loc = kgr_get_fentry_loc(patch_fun);
+-	fentry_loc = kgr_get_fentry_loc(patch_fun->name);
 -	if (IS_ERR_VALUE(fentry_loc))
 -		return fentry_loc;
 +	/* Cache missing addresses. */
-+	addr = kgr_get_function_address(patch_fun);
++	addr = kgr_get_function_address(patch_fun->name);
 +	if (IS_ERR_VALUE(addr))
 +		return addr;
  
@@ -199,7 +199,7 @@ Signed-off-by: Jiri Slaby <jslaby@suse.cz>
  	fops = &patch_fun->ftrace_ops_fast;
  	fops->private = patch_fun;
  	fops->func = kgr_stub_fast;
-@@ -1369,7 +1348,7 @@ static int __init kgr_init(void)
+@@ -1368,7 +1347,7 @@ static int __init kgr_init(void)
  	int ret;
  
  	if (ftrace_is_dead()) {
