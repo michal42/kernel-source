@@ -1,0 +1,53 @@
+From: Selvin Xavier <selvin.xavier@emulex.com>
+Date: Tue, 10 Jun 2014 19:32:19 +0530
+Subject: [PATCH] RDMA/ocrdma: Avoid reporting wrong completions in case of
+ error CQEs
+Patch-mainline: v3.17-rc1
+Git-commit: a96ffb1de9d656ce7083277a8badaa1082813498
+References: bsc#908151
+
+During cable pull test with a mount over NFS/RDMA, the driver was
+reporting error completions when there were no pending requests in the
+SQ and RQ.  This was triggering a host crash because of reporting
+wrong work req id.  Avoid this crash by adding a check for SQ and RQ
+empty condition and prevent reporting completions if queues are empty.
+
+Signed-off-by: Selvin Xavier <selvin.xavier@emulex.com>
+Signed-off-by: Devesh Sharma <devesh.sharma@emulex.com>
+Signed-off-by: Roland Dreier <roland@purestorage.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ drivers/infiniband/hw/ocrdma/ocrdma_verbs.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c b/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c
+index 0d7d808..2b68235 100644
+--- a/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c
++++ b/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c
+@@ -2489,6 +2489,11 @@ static bool ocrdma_poll_err_scqe(struct ocrdma_qp *qp,
+ 			*stop = true;
+ 			expand = false;
+ 		}
++	} else if (is_hw_sq_empty(qp)) {
++		/* Do nothing */
++		expand = false;
++		*polled = false;
++		*stop = false;
+ 	} else {
+ 		*polled = true;
+ 		expand = ocrdma_update_err_scqe(ibwc, cqe, qp, status);
+@@ -2594,6 +2599,11 @@ static bool ocrdma_poll_err_rcqe(struct ocrdma_qp *qp, struct ocrdma_cqe *cqe,
+ 			*stop = true;
+ 			expand = false;
+ 		}
++	} else if (is_hw_rq_empty(qp)) {
++		/* Do nothing */
++		expand = false;
++		*polled = false;
++		*stop = false;
+ 	} else {
+ 		*polled = true;
+ 		expand = ocrdma_update_err_rcqe(ibwc, cqe, qp, status);
+-- 
+1.8.5.2
+
