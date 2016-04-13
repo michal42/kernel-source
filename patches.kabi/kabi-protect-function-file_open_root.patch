@@ -1,0 +1,106 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect function file_open_root
+Patch-mainline: never, kabi
+
+In 3.12.58, commit 3386f680206b9ce91974dd49bbeea1e24bf4ffcc
+(fs/coredump: prevent fsuid=0 dumps into user-controlled directories),
+upstream commit 378c6520e7d29280f400ef2ceaf155c86f05a71a, added one
+parameter to an exported function file_open_root. It obviously changed
+the checksum for that function and we see kABI changes now.
+
+Leave file_open_root untouched and introduce file_open_root5 with the
+changed prototype instead.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ arch/um/drivers/mconsole_kern.c |    2 +-
+ fs/coredump.c                   |    2 +-
+ fs/fhandle.c                    |    2 +-
+ fs/open.c                       |    9 ++++++++-
+ include/linux/fs.h              |    4 +++-
+ kernel/sysctl_binary.c          |    2 +-
+ 6 files changed, 15 insertions(+), 6 deletions(-)
+
+--- a/arch/um/drivers/mconsole_kern.c
++++ b/arch/um/drivers/mconsole_kern.c
+@@ -133,7 +133,7 @@ void mconsole_proc(struct mc_request *re
+ 	ptr += strlen("proc");
+ 	ptr = skip_spaces(ptr);
+ 
+-	file = file_open_root(mnt->mnt_root, mnt, ptr, O_RDONLY, 0);
++	file = file_open_root5(mnt->mnt_root, mnt, ptr, O_RDONLY, 0);
+ 	if (IS_ERR(file)) {
+ 		mconsole_reply(req, "Failed to open file", 1, 0);
+ 		printk(KERN_ERR "open /proc/%s: %ld\n", ptr, PTR_ERR(file));
+--- a/fs/coredump.c
++++ b/fs/coredump.c
+@@ -672,7 +672,7 @@ void do_coredump(siginfo_t *siginfo)
+ 			task_lock(&init_task);
+ 			get_fs_root(init_task.fs, &root);
+ 			task_unlock(&init_task);
+-			cprm.file = file_open_root(root.dentry, root.mnt,
++			cprm.file = file_open_root5(root.dentry, root.mnt,
+ 				cn.corename, open_flags, 0600);
+ 			path_put(&root);
+ 		} else {
+--- a/fs/fhandle.c
++++ b/fs/fhandle.c
+@@ -228,7 +228,7 @@ long do_handle_open(int mountdirfd,
+ 		path_put(&path);
+ 		return fd;
+ 	}
+-	file = file_open_root(path.dentry, path.mnt, "", open_flag, 0);
++	file = file_open_root5(path.dentry, path.mnt, "", open_flag, 0);
+ 	if (IS_ERR(file)) {
+ 		put_unused_fd(fd);
+ 		retval =  PTR_ERR(file);
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -922,7 +922,7 @@ struct file *filp_open(const char *filen
+ }
+ EXPORT_SYMBOL(filp_open);
+ 
+-struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
++struct file *file_open_root5(struct dentry *dentry, struct vfsmount *mnt,
+ 			    const char *filename, int flags, umode_t mode)
+ {
+ 	struct open_flags op;
+@@ -934,6 +934,13 @@ struct file *file_open_root(struct dentr
+ 			return ERR_PTR(-ENOTDIR);
+ 	return do_file_open_root(dentry, mnt, filename, &op);
+ }
++EXPORT_SYMBOL(file_open_root5);
++
++struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
++			    const char *filename, int flags)
++{
++	return file_open_root5(dentry, mnt, filename, flags, 0);
++}
+ EXPORT_SYMBOL(file_open_root);
+ 
+ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -2004,8 +2004,10 @@ extern long do_sys_open(int dfd, const c
+ 			umode_t mode);
+ extern struct file *file_open_name(struct filename *, int, umode_t);
+ extern struct file *filp_open(const char *, int, umode_t);
+-extern struct file *file_open_root(struct dentry *, struct vfsmount *,
++extern struct file *file_open_root5(struct dentry *, struct vfsmount *,
+ 				   const char *, int, umode_t);
++extern struct file *file_open_root(struct dentry *, struct vfsmount *,
++				   const char *, int);
+ extern struct file * dentry_open(const struct path *, int, const struct cred *);
+ extern int filp_close(struct file *, fl_owner_t id);
+ 
+--- a/kernel/sysctl_binary.c
++++ b/kernel/sysctl_binary.c
+@@ -1320,7 +1320,7 @@ static ssize_t binary_sysctl(const int *
+ 	}
+ 
+ 	mnt = task_active_pid_ns(current)->proc_mnt;
+-	file = file_open_root(mnt->mnt_root, mnt, pathname, flags, 0);
++	file = file_open_root5(mnt->mnt_root, mnt, pathname, flags, 0);
+ 	result = PTR_ERR(file);
+ 	if (IS_ERR(file))
+ 		goto out_putname;

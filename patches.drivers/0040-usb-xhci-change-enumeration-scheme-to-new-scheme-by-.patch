@@ -84,7 +84,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
 
 --- a/drivers/usb/core/hub.c
 +++ b/drivers/usb/core/hub.c
-@@ -2554,6 +2554,21 @@ static unsigned hub_is_wusb(struct usb_h
+@@ -2575,6 +2575,21 @@ static unsigned hub_is_wusb(struct usb_h
  #define HUB_LONG_RESET_TIME	200
  #define HUB_RESET_TIMEOUT	800
  
@@ -106,7 +106,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  /* Is a USB 3.0 port in the Inactive or Compliance Mode state?
   * Port worm reset is required to recover
   */
-@@ -4048,6 +4063,20 @@ static void hub_set_initial_usb2_lpm_pol
+@@ -4073,6 +4088,20 @@ static void hub_set_initial_usb2_lpm_pol
  	}
  }
  
@@ -127,7 +127,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  /* Reset device, (re)assign address, get device descriptor.
   * Device connection must be stable, no more debouncing needed.
   * Returns device in USB_STATE_ADDRESS, except on error.
-@@ -4159,7 +4188,7 @@ hub_port_init (struct usb_hub *hub, stru
+@@ -4184,7 +4213,7 @@ hub_port_init (struct usb_hub *hub, stru
  	 * this area, and this is how Linux has done it for ages.
  	 * Change it cautiously.
  	 *
@@ -136,10 +136,10 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	 * a 64-byte GET_DESCRIPTOR request.  This is what Windows does,
  	 * so it may help with some non-standards-compliant devices.
  	 * Otherwise we start with SET_ADDRESS and then try to read the
-@@ -4167,10 +4196,17 @@ hub_port_init (struct usb_hub *hub, stru
+@@ -4192,10 +4221,17 @@ hub_port_init (struct usb_hub *hub, stru
  	 * value.
  	 */
- 	for (i = 0; i < GET_DESCRIPTOR_TRIES; (++i, msleep(100))) {
+ 	for (retries = 0; retries < GET_DESCRIPTOR_TRIES; (++retries, msleep(100))) {
 -		if (USE_NEW_SCHEME(retry_counter) && !(hcd->driver->flags & HCD_USB3)) {
 +		bool did_new_scheme = false;
 +
@@ -155,7 +155,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  #define GET_DESCRIPTOR_BUFSIZE	64
  			buf = kmalloc(GET_DESCRIPTOR_BUFSIZE, GFP_NOIO);
  			if (!buf) {
-@@ -4273,7 +4309,11 @@ hub_port_init (struct usb_hub *hub, stru
+@@ -4304,7 +4340,11 @@ hub_port_init (struct usb_hub *hub, stru
  			 *  - read ep0 maxpacket even for high and low speed,
  			 */
  			msleep(10);
@@ -170,7 +170,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
 --- a/drivers/usb/host/xhci-pci.c
 +++ b/drivers/usb/host/xhci-pci.c
-@@ -375,6 +375,7 @@ static const struct hc_driver xhci_pci_h
+@@ -376,6 +376,7 @@ static const struct hc_driver xhci_pci_h
  	.check_bandwidth =	xhci_check_bandwidth,
  	.reset_bandwidth =	xhci_reset_bandwidth,
  	.address_device =	xhci_address_device,
@@ -190,7 +190,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
 --- a/drivers/usb/host/xhci-ring.c
 +++ b/drivers/usb/host/xhci-ring.c
-@@ -4074,12 +4074,12 @@ int xhci_queue_slot_control(struct xhci_
+@@ -4085,12 +4085,12 @@ int xhci_queue_slot_control(struct xhci_
  
  /* Queue an address device command TRB */
  int xhci_queue_address_device(struct xhci_hcd *xhci, dma_addr_t in_ctx_ptr,
@@ -208,7 +208,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  int xhci_queue_vendor_command(struct xhci_hcd *xhci,
 --- a/drivers/usb/host/xhci.c
 +++ b/drivers/usb/host/xhci.c
-@@ -3766,15 +3766,16 @@ disable_slot:
+@@ -3768,15 +3768,16 @@ disable_slot:
  }
  
  /*
@@ -228,7 +228,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  {
  	unsigned long flags;
  	int timeleft;
-@@ -3833,7 +3834,7 @@ int xhci_address_device(struct usb_hcd *
+@@ -3835,7 +3836,7 @@ int xhci_address_device(struct usb_hcd *
  	spin_lock_irqsave(&xhci->lock, flags);
  	cmd_trb = xhci_find_next_enqueue(xhci->cmd_ring);
  	ret = xhci_queue_address_device(xhci, virt_dev->in_ctx->dma,
@@ -237,7 +237,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	if (ret) {
  		spin_unlock_irqrestore(&xhci->lock, flags);
  		xhci_dbg_trace(xhci, trace_xhci_dbg_address,
-@@ -3931,6 +3932,16 @@ int xhci_address_device(struct usb_hcd *
+@@ -3933,6 +3934,16 @@ int xhci_address_device(struct usb_hcd *
  	return 0;
  }
  
