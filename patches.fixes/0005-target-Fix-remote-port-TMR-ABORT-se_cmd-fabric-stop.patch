@@ -42,13 +42,11 @@ Cc: Mike Christie <mchristi@redhat.com>
 Signed-off-by: Nicholas Bellinger <nab@daterainc.com>
 Acked-by: David Disseldorp <ddiss@suse.de>
 ---
- drivers/target/target_core_tmr.c       |  57 ++++++++++----
- drivers/target/target_core_transport.c | 137 +++++++++++++++++++++++++--------
- include/target/target_core_base.h      |   2 +
- 3 files changed, 148 insertions(+), 48 deletions(-)
+ drivers/target/target_core_tmr.c       |   57 +++++++++----
+ drivers/target/target_core_transport.c |  135 +++++++++++++++++++++++++--------
+ include/target/target_core_base.h      |    2 
+ 3 files changed, 147 insertions(+), 47 deletions(-)
 
-diff --git a/drivers/target/target_core_tmr.c b/drivers/target/target_core_tmr.c
-index 9bcd115..b58af81 100644
 --- a/drivers/target/target_core_tmr.c
 +++ b/drivers/target/target_core_tmr.c
 @@ -82,16 +82,18 @@ void core_tmr_release_req(
@@ -77,7 +75,7 @@ index 9bcd115..b58af81 100644
  		remove = false;
  		transport_send_task_abort(cmd);
  	}
-@@ -114,7 +116,8 @@ static int target_check_cdb_and_preempt(struct list_head *list,
+@@ -114,7 +116,8 @@ static int target_check_cdb_and_preempt(
  	return 1;
  }
  
@@ -87,7 +85,7 @@ index 9bcd115..b58af81 100644
  {
  	struct se_session *sess = se_cmd->se_sess;
  
-@@ -122,21 +125,33 @@ static bool __target_check_io_state(struct se_cmd *se_cmd)
+@@ -122,21 +125,33 @@ static bool __target_check_io_state(stru
  	WARN_ON_ONCE(!irqs_disabled());
  	/*
  	 * If command already reached CMD_T_COMPLETE state within
@@ -186,11 +184,9 @@ index 9bcd115..b58af81 100644
  		target_put_sess_cmd(cmd->se_sess, cmd);
  	}
  }
-diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
-index 4cab9a4..5a48b44 100644
 --- a/drivers/target/target_core_transport.c
 +++ b/drivers/target/target_core_transport.c
-@@ -2355,18 +2355,33 @@ static void transport_write_pending_qf(struct se_cmd *cmd)
+@@ -2357,18 +2357,33 @@ static void transport_write_pending_qf(s
  	}
  }
  
@@ -227,7 +223,7 @@ index 4cab9a4..5a48b44 100644
  		/*
  		 * Handle WRITE failure case where transport_generic_new_cmd()
  		 * has already added se_cmd to state_list, but fabric has
-@@ -2378,7 +2393,21 @@ int transport_generic_free_cmd(struct se_cmd *cmd, int wait_for_tasks)
+@@ -2380,7 +2395,21 @@ int transport_generic_free_cmd(struct se
  		if (cmd->se_lun)
  			transport_lun_remove_cmd(cmd);
  
@@ -250,7 +246,7 @@ index 4cab9a4..5a48b44 100644
  	}
  	return ret;
  }
-@@ -2435,6 +2464,7 @@ static void target_release_cmd_kref(struct kref *kref)
+@@ -2437,6 +2466,7 @@ static void target_release_cmd_kref(stru
  {
  	struct se_cmd *se_cmd = container_of(kref, struct se_cmd, cmd_kref);
  	struct se_session *se_sess = se_cmd->se_sess;
@@ -258,7 +254,7 @@ index 4cab9a4..5a48b44 100644
  
  	if (list_empty(&se_cmd->se_cmd_list)) {
  		spin_unlock(&se_sess->sess_cmd_lock);
-@@ -2442,13 +2472,19 @@ static void target_release_cmd_kref(struct kref *kref)
+@@ -2444,13 +2474,19 @@ static void target_release_cmd_kref(stru
  		se_cmd->se_tfo->release_cmd(se_cmd);
  		return;
  	}
@@ -280,7 +276,7 @@ index 4cab9a4..5a48b44 100644
  	spin_unlock(&se_sess->sess_cmd_lock);
  
  	target_free_cmd_mem(se_cmd);
-@@ -2480,6 +2516,7 @@ void target_sess_cmd_list_set_waiting(struct se_session *se_sess)
+@@ -2482,6 +2518,7 @@ void target_sess_cmd_list_set_waiting(st
  {
  	struct se_cmd *se_cmd;
  	unsigned long flags;
@@ -288,7 +284,7 @@ index 4cab9a4..5a48b44 100644
  
  	spin_lock_irqsave(&se_sess->sess_cmd_lock, flags);
  	if (se_sess->sess_tearing_down) {
-@@ -2489,8 +2526,15 @@ void target_sess_cmd_list_set_waiting(struct se_session *se_sess)
+@@ -2491,8 +2528,15 @@ void target_sess_cmd_list_set_waiting(st
  	se_sess->sess_tearing_down = 1;
  	list_splice_init(&se_sess->sess_cmd_list, &se_sess->sess_wait_list);
  
@@ -306,7 +302,7 @@ index 4cab9a4..5a48b44 100644
  
  	spin_unlock_irqrestore(&se_sess->sess_cmd_lock, flags);
  }
-@@ -2503,15 +2547,25 @@ void target_wait_for_sess_cmds(struct se_session *se_sess)
+@@ -2505,6 +2549,7 @@ void target_wait_for_sess_cmds(struct se
  {
  	struct se_cmd *se_cmd, *tmp_cmd;
  	unsigned long flags;
@@ -314,10 +310,7 @@ index 4cab9a4..5a48b44 100644
  
  	list_for_each_entry_safe(se_cmd, tmp_cmd,
  				&se_sess->sess_wait_list, se_cmd_list) {
--		list_del(&se_cmd->se_cmd_list);
-+		list_del_init(&se_cmd->se_cmd_list);
- 
- 		pr_debug("Waiting for se_cmd: %p t_state: %d, fabric state:"
+@@ -2512,6 +2557,15 @@ void target_wait_for_sess_cmds(struct se
  			" %d\n", se_cmd, se_cmd->t_state,
  			se_cmd->se_tfo->get_cmd_state(se_cmd));
  
@@ -333,7 +326,7 @@ index 4cab9a4..5a48b44 100644
  		wait_for_completion(&se_cmd->cmd_wait_comp);
  		pr_debug("After cmd_wait_comp: se_cmd: %p t_state: %d"
  			" fabric state: %d\n", se_cmd, se_cmd->t_state,
-@@ -2554,34 +2608,38 @@ int transport_clear_lun_ref(struct se_lun *lun)
+@@ -2554,34 +2608,38 @@ int transport_clear_lun_ref(struct se_lu
  	return 0;
  }
  
@@ -391,7 +384,7 @@ index 4cab9a4..5a48b44 100644
  
  	cmd->transport_state |= CMD_T_STOP;
  
-@@ -2590,20 +2648,37 @@ bool transport_wait_for_tasks(struct se_cmd *cmd)
+@@ -2590,20 +2648,37 @@ bool transport_wait_for_tasks(struct se_
  		cmd, cmd->se_tfo->get_task_tag(cmd),
  		cmd->se_tfo->get_cmd_state(cmd), cmd->t_state);
  
@@ -432,8 +425,6 @@ index 4cab9a4..5a48b44 100644
  }
  EXPORT_SYMBOL(transport_wait_for_tasks);
  
-diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
-index ea5baa3..212ec00 100644
 --- a/include/target/target_core_base.h
 +++ b/include/target/target_core_base.h
 @@ -545,6 +545,8 @@ struct se_cmd {
@@ -445,6 +436,3 @@ index ea5baa3..212ec00 100644
  	spinlock_t		t_state_lock;
  	struct completion	t_transport_stop_comp;
  
--- 
-2.1.4
-
