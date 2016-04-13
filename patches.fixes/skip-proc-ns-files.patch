@@ -1,0 +1,32 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Subject: [PATCH] apparmor: Skip proc ns files
+Patch-mainline: Never, upstream has NS as a separate internal filesystem
+References: bsc#959514
+
+When a namespace file is not resolved, it returns an error, which
+raises false errors in apparmor. Skip the namespace files.
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+
+diff --git a/security/apparmor/path.c b/security/apparmor/path.c
+index 35b394a..c7ee4c4 100644
+--- a/security/apparmor/path.c
++++ b/security/apparmor/path.c
+@@ -20,6 +20,7 @@
+ #include <linux/sched.h>
+ #include <linux/slab.h>
+ #include <linux/fs_struct.h>
++#include <linux/proc_ns.h>
+ 
+ #include "include/apparmor.h"
+ #include "include/path.h"
+@@ -60,7 +61,8 @@ static int d_namespace_path(struct path *path, char *buf, int buflen,
+ 	int error = 0;
+ 	int connected = 1;
+ 
+-	if (path->mnt->mnt_flags & MNT_INTERNAL) {
++	if ((path->mnt->mnt_flags & MNT_INTERNAL) ||
++			(path->dentry->d_inode && proc_ns_inode(path->dentry->d_inode))) {
+ 		/* it's not mounted anywhere */
+ 		res = dentry_path(path->dentry, buf, buflen);
+ 		*name = res;
