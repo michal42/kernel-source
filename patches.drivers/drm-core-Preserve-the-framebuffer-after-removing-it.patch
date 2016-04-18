@@ -1,0 +1,42 @@
+From: Maarten Lankhorst <maarten.lankhorst@linux.intel.com>
+Date: Wed Sep 9 16:40:56 2015 +0200
+Subject: drm/core: Preserve the framebuffer after removing it.
+Patch-mainline: v4.4-rc1
+Git-commit: 13803132818cf8084d169617be060fd8e3411a98
+References: bsc#968812
+
+Previously RMFB and fd close chose to disable any plane that had
+an active framebuffer from this file. If it was a primary plane the
+crtc was disabled. However the fbdev code or any system compositor
+should restore the planes anyway so there's no need to do it twice.
+
+The old fb_id is zero'd, so there's no danger of being able to
+restore the fb from fb_id.
+
+Signed-off-by: Maarten Lankhorst <maarten.lankhorst@linux.intel.com>
+Reviewed-by: David Herrmann <dh.herrmann@gmail.com>
+Signed-off-by: Daniel Vetter <daniel.vetter@ffwll.ch>
+Signed-off-by: Egbert Eich <eich@suse.com>
+---
+ drivers/gpu/drm/drm_crtc.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+--- a/drivers/gpu/drm/drm_crtc.c
++++ b/drivers/gpu/drm/drm_crtc.c
+@@ -2603,7 +2603,7 @@ int drm_mode_rmfb(struct drm_device *dev
+ 	mutex_unlock(&dev->mode_config.fb_lock);
+ 	mutex_unlock(&file_priv->fbs_lock);
+ 
+-	drm_framebuffer_remove(fb);
++	drm_framebuffer_unreference(fb);
+ 
+ 	return 0;
+ 
+@@ -2766,7 +2766,7 @@ void drm_fb_release(struct drm_file *pri
+ 		list_del_init(&fb->filp_head);
+ 
+ 		/* This will also drop the fpriv->fbs reference. */
+-		drm_framebuffer_remove(fb);
++		drm_framebuffer_unreference(fb);
+ 	}
+ 	mutex_unlock(&priv->fbs_lock);
+ }
