@@ -1,0 +1,105 @@
+From: Alex Deucher <alexander.deucher@amd.com>
+Date: Thu Nov 7 18:16:23 2013 -0500
+Subject: drm/radeon: fix-up some float to fixed conversion thinkos
+Patch-mainline: v3.13-rc1
+Git-commit: 1cd73ff70d13a22faa95db8323382dd6d036554e
+References: bsc#968813
+
+Spotted by Brad Smith when porting to OpenBSD.
+
+Noticed-by: Brad Smith <brad@comstyle.com>
+Signed-off-by: Alex Deucher <alexander.deucher@amd.com>
+Signed-off-by: Egbert Eich <eich@suse.com>
+---
+ drivers/gpu/drm/radeon/rs690.c | 16 +++++-----------
+ drivers/gpu/drm/radeon/rv515.c |  8 --------
+ 2 files changed, 5 insertions(+), 19 deletions(-)
+diff --git a/drivers/gpu/drm/radeon/rs690.c b/drivers/gpu/drm/radeon/rs690.c
+index 1447d79..1c56062 100644
+--- a/drivers/gpu/drm/radeon/rs690.c
++++ b/drivers/gpu/drm/radeon/rs690.c
+@@ -345,9 +345,11 @@ static void rs690_crtc_bandwidth_compute(struct radeon_device *rdev,
+ 		if (max_bandwidth.full > rdev->pm.sideport_bandwidth.full &&
+ 			rdev->pm.sideport_bandwidth.full)
+ 			max_bandwidth = rdev->pm.sideport_bandwidth;
+-		read_delay_latency.full = dfixed_const(370 * 800 * 1000);
+-		read_delay_latency.full = dfixed_div(read_delay_latency,
+-			rdev->pm.igp_sideport_mclk);
++		read_delay_latency.full = dfixed_const(370 * 800);
++		a.full = dfixed_const(1000);
++		b.full = dfixed_div(rdev->pm.igp_sideport_mclk, a);
++		read_delay_latency.full = dfixed_div(read_delay_latency, b);
++		read_delay_latency.full = dfixed_mul(read_delay_latency, a);
+ 	} else {
+ 		if (max_bandwidth.full > rdev->pm.k8_bandwidth.full &&
+ 			rdev->pm.k8_bandwidth.full)
+@@ -488,14 +490,10 @@ static void rs690_compute_mode_priority(struct radeon_device *rdev,
+ 		}
+ 		if (wm0->priority_mark.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark.full;
+-		if (dfixed_trunc(priority_mark02) < 0)
+-			priority_mark02.full = 0;
+ 		if (wm0->priority_mark_max.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark_max.full;
+ 		if (wm1->priority_mark.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark.full;
+-		if (dfixed_trunc(priority_mark12) < 0)
+-			priority_mark12.full = 0;
+ 		if (wm1->priority_mark_max.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark_max.full;
+ 		*d1mode_priority_a_cnt = dfixed_trunc(priority_mark02);
+@@ -526,8 +524,6 @@ static void rs690_compute_mode_priority(struct radeon_device *rdev,
+ 		}
+ 		if (wm0->priority_mark.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark.full;
+-		if (dfixed_trunc(priority_mark02) < 0)
+-			priority_mark02.full = 0;
+ 		if (wm0->priority_mark_max.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark_max.full;
+ 		*d1mode_priority_a_cnt = dfixed_trunc(priority_mark02);
+@@ -555,8 +551,6 @@ static void rs690_compute_mode_priority(struct radeon_device *rdev,
+ 		}
+ 		if (wm1->priority_mark.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark.full;
+-		if (dfixed_trunc(priority_mark12) < 0)
+-			priority_mark12.full = 0;
+ 		if (wm1->priority_mark_max.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark_max.full;
+ 		*d2mode_priority_a_cnt = dfixed_trunc(priority_mark12);
+diff --git a/drivers/gpu/drm/radeon/rv515.c b/drivers/gpu/drm/radeon/rv515.c
+index 873eb4b..5d1c316 100644
+--- a/drivers/gpu/drm/radeon/rv515.c
++++ b/drivers/gpu/drm/radeon/rv515.c
+@@ -1155,14 +1155,10 @@ static void rv515_compute_mode_priority(struct radeon_device *rdev,
+ 		}
+ 		if (wm0->priority_mark.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark.full;
+-		if (dfixed_trunc(priority_mark02) < 0)
+-			priority_mark02.full = 0;
+ 		if (wm0->priority_mark_max.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark_max.full;
+ 		if (wm1->priority_mark.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark.full;
+-		if (dfixed_trunc(priority_mark12) < 0)
+-			priority_mark12.full = 0;
+ 		if (wm1->priority_mark_max.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark_max.full;
+ 		*d1mode_priority_a_cnt = dfixed_trunc(priority_mark02);
+@@ -1193,8 +1189,6 @@ static void rv515_compute_mode_priority(struct radeon_device *rdev,
+ 		}
+ 		if (wm0->priority_mark.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark.full;
+-		if (dfixed_trunc(priority_mark02) < 0)
+-			priority_mark02.full = 0;
+ 		if (wm0->priority_mark_max.full > priority_mark02.full)
+ 			priority_mark02.full = wm0->priority_mark_max.full;
+ 		*d1mode_priority_a_cnt = dfixed_trunc(priority_mark02);
+@@ -1222,8 +1216,6 @@ static void rv515_compute_mode_priority(struct radeon_device *rdev,
+ 		}
+ 		if (wm1->priority_mark.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark.full;
+-		if (dfixed_trunc(priority_mark12) < 0)
+-			priority_mark12.full = 0;
+ 		if (wm1->priority_mark_max.full > priority_mark12.full)
+ 			priority_mark12.full = wm1->priority_mark_max.full;
+ 		*d2mode_priority_a_cnt = dfixed_trunc(priority_mark12);
