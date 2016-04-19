@@ -1,0 +1,75 @@
+From: Miroslav Benes <mbenes@suse.cz>
+Date: Mon, 11 Apr 2016 14:41:22 +0200
+Subject: kgr: add TAINT_KGRAFT
+Patch-mainline: not yet, kgraft
+References: fate#313296
+
+Add a new taint flag to indicate that the kernel has been live patched
+with kGraft. This is needed so our support teams know when they have to
+deal with those. Otherwise only out-of-tree module flag is raised which
+can be confusing.
+
+Originally-by: Seth Jennings <sjenning@redhat.com>
+Signed-off-by: Miroslav Benes <mbenes@suse.cz>
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ Documentation/oops-tracing.txt  |    2 ++
+ Documentation/sysctl/kernel.txt |    1 +
+ include/linux/kernel.h          |    1 +
+ kernel/kgraft.c                 |    3 +++
+ kernel/panic.c                  |    1 +
+ 5 files changed, 8 insertions(+)
+
+--- a/Documentation/oops-tracing.txt
++++ b/Documentation/oops-tracing.txt
+@@ -268,6 +268,8 @@ characters, each representing a particul
+  14: 'E' if an unsigned module has been loaded in a kernel supporting
+      module signature.
+ 
++ 16: 'K' if the kernel has been live patched with kGraft.
++
+ The primary reason for the 'Tainted: ' string is to tell kernel
+ debuggers if this is a clean kernel or if anything unusual has
+ occurred.  Tainting is permanent: even if an offending module is
+--- a/Documentation/sysctl/kernel.txt
++++ b/Documentation/sysctl/kernel.txt
+@@ -770,6 +770,7 @@ can be ORed together:
+ 4096 - An out-of-tree module has been loaded.
+ 8192 - An unsigned module has been loaded in a kernel supporting module
+        signature.
++32768 - The kernel has been live patched with kGraft.
+  0x40000000 - An unsupported kernel module was loaded.
+  0x80000000 - An kernel module with external support was loaded.
+ 
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -493,6 +493,7 @@ extern enum system_states {
+ #define TAINT_FIRMWARE_WORKAROUND	11
+ #define TAINT_OOT_MODULE		12
+ #define TAINT_UNSIGNED_MODULE		13
++#define TAINT_KGRAFT			15
+ 
+ #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
+ /*
+--- a/kernel/kgraft.c
++++ b/kernel/kgraft.c
+@@ -1143,6 +1143,9 @@ int kgr_patch_kernel(struct kgr_patch *p
+ 		return -EBUSY;
+ 	}
+ 
++	pr_notice_once("tainting kernel with TAINT_KGRAFT\n");
++	add_taint(TAINT_KGRAFT, LOCKDEP_STILL_OK);
++
+ 	init_completion(&patch->finish);
+ 
+ 	ret = kgr_patch_dir_add(patch);
+--- a/kernel/panic.c
++++ b/kernel/panic.c
+@@ -233,6 +233,7 @@ static const struct tnt tnts[] = {
+ 	{ TAINT_FIRMWARE_WORKAROUND,	'I', ' ' },
+ 	{ TAINT_OOT_MODULE,		'O', ' ' },
+ 	{ TAINT_UNSIGNED_MODULE,        'E', ' ' },
++	{ TAINT_KGRAFT,			'K', ' ' },
+ #ifdef CONFIG_SUSE_KERNEL_SUPPORTED
+ 	{ TAINT_NO_SUPPORT,		'N', ' ' },
+ 	{ TAINT_EXTERNAL_SUPPORT,	'X', ' ' },
