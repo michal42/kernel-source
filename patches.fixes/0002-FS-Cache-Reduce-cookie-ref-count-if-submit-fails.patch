@@ -1,0 +1,30 @@
+From: Milosz Tanski <milosz@adfin.com>
+Date: Wed, 13 Aug 2014 12:58:21 -0400
+Subject: [PATCH] FS-Cache: Reduce cookie ref count if submit fails.
+Git-commit: 920bce20d74817bdd8bfcbc28ecb1179c9e01081
+Patch-mainline: v3.17
+References: bsc#971049
+
+I've been seeing issues with disposing cookies under vma pressure. The symptom
+is that the refcount gets out of sync. In this case we fail to decrement the
+refcount if submit fails. I found this while auditing the error in and around
+cookie operations.
+
+Signed-off-by: Milosz Tanski <milosz@adfin.com>
+Signed-off-by: David Howells <dhowells@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/fscache/object.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/fs/fscache/object.c
++++ b/fs/fscache/object.c
+@@ -979,6 +979,7 @@ nomem:
+ submit_op_failed:
+ 	clear_bit(FSCACHE_OBJECT_IS_LIVE, &object->flags);
+ 	spin_unlock(&cookie->lock);
++	fscache_unuse_cookie(object);
+ 	kfree(op);
+ 	_leave(" [EIO]");
+ 	return transit_to(KILL_OBJECT);
