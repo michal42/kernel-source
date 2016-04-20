@@ -1,0 +1,205 @@
+From: NeilBrown <neilb@suse.com>
+Subject: Fix kabi issue
+Patch-mainline: never, kabi
+References: bsc#971049
+
+Remove lots of stuff that is new-features rather than fixes.
+
+Acked-by: NeilBrown <neilb@suse.com>
+Signed-off-by: Neil Brown <neilb@suse.com>
+
+---
+ Documentation/filesystems/caching/backend-api.txt |   23 ----------
+ Documentation/filesystems/caching/fscache.txt     |    4 -
+ fs/cachefiles/namei.c                             |    6 +-
+ fs/fscache/internal.h                             |    5 --
+ fs/fscache/object.c                               |   47 ----------------------
+ fs/fscache/stats.c                                |   10 ----
+ include/linux/fscache-cache.h                     |    5 --
+ 7 files changed, 3 insertions(+), 97 deletions(-)
+
+--- a/Documentation/filesystems/caching/backend-api.txt
++++ b/Documentation/filesystems/caching/backend-api.txt
+@@ -676,29 +676,6 @@ FS-Cache provides some utilities that a
+      as possible.
+ 
+ 
+- (*) Indicate that a stale object was found and discarded:
+-
+-	void fscache_object_retrying_stale(struct fscache_object *object);
+-
+-     This is called to indicate that the lookup procedure found an object in
+-     the cache that the netfs decided was stale.  The object has been
+-     discarded from the cache and the lookup will be performed again.
+-
+-
+- (*) Indicate that the caching backend killed an object:
+-
+-	void fscache_object_mark_killed(struct fscache_object *object,
+-					enum fscache_why_object_killed why);
+-
+-     This is called to indicate that the cache backend preemptively killed an
+-     object.  The why parameter should be set to indicate the reason:
+-
+-	FSCACHE_OBJECT_IS_STALE - the object was stale and needs discarding.
+-	FSCACHE_OBJECT_NO_SPACE - there was insufficient cache space
+-	FSCACHE_OBJECT_WAS_RETIRED - the object was retired when relinquished.
+-	FSCACHE_OBJECT_WAS_CULLED - the object was culled to make space.
+-
+-
+  (*) Get and release references on a retrieval record:
+ 
+ 	void fscache_get_retrieval(struct fscache_retrieval *op);
+--- a/Documentation/filesystems/caching/fscache.txt
++++ b/Documentation/filesystems/caching/fscache.txt
+@@ -303,10 +303,6 @@ proc files.
+ 		wrp=N	Number of in-progress write_page() cache ops
+ 		ucp=N	Number of in-progress uncache_page() cache ops
+ 		dsp=N	Number of in-progress dissociate_pages() cache ops
+-	CacheEv	nsp=N	Number of object lookups/creations rejected due to lack of space
+-		stl=N	Number of stale objects deleted
+-		rtr=N	Number of objects retired when relinquished
+-		cul=N	Number of objects culled
+ 
+ 
+  (*) /proc/fs/fscache/histogram
+--- a/fs/cachefiles/namei.c
++++ b/fs/cachefiles/namei.c
+@@ -138,7 +138,8 @@ found_dentry:
+ 		cachefiles_printk_object(object, NULL);
+ 	} else {
+ 		if (why != FSCACHE_OBJECT_IS_STALE)
+-			fscache_object_mark_killed(&object->fscache, why);
++			set_bit(FSCACHE_OBJECT_KILLED_BY_CACHE,
++				&object->fscache.flags);
+ 	}
+ 
+ 	write_unlock(&cache->active_lock);
+@@ -623,7 +624,6 @@ lookup_again:
+ 				goto delete_error;
+ 
+ 			_debug("redo lookup");
+-			fscache_object_retrying_stale(&object->fscache);
+ 			goto lookup_again;
+ 		}
+ 	}
+@@ -677,7 +677,7 @@ lookup_again:
+ 	return 0;
+ 
+ no_space_error:
+-	fscache_object_mark_killed(&object->fscache, FSCACHE_OBJECT_NO_SPACE);
++	set_bit(FSCACHE_OBJECT_KILLED_BY_CACHE, &object->fscache.flags);
+ create_error:
+ 	_debug("create error %d", ret);
+ 	if (ret == -EIO)
+--- a/fs/fscache/internal.h
++++ b/fs/fscache/internal.h
+@@ -267,11 +267,6 @@ extern atomic_t fscache_n_cop_write_page
+ extern atomic_t fscache_n_cop_uncache_page;
+ extern atomic_t fscache_n_cop_dissociate_pages;
+ 
+-extern atomic_t fscache_n_cache_no_space_reject;
+-extern atomic_t fscache_n_cache_stale_objects;
+-extern atomic_t fscache_n_cache_retired_objects;
+-extern atomic_t fscache_n_cache_culled_objects;
+-
+ static inline void fscache_stat(atomic_t *stat)
+ {
+ 	atomic_inc(stat);
+--- a/fs/fscache/object.c
++++ b/fs/fscache/object.c
+@@ -1013,50 +1013,3 @@ static const struct fscache_state *fscac
+ 	_leave("");
+ 	return transit_to(WAIT_FOR_CMD);
+ }
+-
+-/**
+- * fscache_object_retrying_stale - Note retrying stale object
+- * @object: The object that will be retried
+- *
+- * Note that an object lookup found an on-disk object that was adjudged to be
+- * stale and has been deleted.  The lookup will be retried.
+- */
+-void fscache_object_retrying_stale(struct fscache_object *object)
+-{
+-	fscache_stat(&fscache_n_cache_no_space_reject);
+-}
+-EXPORT_SYMBOL(fscache_object_retrying_stale);
+-
+-/**
+- * fscache_object_mark_killed - Note that an object was killed
+- * @object: The object that was culled
+- * @why: The reason the object was killed.
+- *
+- * Note that an object was killed.  Returns true if the object was
+- * already marked killed, false if it wasn't.
+- */
+-void fscache_object_mark_killed(struct fscache_object *object,
+-				enum fscache_why_object_killed why)
+-{
+-	if (test_and_set_bit(FSCACHE_OBJECT_KILLED_BY_CACHE, &object->flags)) {
+-		pr_err("Error: Object already killed by cache [%s]\n",
+-		       object->cache->identifier);
+-		return;
+-	}
+-
+-	switch (why) {
+-	case FSCACHE_OBJECT_NO_SPACE:
+-		fscache_stat(&fscache_n_cache_no_space_reject);
+-		break;
+-	case FSCACHE_OBJECT_IS_STALE:
+-		fscache_stat(&fscache_n_cache_stale_objects);
+-		break;
+-	case FSCACHE_OBJECT_WAS_RETIRED:
+-		fscache_stat(&fscache_n_cache_retired_objects);
+-		break;
+-	case FSCACHE_OBJECT_WAS_CULLED:
+-		fscache_stat(&fscache_n_cache_culled_objects);
+-		break;
+-	}
+-}
+-EXPORT_SYMBOL(fscache_object_mark_killed);
+--- a/fs/fscache/stats.c
++++ b/fs/fscache/stats.c
+@@ -130,11 +130,6 @@ atomic_t fscache_n_cop_write_page;
+ atomic_t fscache_n_cop_uncache_page;
+ atomic_t fscache_n_cop_dissociate_pages;
+ 
+-atomic_t fscache_n_cache_no_space_reject;
+-atomic_t fscache_n_cache_stale_objects;
+-atomic_t fscache_n_cache_retired_objects;
+-atomic_t fscache_n_cache_culled_objects;
+-
+ /*
+  * display the general statistics
+  */
+@@ -276,11 +271,6 @@ static int fscache_stats_show(struct seq
+ 		   atomic_read(&fscache_n_cop_write_page),
+ 		   atomic_read(&fscache_n_cop_uncache_page),
+ 		   atomic_read(&fscache_n_cop_dissociate_pages));
+-	seq_printf(m, "CacheEv: nsp=%d stl=%d rtr=%d cul=%d\n",
+-		   atomic_read(&fscache_n_cache_no_space_reject),
+-		   atomic_read(&fscache_n_cache_stale_objects),
+-		   atomic_read(&fscache_n_cache_retired_objects),
+-		   atomic_read(&fscache_n_cache_culled_objects));
+ 	return 0;
+ }
+ 
+--- a/include/linux/fscache-cache.h
++++ b/include/linux/fscache-cache.h
+@@ -566,15 +566,10 @@ extern enum fscache_checkaux fscache_che
+ 					       const void *data,
+ 					       uint16_t datalen);
+ 
+-extern void fscache_object_retrying_stale(struct fscache_object *object);
+-
+ enum fscache_why_object_killed {
+ 	FSCACHE_OBJECT_IS_STALE,
+ 	FSCACHE_OBJECT_NO_SPACE,
+ 	FSCACHE_OBJECT_WAS_RETIRED,
+ 	FSCACHE_OBJECT_WAS_CULLED,
+ };
+-extern void fscache_object_mark_killed(struct fscache_object *object,
+-				       enum fscache_why_object_killed why);
+-
+ #endif /* _LINUX_FSCACHE_CACHE_H */
