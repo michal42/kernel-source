@@ -1,0 +1,31 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct user_struct
+Patch-mainline: never, kabi
+
+In 3.12.59, commit 2a032e307d35402306c6464537b8bc6a0a3ac91d (pipe:
+limit the per-user amount of pages allocated in pipes), upstream
+commit 759c01142a5d0f364a462346168a56de28a80f52 added user to struct
+pipe_inode_info. It indeed changed the layout of that structure.
+
+But given this structure is allocated internally by alloc_pipe_info
+and is not a part of any other struct and given the newly added member
+is at the end, we can just protect the change the usual way, by #ifdef
+__GENKSYMS__.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/pipe_fs_i.h |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/include/linux/pipe_fs_i.h
++++ b/include/linux/pipe_fs_i.h
+@@ -58,7 +58,9 @@ struct pipe_inode_info {
+ 	struct fasync_struct *fasync_readers;
+ 	struct fasync_struct *fasync_writers;
+ 	struct pipe_buffer *bufs;
++#ifndef __GENKSYMS__
+ 	struct user_struct *user;
++#endif
+ };
+ 
+ /*
