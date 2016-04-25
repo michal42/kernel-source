@@ -1,0 +1,60 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Fri, 20 Sep 2013 19:55:31 +0800
+Subject: [PATCH] ceph: drop unconnected inodes
+Git-commit: 9f12bd119e408388233e7aeb1152f372a8b5dcad
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+Positve dentry and corresponding inode are always accompanied in MDS reply.
+So no need to keep inode in the cache after dropping all its aliases.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/inode.c |   10 ++++++++++
+ fs/ceph/super.c |    1 +
+ fs/ceph/super.h |    1 +
+ 3 files changed, 12 insertions(+)
+
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -436,6 +436,16 @@ void ceph_destroy_inode(struct inode *in
+ 	call_rcu(&inode->i_rcu, ceph_i_callback);
+ }
+ 
++int ceph_drop_inode(struct inode *inode)
++{
++	/*
++	 * Positve dentry and corresponding inode are always accompanied
++	 * in MDS reply. So no need to keep inode in the cache after
++	 * dropping all its aliases.
++	 */
++	return 1;
++}
++
+ /*
+  * Helpers to fill in size, ctime, mtime, and atime.  We have to be
+  * careful because either the client or MDS may have more up to date
+--- a/fs/ceph/super.c
++++ b/fs/ceph/super.c
+@@ -686,6 +686,7 @@ static const struct super_operations cep
+ 	.alloc_inode	= ceph_alloc_inode,
+ 	.destroy_inode	= ceph_destroy_inode,
+ 	.write_inode    = ceph_write_inode,
++	.drop_inode	= ceph_drop_inode,
+ 	.sync_fs        = ceph_sync_fs,
+ 	.put_super	= ceph_put_super,
+ 	.show_options   = ceph_show_options,
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -691,6 +691,7 @@ extern const struct inode_operations cep
+ 
+ extern struct inode *ceph_alloc_inode(struct super_block *sb);
+ extern void ceph_destroy_inode(struct inode *inode);
++extern int ceph_drop_inode(struct inode *inode);
+ 
+ extern struct inode *ceph_get_inode(struct super_block *sb,
+ 				    struct ceph_vino vino);

@@ -1,0 +1,30 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 7 Sep 2015 11:35:01 +0800
+Subject: [PATCH] ceph: get inode size for each append write
+Git-commit: 55b0b31cbc09f80db384671e22cdc94b2aa26b29
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/file.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -1108,6 +1108,12 @@ static ssize_t ceph_aio_write(struct kio
+ 	/* We can write back this queue in page reclaim */
+ 	current->backing_dev_info = file->f_mapping->backing_dev_info;
+ 
++	if (kiocb_is_append(iocb)) {
++		err = ceph_do_getattr(inode, CEPH_STAT_CAP_SIZE, false);
++		if (err < 0)
++			goto out;
++	}
++
+ 	err = generic_write_checks2(iocb, &pos, &count, S_ISBLK(inode->i_mode));
+ 	if (err)
+ 		goto out;

@@ -1,0 +1,150 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Fri, 14 Nov 2014 21:29:55 +0800
+Subject: [PATCH] ceph: parse inline data in MClientReply and MClientCaps
+Git-commit: fb01d1f8b0343f1b19be878cee89d089f06e9f38
+Patch-mainline: v3.19
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c               |   34 +++++++++++++++++++++++-----------
+ fs/ceph/mds_client.c         |   10 ++++++++++
+ fs/ceph/mds_client.h         |    3 +++
+ include/linux/ceph/ceph_fs.h |    1 +
+ 4 files changed, 37 insertions(+), 11 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -2383,6 +2383,8 @@ static void invalidate_aliases(struct in
+ static void handle_cap_grant(struct ceph_mds_client *mdsc,
+ 			     struct inode *inode, struct ceph_mds_caps *grant,
+ 			     void *snaptrace, int snaptrace_len,
++			     u64 inline_version,
++			     void *inline_data, int inline_len,
+ 			     struct ceph_buffer *xattr_buf,
+ 			     struct ceph_mds_session *session,
+ 			     struct ceph_cap *cap, int issued)
+@@ -2996,11 +2998,12 @@ void ceph_handle_caps(struct ceph_mds_se
+ 	u64 cap_id;
+ 	u64 size, max_size;
+ 	u64 tid;
++	u64 inline_version = 0;
++	void *inline_data = NULL;
++	u32  inline_len = 0;
+ 	void *snaptrace;
+ 	size_t snaptrace_len;
+-	void *flock;
+-	void *end;
+-	u32 flock_len;
++	void *p, *end;
+ 
+ 	dout("handle_caps from mds%d\n", mds);
+ 
+@@ -3021,30 +3024,37 @@ void ceph_handle_caps(struct ceph_mds_se
+ 
+ 	snaptrace = h + 1;
+ 	snaptrace_len = le32_to_cpu(h->snap_trace_len);
++	p = snaptrace + snaptrace_len;
+ 
+ 	if (le16_to_cpu(msg->hdr.version) >= 2) {
+-		void *p = snaptrace + snaptrace_len;
++		u32 flock_len;
+ 		ceph_decode_32_safe(&p, end, flock_len, bad);
+ 		if (p + flock_len > end)
+ 			goto bad;
+-		flock = p;
+-	} else {
+-		flock = NULL;
+-		flock_len = 0;
++		p += flock_len;
+ 	}
+ 
+ 	if (le16_to_cpu(msg->hdr.version) >= 3) {
+ 		if (op == CEPH_CAP_OP_IMPORT) {
+-			void *p = flock + flock_len;
+ 			if (p + sizeof(*peer) > end)
+ 				goto bad;
+ 			peer = p;
++			p += sizeof(*peer);
+ 		} else if (op == CEPH_CAP_OP_EXPORT) {
+ 			/* recorded in unused fields */
+ 			peer = (void *)&h->size;
+ 		}
+ 	}
+ 
++	if (le16_to_cpu(msg->hdr.version) >= 4) {
++		ceph_decode_64_safe(&p, end, inline_version, bad);
++		ceph_decode_32_safe(&p, end, inline_len, bad);
++		if (p + inline_len > end)
++			goto bad;
++		inline_data = p;
++		p += inline_len;
++	}
++
+ 	/* lookup ino */
+ 	inode = ceph_find_inode(sb, vino);
+ 	ci = ceph_inode(inode);
+@@ -3085,6 +3095,7 @@ void ceph_handle_caps(struct ceph_mds_se
+ 		handle_cap_import(mdsc, inode, h, peer, session,
+ 				  &cap, &issued);
+ 		handle_cap_grant(mdsc, inode, h,  snaptrace, snaptrace_len,
++				 inline_version, inline_data, inline_len,
+ 				 msg->middle, session, cap, issued);
+ 		goto done_unlocked;
+ 	}
+@@ -3105,8 +3116,9 @@ void ceph_handle_caps(struct ceph_mds_se
+ 	case CEPH_CAP_OP_GRANT:
+ 		__ceph_caps_issued(ci, &issued);
+ 		issued |= __ceph_caps_dirty(ci);
+-		handle_cap_grant(mdsc, inode, h, NULL, 0, msg->middle,
+-				 session, cap, issued);
++		handle_cap_grant(mdsc, inode, h, NULL, 0,
++				 inline_version, inline_data, inline_len,
++				 msg->middle, session, cap, issued);
+ 		goto done_unlocked;
+ 
+ 	case CEPH_CAP_OP_FLUSH_ACK:
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -89,6 +89,16 @@ static int parse_reply_info_in(void **p,
+ 	ceph_decode_need(p, end, info->xattr_len, bad);
+ 	info->xattr_data = *p;
+ 	*p += info->xattr_len;
++
++	if (features & CEPH_FEATURE_MDS_INLINE_DATA) {
++		ceph_decode_64_safe(p, end, info->inline_version, bad);
++		ceph_decode_32_safe(p, end, info->inline_len, bad);
++		ceph_decode_need(p, end, info->inline_len, bad);
++		info->inline_data = *p;
++		*p += info->inline_len;
++	} else
++		info->inline_version = CEPH_INLINE_NONE;
++
+ 	return 0;
+ bad:
+ 	return err;
+--- a/fs/ceph/mds_client.h
++++ b/fs/ceph/mds_client.h
+@@ -41,6 +41,9 @@ struct ceph_mds_reply_info_in {
+ 	char *symlink;
+ 	u32 xattr_len;
+ 	char *xattr_data;
++	u64 inline_version;
++	u32 inline_len;
++	char *inline_data;
+ };
+ 
+ /*
+--- a/include/linux/ceph/ceph_fs.h
++++ b/include/linux/ceph/ceph_fs.h
+@@ -516,6 +516,7 @@ struct ceph_filelock {
+ 
+ int ceph_flags_to_mode(int flags);
+ 
++#define CEPH_INLINE_NONE       ((__u64)-1)
+ 
+ /* capability bits */
+ #define CEPH_CAP_PIN         1  /* no specific capabilities beyond the pin */

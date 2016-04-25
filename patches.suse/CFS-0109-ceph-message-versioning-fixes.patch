@@ -1,0 +1,48 @@
+From: John Spray <john.spray@redhat.com>
+Date: Thu, 30 Oct 2014 17:15:26 +0000
+Subject: [PATCH] ceph: message versioning fixes
+Git-commit: 7cfa0313d0dc52e4da9f196f8ad5bfdf266fc1fb
+Patch-mainline: v3.19
+References: Fate#318586
+
+
+There were two places we were assigning version in host byte order
+instead of network byte order.
+
+Also in MSG_CLIENT_SESSION we weren't setting compat_version in the
+header to reflect continued compatability with older MDSs.
+
+Fixes: http://tracker.ceph.com/issues/9945
+
+Signed-off-by: John Spray <john.spray@redhat.com>
+Reviewed-by: Sage Weil <sage@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -861,8 +861,11 @@ static struct ceph_msg *create_session_o
+ 	/*
+ 	 * Serialize client metadata into waiting buffer space, using
+ 	 * the format that userspace expects for map<string, string>
++	 *
++	 * ClientSession messages with metadata are v2
+ 	 */
+-	msg->hdr.version = 2;  /* ClientSession messages with metadata are v2 */
++	msg->hdr.version = cpu_to_le16(2);
++	msg->hdr.compat_version = cpu_to_le16(1);
+ 
+ 	/* The write pointer, following the session_head structure */
+ 	p = msg->front.iov_base + sizeof(*h);
+@@ -1874,7 +1877,7 @@ static struct ceph_msg *create_request_m
+ 		goto out_free2;
+ 	}
+ 
+-	msg->hdr.version = 2;
++	msg->hdr.version = cpu_to_le16(2);
+ 	msg->hdr.tid = cpu_to_le64(req->r_tid);
+ 
+ 	head = msg->front.iov_base;

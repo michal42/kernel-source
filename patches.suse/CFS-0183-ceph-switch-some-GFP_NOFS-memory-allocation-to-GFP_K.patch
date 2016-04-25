@@ -1,0 +1,169 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Sat, 13 Jun 2015 17:27:05 +0800
+Subject: [PATCH] ceph: switch some GFP_NOFS memory allocation to GFP_KERNEL
+Git-commit: 687265e5a885d6308f5d73e738efe3c2674fa218
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+GFP_NOFS memory allocation is required for page writeback path.
+But there is no need to use GFP_NOFS in syscall path and readpage
+path
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/acl.c        |    6 +++---
+ fs/ceph/addr.c       |    4 ++--
+ fs/ceph/dir.c        |   10 +++++-----
+ fs/ceph/file.c       |    8 ++++----
+ fs/ceph/mds_client.c |    3 ++-
+ 5 files changed, 16 insertions(+), 15 deletions(-)
+
+--- a/fs/ceph/acl.c
++++ b/fs/ceph/acl.c
+@@ -81,7 +81,7 @@ struct posix_acl *ceph_get_acl(struct in
+ 
+ 	size = __ceph_getxattr(inode, name, "", 0);
+ 	if (size > 0) {
+-		value = kzalloc(size, GFP_NOFS);
++		value = kzalloc(size, GFP_KERNEL);
+ 		if (!value)
+ 			return ERR_PTR(-ENOMEM);
+ 		size = __ceph_getxattr(inode, name, value, size);
+@@ -136,7 +136,7 @@ static int ceph_set_acl(struct dentry *d
+ 
+ 	if (acl) {
+ 		size = posix_acl_xattr_size(acl->a_count);
+-		value = kmalloc(size, GFP_NOFS);
++		value = kmalloc(size, GFP_KERNEL);
+ 		if (!value) {
+ 			ret = -ENOMEM;
+ 			goto out;
+@@ -199,7 +199,7 @@ int ceph_init_acl(struct dentry *dentry,
+ 			if (ret)
+ 				goto out_release;
+ 		}
+-		ret = posix_acl_create(&acl, GFP_NOFS, &new_mode);
++		ret = posix_acl_create(&acl, GFP_KERNEL, &new_mode);
+ 		if (ret < 0)
+ 			goto out;
+ 		else if (ret > 0)
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -360,7 +360,7 @@ static int start_read(struct inode *inod
+ 
+ 	/* build page vector */
+ 	nr_pages = calc_pages_for(0, len);
+-	pages = kmalloc(sizeof(*pages) * nr_pages, GFP_NOFS);
++	pages = kmalloc(sizeof(*pages) * nr_pages, GFP_KERNEL);
+ 	ret = -ENOMEM;
+ 	if (!pages)
+ 		goto out;
+@@ -372,7 +372,7 @@ static int start_read(struct inode *inod
+  		dout("start_read %p adding %p idx %lu\n", inode, page,
+ 		     page->index);
+ 		if (add_to_page_cache_lru(page, &inode->i_data, page->index,
+-					  GFP_NOFS)) {
++					  GFP_KERNEL)) {
+ 			ceph_fscache_uncache_page(inode, page);
+ 			page_cache_release(page);
+ 			dout("start_read %p add_to_page_cache failed %p\n",
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -38,7 +38,7 @@ int ceph_init_dentry(struct dentry *dent
+ 	if (dentry->d_fsdata)
+ 		return 0;
+ 
+-	di = kmem_cache_alloc(ceph_dentry_cachep, GFP_NOFS | __GFP_ZERO);
++	di = kmem_cache_alloc(ceph_dentry_cachep, GFP_KERNEL | __GFP_ZERO);
+ 	if (!di)
+ 		return -ENOMEM;          /* oh well */
+ 
+@@ -231,7 +231,7 @@ static int note_last_dentry(struct ceph_
+ 			    int len)
+ {
+ 	kfree(fi->last_name);
+-	fi->last_name = kmalloc(len+1, GFP_NOFS);
++	fi->last_name = kmalloc(len+1, GFP_KERNEL);
+ 	if (!fi->last_name)
+ 		return -ENOMEM;
+ 	memcpy(fi->last_name, name, len);
+@@ -342,7 +342,7 @@ more:
+ 		req->r_direct_hash = ceph_frag_value(frag);
+ 		req->r_direct_is_hash = true;
+ 		if (fi->last_name) {
+-			req->r_path2 = kstrdup(fi->last_name, GFP_NOFS);
++			req->r_path2 = kstrdup(fi->last_name, GFP_KERNEL);
+ 			if (!req->r_path2) {
+ 				ceph_mdsc_put_request(req);
+ 				return -ENOMEM;
+@@ -754,7 +754,7 @@ static int ceph_symlink(struct inode *di
+ 		d_drop(dentry);
+ 		return PTR_ERR(req);
+ 	}
+-	req->r_path2 = kstrdup(dest, GFP_NOFS);
++	req->r_path2 = kstrdup(dest, GFP_KERNEL);
+ 	if (!req->r_path2) {
+ 		ceph_mdsc_put_request(req);
+ 		d_drop(dentry);
+@@ -1171,7 +1171,7 @@ static ssize_t ceph_read_dir(struct file
+ 		return -EISDIR;
+ 
+ 	if (!cf->dir_info) {
+-		cf->dir_info = kmalloc(bufsize, GFP_NOFS);
++		cf->dir_info = kmalloc(bufsize, GFP_KERNEL);
+ 		if (!cf->dir_info)
+ 			return -ENOMEM;
+ 		cf->dir_info_len =
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -90,7 +90,7 @@ static int ceph_init_file(struct inode *
+ 	case S_IFDIR:
+ 		dout("init_file %p %p 0%o (regular)\n", inode, file,
+ 		     inode->i_mode);
+-		cf = kmem_cache_alloc(ceph_file_cachep, GFP_NOFS | __GFP_ZERO);
++		cf = kmem_cache_alloc(ceph_file_cachep, GFP_KERNEL | __GFP_ZERO);
+ 		if (cf == NULL) {
+ 			ceph_put_fmode(ceph_inode(inode), fmode); /* clean up */
+ 			return -ENOMEM;
+@@ -499,7 +499,7 @@ static ssize_t ceph_sync_read(struct kio
+ 		}
+ 	} else {
+ 		num_pages = calc_pages_for(off, len);
+-		pages = ceph_alloc_page_vector(num_pages, GFP_NOFS);
++		pages = ceph_alloc_page_vector(num_pages, GFP_KERNEL);
+ 		if (IS_ERR(pages))
+ 			return PTR_ERR(pages);
+ 		ret = striped_read(inode, off, len, pages,
+@@ -767,7 +767,7 @@ ceph_sync_write(struct kiocb *iocb, cons
+ 		 */
+ 		num_pages = (len + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
+ 
+-		pages = ceph_alloc_page_vector(num_pages, GFP_NOFS);
++		pages = ceph_alloc_page_vector(num_pages, GFP_KERNEL);
+ 		if (IS_ERR(pages)) {
+ 			ret = PTR_ERR(pages);
+ 			goto out;
+@@ -993,7 +993,7 @@ out:
+ 		struct page *page = NULL;
+ 		loff_t i_size;
+ 		if (retry_op == READ_INLINE) {
+-			page = __page_cache_alloc(GFP_NOFS);
++			page = __page_cache_alloc(GFP_KERNEL);
+ 			if (!page)
+ 				return -ENOMEM;
+ 		}
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1670,7 +1670,8 @@ int ceph_alloc_readdir_reply_buffer(stru
+ 
+ 	order = get_order(size * num_entries);
+ 	while (order >= 0) {
+-		rinfo->dir_in = (void*)__get_free_pages(GFP_NOFS | __GFP_NOWARN,
++		rinfo->dir_in = (void*)__get_free_pages(GFP_KERNEL |
++							__GFP_NOWARN,
+ 							order);
+ 		if (rinfo->dir_in)
+ 			break;

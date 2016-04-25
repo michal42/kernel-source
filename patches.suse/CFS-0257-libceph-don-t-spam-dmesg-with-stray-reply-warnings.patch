@@ -1,0 +1,35 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Fri, 19 Feb 2016 11:38:57 +0100
+Subject: [PATCH] libceph: don't spam dmesg with stray reply warnings
+Git-commit: cd8140c673d9ba9be3591220e1b2226d9e1e40d3
+Patch-mainline: v4.5
+References: Fate#318586
+
+
+Commit d15f9d694b77 ("libceph: check data_len in ->alloc_msg()")
+mistakenly bumped the log level on the "tid %llu unknown, skipping"
+message.  Turn it back into a dout() - stray replies are perfectly
+normal when OSDs flap, crash, get killed for testing purposes, etc.
+
+Cc: stable@vger.kernel.org # 4.3+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/ceph/osd_client.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -3294,8 +3294,8 @@ static struct ceph_msg *get_reply(struct
+ 	mutex_lock(&osdc->request_mutex);
+ 	req = __lookup_request(osdc, tid);
+ 	if (!req) {
+-		pr_warn("%s osd%d tid %llu unknown, skipping\n",
+-			__func__, osd->o_osd, tid);
++		dout("%s osd%d tid %llu unknown, skipping\n", __func__,
++		     osd->o_osd, tid);
+ 		m = NULL;
+ 		*skip = 1;
+ 		goto out;

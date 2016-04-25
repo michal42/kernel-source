@@ -1,0 +1,41 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Thu, 26 Mar 2015 19:06:00 +0800
+Subject: [PATCH] ceph: hold on to exclusive caps on complete directories
+Git-commit: 32ec4397756d072873ee778cbf41b9f6a335b953
+Patch-mainline: v4.1
+References: Fate#318586
+
+
+If a directory is complete, we want to keep the exclusive
+cap. So that MDS does not end up revoking the shared cap
+on every create/unlink operation.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c |   12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1561,7 +1561,19 @@ retry_locked:
+ 	if (!mdsc->stopping && inode->i_nlink > 0) {
+ 		if (want) {
+ 			retain |= CEPH_CAP_ANY;       /* be greedy */
++		} else if (S_ISDIR(inode->i_mode) &&
++			   (issued & CEPH_CAP_FILE_SHARED) &&
++			    __ceph_dir_is_complete(ci)) {
++			/*
++			 * If a directory is complete, we want to keep
++			 * the exclusive cap. So that MDS does not end up
++			 * revoking the shared cap on every create/unlink
++			 * operation.
++			 */
++			want = CEPH_CAP_ANY_SHARED | CEPH_CAP_FILE_EXCL;
++			retain |= want;
+ 		} else {
++
+ 			retain |= CEPH_CAP_ANY_SHARED;
+ 			/*
+ 			 * keep RD only if we didn't have the file open RW,

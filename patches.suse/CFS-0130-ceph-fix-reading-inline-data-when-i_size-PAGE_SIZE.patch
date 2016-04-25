@@ -1,0 +1,173 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Sat, 10 Jan 2015 11:43:12 +0800
+Subject: [PATCH] ceph: fix reading inline data when i_size > PAGE_SIZE
+Git-commit: fcc02d2a03fc629b82d1ca1006fbd06570385264
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+when inode has inline data but its size > PAGE_SIZE (it was truncated
+to larger size), previous direct read code return -EIO. This patch adds
+code to return zeros for data whose offset > PAGE_SIZE.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c |   19 +++++++-----
+ fs/ceph/file.c |   89 +++++++++++++++++++++++++++++++++++++++++++++++++++------
+ 2 files changed, 93 insertions(+), 15 deletions(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -196,17 +196,22 @@ static int readpage_nounlock(struct file
+ 	u64 len = PAGE_CACHE_SIZE;
+ 
+ 	if (off >= i_size_read(inode)) {
+-		zero_user_segment(page, err, PAGE_CACHE_SIZE);
++		zero_user_segment(page, 0, PAGE_CACHE_SIZE);
+ 		SetPageUptodate(page);
+ 		return 0;
+ 	}
+ 
+-	/*
+-	 * Uptodate inline data should have been added into page cache
+-	 * while getting Fcr caps.
+-	 */
+-	if (ci->i_inline_version != CEPH_INLINE_NONE)
+-		return -EINVAL;
++	if (ci->i_inline_version != CEPH_INLINE_NONE) {
++		/*
++		 * Uptodate inline data should have been added
++		 * into page cache while getting Fcr caps.
++		 */
++		if (off == 0)
++			return -EINVAL;
++		zero_user_segment(page, 0, PAGE_CACHE_SIZE);
++		SetPageUptodate(page);
++		return 0;
++	}
+ 
+ 	err = ceph_readpage_from_fscache(inode, page);
+ 	if (err == 0)
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -845,6 +845,69 @@ static ssize_t copy_page_to_iter(struct
+ 	}
+ 	return ret;
+ }
++
++#define iterate_iovec(i, n, __v, __p, skip, STEP) {	\
++	size_t left;					\
++	size_t wanted = n;				\
++	__p = i->iov;					\
++	__v.iov_len = min(n, __p->iov_len - skip);	\
++	if (likely(__v.iov_len)) {			\
++		__v.iov_base = __p->iov_base + skip;	\
++		left = (STEP);				\
++		__v.iov_len -= left;			\
++		skip += __v.iov_len;			\
++		n -= __v.iov_len;			\
++	} else {					\
++		left = 0;				\
++	}						\
++	while (unlikely(!left && n)) {			\
++		__p++;					\
++		__v.iov_len = min(n, __p->iov_len);	\
++		if (unlikely(!__v.iov_len))		\
++			continue;			\
++		__v.iov_base = __p->iov_base;		\
++		left = (STEP);				\
++		__v.iov_len -= left;			\
++		skip = __v.iov_len;			\
++		n -= __v.iov_len;			\
++	}						\
++	n = wanted - n;					\
++}
++
++#define iterate_and_advance(i, n, v, I, B, K) {			\
++	size_t skip = i->iov_offset;				\
++	{						\
++		const struct iovec *iov;			\
++		struct iovec v;					\
++		iterate_iovec(i, n, v, iov, skip, (I))		\
++		if (skip == iov->iov_len) {			\
++			iov++;					\
++			skip = 0;				\
++		}						\
++		i->nr_segs -= iov - i->iov;			\
++		i->iov = iov;					\
++	}							\
++	i->count -= n;						\
++	i->iov_offset = skip;					\
++}
++
++static size_t iov_iter_zero(size_t bytes, struct iov_iter *i)
++{
++	if (unlikely(bytes > i->count))
++		bytes = i->count;
++
++	if (unlikely(!bytes))
++		return 0;
++
++	iterate_and_advance(i, bytes, v,
++		__clear_user(v.iov_base, v.iov_len),
++		memzero_page(v.bv_page, v.bv_offset, v.bv_len),
++		memset(v.iov_base, 0, v.iov_len)
++	)
++
++	return bytes;
++}
++
+ /*
+  * Wrap generic_file_aio_read with checks for cap bits on the inode.
+  * Atomically grab references, so that those bits are not released
+@@ -948,13 +1011,13 @@ out:
+ 
+ 		i_size = i_size_read(inode);
+ 		if (retry_op == READ_INLINE) {
+-			/* does not support inline data > PAGE_SIZE */
+-			if (i_size > PAGE_CACHE_SIZE) {
+-				ret = -EIO;
+-			} else if (iocb->ki_pos < i_size) {
++			BUG_ON(ret > 0 || read > 0);
++			if (iocb->ki_pos < i_size &&
++			    iocb->ki_pos < PAGE_CACHE_SIZE) {
+ 				struct iov_iter i;
+ 				loff_t end = min_t(loff_t, i_size,
+ 						   iocb->ki_pos + len);
++				end = min_t(loff_t, end, PAGE_CACHE_SIZE);
+ 				iov_iter_init(&i, iov, nr_segs, end, read);
+ 				if (statret < end)
+ 					zero_user_segment(page, statret, end);
+@@ -962,16 +1025,26 @@ out:
+ 						iocb->ki_pos & ~PAGE_MASK,
+ 						end - iocb->ki_pos, &i);
+ 				iocb->ki_pos += ret;
+-			} else {
+-				ret = 0;
++				read += ret;
++			}
++			if (iocb->ki_pos < i_size && read < len) {
++				size_t zlen = min_t(size_t, len - read,
++						    i_size - iocb->ki_pos);
++				loff_t end = min_t(loff_t, i_size,
++						   iocb->ki_pos + len);
++				struct iov_iter i;
++				iov_iter_init(&i, iov, nr_segs, end, read);
++				ret = iov_iter_zero(zlen, &i);
++				iocb->ki_pos += ret;
++				read += ret;
+ 			}
+ 			__free_pages(page, 0);
+-			return ret;
++			return read;
+ 		}
+ 
+ 		/* hit EOF or hole? */
+ 		if (retry_op == CHECK_EOF && iocb->ki_pos < i_size &&
+-			ret < len) {
++		    ret < len) {
+ 			dout("sync_read hit hole, ppos %lld < size %lld"
+ 			     ", reading more\n", iocb->ki_pos,
+ 			     inode->i_size);

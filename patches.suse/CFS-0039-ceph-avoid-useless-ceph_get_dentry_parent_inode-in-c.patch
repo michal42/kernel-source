@@ -1,0 +1,35 @@
+From: Sage Weil <sage@inktank.com>
+Date: Tue, 5 Feb 2013 13:36:05 -0800
+Subject: [PATCH] ceph: avoid useless ceph_get_dentry_parent_inode() in
+ ceph_rename()
+Git-commit: 180061a58c17681dd236e5059ba57fe092dbe368
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+This is just old_dir; no reason to abuse the dcache pointers.
+
+Reported-by: Al Viro <viro.zeniv.linux.org.uk>
+Signed-off-by: Sage Weil <sage@inktank.com>
+Reviewed-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -911,10 +911,11 @@ static int ceph_rename(struct inode *old
+ 	req = ceph_mdsc_create_request(mdsc, CEPH_MDS_OP_RENAME, USE_AUTH_MDS);
+ 	if (IS_ERR(req))
+ 		return PTR_ERR(req);
++	ihold(old_dir);
+ 	req->r_dentry = dget(new_dentry);
+ 	req->r_num_caps = 2;
+ 	req->r_old_dentry = dget(old_dentry);
+-	req->r_old_dentry_dir = ceph_get_dentry_parent_inode(old_dentry);
++	req->r_old_dentry_dir = old_dir;
+ 	req->r_locked_dir = new_dir;
+ 	req->r_old_dentry_drop = CEPH_CAP_FILE_SHARED;
+ 	req->r_old_dentry_unless = CEPH_CAP_FILE_EXCL;

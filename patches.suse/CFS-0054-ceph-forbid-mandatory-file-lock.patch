@@ -1,0 +1,43 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Tue, 4 Mar 2014 15:50:06 +0800
+Subject: [PATCH] ceph: forbid mandatory file lock
+Git-commit: eb70c0ce4e877c6854c682c0fc009d7875994942
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/locks.c |   12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/fs/ceph/locks.c
++++ b/fs/ceph/locks.c
+@@ -87,6 +87,12 @@ int ceph_lock(struct file *file, int cmd
+ 	u8 wait = 0;
+ 	u16 op = CEPH_MDS_OP_SETFILELOCK;
+ 
++	if (!(fl->fl_flags & FL_POSIX))
++		return -ENOLCK;
++	/* No mandatory locks */
++	if (__mandatory_lock(file->f_mapping->host) && fl->fl_type != F_UNLCK)
++		return -ENOLCK;
++
+ 	fl->fl_nspid = get_pid(task_tgid(current));
+ 	dout("ceph_lock, fl_pid:%d", fl->fl_pid);
+ 
+@@ -133,6 +139,12 @@ int ceph_flock(struct file *file, int cm
+ 	int err;
+ 	u8 wait = 0;
+ 
++	if (!(fl->fl_flags & FL_FLOCK))
++		return -ENOLCK;
++	/* No mandatory locks */
++	if (__mandatory_lock(file->f_mapping->host) && fl->fl_type != F_UNLCK)
++		return -ENOLCK;
++
+ 	fl->fl_nspid = get_pid(task_tgid(current));
+ 	dout("ceph_flock, fl_pid:%d", fl->fl_pid);
+ 

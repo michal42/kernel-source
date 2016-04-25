@@ -1,0 +1,104 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Wed, 7 Oct 2015 17:27:17 +0200
+Subject: [PATCH] rbd: use writefull op for object size writes
+Git-commit: e30b7577bf1d338ca8a273bd2f881de5a41572b7
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+This covers only the simplest case - an object size sized write, but
+it's still useful in tiering setups when EC is used for the base tier
+as writefull op can be proxied, saving an object promotion.
+
+Even though updating ceph_osdc_new_request() to allow writefull should
+just be a matter of fixing an assert, I didn't do it because its only
+user is cephfs.  All other sites were updated.
+
+Reflects ceph.git commit 7bfb7f9025a8ee0d2305f49bf0336d2424da5b5b.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/block/rbd.c   |    7 ++++++-
+ net/ceph/osd_client.c |   11 ++++++++---
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -1874,6 +1874,7 @@ static void rbd_osd_req_callback(struct
+ 		break;
+ 	case CEPH_OSD_OP_SETALLOCHINT:
+ 		if (osd_req->r_ops[1].op == CEPH_OSD_OP_WRITE ||
++		    osd_req->r_ops[1].op == CEPH_OSD_OP_WRITEFULL ||
+ 		    osd_req->r_ops[1].op == CEPH_OSD_OP_WRITESAME)
+ 			rbd_osd_write_callback(obj_request);
+ 		else if (osd_req->r_ops[1].op == CEPH_OSD_OP_CMPEXT)
+@@ -1882,6 +1883,7 @@ static void rbd_osd_req_callback(struct
+ 			rbd_assert(0);
+ 		break;
+ 	case CEPH_OSD_OP_WRITE:
++	case CEPH_OSD_OP_WRITEFULL:
+ 	case CEPH_OSD_OP_WRITESAME:
+ 		rbd_osd_write_callback(obj_request);
+ 		break;
+@@ -2462,7 +2464,10 @@ static void rbd_img_obj_request_fill(str
+ 				opcode = CEPH_OSD_OP_ZERO;
+ 		}
+ 	} else if (op_type == OBJ_OP_WRITE) {
+-		opcode = CEPH_OSD_OP_WRITE;
++		if (!offset && length == object_size)
++			opcode = CEPH_OSD_OP_WRITEFULL;
++		else
++			opcode = CEPH_OSD_OP_WRITE;
+ 		osd_req_op_alloc_hint_init(osd_request, num_ops,
+ 					object_size, object_size);
+ 		num_ops++;
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -423,6 +423,7 @@ static void osd_req_op_data_release(stru
+ 		ceph_osd_data_release(&op->extent.response_data);
+ 		break;
+ 	case CEPH_OSD_OP_WRITE:
++	case CEPH_OSD_OP_WRITEFULL:
+ 		ceph_osd_data_release(&op->extent.request_data);
+ 		break;
+ 	case CEPH_OSD_OP_WRITESAME:
+@@ -651,14 +652,16 @@ void osd_req_op_extent_init(struct ceph_
+ 	size_t payload_len = 0;
+ 
+ 	BUG_ON(opcode != CEPH_OSD_OP_READ && opcode != CEPH_OSD_OP_WRITE &&
+-	       opcode != CEPH_OSD_OP_ZERO && opcode != CEPH_OSD_OP_TRUNCATE &&
++	       opcode != CEPH_OSD_OP_WRITEFULL && opcode != CEPH_OSD_OP_ZERO &&
++	       opcode != CEPH_OSD_OP_TRUNCATE &&
+ 	       opcode != CEPH_OSD_OP_CMPEXT);
+ 
+ 	op->extent.offset = offset;
+ 	op->extent.length = length;
+ 	op->extent.truncate_size = truncate_size;
+ 	op->extent.truncate_seq = truncate_seq;
+-	if (opcode == CEPH_OSD_OP_WRITE || opcode == CEPH_OSD_OP_CMPEXT)
++	if (opcode == CEPH_OSD_OP_WRITE || opcode == CEPH_OSD_OP_CMPEXT
++	    || opcode == CEPH_OSD_OP_WRITEFULL)
+ 		payload_len += length;
+ 
+ 	op->payload_len = payload_len;
+@@ -871,6 +874,7 @@ static u64 osd_req_encode_op(struct ceph
+ 		break;
+ 	case CEPH_OSD_OP_READ:
+ 	case CEPH_OSD_OP_WRITE:
++	case CEPH_OSD_OP_WRITEFULL:
+ 	case CEPH_OSD_OP_ZERO:
+ 	case CEPH_OSD_OP_TRUNCATE:
+ 	case CEPH_OSD_OP_CMPEXT:
+@@ -885,7 +889,8 @@ static u64 osd_req_encode_op(struct ceph
+ 			ceph_osdc_msg_data_add(req->r_request, osd_data);
+ 
+ 			request_data_len = src->extent.length;
+-		} else if (src->op == CEPH_OSD_OP_CMPEXT) {
++		} else if (src->op == CEPH_OSD_OP_CMPEXT ||
++		    src->op == CEPH_OSD_OP_WRITEFULL) {
+ 			osd_data = &src->extent.request_data;
+ 			ceph_osdc_msg_data_add(req->r_request, osd_data);
+ 

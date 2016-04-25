@@ -1,0 +1,52 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Fri, 4 Jul 2014 13:59:43 +0800
+Subject: [PATCH] ceph: properly apply umask when ACL is enabled
+Git-commit: f5f186474335ac385def69564542e6e4c6a3a8bd
+Patch-mainline: v3.17
+References: Fate#318586
+
+
+when ACL is enabled, posix_acl_create() may change inode's mode
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/acl.c |   16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+--- a/fs/ceph/acl.c
++++ b/fs/ceph/acl.c
+@@ -192,19 +192,29 @@ int ceph_init_acl(struct dentry *dentry,
+ 	}
+ 
+ 	if (IS_POSIXACL(dir) && acl) {
+-		if (S_ISDIR(inode->i_mode)) {
++		umode_t new_mode = inode->i_mode;
++		if (S_ISDIR(new_mode)) {
+ 			ret = ceph_set_acl(dentry, inode, acl,
+ 						ACL_TYPE_DEFAULT);
+ 			if (ret)
+ 				goto out_release;
+ 		}
+-		ret = posix_acl_create(&acl, GFP_NOFS, &inode->i_mode);
++		ret = posix_acl_create(&acl, GFP_NOFS, &new_mode);
+ 		if (ret < 0)
+ 			goto out;
+ 		else if (ret > 0)
+ 			ret = ceph_set_acl(dentry, inode, acl, ACL_TYPE_ACCESS);
+-		else
++		else {
+ 			cache_no_acl(inode);
++			if (new_mode != inode->i_mode) {
++				struct iattr newattrs = {
++					.ia_mode = new_mode,
++					.ia_valid = ATTR_MODE,
++				};
++				ret = ceph_setattr(dentry, &newattrs);
++			}
++			return ret;
++		}
+ 	} else {
+ 		cache_no_acl(inode);
+ 	}

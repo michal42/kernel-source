@@ -1,0 +1,77 @@
+From: Jeff Layton <jlayton@primarydata.com>
+Date: Fri, 16 Jan 2015 15:05:55 -0500
+Subject: [PATCH] ceph: move spinlocking into ceph_encode_locks_to_buffer and
+ ceph_count_locks
+Git-commit: c362781cadd37858c3d8f5d18b1e9957d4671298
+Patch-mainline: v4.0
+References: Fate#318586
+
+There is only a single call site for each of these functions, and the
+caller takes the i_lock prior to calling them and drops it just
+afterward. Move the spinlocking into the functions instead.
+
+Signed-off-by: Jeff Layton <jlayton@primarydata.com>
+Acked-by: Christoph Hellwig <hch@lst.de>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/locks.c      |    4 ++++
+ fs/ceph/mds_client.c |    4 ----
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+--- a/fs/ceph/locks.c
++++ b/fs/ceph/locks.c
+@@ -254,12 +254,14 @@ void ceph_count_locks(struct inode *inod
+ 	*fcntl_count = 0;
+ 	*flock_count = 0;
+ 
++	spin_lock(&inode->i_lock);
+ 	for (lock = inode->i_flock; lock != NULL; lock = lock->fl_next) {
+ 		if (lock->fl_flags & FL_POSIX)
+ 			++(*fcntl_count);
+ 		else if (lock->fl_flags & FL_FLOCK)
+ 			++(*flock_count);
+ 	}
++	spin_unlock(&inode->i_lock);
+ 	dout("counted %d flock locks and %d fcntl locks",
+ 	     *flock_count, *fcntl_count);
+ }
+@@ -282,6 +284,7 @@ int ceph_encode_locks_to_buffer(struct i
+ 	dout("encoding %d flock and %d fcntl locks", num_flock_locks,
+ 	     num_fcntl_locks);
+ 
++	spin_lock(&inode->i_lock);
+ 	for (lock = inode->i_flock; lock != NULL; lock = lock->fl_next) {
+ 		if (lock->fl_flags & FL_POSIX) {
+ 			++seen_fcntl;
+@@ -309,6 +312,7 @@ int ceph_encode_locks_to_buffer(struct i
+ 		}
+ 	}
+ fail:
++	spin_unlock(&inode->i_lock);
+ 	return err;
+ }
+ 
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -2702,20 +2702,16 @@ static int encode_caps_cb(struct inode *
+ 		struct ceph_filelock *flocks;
+ 
+ encode_again:
+-		spin_lock(&inode->i_lock);
+ 		ceph_count_locks(inode, &num_fcntl_locks, &num_flock_locks);
+-		spin_unlock(&inode->i_lock);
+ 		flocks = kmalloc((num_fcntl_locks+num_flock_locks) *
+ 				 sizeof(struct ceph_filelock), GFP_NOFS);
+ 		if (!flocks) {
+ 			err = -ENOMEM;
+ 			goto out_free;
+ 		}
+-		spin_lock(&inode->i_lock);
+ 		err = ceph_encode_locks_to_buffer(inode, flocks,
+ 						  num_fcntl_locks,
+ 						  num_flock_locks);
+-		spin_unlock(&inode->i_lock);
+ 		if (err) {
+ 			kfree(flocks);
+ 			if (err == -ENOSPC)

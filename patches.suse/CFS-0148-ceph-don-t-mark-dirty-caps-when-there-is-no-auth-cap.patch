@@ -1,0 +1,54 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 24 Mar 2015 11:36:08 +0800
+Subject: [PATCH] ceph: don't mark dirty caps when there is no auth cap
+Git-commit: 571ade336ac89f5db602f7df992152e4f4b945bc
+Patch-mainline: v4.1
+References: Fate#318586
+
+
+No i_auth_cap means reconnecting to MDS was denied. So don't
+add new dirty caps.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c       |    8 +++++++-
+ fs/ceph/mds_client.c |    2 +-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1404,6 +1404,13 @@ int __ceph_mark_dirty_caps(struct ceph_i
+ 	int was = ci->i_dirty_caps;
+ 	int dirty = 0;
+ 
++	if (!ci->i_auth_cap) {
++		pr_warn("__mark_dirty_caps %p %llx mask %s, "
++			"but no auth cap (session was closed?)\n",
++			inode, ceph_ino(inode), ceph_cap_string(mask));
++		return 0;
++	}
++
+ 	dout("__mark_dirty_caps %p %s dirty %s -> %s\n", &ci->vfs_inode,
+ 	     ceph_cap_string(mask), ceph_cap_string(was),
+ 	     ceph_cap_string(was | mask));
+@@ -1414,7 +1421,6 @@ int __ceph_mark_dirty_caps(struct ceph_i
+ 				ci->i_snap_realm->cached_context);
+ 		dout(" inode %p now dirty snapc %p auth cap %p\n",
+ 		     &ci->vfs_inode, ci->i_head_snapc, ci->i_auth_cap);
+-		WARN_ON(!ci->i_auth_cap);
+ 		BUG_ON(!list_empty(&ci->i_dirty_item));
+ 		spin_lock(&mdsc->cap_dirty_lock);
+ 		list_add(&ci->i_dirty_item, &mdsc->cap_dirty);
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1100,7 +1100,7 @@ static int remove_session_caps_cb(struct
+ 	     cap, ci, &ci->vfs_inode);
+ 	spin_lock(&ci->i_ceph_lock);
+ 	__ceph_remove_cap(cap, false);
+-	if (!__ceph_is_any_real_caps(ci)) {
++	if (!ci->i_auth_cap) {
+ 		struct ceph_mds_client *mdsc =
+ 			ceph_sb_to_client(inode->i_sb)->mdsc;
+ 

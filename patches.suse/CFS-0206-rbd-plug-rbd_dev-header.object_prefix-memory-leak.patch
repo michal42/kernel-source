@@ -1,0 +1,33 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Mon, 31 Aug 2015 18:22:10 +0300
+Subject: [PATCH] rbd: plug rbd_dev->header.object_prefix memory leak
+Git-commit: d194cd1dd1be61249b08e5461ae8a9c05d1072c9
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+Need to free object_prefix when rbd_dev_v2_snap_context() fails, but
+only if this is the first time we are reading in the header.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/block/rbd.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -5226,7 +5226,10 @@ static int rbd_dev_v2_header_info(struct
+ 	}
+ 
+ 	ret = rbd_dev_v2_snap_context(rbd_dev);
+-	dout("rbd_dev_v2_snap_context returned %d\n", ret);
++	if (ret && first_time) {
++		kfree(rbd_dev->header.object_prefix);
++		rbd_dev->header.object_prefix = NULL;
++	}
+ 
+ 	return ret;
+ }

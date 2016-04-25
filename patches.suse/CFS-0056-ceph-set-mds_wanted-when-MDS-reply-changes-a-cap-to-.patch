@@ -1,0 +1,34 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Tue, 18 Mar 2014 10:15:29 +0800
+Subject: [PATCH] ceph: set mds_wanted when MDS reply changes a cap to auth cap
+Git-commit: d9ffc4f77073e7e1ca731f21804769de9c094b87
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+When adjusting caps client wants, MDS does not record caps that are
+not allowed. For non-auth MDS, it does not record WR caps. So when
+a MDS reply changes a non-auth cap to auth cap, client needs to set
+cap's mds_wanted according to the reply.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -622,8 +622,10 @@ retry:
+ 
+ 	if (flags & CEPH_CAP_FLAG_AUTH) {
+ 		if (ci->i_auth_cap == NULL ||
+-		    ceph_seq_cmp(ci->i_auth_cap->mseq, mseq) < 0)
++		    ceph_seq_cmp(ci->i_auth_cap->mseq, mseq) < 0) {
+ 			ci->i_auth_cap = cap;
++			cap->mds_wanted = wanted;
++		}
+ 		ci->i_cap_exporting_issued = 0;
+ 	} else {
+ 		WARN_ON(ci->i_auth_cap == cap);

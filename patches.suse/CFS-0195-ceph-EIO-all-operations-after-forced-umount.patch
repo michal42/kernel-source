@@ -1,0 +1,186 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 1 Jul 2015 16:27:46 +0800
+Subject: [PATCH] ceph: EIO all operations after forced umount
+Git-commit: 48fec5d0a504dfbb302cb1dd24ebb0b82a46cce9
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+This patch makes try_get_cap_refs() and __do_request() check
+if the file system was forced umount, and return -EIO if it was.
+This patch also adds a helper function to drops dirty caps and
+wakes up blocking operation.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c       |    2 -
+ fs/ceph/caps.c       |    8 +++++++
+ fs/ceph/mds_client.c |   54 ++++++++++++++++++++++++++++++++++++++++-----------
+ fs/ceph/mds_client.h |    1 
+ fs/ceph/super.c      |    1 
+ 5 files changed, 54 insertions(+), 12 deletions(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -727,7 +727,7 @@ static int ceph_writepages_start(struct
+ 	     wbc->sync_mode == WB_SYNC_NONE ? "NONE" :
+ 	     (wbc->sync_mode == WB_SYNC_ALL ? "ALL" : "HOLD"));
+ 
+-	if (fsc->mount_state == CEPH_MOUNT_SHUTDOWN) {
++	if (ACCESS_ONCE(fsc->mount_state) == CEPH_MOUNT_SHUTDOWN) {
+ 		pr_warn("writepage_start %p on forced umount\n", inode);
+ 		return -EIO; /* we're in a forced umount, don't write! */
+ 	}
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -2413,6 +2413,14 @@ again:
+ 			goto out_unlock;
+ 		}
+ 
++		if (!__ceph_is_any_caps(ci) &&
++		    ACCESS_ONCE(mdsc->fsc->mount_state) == CEPH_MOUNT_SHUTDOWN) {
++			dout("get_cap_refs %p forced umount\n", inode);
++			*err = -EIO;
++			ret = 1;
++			goto out_unlock;
++		}
++
+ 		dout("get_cap_refs %p have %s needed %s\n", inode,
+ 		     ceph_cap_string(have), ceph_cap_string(need));
+ 	}
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -2109,7 +2109,6 @@ static int __prepare_send_request(struct
+ 	msg = create_request_message(mdsc, req, mds, drop_cap_releases);
+ 	if (IS_ERR(msg)) {
+ 		req->r_err = PTR_ERR(msg);
+-		complete_request(mdsc, req);
+ 		return PTR_ERR(msg);
+ 	}
+ 	req->r_request = msg;
+@@ -2137,7 +2136,7 @@ static int __do_request(struct ceph_mds_
+ {
+ 	struct ceph_mds_session *session = NULL;
+ 	int mds = -1;
+-	int err = -EAGAIN;
++	int err = 0;
+ 
+ 	if (req->r_err || req->r_got_result) {
+ 		if (req->r_aborted)
+@@ -2151,6 +2150,11 @@ static int __do_request(struct ceph_mds_
+ 		err = -EIO;
+ 		goto finish;
+ 	}
++	if (ACCESS_ONCE(mdsc->fsc->mount_state) == CEPH_MOUNT_SHUTDOWN) {
++		dout("do_request forced umount\n");
++		err = -EIO;
++		goto finish;
++	}
+ 
+ 	put_request_session(req);
+ 
+@@ -2198,13 +2202,15 @@ static int __do_request(struct ceph_mds_
+ 
+ out_session:
+ 	ceph_put_mds_session(session);
++finish:
++	if (err) {
++		dout("__do_request early error %d\n", err);
++		req->r_err = err;
++		complete_request(mdsc, req);
++		__unregister_request(mdsc, req);
++	}
+ out:
+ 	return err;
+-
+-finish:
+-	req->r_err = err;
+-	complete_request(mdsc, req);
+-	goto out;
+ }
+ 
+ /*
+@@ -2291,8 +2297,6 @@ int ceph_mdsc_do_request(struct ceph_mds
+ 
+ 	if (req->r_err) {
+ 		err = req->r_err;
+-		__unregister_request(mdsc, req);
+-		dout("do_request early error %d\n", err);
+ 		goto out;
+ 	}
+ 
+@@ -3557,7 +3561,7 @@ void ceph_mdsc_sync(struct ceph_mds_clie
+ {
+ 	u64 want_tid, want_flush, want_snap;
+ 
+-	if (mdsc->fsc->mount_state == CEPH_MOUNT_SHUTDOWN)
++	if (ACCESS_ONCE(mdsc->fsc->mount_state) == CEPH_MOUNT_SHUTDOWN)
+ 		return;
+ 
+ 	dout("sync\n");
+@@ -3586,7 +3590,7 @@ void ceph_mdsc_sync(struct ceph_mds_clie
+  */
+ static bool done_closing_sessions(struct ceph_mds_client *mdsc)
+ {
+-	if (mdsc->fsc->mount_state == CEPH_MOUNT_SHUTDOWN)
++	if (ACCESS_ONCE(mdsc->fsc->mount_state) == CEPH_MOUNT_SHUTDOWN)
+ 		return true;
+ 	return atomic_read(&mdsc->num_sessions) == 0;
+ }
+@@ -3645,6 +3649,34 @@ void ceph_mdsc_close_sessions(struct cep
+ 	dout("stopped\n");
+ }
+ 
++void ceph_mdsc_force_umount(struct ceph_mds_client *mdsc)
++{
++	struct ceph_mds_session *session;
++	int mds;
++
++	dout("force umount\n");
++
++	mutex_lock(&mdsc->mutex);
++	for (mds = 0; mds < mdsc->max_sessions; mds++) {
++		session = __ceph_lookup_mds_session(mdsc, mds);
++		if (!session)
++			continue;
++		mutex_unlock(&mdsc->mutex);
++		mutex_lock(&session->s_mutex);
++		__close_session(mdsc, session);
++		if (session->s_state == CEPH_MDS_SESSION_CLOSING) {
++			cleanup_session_requests(mdsc, session);
++			remove_session_caps(session);
++		}
++		mutex_unlock(&session->s_mutex);
++		ceph_put_mds_session(session);
++		mutex_lock(&mdsc->mutex);
++		kick_requests(mdsc, mds);
++	}
++	__wake_requests(mdsc, &mdsc->waiting_for_map);
++	mutex_unlock(&mdsc->mutex);
++}
++
+ static void ceph_mdsc_stop(struct ceph_mds_client *mdsc)
+ {
+ 	dout("stop\n");
+--- a/fs/ceph/mds_client.h
++++ b/fs/ceph/mds_client.h
+@@ -366,6 +366,7 @@ extern int ceph_send_msg_mds(struct ceph
+ 
+ extern int ceph_mdsc_init(struct ceph_fs_client *fsc);
+ extern void ceph_mdsc_close_sessions(struct ceph_mds_client *mdsc);
++extern void ceph_mdsc_force_umount(struct ceph_mds_client *mdsc);
+ extern void ceph_mdsc_destroy(struct ceph_fs_client *fsc);
+ 
+ extern void ceph_mdsc_sync(struct ceph_mds_client *mdsc);
+--- a/fs/ceph/super.c
++++ b/fs/ceph/super.c
+@@ -729,6 +729,7 @@ static void ceph_umount_begin(struct sup
+ 	if (!fsc)
+ 		return;
+ 	fsc->mount_state = CEPH_MOUNT_SHUTDOWN;
++	ceph_mdsc_force_umount(fsc->mdsc);
+ 	return;
+ }
+ 

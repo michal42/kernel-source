@@ -1,0 +1,73 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Tue, 19 May 2015 12:05:38 +0300
+Subject: [PATCH] ceph: simplify two mount_timeout sites
+Git-commit: 5be73034771c8f18b241f1974803865a4de2cad1
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+No need to bifurcate wait now that we've got ceph_timeout_jiffies().
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Reviewed-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c        |   14 ++++----------
+ fs/ceph/mds_client.c |   18 ++++++++++--------
+ 2 files changed, 14 insertions(+), 18 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -1239,17 +1239,11 @@ static int ceph_dir_fsync(struct file *f
+ 
+ 		dout("dir_fsync %p wait on tid %llu (until %llu)\n",
+ 		     inode, req->r_tid, last_tid);
+-		if (req->r_timeout) {
+-			unsigned long time_left = wait_for_completion_timeout(
+-					&req->r_safe_completion,
++		ret = !wait_for_completion_timeout(&req->r_safe_completion,
+ 					ceph_timeout_jiffies(req->r_timeout));
+-			if (time_left > 0)
+-				ret = 0;
+-			else
+-				ret = -EIO;  /* timed out */
+-		} else {
+-			wait_for_completion(&req->r_safe_completion);
+-		}
++		if (ret)
++			ret = -EIO;  /* timed out */
++
+ 		ceph_mdsc_put_request(req);
+ 
+ 		spin_lock(&ci->i_unsafe_lock);
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -2268,16 +2268,18 @@ int ceph_mdsc_do_request(struct ceph_mds
+ 	/* wait */
+ 	mutex_unlock(&mdsc->mutex);
+ 	dout("do_request waiting\n");
+-	if (req->r_timeout) {
+-		err = (long)wait_for_completion_killable_timeout(
+-					&req->r_completion,
+-					ceph_timeout_jiffies(req->r_timeout));
+-		if (err == 0)
+-			err = -EIO;
+-	} else if (req->r_wait_for_completion) {
++	if (!req->r_timeout && req->r_wait_for_completion) {
+ 		err = req->r_wait_for_completion(mdsc, req);
+ 	} else {
+-		err = wait_for_completion_killable(&req->r_completion);
++		long timeleft = wait_for_completion_killable_timeout(
++					&req->r_completion,
++					ceph_timeout_jiffies(req->r_timeout));
++		if (timeleft > 0)
++			err = 0;
++		else if (!timeleft)
++			err = -EIO;  /* timed out */
++		else
++			err = timeleft;  /* killed */
+ 	}
+ 	dout("do_request waited, got %d\n", err);
+ 	mutex_lock(&mdsc->mutex);

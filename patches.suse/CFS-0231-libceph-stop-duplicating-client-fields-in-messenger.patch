@@ -1,0 +1,165 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Wed, 28 Oct 2015 23:50:58 +0100
+Subject: [PATCH] libceph: stop duplicating client fields in messenger
+Git-commit: 859bff51dc5e92ddfb5eb6f17b8040d9311095bb
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+supported_features and required_features serve no purpose at all, while
+nocrc and tcp_nodelay belong to ceph_options::flags.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ include/linux/ceph/libceph.h   |    1 +
+ include/linux/ceph/messenger.h |   11 +----------
+ net/ceph/ceph_common.c         |    6 +-----
+ net/ceph/messenger.c           |   26 +++++++++-----------------
+ 4 files changed, 12 insertions(+), 32 deletions(-)
+
+--- a/include/linux/ceph/libceph.h
++++ b/include/linux/ceph/libceph.h
+@@ -137,6 +137,7 @@ struct ceph_client {
+ #endif
+ };
+ 
++#define from_msgr(ms)	container_of(ms, struct ceph_client, msgr)
+ 
+ 
+ /*
+--- a/include/linux/ceph/messenger.h
++++ b/include/linux/ceph/messenger.h
+@@ -54,8 +54,6 @@ struct ceph_messenger {
+ 	struct ceph_entity_addr my_enc_addr;
+ 
+ 	atomic_t stopping;
+-	bool nocrc;
+-	bool tcp_nodelay;
+ 
+ 	/*
+ 	 * the global_seq counts connections i (attempt to) initiate
+@@ -63,9 +61,6 @@ struct ceph_messenger {
+ 	 */
+ 	u32 global_seq;
+ 	spinlock_t global_seq_lock;
+-
+-	u64 supported_features;
+-	u64 required_features;
+ };
+ 
+ enum ceph_msg_data_type {
+@@ -276,11 +271,7 @@ extern void ceph_msgr_exit(void);
+ extern void ceph_msgr_flush(void);
+ 
+ extern void ceph_messenger_init(struct ceph_messenger *msgr,
+-			struct ceph_entity_addr *myaddr,
+-			u64 supported_features,
+-			u64 required_features,
+-			bool nocrc,
+-			bool tcp_nodelay);
++				struct ceph_entity_addr *myaddr);
+ 
+ extern void ceph_con_init(struct ceph_connection *con, void *private,
+ 			const struct ceph_connection_operations *ops,
+--- a/net/ceph/ceph_common.c
++++ b/net/ceph/ceph_common.c
+@@ -590,11 +590,7 @@ struct ceph_client *ceph_create_client(s
+ 	if (ceph_test_opt(client, MYIP))
+ 		myaddr = &client->options->my_addr;
+ 
+-	ceph_messenger_init(&client->msgr, myaddr,
+-		client->supported_features,
+-		client->required_features,
+-		ceph_test_opt(client, NOCRC),
+-		ceph_test_opt(client, TCP_NODELAY));
++	ceph_messenger_init(&client->msgr, myaddr);
+ 
+ 	/* subsystems */
+ 	err = ceph_monc_init(&client->monc, client);
+--- a/net/ceph/messenger.c
++++ b/net/ceph/messenger.c
+@@ -508,7 +508,7 @@ static int ceph_tcp_connect(struct ceph_
+ 		return ret;
+ 	}
+ 
+-	if (con->msgr->tcp_nodelay) {
++	if (ceph_test_opt(from_msgr(con->msgr), TCP_NODELAY)) {
+ 		int optval = 1;
+ 
+ 		ret = kernel_setsockopt(sock, SOL_TCP, TCP_NODELAY,
+@@ -1517,7 +1517,8 @@ static int prepare_write_connect(struct
+ 	dout("prepare_write_connect %p cseq=%d gseq=%d proto=%d\n", con,
+ 	     con->connect_seq, global_seq, proto);
+ 
+-	con->out_connect.features = cpu_to_le64(con->msgr->supported_features);
++	con->out_connect.features =
++	    cpu_to_le64(from_msgr(con->msgr)->supported_features);
+ 	con->out_connect.host_type = cpu_to_le32(CEPH_ENTITY_TYPE_CLIENT);
+ 	con->out_connect.connect_seq = cpu_to_le32(con->connect_seq);
+ 	con->out_connect.global_seq = cpu_to_le32(global_seq);
+@@ -1612,7 +1613,7 @@ static int write_partial_message_data(st
+ {
+ 	struct ceph_msg *msg = con->out_msg;
+ 	struct ceph_msg_data_cursor *cursor = &msg->cursor;
+-	bool do_datacrc = !con->msgr->nocrc;
++	bool do_datacrc = !ceph_test_opt(from_msgr(con->msgr), NOCRC);
+ 	u32 crc;
+ 
+ 	dout("%s %p msg %p\n", __func__, con, msg);
+@@ -2090,8 +2091,8 @@ static int process_banner(struct ceph_co
+ 
+ static int process_connect(struct ceph_connection *con)
+ {
+-	u64 sup_feat = con->msgr->supported_features;
+-	u64 req_feat = con->msgr->required_features;
++	u64 sup_feat = from_msgr(con->msgr)->supported_features;
++	u64 req_feat = from_msgr(con->msgr)->required_features;
+ 	u64 server_feat = ceph_sanitize_features(
+ 				le64_to_cpu(con->in_reply.features));
+ 	int ret;
+@@ -2317,7 +2318,7 @@ static int read_partial_msg_data(struct
+ {
+ 	struct ceph_msg *msg = con->in_msg;
+ 	struct ceph_msg_data_cursor *cursor = &msg->cursor;
+-	const bool do_datacrc = !con->msgr->nocrc;
++	bool do_datacrc = !ceph_test_opt(from_msgr(con->msgr), NOCRC);
+ 	struct page *page;
+ 	size_t page_offset;
+ 	size_t length;
+@@ -2362,7 +2363,7 @@ static int read_partial_message(struct c
+ 	int end;
+ 	int ret;
+ 	unsigned int front_len, middle_len, data_len;
+-	bool do_datacrc = !con->msgr->nocrc;
++	bool do_datacrc = !ceph_test_opt(from_msgr(con->msgr), NOCRC);
+ 	bool need_sign = (con->peer_features & CEPH_FEATURE_MSG_AUTH);
+ 	u64 seq;
+ 	u32 crc;
+@@ -3036,15 +3037,8 @@ static void con_fault(struct ceph_connec
+  * initialize a new messenger instance
+  */
+ void ceph_messenger_init(struct ceph_messenger *msgr,
+-			struct ceph_entity_addr *myaddr,
+-			u64 supported_features,
+-			u64 required_features,
+-			bool nocrc,
+-			bool tcp_nodelay)
++			 struct ceph_entity_addr *myaddr)
+ {
+-	msgr->supported_features = supported_features;
+-	msgr->required_features = required_features;
+-
+ 	spin_lock_init(&msgr->global_seq_lock);
+ 
+ 	if (myaddr)
+@@ -3054,8 +3048,6 @@ void ceph_messenger_init(struct ceph_mes
+ 	msgr->inst.addr.type = 0;
+ 	get_random_bytes(&msgr->inst.addr.nonce, sizeof(msgr->inst.addr.nonce));
+ 	encode_my_addr(msgr);
+-	msgr->nocrc = nocrc;
+-	msgr->tcp_nodelay = tcp_nodelay;
+ 
+ 	atomic_set(&msgr->stopping, 0);
+ 

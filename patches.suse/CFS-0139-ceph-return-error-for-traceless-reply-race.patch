@@ -1,0 +1,57 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 4 Feb 2015 15:10:48 +0800
+Subject: [PATCH] ceph: return error for traceless reply race
+Git-commit: 4d41cef279f72f3965140fffa6b48f2a7d51408c
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+When we receives traceless reply for request that created new inode,
+we re-send a lookup request to MDS get information of the newly created
+inode. (VFS expects FS' callback return an inode in create case)
+This breaks one request into two requests. Other client may modify or
+move to the new inode in the middle.
+
+When the race happens, ceph_handle_notrace_create() unconditionally
+links the dentry for 'create' operation to the inode returned by lookup.
+This may confuse VFS when the inode is a directory (VFS does not allow
+multiple linkages for directory inode).
+
+This patch makes ceph_handle_notrace_create() when it detect a race.
+This event should be rare and it happens only when we talk to old MDS.
+Recent MDS does not send traceless reply for request that creates new
+inode.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c |   15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -670,14 +670,17 @@ int ceph_handle_notrace_create(struct in
+ 		/*
+ 		 * We created the item, then did a lookup, and found
+ 		 * it was already linked to another inode we already
+-		 * had in our cache (and thus got spliced).  Link our
+-		 * dentry to that inode, but don't hash it, just in
+-		 * case the VFS wants to dereference it.
++		 * had in our cache (and thus got spliced). To not
++		 * confuse VFS (especially when inode is a directory),
++		 * we don't link our dentry to that inode, return an
++		 * error instead.
++		 *
++		 * This event should be rare and it happens only when
++		 * we talk to old MDS. Recent MDS does not send traceless
++		 * reply for request that creates new inode.
+ 		 */
+-		BUG_ON(!result->d_inode);
+-		d_instantiate(dentry, result->d_inode);
+ 		d_drop(result);
+-		return 0;
++		return -ESTALE;
+ 	}
+ 	return PTR_ERR(result);
+ }

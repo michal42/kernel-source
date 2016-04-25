@@ -1,0 +1,77 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Sat, 1 Mar 2014 23:09:05 +0800
+Subject: [PATCH] ceph: fix ceph_fh_to_parent()
+Git-commit: 8996f4f23db735f0f3bab34352188b1ab21d7d7f
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+ceph_fh_to_parent() returns dentry that corresponds to the 'ino' field
+of struct ceph_nfs_confh. This is wrong, it should return dentry that
+corresponds to the 'parent_ino' field.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/export.c |   39 +++++++++------------------------------
+ 1 file changed, 9 insertions(+), 30 deletions(-)
+
+--- a/fs/ceph/export.c
++++ b/fs/ceph/export.c
+@@ -181,45 +181,24 @@ struct dentry *ceph_get_parent(struct de
+ }
+ 
+ /*
+- * get parent, if possible.
+- *
+- * FIXME: we could do better by querying the mds to discover the
+- * parent.
++ * convert regular fh to parent
+  */
+ static struct dentry *ceph_fh_to_parent(struct super_block *sb,
+-					 struct fid *fid,
++					struct fid *fid,
+ 					int fh_len, int fh_type)
+ {
+ 	struct ceph_nfs_confh *cfh = (void *)fid->raw;
+-	struct ceph_vino vino;
+-	struct inode *inode;
+ 	struct dentry *dentry;
+-	int err;
+ 
+-	if (fh_type == 1)
+-		return ERR_PTR(-ESTALE);
++	if (fh_type != FILEID_INO32_GEN_PARENT)
++		return NULL;
+ 	if (fh_len < sizeof(*cfh) / 4)
+-		return ERR_PTR(-ESTALE);
++		return NULL;
+ 
+-	vino.ino = cfh->ino;
+-	vino.snap = CEPH_NOSNAP;
+-	inode = ceph_find_inode(sb, vino);
+-	if (!inode)
+-		return ERR_PTR(-ESTALE);
+-
+-	dentry = d_obtain_alias(inode);
+-	if (IS_ERR(dentry)) {
+-		pr_err("fh_to_parent %llx -- inode %p but ENOMEM\n",
+-		       cfh->ino, inode);
+-		iput(inode);
+-		return dentry;
+-	}
+-	err = ceph_init_dentry(dentry);
+-	if (err < 0) {
+-		iput(inode);
+-		return ERR_PTR(err);
+-	}
+-	dout("fh_to_parent %llx %p dentry %p\n", cfh->ino, inode, dentry);
++	dout("fh_to_parent %llx\n", cfh->parent_ino);
++	dentry = __get_parent(sb, NULL, cfh->ino);
++	if (IS_ERR(dentry) && PTR_ERR(dentry) == -ENOENT)
++		dentry = __fh_to_dentry(sb, cfh->parent_ino);
+ 	return dentry;
+ }
+ 
