@@ -1,0 +1,109 @@
+From: Jan Kara <jack@suse.cz>
+Subject: ext4: Add parameter for tuning handling of ext2
+References: bsc#976195
+Patch-mainline: Never, this is SUSE specific hack to allow use of ext2 driver only for users that really want it
+
+We mount ext2 and ext3 filesystems using ext4 driver since SLE12. However the
+ext4 driver is missing support for XIP which is supported by the ext2 driver
+and some customers were apparently using it for s390 with older versions of
+SLE. So add a kernel option 'ext4_used_for_ext2' which can be set to 0 to
+forbid ext4 to register itself as a handler for ext2 filesystem type and thus
+ext2 driver can handle the filesystem in that case.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/ext2/super.c  |   10 +++++++++-
+ fs/ext4/super.c  |   15 +++++++++++----
+ init/do_mounts.c |   12 ++++++++++++
+ 3 files changed, 32 insertions(+), 5 deletions(-)
+
+--- a/fs/ext2/super.c
++++ b/fs/ext2/super.c
+@@ -1539,9 +1539,15 @@ static struct file_system_type ext2_fs_t
+ };
+ MODULE_ALIAS_FS("ext2");
+ 
++extern bool ext4_used_for_ext2;
++
+ static int __init init_ext2_fs(void)
+ {
+-	int err = init_ext2_xattr();
++	int err;
++
++	if (ext4_used_for_ext2)
++		return 0;
++	err = init_ext2_xattr();
+ 	if (err)
+ 		return err;
+ 	err = init_inodecache();
+@@ -1560,6 +1566,8 @@ out1:
+ 
+ static void __exit exit_ext2_fs(void)
+ {
++	if (ext4_used_for_ext2)
++		return;
+ 	unregister_filesystem(&ext2_fs_type);
+ 	destroy_inodecache();
+ 	exit_ext2_xattr();
+--- a/fs/ext4/super.c
++++ b/fs/ext4/super.c
+@@ -84,7 +84,7 @@ static void ext4_unregister_li_request(s
+ static void ext4_clear_request_list(void);
+ static int ext4_reserve_clusters(struct ext4_sb_info *, ext4_fsblk_t);
+ 
+-#if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
++#if defined(CONFIG_EXT4_USE_FOR_EXT23)
+ static struct file_system_type ext2_fs_type = {
+ 	.owner		= THIS_MODULE,
+ 	.name		= "ext2",
+@@ -5379,10 +5379,16 @@ static struct dentry *ext4_mount(struct
+ 	return mount_bdev(fs_type, flags, dev_name, data, ext4_fill_super);
+ }
+ 
+-#if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT23)
++#if defined(CONFIG_EXT4_USE_FOR_EXT23)
++extern bool ext4_used_for_ext2;
++
+ static inline void register_as_ext2(void)
+ {
+-	int err = register_filesystem(&ext2_fs_type);
++	int err;
++
++	if (!ext4_used_for_ext2)
++		return;
++	err = register_filesystem(&ext2_fs_type);
+ 	if (err)
+ 		printk(KERN_WARNING
+ 		       "EXT4-fs: Unable to register as ext2 (%d)\n", err);
+@@ -5390,7 +5396,8 @@ static inline void register_as_ext2(void
+ 
+ static inline void unregister_as_ext2(void)
+ {
+-	unregister_filesystem(&ext2_fs_type);
++	if (ext4_used_for_ext2)
++		unregister_filesystem(&ext2_fs_type);
+ }
+ 
+ static inline int ext2_feature_set_ok(struct super_block *sb)
+--- a/init/do_mounts.c
++++ b/init/do_mounts.c
+@@ -327,6 +327,18 @@ __setup("rootflags=", root_data_setup);
+ __setup("rootfstype=", fs_names_setup);
+ __setup("rootdelay=", root_delay_setup);
+ 
++bool ext4_used_for_ext2 = true;
++EXPORT_SYMBOL(ext4_used_for_ext2);
++static int __init ext4_used_for_ext2_setup(char *str)
++{
++	if (simple_strtoul(str, NULL, 0) > 0)
++		ext4_used_for_ext2 = true;
++	else
++		ext4_used_for_ext2 = false;
++	return 1;
++}
++__setup("ext4_used_for_ext2=", ext4_used_for_ext2_setup);
++
+ static void __init get_fs_names(char *page)
+ {
+ 	char *s = page;
