@@ -1,0 +1,64 @@
+From: Olaf Hering <ohering@suse.de>
+Date: Wed, 27 Apr 2016 15:16:03 +0200
+Subject: Export helper function to set irq affinity in pci-hyperv
+Patch-mainline: never (upstream differs substantially)
+
+Signed-off-by: Olaf Hering <ohering@suse.de>
+---
+ arch/x86/include/asm/mshyperv.h |  3 +++
+ arch/x86/kernel/cpu/mshyperv.c  | 11 +++++++++++
+ drivers/pci/host/pci-hyperv.c   |  7 ++++++-
+ 3 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/mshyperv.h b/arch/x86/include/asm/mshyperv.h
+index aaf59b7..12b0d1a 100644
+--- a/arch/x86/include/asm/mshyperv.h
++++ b/arch/x86/include/asm/mshyperv.h
+@@ -25,4 +25,7 @@ void hv_setup_kexec_handler(void (*handler)(void));
+ void hv_remove_kexec_handler(void);
+ void hv_setup_crash_handler(void (*handler)(struct pt_regs *regs));
+ void hv_remove_crash_handler(void);
++int suse_ms_hyperv_set_affinity(struct irq_data *data,
++				const struct cpumask *mask,
++				unsigned int *dest_id);
+ #endif
+diff --git a/arch/x86/kernel/cpu/mshyperv.c b/arch/x86/kernel/cpu/mshyperv.c
+index 20e242e..2a7c615 100644
+--- a/arch/x86/kernel/cpu/mshyperv.c
++++ b/arch/x86/kernel/cpu/mshyperv.c
+@@ -193,6 +193,17 @@ static void __init ms_hyperv_init_platform(void)
+ 	mark_tsc_unstable("running on Hyper-V");
+ }
+ 
++struct irq_data;
++int suse_ms_hyperv_set_affinity(struct irq_data *data,
++				const struct cpumask *mask,
++				unsigned int *dest_id)
++{
++	if (x86_hyper != &x86_hyper_ms_hyperv)
++		return -ENODEV;
++	return __ioapic_set_affinity(data, mask, dest_id);
++}
++EXPORT_SYMBOL(suse_ms_hyperv_set_affinity);
++
+ const __refconst struct hypervisor_x86 x86_hyper_ms_hyperv = {
+ 	.name			= "Microsoft HyperV",
+ 	.detect			= ms_hyperv_platform,
+diff --git a/drivers/pci/host/pci-hyperv.c b/drivers/pci/host/pci-hyperv.c
+index 0180601..33f3338 100644
+--- a/drivers/pci/host/pci-hyperv.c
++++ b/drivers/pci/host/pci-hyperv.c
+@@ -951,7 +951,12 @@ static int hv_set_affinity(struct irq_data *data, const struct cpumask *dest,
+ 	struct hv_pcibus_device *hbus;
+ 	struct pci_bus *pbus;
+ 	struct pci_dev *pdev;
+-	int cpu;
++	int cpu, ret;
++	unsigned int dest_id;
++
++	ret = suse_ms_hyperv_set_affinity(data, dest, &dest_id);
++	if (ret)
++		return ret;
+ 
+ 	pdev = msi_desc_to_pci_dev(data->msi_desc);
+ 	pbus = pdev->bus;
