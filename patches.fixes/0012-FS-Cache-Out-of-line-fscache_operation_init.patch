@@ -1,0 +1,84 @@
+From: David Howells <dhowells@redhat.com>
+Date: Wed, 25 Feb 2015 13:26:39 +0000
+Subject: [PATCH] FS-Cache: Out of line fscache_operation_init()
+Git-commit: 1339ec98e32b4bc8efb6fbb71c006a465130aaba
+Patch-mainline: v4.2
+References: bsc#971049
+
+Out of line fscache_operation_init() so that it can access internal FS-Cache
+features, such as stats, in a later commit.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Reviewed-by: Steve Dickson <steved@redhat.com>
+Acked-by: Jeff Layton <jeff.layton@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/fscache/operation.c        |   22 ++++++++++++++++++++++
+ include/linux/fscache-cache.h |   24 +++---------------------
+ 2 files changed, 25 insertions(+), 21 deletions(-)
+
+--- a/fs/fscache/operation.c
++++ b/fs/fscache/operation.c
+@@ -21,6 +21,28 @@ atomic_t fscache_op_debug_id;
+ EXPORT_SYMBOL(fscache_op_debug_id);
+ 
+ /**
++ * fscache_operation_init - Do basic initialisation of an operation
++ * @op: The operation to initialise
++ * @release: The release function to assign
++ *
++ * Do basic initialisation of an operation.  The caller must still set flags,
++ * object and processor if needed.
++ */
++void fscache_operation_init(struct fscache_operation *op,
++			    fscache_operation_processor_t processor,
++			    fscache_operation_release_t release)
++{
++	INIT_WORK(&op->work, fscache_op_work_func);
++	atomic_set(&op->usage, 1);
++	op->state = FSCACHE_OP_ST_INITIALISED;
++	op->debug_id = atomic_inc_return(&fscache_op_debug_id);
++	op->processor = processor;
++	op->release = release;
++	INIT_LIST_HEAD(&op->pend_link);
++}
++EXPORT_SYMBOL(fscache_operation_init);
++
++/**
+  * fscache_enqueue_operation - Enqueue an operation for processing
+  * @op: The operation to enqueue
+  *
+--- a/include/linux/fscache-cache.h
++++ b/include/linux/fscache-cache.h
+@@ -119,27 +119,9 @@ extern void fscache_op_work_func(struct
+ extern void fscache_enqueue_operation(struct fscache_operation *);
+ extern void fscache_op_complete(struct fscache_operation *, bool);
+ extern void fscache_put_operation(struct fscache_operation *);
+-
+-/**
+- * fscache_operation_init - Do basic initialisation of an operation
+- * @op: The operation to initialise
+- * @release: The release function to assign
+- *
+- * Do basic initialisation of an operation.  The caller must still set flags,
+- * object and processor if needed.
+- */
+-static inline void fscache_operation_init(struct fscache_operation *op,
+-					fscache_operation_processor_t processor,
+-					fscache_operation_release_t release)
+-{
+-	INIT_WORK(&op->work, fscache_op_work_func);
+-	atomic_set(&op->usage, 1);
+-	op->state = FSCACHE_OP_ST_INITIALISED;
+-	op->debug_id = atomic_inc_return(&fscache_op_debug_id);
+-	op->processor = processor;
+-	op->release = release;
+-	INIT_LIST_HEAD(&op->pend_link);
+-}
++extern void fscache_operation_init(struct fscache_operation *,
++				   fscache_operation_processor_t,
++				   fscache_operation_release_t);
+ 
+ /*
+  * data read operation

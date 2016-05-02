@@ -1,0 +1,110 @@
+From: David Howells <dhowells@redhat.com>
+Date: Tue, 24 Feb 2015 10:39:28 +0000
+Subject: [PATCH] FS-Cache: Move fscache_report_unexpected_submission() to make
+ it more available
+Git-commit: 3c3059841a9b99fa8dd8d878607deceec1e363e9
+Patch-mainline: v4.2
+References: bsc#971049
+
+Move fscache_report_unexpected_submission() up within operation.c so that it
+can be called from fscache_submit_exclusive_op() too.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Reviewed-by: Steve Dickson <steved@redhat.com>
+Acked-by: Jeff Layton <jeff.layton@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/fscache/operation.c |   74 ++++++++++++++++++++++++-------------------------
+ 1 file changed, 37 insertions(+), 37 deletions(-)
+
+--- a/fs/fscache/operation.c
++++ b/fs/fscache/operation.c
+@@ -77,6 +77,43 @@ static void fscache_run_op(struct fscach
+ }
+ 
+ /*
++ * report an unexpected submission
++ */
++static void fscache_report_unexpected_submission(struct fscache_object *object,
++						 struct fscache_operation *op,
++						 const struct fscache_state *ostate)
++{
++	static bool once_only;
++	struct fscache_operation *p;
++	unsigned n;
++
++	if (once_only)
++		return;
++	once_only = true;
++
++	kdebug("unexpected submission OP%x [OBJ%x %s]",
++	       op->debug_id, object->debug_id, object->state->name);
++	kdebug("objstate=%s [%s]", object->state->name, ostate->name);
++	kdebug("objflags=%lx", object->flags);
++	kdebug("objevent=%lx [%lx]", object->events, object->event_mask);
++	kdebug("ops=%u inp=%u exc=%u",
++	       object->n_ops, object->n_in_progress, object->n_exclusive);
++
++	if (!list_empty(&object->pending_ops)) {
++		n = 0;
++		list_for_each_entry(p, &object->pending_ops, pend_link) {
++			ASSERTCMP(p->object, ==, object);
++			kdebug("%p %p", op->processor, op->release);
++			n++;
++		}
++
++		kdebug("n=%u", n);
++	}
++
++	dump_stack();
++}
++
++/*
+  * submit an exclusive operation for an object
+  * - other ops are excluded from running simultaneously with this one
+  * - this gets any extra refs it needs on an op
+@@ -140,43 +177,6 @@ int fscache_submit_exclusive_op(struct f
+ }
+ 
+ /*
+- * report an unexpected submission
+- */
+-static void fscache_report_unexpected_submission(struct fscache_object *object,
+-						 struct fscache_operation *op,
+-						 const struct fscache_state *ostate)
+-{
+-	static bool once_only;
+-	struct fscache_operation *p;
+-	unsigned n;
+-
+-	if (once_only)
+-		return;
+-	once_only = true;
+-
+-	kdebug("unexpected submission OP%x [OBJ%x %s]",
+-	       op->debug_id, object->debug_id, object->state->name);
+-	kdebug("objstate=%s [%s]", object->state->name, ostate->name);
+-	kdebug("objflags=%lx", object->flags);
+-	kdebug("objevent=%lx [%lx]", object->events, object->event_mask);
+-	kdebug("ops=%u inp=%u exc=%u",
+-	       object->n_ops, object->n_in_progress, object->n_exclusive);
+-
+-	if (!list_empty(&object->pending_ops)) {
+-		n = 0;
+-		list_for_each_entry(p, &object->pending_ops, pend_link) {
+-			ASSERTCMP(p->object, ==, object);
+-			kdebug("%p %p", op->processor, op->release);
+-			n++;
+-		}
+-
+-		kdebug("n=%u", n);
+-	}
+-
+-	dump_stack();
+-}
+-
+-/*
+  * submit an operation for an object
+  * - objects may be submitted only in the following states:
+  *   - during object creation (write ops may be submitted)

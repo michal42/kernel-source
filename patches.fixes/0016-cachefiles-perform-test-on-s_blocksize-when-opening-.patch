@@ -1,0 +1,57 @@
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 4 Nov 2015 15:20:34 +0000
+Subject: [PATCH] cachefiles: perform test on s_blocksize when opening cache
+ file.
+Git-commit: 95201a40604791bc4a2e8d066429be89fb82b46d
+Patch-mainline: v4.4
+References: bsc#971049
+
+cachefiles requires that s_blocksize in the cache is not greater than
+PAGE_SIZE, and performs the check every time a block is accessed.
+
+Move the test to the place where the file is "opened", where other
+file-validity tests are performed.
+
+Signed-off-by: NeilBrown <neilb@suse.de>
+Signed-off-by: David Howells <dhowells@redhat.com>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/cachefiles/namei.c |    2 ++
+ fs/cachefiles/rdwr.c  |    6 ------
+ 2 files changed, 2 insertions(+), 6 deletions(-)
+
+--- a/fs/cachefiles/namei.c
++++ b/fs/cachefiles/namei.c
+@@ -663,6 +663,8 @@ lookup_again:
+ 			aops = object->dentry->d_inode->i_mapping->a_ops;
+ 			if (!aops->bmap)
+ 				goto check_error;
++			if (object->dentry->d_sb->s_blocksize > PAGE_SIZE)
++				goto check_error;
+ 
+ 			object->backer = object->dentry;
+ 		} else {
+--- a/fs/cachefiles/rdwr.c
++++ b/fs/cachefiles/rdwr.c
+@@ -420,9 +420,6 @@ int cachefiles_read_or_alloc_page(struct
+ 	ASSERT(inode->i_mapping->a_ops->readpages);
+ 
+ 	/* calculate the shift required to use bmap */
+-	if (inode->i_sb->s_blocksize > PAGE_SIZE)
+-		goto enobufs;
+-
+ 	shift = PAGE_SHIFT - inode->i_sb->s_blocksize_bits;
+ 
+ 	op->op.flags &= FSCACHE_OP_KEEP_FLAGS;
+@@ -724,9 +721,6 @@ int cachefiles_read_or_alloc_pages(struc
+ 	ASSERT(inode->i_mapping->a_ops->readpages);
+ 
+ 	/* calculate the shift required to use bmap */
+-	if (inode->i_sb->s_blocksize > PAGE_SIZE)
+-		goto all_enobufs;
+-
+ 	shift = PAGE_SHIFT - inode->i_sb->s_blocksize_bits;
+ 
+ 	pagevec_init(&pagevec, 0);
