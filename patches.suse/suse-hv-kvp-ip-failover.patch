@@ -56,7 +56,7 @@ Acked-by: <ohering@suse.de>
  static int kvp_handle_handshake(struct hv_kvp_msg *msg)
  {
  	switch (msg->kvp_hdr.operation) {
-@@ -154,6 +161,13 @@ static int kvp_handle_handshake(struct h
+@@ -154,6 +161,12 @@ static int kvp_handle_handshake(struct h
  	pr_debug("KVP: userspace daemon ver. %d registered\n",
  		 KVP_OP_REGISTER);
  	kvp_register(dm_reg_value);
@@ -66,7 +66,6 @@ Acked-by: <ohering@suse.de>
 +	 * work to not poll the channel twice.
 +	 */
 +	cancel_delayed_work_sync(&kvp_host_handshake_work);
-+
  	hv_poll_channel(kvp_transaction.recv_channel, kvp_poll_wrapper);
  
  	return 0;
@@ -102,6 +101,14 @@ Acked-by: <ohering@suse.de>
  	}
  
  }
+@@ -708,6 +738,7 @@ hv_kvp_init(struct hv_util_service *srv)
+ void hv_kvp_deinit(void)
+ {
+ 	kvp_transaction.state = HVUTIL_DEVICE_DYING;
++	cancel_delayed_work_sync(&kvp_host_handshake_work);
+ 	cancel_delayed_work_sync(&kvp_timeout_work);
+ 	cancel_work_sync(&kvp_sendkey_work);
+ 	hvutil_transport_destroy(hvt);
 --- a/drivers/hv/hyperv_vmbus.h
 +++ b/drivers/hv/hyperv_vmbus.h
 @@ -31,6 +31,11 @@
