@@ -3613,7 +3613,7 @@ Acked-by: jbeulich@suse.com
  	early_make_page_readonly(init_level4_pgt,
  				 XENFEAT_writable_page_tables);
  	early_make_page_readonly(__user_pgd(init_level4_pgt),
-@@ -783,7 +865,8 @@ void __init xen_init_pt(void)
+@@ -783,7 +867,8 @@ void __init xen_init_pt(void)
  
  void __init xen_finish_init_mapping(void)
  {
@@ -3623,7 +3623,7 @@ Acked-by: jbeulich@suse.com
  
  	/* Re-vector virtual addresses pointing into the initial
  	   mapping to the just-established permanent ones. */
-@@ -800,17 +883,24 @@ void __init xen_finish_init_mapping(void
+@@ -800,17 +885,24 @@ void __init xen_finish_init_mapping(void
  		xen_start_info->mod_start = (unsigned long)
  			__va(__pa(xen_start_info->mod_start));
  
@@ -3657,7 +3657,7 @@ Acked-by: jbeulich@suse.com
  }
  
  unsigned long __meminit
-@@ -828,42 +918,34 @@ kernel_physical_mapping_init(unsigned lo
+@@ -828,42 +920,34 @@ kernel_physical_mapping_init(unsigned lo
  
  	for (; start < end; start = next) {
  		pgd_t *pgd = pgd_offset_k(start);
@@ -3710,7 +3710,7 @@ Acked-by: jbeulich@suse.com
  
  	return last_map_addr;
  }
-@@ -922,13 +1004,11 @@ int arch_add_memory(int nid, u64 start,
+@@ -922,13 +1006,11 @@ int arch_add_memory(int nid, u64 start,
  {
  	struct pglist_data *pgdat = NODE_DATA(nid);
  	struct zone *zone = pgdat->node_zones + ZONE_NORMAL;
@@ -3726,7 +3726,7 @@ Acked-by: jbeulich@suse.com
  
  	ret = __add_pages(nid, zone, start_pfn, nr_pages);
  	WARN_ON_ONCE(ret);
-@@ -940,10 +1020,357 @@ int arch_add_memory(int nid, u64 start,
+@@ -940,10 +1022,357 @@ int arch_add_memory(int nid, u64 start,
  }
  EXPORT_SYMBOL_GPL(arch_add_memory);
  
@@ -4084,7 +4084,7 @@ Acked-by: jbeulich@suse.com
  void __init mem_init(void)
  {
  	long codesize, reservedpages, datasize, initsize;
-@@ -957,11 +1384,8 @@ void __init mem_init(void)
+@@ -957,11 +1386,8 @@ void __init mem_init(void)
  	reservedpages = 0;
  
  	/* this will put all low memory onto the freelists */
@@ -4097,7 +4097,7 @@ Acked-by: jbeulich@suse.com
  
  	/* XEN: init pages outside initial allocation. */
  	for (pfn = xen_start_info->nr_pages; pfn < max_pfn; pfn++) {
-@@ -1037,12 +1461,11 @@ void set_kernel_text_ro(void)
+@@ -1037,12 +1463,11 @@ void set_kernel_text_ro(void)
  void mark_rodata_ro(void)
  {
  	unsigned long start = PFN_ALIGN(_text);
@@ -4114,7 +4114,7 @@ Acked-by: jbeulich@suse.com
  
  	printk(KERN_INFO "Write protecting the kernel read-only data: %luk\n",
  	       (end - start) >> 10);
-@@ -1051,10 +1474,10 @@ void mark_rodata_ro(void)
+@@ -1051,10 +1476,10 @@ void mark_rodata_ro(void)
  	kernel_set_to_readonly = 1;
  
  	/*
@@ -4128,7 +4128,7 @@ Acked-by: jbeulich@suse.com
  
  	rodata_test();
  
-@@ -1067,12 +1490,12 @@ void mark_rodata_ro(void)
+@@ -1067,12 +1492,12 @@ void mark_rodata_ro(void)
  #endif
  
  	free_init_pages("unused kernel memory",
@@ -4146,7 +4146,7 @@ Acked-by: jbeulich@suse.com
  }
  
  #endif
-@@ -1262,10 +1685,70 @@ vmemmap_populate(struct page *start_page
+@@ -1262,10 +1687,70 @@ vmemmap_populate(struct page *start_page
  		}
  
  	}
@@ -5419,7 +5419,7 @@ Acked-by: jbeulich@suse.com
  		err = -EINVAL;
 --- a/drivers/xen/xen-pciback/pciback_ops.c
 +++ b/drivers/xen/xen-pciback/pciback_ops.c
-@@ -147,7 +147,8 @@ void xen_pcibk_reset_device(struct pci_d
+@@ -154,7 +154,8 @@ void xen_pcibk_reset_device(struct pci_d
  #ifdef CONFIG_PCI_MSI
  static
  int xen_pcibk_enable_msi(struct xen_pcibk_device *pdev,
@@ -5429,7 +5429,7 @@ Acked-by: jbeulich@suse.com
  {
  #ifndef CONFIG_XEN
  	struct xen_pcibk_dev_data *dev_data;
-@@ -157,13 +158,13 @@ int xen_pcibk_enable_msi(struct xen_pcib
+@@ -169,13 +170,17 @@ int xen_pcibk_enable_msi(struct xen_pcib
  	else if (dev->msix_enabled)
  		status = -ENXIO;
  	else
@@ -5437,15 +5437,22 @@ Acked-by: jbeulich@suse.com
 +		status = pci_enable_msi_block(dev, nvec);
  
  	if (status) {
- 		pr_warn_ratelimited("%s: error enabling MSI for guest %u: err %d\n",
- 				    pci_name(dev), pdev->xdev->otherend_id,
- 				    status);
+-		pr_warn_ratelimited("%s: error enabling MSI for guest %u: err %d\n",
+-				    pci_name(dev), pdev->xdev->otherend_id,
+-				    status);
 -		op->value = 0;
-+		op->value = status > 0 && status < nvec ? status : 0;
++		if (status > 0 && status < nvec)
++			op->value = status;
++		else {
++			pr_warn_ratelimited("%s: error %d enabling %u-vector MSI for Dom%u\n",
++					    pci_name(dev), status, nvec,
++					    pdev->xdev->otherend_id);
++			op->value = 0;
++		}
  		return XEN_PCI_ERR_op_failed;
  	}
  
-@@ -367,7 +368,11 @@ void xen_pcibk_do_op(struct work_struct
+@@ -406,7 +411,11 @@ void xen_pcibk_do_op(struct work_struct
  			break;
  #ifdef CONFIG_PCI_MSI
  		case XEN_PCI_OP_enable_msi:
