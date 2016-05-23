@@ -19,13 +19,11 @@ Signed-off-by: David S. Miller <davem@davemloft.net>
 Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
- include/net/ip6_fib.h | 13 +++++----
- net/ipv6/ip6_fib.c    | 77 ++++++++++++++++++++++++++-------------------------
- net/ipv6/route.c      | 57 +++++++++++++++++++++++++++++++-------
- 3 files changed, 94 insertions(+), 53 deletions(-)
+ include/net/ip6_fib.h |   13 ++++----
+ net/ipv6/ip6_fib.c    |   80 +++++++++++++++++++++++++-------------------------
+ net/ipv6/route.c      |   60 +++++++++++++++++++++++++++++++------
+ 3 files changed, 97 insertions(+), 56 deletions(-)
 
-diff --git a/include/net/ip6_fib.h b/include/net/ip6_fib.h
-index 4895e351c2ab..d31c1a77f1ef 100644
 --- a/include/net/ip6_fib.h
 +++ b/include/net/ip6_fib.h
 @@ -74,6 +74,11 @@ struct fib6_node {
@@ -40,7 +38,7 @@ index 4895e351c2ab..d31c1a77f1ef 100644
  /*
   *	routing information
   *
-@@ -290,12 +295,8 @@ extern void			fib6_clean_all(struct net *net,
+@@ -290,12 +295,8 @@ extern void			fib6_clean_all(struct net
  					       int (*func)(struct rt6_info *, void *arg),
  					       int prune, void *arg);
  
@@ -55,11 +53,9 @@ index 4895e351c2ab..d31c1a77f1ef 100644
  extern int			fib6_del(struct rt6_info *rt,
  					 struct nl_info *info);
  
-diff --git a/net/ipv6/ip6_fib.c b/net/ipv6/ip6_fib.c
-index 6e900cac429b..a54d15334af7 100644
 --- a/net/ipv6/ip6_fib.c
 +++ b/net/ipv6/ip6_fib.c
-@@ -661,31 +661,35 @@ static void fib6_purge_rt(struct rt6_info *rt, struct fib6_node *fn,
+@@ -661,34 +661,35 @@ static void fib6_purge_rt(struct rt6_inf
  	}
  }
  
@@ -86,14 +82,17 @@ index 6e900cac429b..a54d15334af7 100644
 -			if (type > RTAX_MAX)
 -				return -EINVAL;
 -
--			mp[type - 1] = nla_get_u32(nla);
+-			if (type == RTAX_HOPLIMIT && nla_get_u32(nla) > 255)
+-				mp[type - 1] = 255;
+-			else
+-				mp[type - 1] = nla_get_u32(nla);
 -		}
 +	int i;
 +
 +	for (i = 0; i < RTAX_MAX; i++) {
 +		if (test_bit(i, mxc->mx_valid))
 +			mp[i] = mxc->mx[i];
-+	}
+ 	}
 +}
 +
 +static int fib6_commit_metrics(struct dst_entry *dst, struct mx6_config *mxc)
@@ -113,12 +112,12 @@ index 6e900cac429b..a54d15334af7 100644
 +
 +		/* We've stolen mx now. */
 +		mxc->mx = NULL;
- 	}
++	}
 +
  	return 0;
  }
  
-@@ -694,7 +698,7 @@ static int fib6_commit_metrics(struct dst_entry *dst,
+@@ -697,7 +698,7 @@ static int fib6_commit_metrics(struct ds
   */
  
  static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
@@ -127,7 +126,7 @@ index 6e900cac429b..a54d15334af7 100644
  {
  	struct rt6_info *iter = NULL;
  	struct rt6_info **ins;
-@@ -817,11 +821,10 @@ next_iter:
+@@ -820,11 +821,10 @@ next_iter:
  			pr_warn("NLM_F_CREATE should be set when creating new route\n");
  
  add:
@@ -143,7 +142,7 @@ index 6e900cac429b..a54d15334af7 100644
  		rt->dst.rt6_next = iter;
  		*ins = rt;
  		rt->rt6i_node = fn;
-@@ -843,11 +846,11 @@ add:
+@@ -846,11 +846,11 @@ add:
  			pr_warn("NLM_F_REPLACE set, but no existing node found!\n");
  			return -ENOENT;
  		}
@@ -160,7 +159,7 @@ index 6e900cac429b..a54d15334af7 100644
  		*ins = rt;
  		rt->rt6i_node = fn;
  		rt->dst.rt6_next = iter->dst.rt6_next;
-@@ -904,8 +907,8 @@ void fib6_force_start_gc(struct net *net)
+@@ -907,8 +907,8 @@ void fib6_force_start_gc(struct net *net
   *	with source addr info in sub-trees
   */
  
@@ -171,7 +170,7 @@ index 6e900cac429b..a54d15334af7 100644
  {
  	struct fib6_node *fn, *pn = NULL;
  	int err = -ENOMEM;
-@@ -999,7 +1002,7 @@ int fib6_add(struct fib6_node *root, struct rt6_info *rt, struct nl_info *info,
+@@ -1002,7 +1002,7 @@ int fib6_add(struct fib6_node *root, str
  	}
  #endif
  
@@ -180,8 +179,6 @@ index 6e900cac429b..a54d15334af7 100644
  	if (!err) {
  		fib6_start_gc(info->nl_net, rt);
  		if (!(rt->rt6i_flags & RTF_CACHE))
-diff --git a/net/ipv6/route.c b/net/ipv6/route.c
-index ceac22751870..4bdd662ded0d 100644
 --- a/net/ipv6/route.c
 +++ b/net/ipv6/route.c
 @@ -845,14 +845,14 @@ EXPORT_SYMBOL(rt6_lookup);
@@ -201,7 +198,7 @@ index ceac22751870..4bdd662ded0d 100644
  	write_unlock_bh(&table->tb6_lock);
  
  	return err;
-@@ -860,10 +860,10 @@ static int __ip6_ins_rt(struct rt6_info *rt, struct nl_info *info,
+@@ -860,10 +860,10 @@ static int __ip6_ins_rt(struct rt6_info
  
  int ip6_ins_rt(struct rt6_info *rt)
  {
@@ -216,7 +213,7 @@ index ceac22751870..4bdd662ded0d 100644
  }
  
  static struct rt6_info *rt6_alloc_cow(struct rt6_info *ort,
-@@ -1456,9 +1456,39 @@ out:
+@@ -1456,9 +1456,42 @@ out:
  	return entries > rt_max_size;
  }
  
@@ -244,7 +241,10 @@ index ceac22751870..4bdd662ded0d 100644
 +			if (unlikely(type > RTAX_MAX))
 +				goto err;
 +
-+			mp[type - 1] = nla_get_u32(nla);
++			if (type == RTAX_HOPLIMIT && nla_get_u32(nla) > 255)
++				mp[type - 1] = 255;
++			else
++				mp[type - 1] = nla_get_u32(nla);
 +			__set_bit(type - 1, mxc->mx_valid);
 +		}
 +	}
@@ -259,7 +259,7 @@ index ceac22751870..4bdd662ded0d 100644
  
  int ip6_route_add(struct fib6_config *cfg)
  {
-@@ -1468,6 +1498,7 @@ int ip6_route_add(struct fib6_config *cfg)
+@@ -1468,6 +1501,7 @@ int ip6_route_add(struct fib6_config *cf
  	struct net_device *dev = NULL;
  	struct inet6_dev *idev = NULL;
  	struct fib6_table *table;
@@ -267,7 +267,7 @@ index ceac22751870..4bdd662ded0d 100644
  	int addr_type;
  
  	if (cfg->fc_dst_len > 128 || cfg->fc_src_len > 128)
-@@ -1663,8 +1694,14 @@ install_route:
+@@ -1663,8 +1697,14 @@ install_route:
  
  	cfg->fc_nlinfo.nl_net = dev_net(dev);
  
@@ -283,6 +283,3 @@ index ceac22751870..4bdd662ded0d 100644
  out:
  	if (dev)
  		dev_put(dev);
--- 
-2.4.4
-
