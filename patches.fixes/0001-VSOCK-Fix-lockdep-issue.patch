@@ -1,0 +1,39 @@
+From 8566b86ab9f0f45bc6f7dd422b21de9d0cf5415a Mon Sep 17 00:00:00 2001
+From: Jorgen Hansen <jhansen@vmware.com>
+Date: Thu, 22 Oct 2015 08:25:25 -0700
+Subject: [PATCH] VSOCK: Fix lockdep issue.
+Git-commit: 8566b86ab9f0f45bc6f7dd422b21de9d0cf5415a
+Patch-mainline: v4.3
+References: bsc#977417
+
+The recent fix for the vsock sock_put issue used the wrong
+initializer for the transport spin_lock causing an issue when
+running with lockdep checking.
+
+Testing: Verified fix on kernel with lockdep enabled.
+
+Reviewed-by: Thomas Hellstrom <thellstrom@vmware.com>
+Signed-off-by: Jorgen Hansen <jhansen@vmware.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Roberto Sassu <rsassu@suse.de>
+
+---
+ net/vmw_vsock/vmci_transport.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/vmw_vsock/vmci_transport.c b/net/vmw_vsock/vmci_transport.c
+index 5243ce2..7555cad 100644
+--- a/net/vmw_vsock/vmci_transport.c
++++ b/net/vmw_vsock/vmci_transport.c
+@@ -1570,7 +1570,7 @@ static int vmci_transport_socket_init(struct vsock_sock *vsk,
+ 	vmci_trans(vsk)->notify_ops = NULL;
+ 	INIT_LIST_HEAD(&vmci_trans(vsk)->elem);
+ 	vmci_trans(vsk)->sk = &vsk->sk;
+-	vmci_trans(vsk)->lock = __SPIN_LOCK_UNLOCKED(vmci_trans(vsk)->lock);
++	spin_lock_init(&vmci_trans(vsk)->lock);
+ 	if (psk) {
+ 		vmci_trans(vsk)->queue_pair_size =
+ 			vmci_trans(psk)->queue_pair_size;
+-- 
+2.1.4
+
