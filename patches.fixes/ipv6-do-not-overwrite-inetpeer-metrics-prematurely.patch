@@ -59,9 +59,9 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
 ---
  include/net/dst.h     |   11 +++++++++--
  include/net/ip6_fib.h |    4 +++-
- net/ipv6/ip6_fib.c    |   47 ++++++++++++++++++++++++++++++++++++++++++++---
- net/ipv6/route.c      |   44 +++++++++++---------------------------------
- 4 files changed, 67 insertions(+), 39 deletions(-)
+ net/ipv6/ip6_fib.c    |   50 +++++++++++++++++++++++++++++++++++++++++++++++---
+ net/ipv6/route.c      |   48 +++++++++++-------------------------------------
+ 4 files changed, 70 insertions(+), 43 deletions(-)
 
 --- a/include/net/dst.h
 +++ b/include/net/dst.h
@@ -106,7 +106,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  					 struct nl_info *info);
 --- a/net/ipv6/ip6_fib.c
 +++ b/net/ipv6/ip6_fib.c
-@@ -661,12 +661,41 @@ static void fib6_purge_rt(struct rt6_inf
+@@ -661,12 +661,44 @@ static void fib6_purge_rt(struct rt6_inf
  	}
  }
  
@@ -133,7 +133,10 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
 +			if (type > RTAX_MAX)
 +				return -EINVAL;
 +
-+			mp[type - 1] = nla_get_u32(nla);
++			if (type == RTAX_HOPLIMIT && nla_get_u32(nla) > 255)
++				mp[type - 1] = 255;
++			else
++				mp[type - 1] = nla_get_u32(nla);
 +		}
 +	}
 +	return 0;
@@ -149,7 +152,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  {
  	struct rt6_info *iter = NULL;
  	struct rt6_info **ins;
-@@ -676,6 +705,7 @@ static int fib6_add_rt2node(struct fib6_
+@@ -676,6 +708,7 @@ static int fib6_add_rt2node(struct fib6_
  		   (info->nlh->nlmsg_flags & NLM_F_CREATE));
  	int found = 0;
  	bool rt_can_ecmp = rt6_qualify_for_ecmp(rt);
@@ -157,7 +160,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  
  	ins = &fn->leaf;
  
-@@ -774,6 +804,11 @@ static int fib6_add_rt2node(struct fib6_
+@@ -774,6 +807,11 @@ static int fib6_add_rt2node(struct fib6_
  			pr_warn("NLM_F_CREATE should be set when creating new route\n");
  
  add:
@@ -169,7 +172,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  		rt->dst.rt6_next = iter;
  		*ins = rt;
  		rt->rt6i_node = fn;
-@@ -793,6 +828,11 @@ add:
+@@ -793,6 +831,11 @@ add:
  			pr_warn("NLM_F_REPLACE set, but no existing node found!\n");
  			return -ENOENT;
  		}
@@ -181,7 +184,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  		*ins = rt;
  		rt->rt6i_node = fn;
  		rt->dst.rt6_next = iter->dst.rt6_next;
-@@ -830,7 +870,8 @@ void fib6_force_start_gc(struct net *net
+@@ -830,7 +873,8 @@ void fib6_force_start_gc(struct net *net
   *	with source addr info in sub-trees
   */
  
@@ -191,7 +194,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  {
  	struct fib6_node *fn, *pn = NULL;
  	int err = -ENOMEM;
-@@ -924,7 +965,7 @@ int fib6_add(struct fib6_node *root, str
+@@ -924,7 +968,7 @@ int fib6_add(struct fib6_node *root, str
  	}
  #endif
  
@@ -261,7 +264,7 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
  #ifdef CONFIG_IPV6_SUBTREES
  	ipv6_addr_prefix(&rt->rt6i_src.addr, &cfg->fc_src, cfg->fc_src_len);
  	rt->rt6i_src.plen = cfg->fc_src_len;
-@@ -1661,31 +1657,13 @@ int ip6_route_add(struct fib6_config *cf
+@@ -1661,35 +1657,13 @@ int ip6_route_add(struct fib6_config *cf
  	rt->rt6i_flags = cfg->fc_flags;
  
  install_route:
@@ -278,7 +281,11 @@ Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
 -					goto out;
 -				}
 -
--				dst_metric_set(&rt->dst, type, nla_get_u32(nla));
+-				if (type == RTAX_HOPLIMIT && nla_get_u32(nla) > 255)
+-					dst_metric_set(&rt->dst, type, 255);
+-				else
+-					dst_metric_set(&rt->dst, type,
+-						nla_get_u32(nla));
 -			}
 -		}
 -	}

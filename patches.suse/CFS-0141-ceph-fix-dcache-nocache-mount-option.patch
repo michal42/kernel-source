@@ -1,0 +1,46 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 4 Mar 2015 16:05:04 +0800
+Subject: [PATCH] ceph: fix dcache/nocache mount option
+Git-commit: e2c3de046c5a1f3525772b4cacc7731cb626ab61
+Patch-mainline: v4.1
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c   |    2 ++
+ fs/ceph/super.h |    3 ++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -281,6 +281,7 @@ static int ceph_readdir(struct file *fil
+ 	/* can we use the dcache? */
+ 	spin_lock(&ci->i_ceph_lock);
+ 	if ((ctx->pos == 2 || fi->dentry) &&
++	    ceph_test_mount_opt(fsc, DCACHE) &&
+ 	    !ceph_test_mount_opt(fsc, NOASYNCREADDIR) &&
+ 	    ceph_snap(inode) != CEPH_SNAPDIR &&
+ 	    __ceph_dir_is_complete_ordered(ci) &&
+@@ -629,6 +630,7 @@ static struct dentry *ceph_lookup(struct
+ 			    fsc->mount_options->snapdir_name,
+ 			    dentry->d_name.len) &&
+ 		    !is_root_ceph_dentry(dir, dentry) &&
++		    ceph_test_mount_opt(fsc, DCACHE) &&
+ 		    __ceph_dir_is_complete(ci) &&
+ 		    (__ceph_caps_issued_mask(ci, CEPH_CAP_FILE_SHARED, 1))) {
+ 			spin_unlock(&ci->i_ceph_lock);
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -36,7 +36,8 @@
+ #define CEPH_MOUNT_OPT_DCACHE          (1<<9) /* use dcache for readdir etc */
+ #define CEPH_MOUNT_OPT_FSCACHE         (1<<10) /* use fscache */
+ 
+-#define CEPH_MOUNT_OPT_DEFAULT    (CEPH_MOUNT_OPT_RBYTES)
++#define CEPH_MOUNT_OPT_DEFAULT    (CEPH_MOUNT_OPT_RBYTES | \
++				   CEPH_MOUNT_OPT_DCACHE)
+ 
+ #define ceph_set_mount_opt(fsc, opt) \
+ 	(fsc)->mount_options->flags |= CEPH_MOUNT_OPT_##opt;

@@ -1,0 +1,58 @@
+From: Jake Oshins <jakeo@microsoft.com>
+Date: Tue, 8 Mar 2016 12:26:29 +0100
+Patch-mainline: submitted (lkml - https://www.mail-archive.com/linux-kernel@vger.kernel.org/msg1097523.html)
+Subject: hv: Make a function to free mmio regions through vmbus
+References: bnc#965924
+
+This patch introduces a function that reverses everything done by
+vmbus_allocate_mmio(). Existing code just called release_mem_region().
+Future patches in this series require a more complex sequence of
+actions, so this function is introduced to wrap those actions.
+
+For SLE12-SP1.
+
+Signed-off-by: Jake Oshins <jakeo@microsoft.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/hv/vmbus_drv.c | 14 ++++++++++++++
+ include/linux/hyperv.h |  2 +-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index 2b5869c..44074fbd 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -1230,6 +1230,20 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
+ EXPORT_SYMBOL_GPL(vmbus_allocate_mmio);
+ 
+ /**
++ * vmbus_free_mmio() - Free a memory-mapped I/O range.
++ * @start:		Base address of region to release.
++ * @size:		Size of the range to be allocated
++ *
++ * This function releases anything requested by
++ * vmbus_mmio_allocate().
++ */
++void vmbus_free_mmio(resource_size_t start, resource_size_t size) {
++	release_mem_region(start, size);
++
++}
++EXPORT_SYMBOL_GPL(vmbus_free_mmio);
++
++/**
+  * vmbus_cpu_number_to_vp_number() - Map CPU to VP.
+  * @cpu_number: CPU number in Linux terms
+  *
+diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
+index 69eb79e..289e1a1 100644
+--- a/include/linux/hyperv.h
++++ b/include/linux/hyperv.h
+@@ -984,7 +984,7 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
+ 			resource_size_t min, resource_size_t max,
+ 			resource_size_t size, resource_size_t align,
+ 			bool fb_overlap_ok);
+-
++void vmbus_free_mmio(resource_size_t start, resource_size_t size);
+ int vmbus_cpu_number_to_vp_number(int cpu_number);
+ u64 hv_do_hypercall(u64 control, void *input, void *output);
+ 

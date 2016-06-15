@@ -1,0 +1,121 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 20 Jul 2015 09:50:58 +0800
+Subject: [PATCH] ceph: always re-send cap flushes when MDS recovers
+Git-commit: fc927cd32feca2acefd90a4ac317fa4f0a2e5955
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+commit e548e9b93d3e565e42b938a99804114565be1f81 makes the kclient
+only re-send cap flush once during MDS failover. If the kclient sends
+a cap flush after MDS enters reconnect stage but before MDS recovers.
+The kclient will skip re-sending the same cap flush when MDS recovers.
+
+This causes problem for newly created inode. The MDS handles cap
+flushes before replaying unsafe requests, so it's possible that MDS
+find corresponding inode is missing when handling cap flush. The fix
+is reverting to old behaviour: always re-send when MDS recovers
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c  |   22 +++++-----------------
+ fs/ceph/super.h |    1 -
+ 2 files changed, 5 insertions(+), 18 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1506,7 +1506,6 @@ static int __mark_caps_flushing(struct i
+ 
+ 	swap(cf, ci->i_prealloc_cap_flush);
+ 	cf->caps = flushing;
+-	cf->kick = false;
+ 
+ 	spin_lock(&mdsc->cap_dirty_lock);
+ 	list_del_init(&ci->i_dirty_item);
+@@ -2123,8 +2122,7 @@ static void kick_flushing_capsnaps(struc
+ 
+ static int __kick_flushing_caps(struct ceph_mds_client *mdsc,
+ 				struct ceph_mds_session *session,
+-				struct ceph_inode_info *ci,
+-				bool kick_all)
++				struct ceph_inode_info *ci)
+ {
+ 	struct inode *inode = &ci->vfs_inode;
+ 	struct ceph_cap *cap;
+@@ -2150,9 +2148,7 @@ static int __kick_flushing_caps(struct c
+ 
+ 		for (n = rb_first(&ci->i_cap_flush_tree); n; n = rb_next(n)) {
+ 			cf = rb_entry(n, struct ceph_cap_flush, i_node);
+-			if (cf->tid < first_tid)
+-				continue;
+-			if (kick_all || cf->kick)
++			if (cf->tid >= first_tid)
+ 				break;
+ 		}
+ 		if (!n) {
+@@ -2161,7 +2157,6 @@ static int __kick_flushing_caps(struct c
+ 		}
+ 
+ 		cf = rb_entry(n, struct ceph_cap_flush, i_node);
+-		cf->kick = false;
+ 
+ 		first_tid = cf->tid + 1;
+ 
+@@ -2181,8 +2176,6 @@ void ceph_early_kick_flushing_caps(struc
+ {
+ 	struct ceph_inode_info *ci;
+ 	struct ceph_cap *cap;
+-	struct ceph_cap_flush *cf;
+-	struct rb_node *n;
+ 
+ 	dout("early_kick_flushing_caps mds%d\n", session->s_mds);
+ 	list_for_each_entry(ci, &session->s_cap_flushing, i_flushing_item) {
+@@ -2205,16 +2198,11 @@ void ceph_early_kick_flushing_caps(struc
+ 		if ((cap->issued & ci->i_flushing_caps) !=
+ 		    ci->i_flushing_caps) {
+ 			spin_unlock(&ci->i_ceph_lock);
+-			if (!__kick_flushing_caps(mdsc, session, ci, true))
++			if (!__kick_flushing_caps(mdsc, session, ci))
+ 				continue;
+ 			spin_lock(&ci->i_ceph_lock);
+ 		}
+ 
+-		for (n = rb_first(&ci->i_cap_flush_tree); n; n = rb_next(n)) {
+-			cf = rb_entry(n, struct ceph_cap_flush, i_node);
+-			cf->kick = true;
+-		}
+-
+ 		spin_unlock(&ci->i_ceph_lock);
+ 	}
+ }
+@@ -2228,7 +2216,7 @@ void ceph_kick_flushing_caps(struct ceph
+ 
+ 	dout("kick_flushing_caps mds%d\n", session->s_mds);
+ 	list_for_each_entry(ci, &session->s_cap_flushing, i_flushing_item) {
+-		int delayed = __kick_flushing_caps(mdsc, session, ci, false);
++		int delayed = __kick_flushing_caps(mdsc, session, ci);
+ 		if (delayed) {
+ 			spin_lock(&ci->i_ceph_lock);
+ 			__cap_delay_requeue(mdsc, ci);
+@@ -2261,7 +2249,7 @@ static void kick_flushing_inode_caps(str
+ 
+ 		spin_unlock(&ci->i_ceph_lock);
+ 
+-		delayed = __kick_flushing_caps(mdsc, session, ci, true);
++		delayed = __kick_flushing_caps(mdsc, session, ci);
+ 		if (delayed) {
+ 			spin_lock(&ci->i_ceph_lock);
+ 			__cap_delay_requeue(mdsc, ci);
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -189,7 +189,6 @@ static inline void ceph_put_cap_snap(str
+ struct ceph_cap_flush {
+ 	u64 tid;
+ 	int caps;
+-	bool kick;
+ 	struct rb_node g_node; // global
+ 	union {
+ 		struct rb_node i_node; // inode

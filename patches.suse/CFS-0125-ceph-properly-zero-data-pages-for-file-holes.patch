@@ -1,0 +1,54 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 6 Jan 2015 15:29:14 +0800
+Subject: [PATCH] ceph: properly zero data pages for file holes.
+Git-commit: 1487a688d8ea596e6710b0d256300ab10ce99284
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+A bug is found in striped_read() of fs/ceph/file.c. striped_read() calls
+ceph_zero_pape_vector_range().  The first argument, page_align + read + ret,
+passed to ceph_zero_pape_vector_range() is wrong.
+
+When a file has holes, this wrong parameter may cause memory corruption
+either in kernal space or user space. Kernel space memory may be corrupted in
+the case of non direct IO; user space memory may be corrupted in the case of
+direct IO. In the latter case, the application doing direct IO may crash due
+to memory corruption, as we have experienced.
+
+The correct value should be initial_align + read + ret, where intial_align =
+o_direct ? buf_align : io_align.  Compared with page_align, the current page
+offest, initial_align is the initial page offest, which should be used to
+calculate the page and offset in ceph_zero_pape_vector_range().
+
+Reported-by: caifeng zhu <zhucaifeng@unissoft-nj.com>
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/file.c |   13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -377,13 +377,14 @@ more:
+ 	if (ret >= 0) {
+ 		int didpages;
+ 		if (was_short && (pos + ret < inode->i_size)) {
+-			u64 tmp = min(this_len - ret,
+-					inode->i_size - pos - ret);
++			int zlen = min(this_len - ret,
++				       inode->i_size - pos - ret);
++			int zoff = (o_direct ? buf_align : io_align) +
++				    read + ret;
+ 			dout(" zero gap %llu to %llu\n",
+-				pos + ret, pos + ret + tmp);
+-			ceph_zero_page_vector_range(page_align + read + ret,
+-							tmp, pages);
+-			ret += tmp;
++				pos + ret, pos + ret + zlen);
++			ceph_zero_page_vector_range(zoff, zlen, pages);
++			ret += zlen;
+ 		}
+ 
+ 		didpages = (page_align + ret) >> PAGE_CACHE_SHIFT;

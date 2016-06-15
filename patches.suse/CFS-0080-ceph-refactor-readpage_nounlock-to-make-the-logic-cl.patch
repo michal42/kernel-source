@@ -1,0 +1,49 @@
+From: Zhang Zhen <zhenzhang.zhang@huawei.com>
+Date: Wed, 28 May 2014 15:09:55 +0800
+Subject: [PATCH] ceph: refactor readpage_nounlock() to make the logic clearer
+Git-commit: 23cd573b46c1f90645023ca2989bc041a0fcf38c
+Patch-mainline: v3.16
+References: Fate#318586
+
+
+If the return value of ceph_osdc_readpages() is not negative,
+it is certainly greater than or equal to zero.
+
+Remove the useless condition judgment and redundant braces.
+
+Signed-off-by: Zhang Zhen <zhenzhang.zhang@huawei.com>
+Reviewed-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c |   17 +++++++----------
+ 1 file changed, 7 insertions(+), 10 deletions(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -211,18 +211,15 @@ static int readpage_nounlock(struct file
+ 		SetPageError(page);
+ 		ceph_fscache_readpage_cancel(inode, page);
+ 		goto out;
+-	} else {
+-		if (err < PAGE_CACHE_SIZE) {
+-		/* zero fill remainder of page */
+-			zero_user_segment(page, err, PAGE_CACHE_SIZE);
+-		} else {
+-			flush_dcache_page(page);
+-		}
+ 	}
+-	SetPageUptodate(page);
++	if (err < PAGE_CACHE_SIZE)
++		/* zero fill remainder of page */
++		zero_user_segment(page, err, PAGE_CACHE_SIZE);
++	else
++		flush_dcache_page(page);
+ 
+-	if (err >= 0)
+-		ceph_readpage_to_fscache(inode, page);
++	SetPageUptodate(page);
++	ceph_readpage_to_fscache(inode, page);
+ 
+ out:
+ 	return err < 0 ? err : 0;

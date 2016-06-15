@@ -1,0 +1,62 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Tue, 11 Feb 2014 12:55:05 +0800
+Subject: [PATCH] ceph: add missing init_acl() for mkdir() and atomic_open()
+Git-commit: b20a95a0dd47c56c5d20e1c9e260293d0b87abe0
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c  |   13 ++++++++-----
+ fs/ceph/file.c |    1 +
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -695,9 +695,8 @@ static int ceph_mknod(struct inode *dir,
+ 	ceph_mdsc_put_request(req);
+ 
+ 	if (!err)
+-		err = ceph_init_acl(dentry, dentry->d_inode, dir);
+-
+-	if (err)
++		ceph_init_acl(dentry, dentry->d_inode, dir);
++	else
+ 		d_drop(dentry);
+ 	return err;
+ }
+@@ -735,7 +734,9 @@ static int ceph_symlink(struct inode *di
+ 	if (!err && !req->r_reply_info.head->is_dentry)
+ 		err = ceph_handle_notrace_create(dir, dentry);
+ 	ceph_mdsc_put_request(req);
+-	if (err)
++	if (!err)
++		ceph_init_acl(dentry, dentry->d_inode, dir);
++	else
+ 		d_drop(dentry);
+ 	return err;
+ }
+@@ -776,7 +777,9 @@ static int ceph_mkdir(struct inode *dir,
+ 		err = ceph_handle_notrace_create(dir, dentry);
+ 	ceph_mdsc_put_request(req);
+ out:
+-	if (err < 0)
++	if (!err)
++		ceph_init_acl(dentry, dentry->d_inode, dir);
++	else
+ 		d_drop(dentry);
+ 	return err;
+ }
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -286,6 +286,7 @@ int ceph_atomic_open(struct inode *dir,
+ 	} else {
+ 		dout("atomic_open finish_open on dn %p\n", dn);
+ 		if (req->r_op == CEPH_MDS_OP_CREATE && req->r_reply_info.has_create_ino) {
++			ceph_init_acl(dentry, dentry->d_inode, dir);
+ 			*opened |= FILE_CREATED;
+ 		}
+ 		err = finish_open(file, dentry, ceph_open, opened);

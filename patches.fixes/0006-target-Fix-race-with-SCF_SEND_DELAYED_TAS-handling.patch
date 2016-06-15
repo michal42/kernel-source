@@ -1,0 +1,148 @@
+From 02b408f113dfb5ba869d69f5a785dfd8c4a7d7a6 Mon Sep 17 00:00:00 2001
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Sun, 6 Mar 2016 02:55:25 +0000
+Subject: [PATCH 6/6] target: Fix race with SCF_SEND_DELAYED_TAS handling
+Patch-mainline: v4.5-rc4
+Git-commit: 310d3d314be7f0a84011ebdc4bdccbcae9755a87
+References: bsc#962872
+
+commit 310d3d314be7f0a84011ebdc4bdccbcae9755a87 upstream.
+
+This patch fixes a race between setting of SCF_SEND_DELAYED_TAS
+in transport_send_task_abort(), and check of the same bit in
+transport_check_aborted_status().
+
+It adds a __transport_check_aborted_status() version that is
+used by target_execute_cmd() when se_cmd->t_state_lock is
+held, and a transport_check_aborted_status() wrapper for
+all other existing callers.
+
+Also, it handles the case where the check happens before
+transport_send_task_abort() gets called.  For this, go
+ahead and set SCF_SEND_DELAYED_TAS early when necessary,
+and have transport_send_task_abort() send the abort.
+
+Cc: Quinn Tran <quinn.tran@qlogic.com>
+Cc: Himanshu Madhani <himanshu.madhani@qlogic.com>
+Cc: Sagi Grimberg <sagig@mellanox.com>
+Cc: Christoph Hellwig <hch@lst.de>
+Cc: Hannes Reinecke <hare@suse.de>
+Cc: Andy Grover <agrover@redhat.com>
+Cc: Mike Christie <mchristi@redhat.com>
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+Acked-by: David Disseldorp <ddiss@suse.de>
+---
+ drivers/target/target_core_transport.c | 54 ++++++++++++++++++++++++++--------
+ 1 file changed, 42 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index 5a48b44..aede410 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -1773,19 +1773,21 @@ static bool target_handle_task_attr(struct se_cmd *cmd)
+ 	return true;
+ }
+ 
++static int __transport_check_aborted_status(struct se_cmd *, int);
++
+ void target_execute_cmd(struct se_cmd *cmd)
+ {
+ 	/*
+-	 * If the received CDB has aleady been aborted stop processing it here.
+-	 */
+-	if (transport_check_aborted_status(cmd, 1))
+-		return;
+-
+-	/*
+ 	 * Determine if frontend context caller is requesting the stopping of
+ 	 * this command for frontend exceptions.
++	 *
++	 * If the received CDB has aleady been aborted stop processing it here.
+ 	 */
+ 	spin_lock_irq(&cmd->t_state_lock);
++	if (__transport_check_aborted_status(cmd, 1)) {
++		spin_unlock_irq(&cmd->t_state_lock);
++		return;
++	}
+ 	if (cmd->transport_state & CMD_T_STOP) {
+ 		pr_debug("%s:%d CMD_T_STOP for ITT: 0x%08x\n",
+ 			__func__, __LINE__,
+@@ -2972,8 +2974,13 @@ after_reason:
+ }
+ EXPORT_SYMBOL(transport_send_check_condition_and_sense);
+ 
+-int transport_check_aborted_status(struct se_cmd *cmd, int send_status)
++static int __transport_check_aborted_status(struct se_cmd *cmd, int send_status)
++	__releases(&cmd->t_state_lock)
++	__acquires(&cmd->t_state_lock)
+ {
++	assert_spin_locked(&cmd->t_state_lock);
++	WARN_ON_ONCE(!irqs_disabled());
++
+ 	if (!(cmd->transport_state & CMD_T_ABORTED))
+ 		return 0;
+ 
+@@ -2981,19 +2988,37 @@ int transport_check_aborted_status(struct se_cmd *cmd, int send_status)
+ 	 * If cmd has been aborted but either no status is to be sent or it has
+ 	 * already been sent, just return
+ 	 */
+-	if (!send_status || !(cmd->se_cmd_flags & SCF_SEND_DELAYED_TAS))
++	if (!send_status || !(cmd->se_cmd_flags & SCF_SEND_DELAYED_TAS)) {
++		if (send_status)
++			cmd->se_cmd_flags |= SCF_SEND_DELAYED_TAS;
+ 		return 1;
++	}
+ 
+-	pr_debug("Sending delayed SAM_STAT_TASK_ABORTED status for CDB: 0x%02x ITT: 0x%08x\n",
+-		 cmd->t_task_cdb[0], cmd->se_tfo->get_task_tag(cmd));
++	pr_debug("Sending delayed SAM_STAT_TASK_ABORTED status for CDB:"
++		" 0x%02x ITT: 0x%08x\n", cmd->t_task_cdb[0],
++		cmd->se_tfo->get_task_tag(cmd));
+ 
+ 	cmd->se_cmd_flags &= ~SCF_SEND_DELAYED_TAS;
+ 	cmd->scsi_status = SAM_STAT_TASK_ABORTED;
+ 	trace_target_cmd_complete(cmd);
++
++	spin_unlock_irq(&cmd->t_state_lock);
+ 	cmd->se_tfo->queue_status(cmd);
++	spin_lock_irq(&cmd->t_state_lock);
+ 
+ 	return 1;
+ }
++
++int transport_check_aborted_status(struct se_cmd *cmd, int send_status)
++{
++	int ret;
++
++	spin_lock_irq(&cmd->t_state_lock);
++	ret = __transport_check_aborted_status(cmd, send_status);
++	spin_unlock_irq(&cmd->t_state_lock);
++
++	return ret;
++}
+ EXPORT_SYMBOL(transport_check_aborted_status);
+ 
+ void transport_send_task_abort(struct se_cmd *cmd)
+@@ -3015,12 +3040,17 @@ void transport_send_task_abort(struct se_cmd *cmd)
+ 	 */
+ 	if (cmd->data_direction == DMA_TO_DEVICE) {
+ 		if (cmd->se_tfo->write_pending_status(cmd) != 0) {
+-			cmd->transport_state |= CMD_T_ABORTED;
++			spin_lock_irqsave(&cmd->t_state_lock, flags);
++			if (cmd->se_cmd_flags & SCF_SEND_DELAYED_TAS) {
++				spin_unlock_irqrestore(&cmd->t_state_lock, flags);
++				goto send_abort;
++			}
+ 			cmd->se_cmd_flags |= SCF_SEND_DELAYED_TAS;
+-			smp_mb__after_atomic_inc();
++			spin_unlock_irqrestore(&cmd->t_state_lock, flags);
+ 			return;
+ 		}
+ 	}
++send_abort:
+ 	cmd->scsi_status = SAM_STAT_TASK_ABORTED;
+ 
+ 	transport_lun_remove_cmd(cmd);
+-- 
+2.1.4
+

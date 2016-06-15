@@ -1,0 +1,75 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Fri, 9 Jan 2015 17:00:42 +0800
+Subject: [PATCH] ceph: avoid block operation when !TASK_RUNNING
+ (ceph_mdsc_close_sessions)
+Git-commit: 86d8f67b26a8b30228b5177b7e594bbc89798a23
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+use an atomic variable to track number of sessions, this can avoid block
+operation inside wait loops.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |   13 ++++---------
+ fs/ceph/mds_client.h |    1 +
+ 2 files changed, 5 insertions(+), 9 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -480,6 +480,7 @@ static struct ceph_mds_session *register
+ 		mdsc->max_sessions = newmax;
+ 	}
+ 	mdsc->sessions[mds] = s;
++	atomic_inc(&mdsc->num_sessions);
+ 	atomic_inc(&s->s_ref);  /* one ref to sessions[], one to caller */
+ 
+ 	ceph_con_open(&s->s_con, CEPH_ENTITY_TYPE_MDS, mds,
+@@ -503,6 +504,7 @@ static void __unregister_session(struct
+ 	mdsc->sessions[s->s_mds] = NULL;
+ 	ceph_con_close(&s->s_con);
+ 	ceph_put_mds_session(s);
++	atomic_dec(&mdsc->num_sessions);
+ }
+ 
+ /*
+@@ -3326,6 +3328,7 @@ int ceph_mdsc_init(struct ceph_fs_client
+ 	init_waitqueue_head(&mdsc->session_close_wq);
+ 	INIT_LIST_HEAD(&mdsc->waiting_for_map);
+ 	mdsc->sessions = NULL;
++	atomic_set(&mdsc->num_sessions, 0);
+ 	mdsc->max_sessions = 0;
+ 	mdsc->stopping = 0;
+ 	init_rwsem(&mdsc->snap_rwsem);
+@@ -3477,17 +3480,9 @@ void ceph_mdsc_sync(struct ceph_mds_clie
+  */
+ static bool done_closing_sessions(struct ceph_mds_client *mdsc)
+ {
+-	int i, n = 0;
+-
+ 	if (mdsc->fsc->mount_state == CEPH_MOUNT_SHUTDOWN)
+ 		return true;
+-
+-	mutex_lock(&mdsc->mutex);
+-	for (i = 0; i < mdsc->max_sessions; i++)
+-		if (mdsc->sessions[i])
+-			n++;
+-	mutex_unlock(&mdsc->mutex);
+-	return n == 0;
++	return atomic_read(&mdsc->num_sessions) == 0;
+ }
+ 
+ /*
+--- a/fs/ceph/mds_client.h
++++ b/fs/ceph/mds_client.h
+@@ -273,6 +273,7 @@ struct ceph_mds_client {
+ 	struct list_head        waiting_for_map;
+ 
+ 	struct ceph_mds_session **sessions;    /* NULL for mds if no session */
++	atomic_t		num_sessions;
+ 	int                     max_sessions;  /* len of s_mds_sessions */
+ 	int                     stopping;      /* true if shutting down */
+ 

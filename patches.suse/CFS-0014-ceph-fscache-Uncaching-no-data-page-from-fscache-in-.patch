@@ -1,0 +1,31 @@
+From: Li Wang <liwang@ubuntukylin.com>
+Date: Thu, 19 Dec 2013 06:03:49 -0800
+Subject: [PATCH] ceph fscache: Uncaching no data page from fscache in
+ readpage()
+Git-commit: 183028052b48db2b34c09fd54f0bc465eaa305eb
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+Currently, if one new page allocated into fscache in readpage(), however,
+with no data read into due to error encountered during reading from OSDs,
+the slot in fscache is not uncached. This patch fixes this.
+
+Signed-off-by: Li Wang <liwang@ubuntukylin.com>
+Reviewed-by: Milosz Tanski <milosz@adfin.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -209,6 +209,7 @@ static int readpage_nounlock(struct file
+ 		err = 0;
+ 	if (err < 0) {
+ 		SetPageError(page);
++		ceph_fscache_readpage_cancel(inode, page);
+ 		goto out;
+ 	} else {
+ 		if (err < PAGE_CACHE_SIZE) {

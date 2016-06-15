@@ -40,18 +40,16 @@ Reviewed-by: Tomas Henzl <thenzl@redhat.com>
 Signed-off-by: Christoph Hellwig <hch@lst.de>
 Acked-by: Johannes Thumshirn <jthumshirn@suse.de>
 ---
- drivers/scsi/megaraid/megaraid_sas.h        |  73 +++++++---
- drivers/scsi/megaraid/megaraid_sas_base.c   | 205 ++++++++++++++++------------
- drivers/scsi/megaraid/megaraid_sas_fp.c     | 195 ++++++++++++++++++--------
- drivers/scsi/megaraid/megaraid_sas_fusion.c | 118 ++++++++++++----
- drivers/scsi/megaraid/megaraid_sas_fusion.h |  94 ++++++++++++-
- 5 files changed, 500 insertions(+), 185 deletions(-)
+ drivers/scsi/megaraid/megaraid_sas.h        |   73 +++++++--
+ drivers/scsi/megaraid/megaraid_sas_base.c   |  211 ++++++++++++++++------------
+ drivers/scsi/megaraid/megaraid_sas_fp.c     |  195 ++++++++++++++++++-------
+ drivers/scsi/megaraid/megaraid_sas_fusion.c |  118 ++++++++++++---
+ drivers/scsi/megaraid/megaraid_sas_fusion.h |   94 +++++++++++-
+ 5 files changed, 503 insertions(+), 188 deletions(-)
 
-diff --git a/drivers/scsi/megaraid/megaraid_sas.h b/drivers/scsi/megaraid/megaraid_sas.h
-index e0f03e2..5dedf09 100644
 --- a/drivers/scsi/megaraid/megaraid_sas.h
 +++ b/drivers/scsi/megaraid/megaraid_sas.h
-@@ -390,7 +390,6 @@ enum MR_LD_QUERY_TYPE {
+@@ -392,7 +392,6 @@ enum MR_LD_QUERY_TYPE {
  #define MR_EVT_FOREIGN_CFG_IMPORTED                     0x00db
  #define MR_EVT_LD_OFFLINE                               0x00fc
  #define MR_EVT_CTRL_HOST_BUS_SCAN_REQUESTED             0x0152
@@ -59,7 +57,7 @@ index e0f03e2..5dedf09 100644
  
  enum MR_PD_STATE {
  	MR_PD_STATE_UNCONFIGURED_GOOD   = 0x00,
-@@ -468,14 +467,14 @@ struct MR_LD_LIST {
+@@ -470,14 +469,14 @@ struct MR_LD_LIST {
  		u8          state;
  		u8          reserved[3];
  		u64         size;
@@ -76,7 +74,7 @@ index e0f03e2..5dedf09 100644
  };
  
  
-@@ -941,6 +940,15 @@ struct megasas_ctrl_info {
+@@ -943,6 +942,15 @@ struct megasas_ctrl_info {
  	* HA cluster information
  	*/
  	struct {
@@ -92,7 +90,7 @@ index e0f03e2..5dedf09 100644
  		u32     peerIsPresent:1;
  		u32     peerIsIncompatible:1;
  		u32     hwIncompatible:1;
-@@ -948,6 +956,7 @@ struct megasas_ctrl_info {
+@@ -950,6 +958,7 @@ struct megasas_ctrl_info {
  		u32     ctrlPropIncompatible:1;
  		u32     premiumFeatureMismatch:1;
  		u32     reserved:26;
@@ -100,7 +98,7 @@ index e0f03e2..5dedf09 100644
  	} cluster;
  
  	char clusterId[16];                     /*7D4h */
-@@ -962,9 +971,17 @@ struct megasas_ctrl_info {
+@@ -964,9 +973,17 @@ struct megasas_ctrl_info {
  #if defined(__BIG_ENDIAN_BITFIELD)
  		u32     reserved:25;
  		u32     supportCrashDump:1;
@@ -120,7 +118,7 @@ index e0f03e2..5dedf09 100644
  		u32     supportCrashDump:1;
  		u32     reserved:25;
  #endif
-@@ -979,13 +996,12 @@ struct megasas_ctrl_info {
+@@ -981,13 +998,12 @@ struct megasas_ctrl_info {
   * ===============================
   */
  #define MEGASAS_MAX_PD_CHANNELS			2
@@ -135,7 +133,7 @@ index e0f03e2..5dedf09 100644
  #define MEGASAS_DEFAULT_CMD_PER_LUN		256
  #define MEGASAS_MAX_PD                          (MEGASAS_MAX_PD_CHANNELS * \
  						MEGASAS_MAX_DEV_PER_CHANNEL)
-@@ -998,6 +1014,8 @@ struct megasas_ctrl_info {
+@@ -1000,6 +1016,8 @@ struct megasas_ctrl_info {
  
  #define MEGASAS_FW_BUSY				1
  
@@ -144,7 +142,7 @@ index e0f03e2..5dedf09 100644
  /* Frame Type */
  #define IO_FRAME				0
  #define PTHRU_FRAME				1
-@@ -1170,13 +1188,17 @@ union megasas_sgl_frame {
+@@ -1172,13 +1190,17 @@ union megasas_sgl_frame {
  typedef union _MFI_CAPABILITIES {
  	struct {
  #if   defined(__BIG_ENDIAN_BITFIELD)
@@ -164,7 +162,7 @@ index e0f03e2..5dedf09 100644
  #endif
  	} mfi_capabilities;
  	u32     reg;
-@@ -1665,6 +1687,14 @@ struct megasas_instance {
+@@ -1667,6 +1689,14 @@ struct megasas_instance {
  	u8 issuepend_done;
  	u8 disableOnlineCtrlReset;
  	u8 UnevenSpanSupport;
@@ -179,7 +177,7 @@ index e0f03e2..5dedf09 100644
  	u8 adprecovery;
  	unsigned long last_time;
  	u32 mfiStatus;
-@@ -1674,6 +1704,8 @@ struct megasas_instance {
+@@ -1676,6 +1706,8 @@ struct megasas_instance {
  
  	/* Ptr to hba specific information */
  	void *ctrl_context;
@@ -188,7 +186,7 @@ index e0f03e2..5dedf09 100644
  	unsigned int msix_vectors;
  	struct msix_entry msixentry[MEGASAS_MAX_MSIX_QUEUES];
  	struct megasas_irq_context irq_context[MEGASAS_MAX_MSIX_QUEUES];
-@@ -1874,16 +1906,21 @@ u8
+@@ -1876,16 +1908,21 @@ u8
  MR_BuildRaidContext(struct megasas_instance *instance,
  		    struct IO_REQUEST_INFO *io_info,
  		    struct RAID_CONTEXT *pRAID_Context,
@@ -219,11 +217,9 @@ index e0f03e2..5dedf09 100644
  void megasas_fusion_crash_dump_wq(struct work_struct *work);
 +
  #endif				/*LSI_MEGARAID_SAS_H */
-diff --git a/drivers/scsi/megaraid/megaraid_sas_base.c b/drivers/scsi/megaraid/megaraid_sas_base.c
-index 5dfdf8f..957b539 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_base.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_base.c
-@@ -1592,7 +1592,8 @@ megasas_queue_command_lck(struct scsi_cmnd *scmd, void (*done) (struct scsi_cmnd
+@@ -1592,7 +1592,8 @@ megasas_queue_command_lck(struct scsi_cm
  	scmd->result = 0;
  
  	if (MEGASAS_IS_LOGICAL(scmd) &&
@@ -233,7 +229,7 @@ index 5dfdf8f..957b539 100644
  		scmd->result = DID_BAD_TARGET << 16;
  		goto out_done;
  	}
-@@ -3851,6 +3852,8 @@ megasas_get_ld_list(struct megasas_instance *instance)
+@@ -3853,6 +3854,8 @@ megasas_get_ld_list(struct megasas_insta
  	memset(ci, 0, sizeof(*ci));
  	memset(dcmd->mbox.b, 0, MFI_MBOX_SIZE);
  
@@ -242,7 +238,7 @@ index 5dfdf8f..957b539 100644
  	dcmd->cmd = MFI_CMD_DCMD;
  	dcmd->cmd_status = 0xFF;
  	dcmd->sge_count = 1;
-@@ -3868,8 +3871,8 @@ megasas_get_ld_list(struct megasas_instance *instance)
+@@ -3870,8 +3873,8 @@ megasas_get_ld_list(struct megasas_insta
  
  	/* the following function will get the instance PD LIST */
  
@@ -253,7 +249,7 @@ index 5dfdf8f..957b539 100644
  
  		for (ld_index = 0; ld_index < ld_count; ld_index++) {
  			if (ci->ldList[ld_index].state != 0) {
-@@ -3932,6 +3935,8 @@ megasas_ld_list_query(struct megasas_instance *instance, u8 query_type)
+@@ -3934,6 +3937,8 @@ megasas_ld_list_query(struct megasas_ins
  	memset(dcmd->mbox.b, 0, MFI_MBOX_SIZE);
  
  	dcmd->mbox.b[0] = query_type;
@@ -262,7 +258,7 @@ index 5dfdf8f..957b539 100644
  
  	dcmd->cmd = MFI_CMD_DCMD;
  	dcmd->cmd_status = 0xFF;
-@@ -3957,7 +3962,7 @@ megasas_ld_list_query(struct megasas_instance *instance, u8 query_type)
+@@ -3959,7 +3964,7 @@ megasas_ld_list_query(struct megasas_ins
  		ret = 1;
  	}
  
@@ -271,7 +267,7 @@ index 5dfdf8f..957b539 100644
  		memset(instance->ld_ids, 0xff, MEGASAS_MAX_LD_IDS);
  		for (ld_index = 0; ld_index < tgtid_count; ld_index++) {
  			ids = ci->targetId[ld_index];
-@@ -3983,7 +3988,7 @@ megasas_ld_list_query(struct megasas_instance *instance, u8 query_type)
+@@ -3985,7 +3990,7 @@ megasas_ld_list_query(struct megasas_ins
   * This information is mainly used to find out the maximum IO transfer per
   * command supported by the FW.
   */
@@ -280,7 +276,7 @@ index 5dfdf8f..957b539 100644
  megasas_get_ctrl_info(struct megasas_instance *instance,
  		      struct megasas_ctrl_info *ctrl_info)
  {
-@@ -4024,6 +4029,7 @@ megasas_get_ctrl_info(struct megasas_instance *instance,
+@@ -4026,6 +4031,7 @@ megasas_get_ctrl_info(struct megasas_ins
  	dcmd->opcode = cpu_to_le32(MR_DCMD_CTRL_GET_INFO);
  	dcmd->sgl.sge32[0].phys_addr = cpu_to_le32(ci_h);
  	dcmd->sgl.sge32[0].length = cpu_to_le32(sizeof(struct megasas_ctrl_info));
@@ -288,7 +284,7 @@ index 5dfdf8f..957b539 100644
  
  	ret = megasas_issue_polled(instance, cmd);
  	if (!ret)
-@@ -4219,6 +4225,13 @@ megasas_init_adapter_mfi(struct megasas_instance *instance)
+@@ -4221,6 +4227,13 @@ megasas_init_adapter_mfi(struct megasas_
  	if (megasas_issue_init_mfi(instance))
  		goto fail_fw_init;
  
@@ -302,7 +298,7 @@ index 5dfdf8f..957b539 100644
  	instance->fw_support_ieee = 0;
  	instance->fw_support_ieee =
  		(instance->instancet->read_fw_status_reg(reg_set) &
-@@ -4257,7 +4270,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
+@@ -4259,7 +4272,7 @@ static int megasas_init_fw(struct megasa
  	u32 tmp_sectors, msix_enable, scratch_pad_2;
  	resource_size_t base_addr;
  	struct megasas_register_set __iomem *reg_set;
@@ -311,7 +307,7 @@ index 5dfdf8f..957b539 100644
  	unsigned long bar_list;
  	int i, loop, fw_msix_count = 0, ret;
  	struct IOV_111 *iovPtr;
-@@ -4395,6 +4408,17 @@ static int megasas_init_fw(struct megasas_instance *instance)
+@@ -4397,6 +4410,17 @@ static int megasas_init_fw(struct megasa
  			instance->msix_vectors);
  	}
  
@@ -329,7 +325,7 @@ index 5dfdf8f..957b539 100644
  	/* Get operational params, sge flags, send init cmd to controller */
  	if (instance->instancet->init_adapter(instance))
  		goto fail_init_adapter;
-@@ -4422,8 +4446,6 @@ static int megasas_init_fw(struct megasas_instance *instance)
+@@ -4424,8 +4448,6 @@ static int megasas_init_fw(struct megasa
  	if (ret > 0)
  		megasas_get_ld_list(instance);
  
@@ -338,22 +334,19 @@ index 5dfdf8f..957b539 100644
  	/*
  	 * Compute the max allowed sectors per IO: The controller info has two
  	 * limits on max sectors. Driver should use the minimum of these two.
-@@ -4434,79 +4456,79 @@ static int megasas_init_fw(struct megasas_instance *instance)
+@@ -4436,79 +4458,79 @@ static int megasas_init_fw(struct megasa
  	 * to calculate max_sectors_1. So the number ended up as zero always.
  	 */
  	tmp_sectors = 0;
 -	if (ctrl_info && !megasas_get_ctrl_info(instance, ctrl_info)) {
--
++	ctrl_info = instance->ctrl_info;
+ 
 -		max_sectors_1 = (1 << ctrl_info->stripe_sz_ops.min) *
 -			le16_to_cpu(ctrl_info->max_strips_per_io);
 -		max_sectors_2 = le32_to_cpu(ctrl_info->max_request_size);
-+	ctrl_info = instance->ctrl_info;
- 
+-
 -		tmp_sectors = min_t(u32, max_sectors_1 , max_sectors_2);
-+	max_sectors_1 = (1 << ctrl_info->stripe_sz_ops.min) *
-+		le16_to_cpu(ctrl_info->max_strips_per_io);
-+	max_sectors_2 = le32_to_cpu(ctrl_info->max_request_size);
- 
+-
 -		/*Check whether controller is iMR or MR */
 -		if (ctrl_info->memory_size) {
 -			instance->is_imr = 0;
@@ -382,8 +375,7 @@ index 5dfdf8f..957b539 100644
 -				fusion->fast_path_io = 1;
 -			else
 -				fusion->fast_path_io = 0;
-+	tmp_sectors = min_t(u32, max_sectors_1 , max_sectors_2);
- 
+-
 -		}
 -		if (ctrl_info->host_interface.SRIOV) {
 -			if (!ctrl_info->adapterOperations2.activePassive)
@@ -399,6 +391,12 @@ index 5dfdf8f..957b539 100644
 -			dev_info(&instance->pdev->dev,
 -				 "VF requestorId %d\n", instance->requestorId);
 -		}
++	max_sectors_1 = (1 << ctrl_info->stripe_sz_ops.min) *
++		le16_to_cpu(ctrl_info->max_strips_per_io);
++	max_sectors_2 = le32_to_cpu(ctrl_info->max_request_size);
++
++	tmp_sectors = min_t(u32, max_sectors_1 , max_sectors_2);
++
 +	/*Check whether controller is iMR or MR */
 +	if (ctrl_info->memory_size) {
 +		instance->is_imr = 0;
@@ -444,21 +442,14 @@ index 5dfdf8f..957b539 100644
 +	if (ctrl_info->host_interface.SRIOV) {
 +		if (!ctrl_info->adapterOperations2.activePassive)
 +			instance->PlasmaFW111 = 1;
- 
--		} else {
--			if (instance->crash_dump_buf)
--				pci_free_consistent(instance->pdev,
--					CRASH_DMA_BUF_SIZE,
--					instance->crash_dump_buf,
--					instance->crash_dump_h);
--			instance->crash_dump_buf = NULL;
++
 +		if (!instance->PlasmaFW111)
 +			instance->requestorId =
 +				ctrl_info->iov.requestorId;
 +		else {
 +			iovPtr = (struct IOV_111 *)((unsigned char *)ctrl_info + IOV_111_OFFSET);
 +			instance->requestorId = iovPtr->requestorId;
- 		}
++		}
 +		dev_warn(&instance->pdev->dev, "I am VF "
 +		       "requestorId %d\n", instance->requestorId);
 +	}
@@ -474,7 +465,15 @@ index 5dfdf8f..957b539 100644
 +			"feature is supported\n");
 +		megasas_set_crash_dump_params(instance,
 +			MR_CRASH_BUF_TURN_OFF);
-+
+ 
+-		} else {
+-			if (instance->crash_dump_buf)
+-				pci_free_consistent(instance->pdev,
+-					CRASH_DMA_BUF_SIZE,
+-					instance->crash_dump_buf,
+-					instance->crash_dump_h);
+-			instance->crash_dump_buf = NULL;
+-		}
 +	} else {
 +		if (instance->crash_dump_buf)
 +			pci_free_consistent(instance->pdev,
@@ -484,8 +483,8 @@ index 5dfdf8f..957b539 100644
 +		instance->crash_dump_buf = NULL;
  	}
  	instance->max_sectors_per_req = instance->max_num_sge *
- 						PAGE_SIZE / 512;
-@@ -4554,6 +4576,8 @@ static int megasas_init_fw(struct megasas_instance *instance)
+ 						SGE_BUFFER_SIZE / 512;
+@@ -4556,6 +4578,8 @@ static int megasas_init_fw(struct megasa
  
  fail_init_adapter:
  fail_ready_state:
@@ -494,7 +493,7 @@ index 5dfdf8f..957b539 100644
  	iounmap(instance->reg_set);
  
        fail_ioremap:
-@@ -4932,6 +4956,7 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -4934,6 +4958,7 @@ static int megasas_probe_one(struct pci_
  	struct Scsi_Host *host;
  	struct megasas_instance *instance;
  	u16 control = 0;
@@ -502,7 +501,7 @@ index 5dfdf8f..957b539 100644
  
  	/* Reset MSI-X in the kdump kernel */
  	if (reset_devices) {
-@@ -4992,10 +5017,10 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -4994,10 +5019,10 @@ static int megasas_probe_one(struct pci_
  	case PCI_DEVICE_ID_LSI_INVADER:
  	case PCI_DEVICE_ID_LSI_FURY:
  	{
@@ -517,7 +516,7 @@ index 5dfdf8f..957b539 100644
  		if (!instance->ctrl_context) {
  			dev_err(&pdev->dev, "Failed to allocate "
  				"memory for Fusion context info\n");
-@@ -5004,6 +5029,8 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -5006,6 +5031,8 @@ static int megasas_probe_one(struct pci_
  		fusion = instance->ctrl_context;
  		INIT_LIST_HEAD(&fusion->cmd_pool);
  		spin_lock_init(&fusion->cmd_pool_lock);
@@ -526,7 +525,7 @@ index 5dfdf8f..957b539 100644
  	}
  	break;
  	default: /* For all other supported controllers */
-@@ -5049,7 +5076,6 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -5051,7 +5078,6 @@ static int megasas_probe_one(struct pci_
  	instance->issuepend_done = 1;
  	instance->adprecovery = MEGASAS_HBA_OPERATIONAL;
  	instance->is_imr = 0;
@@ -534,7 +533,7 @@ index 5dfdf8f..957b539 100644
  
  	instance->evt_detail = pci_alloc_consistent(pdev,
  						    sizeof(struct
-@@ -5086,6 +5112,7 @@ static int megasas_probe_one(struct pci_dev *pdev,
+@@ -5088,6 +5114,7 @@ static int megasas_probe_one(struct pci_
  	instance->host = host;
  	instance->unique_id = pdev->bus->number << 8 | pdev->devfn;
  	instance->init_id = MEGASAS_DEFAULT_INIT_ID;
@@ -542,7 +541,7 @@ index 5dfdf8f..957b539 100644
  
  	if ((instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0073SKINNY) ||
  		(instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0071SKINNY)) {
-@@ -5646,14 +5673,18 @@ static void megasas_detach_one(struct pci_dev *pdev)
+@@ -5648,14 +5675,18 @@ static void megasas_detach_one(struct pc
  	case PCI_DEVICE_ID_LSI_INVADER:
  	case PCI_DEVICE_ID_LSI_FURY:
  		megasas_release_fusion(instance);
@@ -566,7 +565,7 @@ index 5dfdf8f..957b539 100644
  		break;
  	default:
  		megasas_release_mfi(instance);
-@@ -5666,6 +5697,8 @@ static void megasas_detach_one(struct pci_dev *pdev)
+@@ -5668,6 +5699,8 @@ static void megasas_detach_one(struct pc
  		break;
  	}
  
@@ -575,7 +574,7 @@ index 5dfdf8f..957b539 100644
  	if (instance->evt_detail)
  		pci_free_consistent(pdev, sizeof(struct megasas_evt_detail),
  				instance->evt_detail, instance->evt_detail_h);
-@@ -5776,8 +5809,10 @@ static unsigned int megasas_mgmt_poll(struct file *file, poll_table *wait)
+@@ -5778,8 +5811,10 @@ static unsigned int megasas_mgmt_poll(st
  	spin_lock_irqsave(&poll_aen_lock, flags);
  	if (megasas_poll_wait_aen)
  		mask =   (POLLIN | POLLRDNORM);
@@ -586,8 +585,6 @@ index 5dfdf8f..957b539 100644
  	spin_unlock_irqrestore(&poll_aen_lock, flags);
  	return mask;
  }
-diff --git a/drivers/scsi/megaraid/megaraid_sas_fp.c b/drivers/scsi/megaraid/megaraid_sas_fp.c
-index 081bfff..c2eaf6e 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_fp.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_fp.c
 @@ -66,16 +66,13 @@
@@ -610,7 +607,7 @@ index 081bfff..c2eaf6e 100644
  
  u32 mega_mod64(u64 dividend, u32 divisor)
  {
-@@ -109,94 +106,183 @@ u64 mega_div64_32(uint64_t dividend, uint32_t divisor)
+@@ -109,94 +106,183 @@ u64 mega_div64_32(uint64_t dividend, uin
  	return d;
  }
  
@@ -824,7 +821,7 @@ index 081bfff..c2eaf6e 100644
  		le32_to_cpus((u32 *)&raid->capability);
  	}
  
-@@ -204,7 +290,7 @@ u8 MR_ValidateMapInfo(struct megasas_instance *instance)
+@@ -204,7 +290,7 @@ u8 MR_ValidateMapInfo(struct megasas_ins
  }
  
  u32 MR_GetSpanBlock(u32 ld, u64 row, u64 *span_blk,
@@ -833,7 +830,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct MR_SPAN_BLOCK_INFO *pSpanBlock = MR_LdSpanInfoGet(ld, map);
  	struct MR_QUAD_ELEMENT    *quad;
-@@ -246,7 +332,8 @@ u32 MR_GetSpanBlock(u32 ld, u64 row, u64 *span_blk,
+@@ -246,7 +332,8 @@ u32 MR_GetSpanBlock(u32 ld, u64 row, u64
  * ldSpanInfo - ldSpanInfo per HBA instance
  */
  #if SPAN_DEBUG
@@ -843,7 +840,7 @@ index 081bfff..c2eaf6e 100644
  {
  
  	u8   span;
-@@ -257,9 +344,9 @@ static int getSpanInfo(struct MR_FW_RAID_MAP_ALL *map, PLD_SPAN_INFO ldSpanInfo)
+@@ -257,9 +344,9 @@ static int getSpanInfo(struct MR_FW_RAID
  	int ldCount;
  	u16 ld;
  
@@ -855,7 +852,7 @@ index 081bfff..c2eaf6e 100644
  				continue;
  		raid = MR_LdRaidGet(ld, map);
  		dev_dbg(&instance->pdev->dev, "LD %x: span_depth=%x\n",
-@@ -339,7 +426,7 @@ static int getSpanInfo(struct MR_FW_RAID_MAP_ALL *map, PLD_SPAN_INFO ldSpanInfo)
+@@ -339,7 +426,7 @@ static int getSpanInfo(struct MR_FW_RAID
  */
  
  u32 mr_spanset_get_span_block(struct megasas_instance *instance,
@@ -864,7 +861,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct fusion_context *fusion = instance->ctrl_context;
  	struct MR_LD_RAID         *raid = MR_LdRaidGet(ld, map);
-@@ -402,7 +489,7 @@ u32 mr_spanset_get_span_block(struct megasas_instance *instance,
+@@ -402,7 +489,7 @@ u32 mr_spanset_get_span_block(struct meg
  */
  
  static u64  get_row_from_strip(struct megasas_instance *instance,
@@ -873,7 +870,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct fusion_context *fusion = instance->ctrl_context;
  	struct MR_LD_RAID	*raid = MR_LdRaidGet(ld, map);
-@@ -471,7 +558,7 @@ static u64  get_row_from_strip(struct megasas_instance *instance,
+@@ -471,7 +558,7 @@ static u64  get_row_from_strip(struct me
  */
  
  static u64 get_strip_from_row(struct megasas_instance *instance,
@@ -882,7 +879,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct fusion_context *fusion = instance->ctrl_context;
  	struct MR_LD_RAID         *raid = MR_LdRaidGet(ld, map);
-@@ -532,7 +619,7 @@ static u64 get_strip_from_row(struct megasas_instance *instance,
+@@ -532,7 +619,7 @@ static u64 get_strip_from_row(struct meg
  */
  
  static u32 get_arm_from_strip(struct megasas_instance *instance,
@@ -891,7 +888,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct fusion_context *fusion = instance->ctrl_context;
  	struct MR_LD_RAID         *raid = MR_LdRaidGet(ld, map);
-@@ -580,7 +667,7 @@ static u32 get_arm_from_strip(struct megasas_instance *instance,
+@@ -580,7 +667,7 @@ static u32 get_arm_from_strip(struct meg
  
  /* This Function will return Phys arm */
  u8 get_arm(struct megasas_instance *instance, u32 ld, u8 span, u64 stripe,
@@ -900,7 +897,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct MR_LD_RAID  *raid = MR_LdRaidGet(ld, map);
  	/* Need to check correct default value */
-@@ -624,7 +711,7 @@ u8 get_arm(struct megasas_instance *instance, u32 ld, u8 span, u64 stripe,
+@@ -624,7 +711,7 @@ u8 get_arm(struct megasas_instance *inst
  static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
  		u64 stripRow, u16 stripRef, struct IO_REQUEST_INFO *io_info,
  		struct RAID_CONTEXT *pRAID_Context,
@@ -909,7 +906,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct MR_LD_RAID  *raid = MR_LdRaidGet(ld, map);
  	u32     pd, arRef;
-@@ -705,7 +792,7 @@ static u8 mr_spanset_get_phy_params(struct megasas_instance *instance, u32 ld,
+@@ -705,7 +792,7 @@ static u8 mr_spanset_get_phy_params(stru
  u8 MR_GetPhyParams(struct megasas_instance *instance, u32 ld, u64 stripRow,
  		u16 stripRef, struct IO_REQUEST_INFO *io_info,
  		struct RAID_CONTEXT *pRAID_Context,
@@ -927,7 +924,7 @@ index 081bfff..c2eaf6e 100644
  {
  	struct MR_LD_RAID  *raid;
  	u32         ld, stripSize, stripe_mask;
-@@ -1043,7 +1130,7 @@ MR_BuildRaidContext(struct megasas_instance *instance,
+@@ -1043,7 +1130,7 @@ MR_BuildRaidContext(struct megasas_insta
  * ldSpanInfo - ldSpanInfo per HBA instance
  *
  */
@@ -936,7 +933,7 @@ index 081bfff..c2eaf6e 100644
  			PLD_SPAN_INFO ldSpanInfo)
  {
  	u8   span, count;
-@@ -1056,9 +1143,9 @@ void mr_update_span_set(struct MR_FW_RAID_MAP_ALL *map,
+@@ -1056,9 +1143,9 @@ void mr_update_span_set(struct MR_FW_RAI
  	u16 ld;
  
  
@@ -948,7 +945,7 @@ index 081bfff..c2eaf6e 100644
  			continue;
  		raid = MR_LdRaidGet(ld, map);
  		for (element = 0; element < MAX_QUAD_DEPTH; element++) {
-@@ -1153,16 +1240,16 @@ void mr_update_span_set(struct MR_FW_RAID_MAP_ALL *map,
+@@ -1153,16 +1240,16 @@ void mr_update_span_set(struct MR_FW_RAI
  }
  
  void
@@ -968,11 +965,9 @@ index 081bfff..c2eaf6e 100644
  			lbInfo[ldCount].loadBalanceFlag = 0;
  			continue;
  		}
-diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.c b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-index 9283129..205772a 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-@@ -654,6 +654,8 @@ megasas_ioc_init_fusion(struct megasas_instance *instance)
+@@ -654,6 +654,8 @@ megasas_ioc_init_fusion(struct megasas_i
  	/* driver supports HA / Remote LUN over Fast Path interface */
  	init_frame->driver_operations.mfi_capabilities.support_fp_remote_lun
  		= 1;
@@ -995,7 +990,7 @@ index 9283129..205772a 100644
   */
  static int
  megasas_get_ld_map_info(struct megasas_instance *instance)
-@@ -720,7 +729,7 @@ megasas_get_ld_map_info(struct megasas_instance *instance)
+@@ -720,7 +729,7 @@ megasas_get_ld_map_info(struct megasas_i
  	int ret = 0;
  	struct megasas_cmd *cmd;
  	struct megasas_dcmd_frame *dcmd;
@@ -1004,7 +999,7 @@ index 9283129..205772a 100644
  	dma_addr_t ci_h = 0;
  	u32 size_map_info;
  	struct fusion_context *fusion;
-@@ -741,10 +750,9 @@ megasas_get_ld_map_info(struct megasas_instance *instance)
+@@ -741,10 +750,9 @@ megasas_get_ld_map_info(struct megasas_i
  
  	dcmd = &cmd->frame->dcmd;
  
@@ -1017,7 +1012,7 @@ index 9283129..205772a 100644
  	ci_h = fusion->ld_map_phys[(instance->map_id & 1)];
  
  	if (!ci) {
-@@ -753,9 +761,13 @@ megasas_get_ld_map_info(struct megasas_instance *instance)
+@@ -753,9 +761,13 @@ megasas_get_ld_map_info(struct megasas_i
  		return -ENOMEM;
  	}
  
@@ -1033,7 +1028,7 @@ index 9283129..205772a 100644
  	dcmd->cmd = MFI_CMD_DCMD;
  	dcmd->cmd_status = 0xFF;
  	dcmd->sge_count = 1;
-@@ -811,7 +823,7 @@ megasas_sync_map_info(struct megasas_instance *instance)
+@@ -811,7 +823,7 @@ megasas_sync_map_info(struct megasas_ins
  	u32 size_sync_info, num_lds;
  	struct fusion_context *fusion;
  	struct MR_LD_TARGET_SYNC *ci = NULL;
@@ -1042,7 +1037,7 @@ index 9283129..205772a 100644
  	struct MR_LD_RAID  *raid;
  	struct MR_LD_TARGET_SYNC *ld_sync;
  	dma_addr_t ci_h = 0;
-@@ -832,7 +844,7 @@ megasas_sync_map_info(struct megasas_instance *instance)
+@@ -832,7 +844,7 @@ megasas_sync_map_info(struct megasas_ins
  		return 1;
  	}
  
@@ -1051,7 +1046,7 @@ index 9283129..205772a 100644
  
  	num_lds = le32_to_cpu(map->raidMap.ldCount);
  
-@@ -844,7 +856,7 @@ megasas_sync_map_info(struct megasas_instance *instance)
+@@ -844,7 +856,7 @@ megasas_sync_map_info(struct megasas_ins
  
  	ci = (struct MR_LD_TARGET_SYNC *)
  	  fusion->ld_map[(instance->map_id - 1) & 1];
@@ -1060,7 +1055,7 @@ index 9283129..205772a 100644
  
  	ci_h = fusion->ld_map_phys[(instance->map_id - 1) & 1];
  
-@@ -856,8 +868,7 @@ megasas_sync_map_info(struct megasas_instance *instance)
+@@ -856,8 +868,7 @@ megasas_sync_map_info(struct megasas_ins
  		ld_sync->seqNum = raid->seqNum;
  	}
  
@@ -1070,7 +1065,7 @@ index 9283129..205772a 100644
  
  	dcmd->cmd = MFI_CMD_DCMD;
  	dcmd->cmd_status = 0xFF;
-@@ -1020,17 +1031,75 @@ megasas_init_adapter_fusion(struct megasas_instance *instance)
+@@ -1020,17 +1031,75 @@ megasas_init_adapter_fusion(struct megas
  		goto fail_ioc_init;
  
  	megasas_display_intel_branding(instance);
@@ -1150,7 +1145,7 @@ index 9283129..205772a 100644
  						       &fusion->ld_map_phys[i],
  						       GFP_KERNEL);
  		if (!fusion->ld_map[i]) {
-@@ -1047,7 +1116,7 @@ megasas_init_adapter_fusion(struct megasas_instance *instance)
+@@ -1047,7 +1116,7 @@ megasas_init_adapter_fusion(struct megas
  
  fail_map_info:
  	if (i == 1)
@@ -1159,7 +1154,7 @@ index 9283129..205772a 100644
  				  fusion->ld_map[0], fusion->ld_map_phys[0]);
  fail_ioc_init:
  	megasas_free_cmds_fusion(instance);
-@@ -1234,7 +1303,7 @@ megasas_make_sgl_fusion(struct megasas_instance *instance,
+@@ -1234,7 +1303,7 @@ megasas_make_sgl_fusion(struct megasas_i
  void
  megasas_set_pd_lba(struct MPI2_RAID_SCSI_IO_REQUEST *io_request, u8 cdb_len,
  		   struct IO_REQUEST_INFO *io_info, struct scsi_cmnd *scp,
@@ -1168,7 +1163,7 @@ index 9283129..205772a 100644
  {
  	struct MR_LD_RAID *raid;
  	u32 ld;
-@@ -1419,7 +1488,7 @@ megasas_build_ldio_fusion(struct megasas_instance *instance,
+@@ -1419,7 +1488,7 @@ megasas_build_ldio_fusion(struct megasas
  	union MEGASAS_REQUEST_DESCRIPTOR_UNION *req_desc;
  	struct IO_REQUEST_INFO io_info;
  	struct fusion_context *fusion;
@@ -1177,7 +1172,7 @@ index 9283129..205772a 100644
  	u8 *raidLUN;
  
  	device_id = MEGASAS_DEV_INDEX(instance, scp);
-@@ -1496,10 +1565,10 @@ megasas_build_ldio_fusion(struct megasas_instance *instance,
+@@ -1496,10 +1565,10 @@ megasas_build_ldio_fusion(struct megasas
  	if (scp->sc_data_direction == PCI_DMA_FROMDEVICE)
  		io_info.isRead = 1;
  
@@ -1190,7 +1185,7 @@ index 9283129..205772a 100644
  		io_request->RaidContext.regLockFlags  = 0;
  		fp_possible = 0;
  	} else {
-@@ -1589,7 +1658,7 @@ megasas_build_dcdb_fusion(struct megasas_instance *instance,
+@@ -1589,7 +1658,7 @@ megasas_build_dcdb_fusion(struct megasas
  	u32 device_id;
  	struct MPI2_RAID_SCSI_IO_REQUEST *io_request;
  	u16 pd_index = 0;
@@ -1199,7 +1194,7 @@ index 9283129..205772a 100644
  	struct fusion_context *fusion = instance->ctrl_context;
  	u8                          span, physArm;
  	u16                         devHandle;
-@@ -1601,7 +1670,7 @@ megasas_build_dcdb_fusion(struct megasas_instance *instance,
+@@ -1601,7 +1670,7 @@ megasas_build_dcdb_fusion(struct megasas
  	device_id = MEGASAS_DEV_INDEX(instance, scmd);
  	pd_index = (scmd->device->channel * MEGASAS_MAX_DEV_PER_CHANNEL)
  		+scmd->device->id;
@@ -1208,7 +1203,7 @@ index 9283129..205772a 100644
  
  	io_request->DataLength = cpu_to_le32(scsi_bufflen(scmd));
  
-@@ -1649,7 +1718,8 @@ megasas_build_dcdb_fusion(struct megasas_instance *instance,
+@@ -1649,7 +1718,8 @@ megasas_build_dcdb_fusion(struct megasas
  			goto NonFastPath;
  
  		ld = MR_TargetIdToLdGet(device_id, local_map_ptr);
@@ -1218,7 +1213,7 @@ index 9283129..205772a 100644
  			goto NonFastPath;
  
  		raid = MR_LdRaidGet(ld, local_map_ptr);
-@@ -2724,7 +2794,7 @@ int megasas_reset_fusion(struct Scsi_Host *shost, int iotimeout)
+@@ -2719,7 +2789,7 @@ int megasas_reset_fusion(struct Scsi_Hos
  			/* Reset load balance info */
  			memset(fusion->load_balance_info, 0,
  			       sizeof(struct LD_LOAD_BALANCE_INFO)
@@ -1227,8 +1222,6 @@ index 9283129..205772a 100644
  
  			if (!megasas_get_map_info(instance))
  				megasas_sync_map_info(instance);
-diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.h b/drivers/scsi/megaraid/megaraid_sas_fusion.h
-index d660c4d..065c270 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_fusion.h
 +++ b/drivers/scsi/megaraid/megaraid_sas_fusion.h
 @@ -479,10 +479,13 @@ struct MPI2_IOC_INIT_REQUEST {
@@ -1363,6 +1356,3 @@ index d660c4d..065c270 100644
  
 +
  #endif /* _MEGARAID_SAS_FUSION_H_ */
--- 
-2.4.2
-

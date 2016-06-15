@@ -1,0 +1,57 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390/compat: correct restore of high gprs on signal return
+Patch-mainline: v4.5-rc6
+Git-commit: 342300cc9cd3428bc6bfe5809bfcc1b9a0f06702
+References: bnc#968497, LTC#137571
+
+Description:  kernel: correct restore of high gprs on signal return
+Symptom:      The upper halves of the 64-bit general purspose registers
+              of a 31-bit compat process get clobbered on signal return.
+              This can lead to user space crashes and incorrect results.
+Problem:      The restore_sigregs_ext32 function that copies the upper
+              register halves from the signal frame on the user stack
+              uses an incorrect length for the extended signal frame
+              area. Only the first two general purpose registers are
+              restored correctly, for the other 14 registers the upper
+              register half is clobbered.
+Solution:     Use the correct length for the user space copy for the
+              extended signal frame in the signal return code.
+Reproduction: Run a 31-bit compat process, force the delivery of a signal
+              and verify the upper registers halves.
+
+Upstream-Description:
+
+              s390/compat: correct restore of high gprs on signal return
+
+              git commit 8070361799ae1e3f4ef347bd10f0a508ac10acfb
+              "s390: add support for vector extension"
+              broke 31-bit compat processes in regard to signal handling.
+
+              The restore_sigregs_ext32() function is used to restore the additional
+              elements from the user space signal frame. Among the additional elements
+              are the upper registers halves for 64-bit register support for 31-bit
+              processes. The copy_from_user that is used to retrieve the high-gprs
+              array from the user stack uses an incorrect length, 8 bytes instead of
+              64 bytes. This causes incorrect upper register halves to get loaded.
+
+              Cc: stable@vger.kernel.org # 3.8+
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/compat_signal.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/arch/s390/kernel/compat_signal.c
++++ b/arch/s390/kernel/compat_signal.c
+@@ -288,7 +288,7 @@ static int restore_sigregs_ext32(struct
+ 
+ 	/* Restore high gprs from signal stack */
+ 	if (__copy_from_user(&gprs_high, &sregs_ext->gprs_high,
+-			     sizeof(&sregs_ext->gprs_high)))
++			     sizeof(sregs_ext->gprs_high)))
+ 		return -EFAULT;
+ 	for (i = 0; i < NUM_GPRS; i++)
+ 		*(__u32 *)&regs->gprs[i] = gprs_high[i];

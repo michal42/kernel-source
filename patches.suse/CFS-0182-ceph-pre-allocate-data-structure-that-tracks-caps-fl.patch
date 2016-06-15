@@ -1,0 +1,482 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 10 Jun 2015 17:26:13 +0800
+Subject: [PATCH] ceph: pre-allocate data structure that tracks caps flushing
+Git-commit: f66fd9f0952187d274c13c136b74548f792c1925
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c               |   19 +++++++++++++++----
+ fs/ceph/caps.c               |   26 ++++++++++++++++++++++----
+ fs/ceph/file.c               |   18 ++++++++++++++++--
+ fs/ceph/inode.c              |   15 +++++++++++++--
+ fs/ceph/mds_client.c         |    6 +++++-
+ fs/ceph/super.c              |    8 ++++++++
+ fs/ceph/super.h              |    6 +++++-
+ fs/ceph/xattr.c              |   20 ++++++++++++++++++--
+ include/linux/ceph/libceph.h |    1 +
+ 9 files changed, 103 insertions(+), 16 deletions(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -1319,12 +1319,17 @@ static int ceph_page_mkwrite(struct vm_a
+ 	struct inode *inode = file_inode(vma->vm_file);
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+ 	struct ceph_file_info *fi = vma->vm_file->private_data;
++	struct ceph_cap_flush *prealloc_cf;
+ 	struct page *page = vmf->page;
+ 	loff_t off = page_offset(page);
+ 	loff_t size = i_size_read(inode);
+ 	size_t len;
+ 	int want, got, ret;
+ 
++	prealloc_cf = ceph_alloc_cap_flush();
++	if (!prealloc_cf)
++		return VM_FAULT_SIGBUS;
++
+ 	if (ci->i_inline_version != CEPH_INLINE_NONE) {
+ 		struct page *locked_page = NULL;
+ 		if (off == 0) {
+@@ -1334,8 +1339,10 @@ static int ceph_page_mkwrite(struct vm_a
+ 		ret = ceph_uninline_data(vma->vm_file, locked_page);
+ 		if (locked_page)
+ 			unlock_page(locked_page);
+-		if (ret < 0)
+-			return VM_FAULT_SIGBUS;
++		if (ret < 0) {
++			ret = VM_FAULT_SIGBUS;
++			goto out_free;
++		}
+ 	}
+ 
+ 	if (off + PAGE_CACHE_SIZE <= size)
+@@ -1357,7 +1364,8 @@ static int ceph_page_mkwrite(struct vm_a
+ 			break;
+ 		if (ret != -ERESTARTSYS) {
+ 			WARN_ON(1);
+-			return VM_FAULT_SIGBUS;
++			ret = VM_FAULT_SIGBUS;
++			goto out_free;
+ 		}
+ 	}
+ 	dout("page_mkwrite %p %llu~%zd got cap refs on %s\n",
+@@ -1392,7 +1400,8 @@ out:
+ 		int dirty;
+ 		spin_lock(&ci->i_ceph_lock);
+ 		ci->i_inline_version = CEPH_INLINE_NONE;
+-		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR);
++		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR,
++					       &prealloc_cf);
+ 		spin_unlock(&ci->i_ceph_lock);
+ 		if (dirty)
+ 			__mark_inode_dirty(inode, dirty);
+@@ -1401,6 +1410,8 @@ out:
+ 	dout("page_mkwrite %p %llu~%zd dropping cap refs on %s ret %d\n",
+ 	     inode, off, len, ceph_cap_string(got), ret);
+ 	ceph_put_cap_refs(ci, got);
++out_free:
++	ceph_free_cap_flush(prealloc_cf);
+ 
+ 	return ret;
+ }
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1356,7 +1356,8 @@ static void ceph_flush_snaps(struct ceph
+  * Caller is then responsible for calling __mark_inode_dirty with the
+  * returned flags value.
+  */
+-int __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask)
++int __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask,
++			   struct ceph_cap_flush **pcf)
+ {
+ 	struct ceph_mds_client *mdsc =
+ 		ceph_sb_to_client(ci->vfs_inode.i_sb)->mdsc;
+@@ -1376,6 +1377,9 @@ int __ceph_mark_dirty_caps(struct ceph_i
+ 	     ceph_cap_string(was | mask));
+ 	ci->i_dirty_caps |= mask;
+ 	if (was == 0) {
++		WARN_ON_ONCE(ci->i_prealloc_cap_flush);
++		swap(ci->i_prealloc_cap_flush, *pcf);
++
+ 		if (!ci->i_head_snapc) {
+ 			WARN_ON_ONCE(!rwsem_is_locked(&mdsc->snap_rwsem));
+ 			ci->i_head_snapc = ceph_get_snap_context(
+@@ -1391,6 +1395,8 @@ int __ceph_mark_dirty_caps(struct ceph_i
+ 			ihold(inode);
+ 			dirty |= I_DIRTY_SYNC;
+ 		}
++	} else {
++		WARN_ON_ONCE(!ci->i_prealloc_cap_flush);
+ 	}
+ 	BUG_ON(list_empty(&ci->i_dirty_item));
+ 	if (((was | ci->i_flushing_caps) & CEPH_CAP_FILE_BUFFER) &&
+@@ -1446,6 +1452,17 @@ static void __add_cap_flushing_to_mdsc(s
+ 	rb_insert_color(&cf->g_node, &mdsc->cap_flush_tree);
+ }
+ 
++struct ceph_cap_flush *ceph_alloc_cap_flush(void)
++{
++	return kmem_cache_alloc(ceph_cap_flush_cachep, GFP_KERNEL);
++}
++
++void ceph_free_cap_flush(struct ceph_cap_flush *cf)
++{
++	if (cf)
++		kmem_cache_free(ceph_cap_flush_cachep, cf);
++}
++
+ static u64 __get_oldest_flush_tid(struct ceph_mds_client *mdsc)
+ {
+ 	struct rb_node *n = rb_first(&mdsc->cap_flush_tree);
+@@ -1469,11 +1486,12 @@ static int __mark_caps_flushing(struct i
+ {
+ 	struct ceph_mds_client *mdsc = ceph_sb_to_client(inode->i_sb)->mdsc;
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+-	struct ceph_cap_flush *cf;
++	struct ceph_cap_flush *cf = NULL;
+ 	int flushing;
+ 
+ 	BUG_ON(ci->i_dirty_caps == 0);
+ 	BUG_ON(list_empty(&ci->i_dirty_item));
++	BUG_ON(!ci->i_prealloc_cap_flush);
+ 
+ 	flushing = ci->i_dirty_caps;
+ 	dout("__mark_caps_flushing flushing %s, flushing_caps %s -> %s\n",
+@@ -1484,7 +1502,7 @@ static int __mark_caps_flushing(struct i
+ 	ci->i_dirty_caps = 0;
+ 	dout(" inode %p now !dirty\n", inode);
+ 
+-	cf = kmalloc(sizeof(*cf), GFP_ATOMIC);
++	swap(cf, ci->i_prealloc_cap_flush);
+ 	cf->caps = flushing;
+ 	cf->kick = false;
+ 
+@@ -3075,7 +3093,7 @@ out:
+ 		cf = list_first_entry(&to_remove,
+ 				      struct ceph_cap_flush, list);
+ 		list_del(&cf->list);
+-		kfree(cf);
++		ceph_free_cap_flush(cf);
+ 	}
+ 	if (drop)
+ 		iput(inode);
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -1092,12 +1092,17 @@ static ssize_t ceph_aio_write(struct kio
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+ 	struct ceph_osd_client *osdc =
+ 		&ceph_sb_to_client(inode->i_sb)->client->osdc;
++	struct ceph_cap_flush *prealloc_cf;
+ 	ssize_t count, written = 0;
+ 	int err, want, got;
+ 
+ 	if (ceph_snap(inode) != CEPH_NOSNAP)
+ 		return -EROFS;
+ 
++	prealloc_cf = ceph_alloc_cap_flush();
++	if (!prealloc_cf)
++		return -ENOMEM;
++
+ 	mutex_lock(&inode->i_mutex);
+ 
+ 	err = generic_segment_checks(iov, &nr_segs, &count, VERIFY_READ);
+@@ -1206,7 +1211,8 @@ retry_snap:
+ 		int dirty;
+ 		spin_lock(&ci->i_ceph_lock);
+ 		ci->i_inline_version = CEPH_INLINE_NONE;
+-		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR);
++		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR,
++					       &prealloc_cf);
+ 		spin_unlock(&ci->i_ceph_lock);
+ 		if (dirty)
+ 			__mark_inode_dirty(inode, dirty);
+@@ -1230,6 +1236,7 @@ retry_snap:
+ out:
+ 	mutex_unlock(&inode->i_mutex);
+ out_unlocked:
++	ceph_free_cap_flush(prealloc_cf);
+ 	current->backing_dev_info = NULL;
+ 	return written ? written : err;
+ }
+@@ -1426,6 +1433,7 @@ static long ceph_fallocate(struct file *
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+ 	struct ceph_osd_client *osdc =
+ 		&ceph_inode_to_client(inode)->client->osdc;
++	struct ceph_cap_flush *prealloc_cf;
+ 	int want, got = 0;
+ 	int dirty;
+ 	int ret = 0;
+@@ -1441,6 +1449,10 @@ static long ceph_fallocate(struct file *
+ 	if (IS_SWAPFILE(inode))
+ 		return -ETXTBSY;
+ 
++	prealloc_cf = ceph_alloc_cap_flush();
++	if (!prealloc_cf)
++		return -ENOMEM;
++
+ 	mutex_lock(&inode->i_mutex);
+ 
+ 	if (ceph_snap(inode) != CEPH_NOSNAP) {
+@@ -1487,7 +1499,8 @@ static long ceph_fallocate(struct file *
+ 	if (!ret) {
+ 		spin_lock(&ci->i_ceph_lock);
+ 		ci->i_inline_version = CEPH_INLINE_NONE;
+-		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR);
++		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_FILE_WR,
++					       &prealloc_cf);
+ 		spin_unlock(&ci->i_ceph_lock);
+ 		if (dirty)
+ 			__mark_inode_dirty(inode, dirty);
+@@ -1496,6 +1509,7 @@ static long ceph_fallocate(struct file *
+ 	ceph_put_cap_refs(ci, got);
+ unlock:
+ 	mutex_unlock(&inode->i_mutex);
++	ceph_free_cap_flush(prealloc_cf);
+ 	return ret;
+ }
+ 
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -414,6 +414,7 @@ struct inode *ceph_alloc_inode(struct su
+ 	ci->i_flushing_caps = 0;
+ 	INIT_LIST_HEAD(&ci->i_dirty_item);
+ 	INIT_LIST_HEAD(&ci->i_flushing_item);
++	ci->i_prealloc_cap_flush = NULL;
+ 	ci->i_cap_flush_tree = RB_ROOT;
+ 	init_waitqueue_head(&ci->i_cap_wq);
+ 	ci->i_hold_caps_min = 0;
+@@ -1723,6 +1724,7 @@ int ceph_setattr(struct dentry *dentry,
+ 	const unsigned int ia_valid = attr->ia_valid;
+ 	struct ceph_mds_request *req;
+ 	struct ceph_mds_client *mdsc = ceph_sb_to_client(dentry->d_sb)->mdsc;
++	struct ceph_cap_flush *prealloc_cf;
+ 	int issued;
+ 	int release = 0, dirtied = 0;
+ 	int mask = 0;
+@@ -1737,10 +1739,16 @@ int ceph_setattr(struct dentry *dentry,
+ 	if (err != 0)
+ 		return err;
+ 
++	prealloc_cf = ceph_alloc_cap_flush();
++	if (!prealloc_cf)
++		return -ENOMEM;
++
+ 	req = ceph_mdsc_create_request(mdsc, CEPH_MDS_OP_SETATTR,
+ 				       USE_AUTH_MDS);
+-	if (IS_ERR(req))
++	if (IS_ERR(req)) {
++		ceph_free_cap_flush(prealloc_cf);
+ 		return PTR_ERR(req);
++	}
+ 
+ 	spin_lock(&ci->i_ceph_lock);
+ 	issued = __ceph_caps_issued(ci, NULL);
+@@ -1898,7 +1906,8 @@ int ceph_setattr(struct dentry *dentry,
+ 		dout("setattr %p ATTR_FILE ... hrm!\n", inode);
+ 
+ 	if (dirtied) {
+-		inode_dirty_flags = __ceph_mark_dirty_caps(ci, dirtied);
++		inode_dirty_flags = __ceph_mark_dirty_caps(ci, dirtied,
++							   &prealloc_cf);
+ 		inode->i_ctime = CURRENT_TIME;
+ 	}
+ 
+@@ -1930,9 +1939,11 @@ int ceph_setattr(struct dentry *dentry,
+ 	ceph_mdsc_put_request(req);
+ 	if (mask & CEPH_SETATTR_SIZE)
+ 		__ceph_do_pending_vmtruncate(inode);
++	ceph_free_cap_flush(prealloc_cf);
+ 	return err;
+ out_put:
+ 	ceph_mdsc_put_request(req);
++	ceph_free_cap_flush(prealloc_cf);
+ 	return err;
+ }
+ 
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1191,6 +1191,10 @@ static int remove_session_caps_cb(struct
+ 		}
+ 		spin_unlock(&mdsc->cap_dirty_lock);
+ 
++		if (!ci->i_dirty_caps && ci->i_prealloc_cap_flush) {
++			list_add(&ci->i_prealloc_cap_flush->list, &to_remove);
++			ci->i_prealloc_cap_flush = NULL;
++		}
+ 	}
+ 	spin_unlock(&ci->i_ceph_lock);
+ 	while (!list_empty(&to_remove)) {
+@@ -1198,7 +1202,7 @@ static int remove_session_caps_cb(struct
+ 		cf = list_first_entry(&to_remove,
+ 				      struct ceph_cap_flush, list);
+ 		list_del(&cf->list);
+-		kfree(cf);
++		ceph_free_cap_flush(cf);
+ 	}
+ 	while (drop--)
+ 		iput(inode);
+--- a/fs/ceph/super.c
++++ b/fs/ceph/super.c
+@@ -643,6 +643,7 @@ static void destroy_fs_client(struct cep
+  */
+ struct kmem_cache *ceph_inode_cachep;
+ struct kmem_cache *ceph_cap_cachep;
++struct kmem_cache *ceph_cap_flush_cachep;
+ struct kmem_cache *ceph_dentry_cachep;
+ struct kmem_cache *ceph_file_cachep;
+ 
+@@ -668,6 +669,10 @@ static int __init init_caches(void)
+ 				     SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD);
+ 	if (ceph_cap_cachep == NULL)
+ 		goto bad_cap;
++	ceph_cap_flush_cachep = KMEM_CACHE(ceph_cap_flush,
++					   SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD);
++	if (ceph_cap_flush_cachep == NULL)
++		goto bad_cap_flush;
+ 
+ 	ceph_dentry_cachep = KMEM_CACHE(ceph_dentry_info,
+ 					SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD);
+@@ -686,6 +691,8 @@ static int __init init_caches(void)
+ bad_file:
+ 	kmem_cache_destroy(ceph_dentry_cachep);
+ bad_dentry:
++	kmem_cache_destroy(ceph_cap_flush_cachep);
++bad_cap_flush:
+ 	kmem_cache_destroy(ceph_cap_cachep);
+ bad_cap:
+ 	kmem_cache_destroy(ceph_inode_cachep);
+@@ -702,6 +709,7 @@ static void destroy_caches(void)
+ 
+ 	kmem_cache_destroy(ceph_inode_cachep);
+ 	kmem_cache_destroy(ceph_cap_cachep);
++	kmem_cache_destroy(ceph_cap_flush_cachep);
+ 	kmem_cache_destroy(ceph_dentry_cachep);
+ 	kmem_cache_destroy(ceph_file_cachep);
+ 
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -309,6 +309,7 @@ struct ceph_inode_info {
+ 	/* we need to track cap writeback on a per-cap-bit basis, to allow
+ 	 * overlapping, pipelined cap flushes to the mds.  we can probably
+ 	 * reduce the tid to 8 bits if we're concerned about inode size. */
++	struct ceph_cap_flush *i_prealloc_cap_flush;
+ 	struct rb_root i_cap_flush_tree;
+ 	wait_queue_head_t i_cap_wq;      /* threads waiting on a capability */
+ 	unsigned long i_hold_caps_min; /* jiffies */
+@@ -578,7 +579,10 @@ static inline int __ceph_caps_dirty(stru
+ {
+ 	return ci->i_dirty_caps | ci->i_flushing_caps;
+ }
+-extern int __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask);
++extern struct ceph_cap_flush *ceph_alloc_cap_flush(void);
++extern void ceph_free_cap_flush(struct ceph_cap_flush *cf);
++extern int __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask,
++				  struct ceph_cap_flush **pcf);
+ 
+ extern int __ceph_caps_revoking_other(struct ceph_inode_info *ci,
+ 				      struct ceph_cap *ocap, int mask);
+--- a/fs/ceph/xattr.c
++++ b/fs/ceph/xattr.c
+@@ -914,6 +914,7 @@ int __ceph_setxattr(struct dentry *dentr
+ 	struct ceph_vxattr *vxattr;
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+ 	struct ceph_mds_client *mdsc = ceph_sb_to_client(dentry->d_sb)->mdsc;
++	struct ceph_cap_flush *prealloc_cf = NULL;
+ 	int issued;
+ 	int err;
+ 	int dirty = 0;
+@@ -952,6 +953,10 @@ int __ceph_setxattr(struct dentry *dentr
+ 	if (!xattr)
+ 		goto out;
+ 
++	prealloc_cf = ceph_alloc_cap_flush();
++	if (!prealloc_cf)
++		goto out;
++
+ 	spin_lock(&ci->i_ceph_lock);
+ retry:
+ 	issued = __ceph_caps_issued(ci, NULL);
+@@ -993,7 +998,8 @@ retry:
+ 			  flags, value ? 1 : -1, &xattr);
+ 
+ 	if (!err) {
+-		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_XATTR_EXCL);
++		dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_XATTR_EXCL,
++					       &prealloc_cf);
+ 		ci->i_xattrs.dirty = true;
+ 		inode->i_ctime = CURRENT_TIME;
+ 	}
+@@ -1003,6 +1009,7 @@ retry:
+ 		up_read(&mdsc->snap_rwsem);
+ 	if (dirty)
+ 		__mark_inode_dirty(inode, dirty);
++	ceph_free_cap_flush(prealloc_cf);
+ 	return err;
+ 
+ do_sync:
+@@ -1012,6 +1019,7 @@ do_sync_unlocked:
+ 		up_read(&mdsc->snap_rwsem);
+ 	err = ceph_sync_setxattr(dentry, name, value, size, flags);
+ out:
++	ceph_free_cap_flush(prealloc_cf);
+ 	kfree(newname);
+ 	kfree(newval);
+ 	kfree(xattr);
+@@ -1064,6 +1072,7 @@ int __ceph_removexattr(struct dentry *de
+ 	struct ceph_vxattr *vxattr;
+ 	struct ceph_inode_info *ci = ceph_inode(inode);
+ 	struct ceph_mds_client *mdsc = ceph_sb_to_client(dentry->d_sb)->mdsc;
++	struct ceph_cap_flush *prealloc_cf = NULL;
+ 	int issued;
+ 	int err;
+ 	int required_blob_size;
+@@ -1081,6 +1090,10 @@ int __ceph_removexattr(struct dentry *de
+ 	if (!strncmp(name, XATTR_CEPH_PREFIX, XATTR_CEPH_PREFIX_LEN))
+ 		goto do_sync_unlocked;
+ 
++	prealloc_cf = ceph_alloc_cap_flush();
++	if (!prealloc_cf)
++		return -ENOMEM;
++
+ 	err = -ENOMEM;
+ 	spin_lock(&ci->i_ceph_lock);
+ retry:
+@@ -1122,7 +1135,8 @@ retry:
+ 
+ 	err = __remove_xattr_by_name(ceph_inode(inode), name);
+ 
+-	dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_XATTR_EXCL);
++	dirty = __ceph_mark_dirty_caps(ci, CEPH_CAP_XATTR_EXCL,
++				       &prealloc_cf);
+ 	ci->i_xattrs.dirty = true;
+ 	inode->i_ctime = CURRENT_TIME;
+ 	spin_unlock(&ci->i_ceph_lock);
+@@ -1130,12 +1144,14 @@ retry:
+ 		up_read(&mdsc->snap_rwsem);
+ 	if (dirty)
+ 		__mark_inode_dirty(inode, dirty);
++	ceph_free_cap_flush(prealloc_cf);
+ 	return err;
+ do_sync:
+ 	spin_unlock(&ci->i_ceph_lock);
+ do_sync_unlocked:
+ 	if (lock_snap_rwsem)
+ 		up_read(&mdsc->snap_rwsem);
++	ceph_free_cap_flush(prealloc_cf);
+ 	err = ceph_send_removexattr(dentry, name);
+ 	return err;
+ }
+--- a/include/linux/ceph/libceph.h
++++ b/include/linux/ceph/libceph.h
+@@ -174,6 +174,7 @@ static inline int calc_pages_for(u64 off
+ 
+ extern struct kmem_cache *ceph_inode_cachep;
+ extern struct kmem_cache *ceph_cap_cachep;
++extern struct kmem_cache *ceph_cap_flush_cachep;
+ extern struct kmem_cache *ceph_dentry_cachep;
+ extern struct kmem_cache *ceph_file_cachep;
+ 

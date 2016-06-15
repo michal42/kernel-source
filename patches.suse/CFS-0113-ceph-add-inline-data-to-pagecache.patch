@@ -1,0 +1,167 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Fri, 14 Nov 2014 21:41:55 +0800
+Subject: [PATCH] ceph: add inline data to pagecache
+Git-commit: 31c542a199d79f0f402c2f3e04229464510d47ec
+Patch-mainline: v3.19
+References: Fate#318586
+
+
+Request reply and cap message can contain inline data. add inline data
+to the page cache if there is Fc cap.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c  |   43 +++++++++++++++++++++++++++++++++++++++++++
+ fs/ceph/caps.c  |   11 +++++++++++
+ fs/ceph/inode.c |   16 ++++++++++++++++
+ fs/ceph/super.h |    3 +++
+ 4 files changed, 73 insertions(+)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -1318,6 +1318,49 @@ out:
+ 	return ret;
+ }
+ 
++void ceph_fill_inline_data(struct inode *inode, struct page *locked_page,
++			   char	*data, size_t len)
++{
++	struct address_space *mapping = inode->i_mapping;
++	struct page *page;
++
++	if (locked_page) {
++		page = locked_page;
++	} else {
++		if (i_size_read(inode) == 0)
++			return;
++		page = find_or_create_page(mapping, 0,
++					   mapping_gfp_mask(mapping) & ~__GFP_FS);
++		if (!page)
++			return;
++		if (PageUptodate(page)) {
++			unlock_page(page);
++			page_cache_release(page);
++			return;
++		}
++	}
++
++	dout("fill_inline_data %p %llx.%llx len %lu locked_page %p\n",
++	     inode, ceph_vinop(inode), len, locked_page);
++
++	if (len > 0) {
++		void *kaddr = kmap_atomic(page);
++		memcpy(kaddr, data, len);
++		kunmap_atomic(kaddr);
++	}
++
++	if (page != locked_page) {
++		if (len < PAGE_CACHE_SIZE)
++			zero_user_segment(page, len, PAGE_CACHE_SIZE);
++		else
++			flush_dcache_page(page);
++
++		SetPageUptodate(page);
++		unlock_page(page);
++		page_cache_release(page);
++	}
++}
++
+ static struct vm_operations_struct ceph_vmops = {
+ 	.fault		= ceph_filemap_fault,
+ 	.page_mkwrite	= ceph_page_mkwrite,
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -2405,6 +2405,7 @@ static void handle_cap_grant(struct ceph
+ 	bool queue_invalidate = false;
+ 	bool queue_revalidate = false;
+ 	bool deleted_inode = false;
++	bool fill_inline = false;
+ 
+ 	dout("handle_cap_grant inode %p cap %p mds%d seq %d %s\n",
+ 	     inode, cap, mds, seq, ceph_cap_string(newcaps));
+@@ -2578,6 +2579,13 @@ static void handle_cap_grant(struct ceph
+ 	}
+ 	BUG_ON(cap->issued & ~cap->implemented);
+ 
++	if (inline_version > 0 && inline_version >= ci->i_inline_version) {
++		ci->i_inline_version = inline_version;
++		if (ci->i_inline_version != CEPH_INLINE_NONE &&
++		    (newcaps & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)))
++			fill_inline = true;
++	}
++
+ 	spin_unlock(&ci->i_ceph_lock);
+ 
+ 	if (le32_to_cpu(grant->op) == CEPH_CAP_OP_IMPORT) {
+@@ -2591,6 +2599,9 @@ static void handle_cap_grant(struct ceph
+ 			wake = true;
+ 	}
+ 
++	if (fill_inline)
++		ceph_fill_inline_data(inode, NULL, inline_data, inline_len);
++
+ 	if (queue_trunc) {
+ 		ceph_queue_vmtruncate(inode);
+ 		ceph_queue_revalidate(inode);
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -385,6 +385,7 @@ struct inode *ceph_alloc_inode(struct su
+ 	spin_lock_init(&ci->i_ceph_lock);
+ 
+ 	ci->i_version = 0;
++	ci->i_inline_version = 0;
+ 	ci->i_time_warp_seq = 0;
+ 	ci->i_ceph_flags = 0;
+ 	ci->i_ordered_count = 0;
+@@ -674,6 +675,7 @@ static int fill_inode(struct inode *inod
+ 	bool wake = false;
+ 	bool queue_trunc = false;
+ 	bool new_version = false;
++	bool fill_inline = false;
+ 
+ 	dout("fill_inode %p ino %llx.%llx v %llu had %llu\n",
+ 	     inode, ceph_vinop(inode), le64_to_cpu(info->version),
+@@ -873,8 +875,22 @@ static int fill_inode(struct inode *inod
+ 			   ceph_vinop(inode));
+ 		__ceph_get_fmode(ci, cap_fmode);
+ 	}
++
++	if (iinfo->inline_version > 0 &&
++	    iinfo->inline_version >= ci->i_inline_version) {
++		int cache_caps = CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO;
++		ci->i_inline_version = iinfo->inline_version;
++		if (ci->i_inline_version != CEPH_INLINE_NONE &&
++		    (le32_to_cpu(info->cap.caps) & cache_caps))
++			fill_inline = true;
++	}
++
+ 	spin_unlock(&ci->i_ceph_lock);
+ 
++	if (fill_inline)
++		ceph_fill_inline_data(inode, NULL,
++				      iinfo->inline_data, iinfo->inline_len);
++
+ 	if (wake)
+ 		wake_up_all(&ci->i_cap_wq);
+ 
+--- a/fs/ceph/super.h
++++ b/fs/ceph/super.h
+@@ -253,6 +253,7 @@ struct ceph_inode_info {
+ 	spinlock_t i_ceph_lock;
+ 
+ 	u64 i_version;
++	u64 i_inline_version;
+ 	u32 i_time_warp_seq;
+ 
+ 	unsigned i_ceph_flags;
+@@ -867,6 +868,8 @@ extern int ceph_atomic_open(struct inode
+ 			    struct file *file, unsigned flags, umode_t mode,
+ 			    int *opened);
+ extern int ceph_release(struct inode *inode, struct file *filp);
++extern void ceph_fill_inline_data(struct inode *inode, struct page *locked_page,
++				  char *data, size_t len);
+ 
+ /* dir.c */
+ extern const struct file_operations ceph_dir_fops;

@@ -1,0 +1,34 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Wed, 7 Oct 2015 16:09:35 +0200
+Subject: [PATCH] rbd: set max_sectors explicitly
+Git-commit: 0d9fde4fc8f59a6bd316559d267a936b0737d05a
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+Commit 30e2bc08b2bb ("Revert "block: remove artifical max_hw_sectors
+cap"") restored a clamp on max_sectors.  It's now 2560 sectors instead
+of 1024, but it's not good enough: we set max_hw_sectors to rbd object
+size because we don't want object sized I/Os to be split, and the
+default object size is 4M.
+
+So, set max_sectors to max_hw_sectors in rbd at queue init time.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/block/rbd.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -4010,6 +4010,7 @@ static int rbd_init_disk(struct rbd_devi
+ 	/* set io sizes to object size */
+ 	segment_size = rbd_obj_bytes(&rbd_dev->header);
+ 	blk_queue_max_hw_sectors(q, segment_size / SECTOR_SIZE);
++	q->limits.max_sectors = queue_max_hw_sectors(q);
+ 	blk_queue_max_segments(q, segment_size / SECTOR_SIZE);
+ 	blk_queue_max_segment_size(q, segment_size);
+ 	blk_queue_io_min(q, segment_size);

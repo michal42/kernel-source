@@ -1,0 +1,73 @@
+From: Tang Chen <tangchen@cn.fujitsu.com>
+Date: Wed, 24 Sep 2014 15:57:55 +0800
+Subject: kvm: Rename make_all_cpus_request() to kvm_make_all_cpus_request()
+ and make it non-static
+Git-commit: 445b8236959bfe624a5aa9bce89f44a3bec9b2b1
+Patch-mainline: v3.18-rc1
+References: bsc#959463
+
+Different architectures need different requests, and in fact we
+will use this function in architecture-specific code later. This
+will be outside kvm_main.c, so make it non-static and rename it to
+kvm_make_all_cpus_request().
+
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Tang Chen <tangchen@cn.fujitsu.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ include/linux/kvm_host.h |  1 +
+ virt/kvm/kvm_main.c      | 10 +++++-----
+ 2 files changed, 6 insertions(+), 5 deletions(-)
+
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -588,6 +588,7 @@
+ void kvm_reload_remote_mmus(struct kvm *kvm);
+ void kvm_make_mclock_inprogress_request(struct kvm *kvm);
+ void kvm_make_scan_ioapic_request(struct kvm *kvm);
++bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req);
+ 
+ long kvm_arch_dev_ioctl(struct file *filp,
+ 			unsigned int ioctl, unsigned long arg);
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -146,7 +146,7 @@
+ {
+ }
+ 
+-static bool make_all_cpus_request(struct kvm *kvm, unsigned int req)
++bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req)
+ {
+ 	int i, cpu, me;
+ 	cpumask_var_t cpus;
+@@ -183,7 +183,7 @@
+ 	long dirty_count = kvm->tlbs_dirty;
+ 
+ 	smp_mb();
+-	if (make_all_cpus_request(kvm, KVM_REQ_TLB_FLUSH))
++	if (kvm_make_all_cpus_request(kvm, KVM_REQ_TLB_FLUSH))
+ 		++kvm->stat.remote_tlb_flush;
+ 	cmpxchg(&kvm->tlbs_dirty, dirty_count, 0);
+ }
+@@ -191,17 +191,17 @@
+ 
+ void kvm_reload_remote_mmus(struct kvm *kvm)
+ {
+-	make_all_cpus_request(kvm, KVM_REQ_MMU_RELOAD);
++	kvm_make_all_cpus_request(kvm, KVM_REQ_MMU_RELOAD);
+ }
+ 
+ void kvm_make_mclock_inprogress_request(struct kvm *kvm)
+ {
+-	make_all_cpus_request(kvm, KVM_REQ_MCLOCK_INPROGRESS);
++	kvm_make_all_cpus_request(kvm, KVM_REQ_MCLOCK_INPROGRESS);
+ }
+ 
+ void kvm_make_scan_ioapic_request(struct kvm *kvm)
+ {
+-	make_all_cpus_request(kvm, KVM_REQ_SCAN_IOAPIC);
++	kvm_make_all_cpus_request(kvm, KVM_REQ_SCAN_IOAPIC);
+ }
+ 
+ int kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)

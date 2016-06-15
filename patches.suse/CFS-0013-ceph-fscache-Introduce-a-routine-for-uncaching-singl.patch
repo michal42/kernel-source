@@ -1,0 +1,46 @@
+From: Li Wang <liwang@ubuntukylin.com>
+Date: Thu, 19 Dec 2013 06:03:48 -0800
+Subject: [PATCH] ceph fscache: Introduce a routine for uncaching single no
+ data page from fscache
+Git-commit: 3f42bc4beadef554fd0d4e6408e9142da268613b
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+Signed-off-by: Li Wang <liwang@ubuntukylin.com>
+Reviewed-by: Milosz Tanski <milosz@adfin.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/cache.h |   13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+--- a/fs/ceph/cache.h
++++ b/fs/ceph/cache.h
+@@ -67,6 +67,14 @@ static inline int ceph_release_fscache_p
+ 	return fscache_maybe_release_page(ci->fscache, page, gfp);
+ }
+ 
++static inline void ceph_fscache_readpage_cancel(struct inode *inode,
++						struct page *page)
++{
++	struct ceph_inode_info *ci = ceph_inode(inode);
++	if (fscache_cookie_valid(ci->fscache) && PageFsCache(page))
++		__fscache_uncache_page(ci->fscache, page);
++}
++
+ static inline void ceph_fscache_readpages_cancel(struct inode *inode,
+ 						 struct list_head *pages)
+ {
+@@ -145,6 +153,11 @@ static inline int ceph_release_fscache_p
+ 	return 1;
+ }
+ 
++static inline void ceph_fscache_readpage_cancel(struct inode *inode,
++						struct page *page)
++{
++}
++
+ static inline void ceph_fscache_readpages_cancel(struct inode *inode,
+ 						 struct list_head *pages)
+ {

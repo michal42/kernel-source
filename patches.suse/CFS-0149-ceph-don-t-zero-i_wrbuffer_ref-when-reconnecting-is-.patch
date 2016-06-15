@@ -1,0 +1,35 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 24 Mar 2015 15:49:36 +0800
+Subject: [PATCH] ceph: don't zero i_wrbuffer_ref when reconnecting is denied
+Git-commit: a9f6eb61850e1599f9aa5141f25ccc1d8248e174
+Patch-mainline: v4.1
+References: Fate#318586
+
+
+remove_session_caps_cb() does not truncate dirty data in page
+cache, but zeros i_wrbuffer_ref/i_wrbuffer_ref_head. This will
+result negtive i_wrbuffer_ref/i_wrbuffer_ref_head
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |    7 -------
+ 1 file changed, 7 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1122,13 +1122,6 @@ static int remove_session_caps_cb(struct
+ 			mdsc->num_cap_flushing--;
+ 			drop = 1;
+ 		}
+-		if (drop && ci->i_wrbuffer_ref) {
+-			pr_info(" dropping dirty data for %p %lld\n",
+-				inode, ceph_ino(inode));
+-			ci->i_wrbuffer_ref = 0;
+-			ci->i_wrbuffer_ref_head = 0;
+-			drop++;
+-		}
+ 		spin_unlock(&mdsc->cap_dirty_lock);
+ 	}
+ 	spin_unlock(&ci->i_ceph_lock);

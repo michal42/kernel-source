@@ -1,0 +1,45 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Fri, 16 Oct 2015 20:11:25 +0200
+Subject: [PATCH] rbd: set device_type::release instead of device::release
+Git-commit: 6cac4695f2042a1d0e17aa48c5705f69907e74c3
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+No point in providing an empty device_type::release callback and then
+setting device::release for each rbd_dev dynamically.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/block/rbd.c |    7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -4353,14 +4353,12 @@ static const struct attribute_group *rbd
+ 	NULL
+ };
+ 
+-static void rbd_sysfs_dev_release(struct device *dev)
+-{
+-}
++static void rbd_dev_release(struct device *dev);
+ 
+ static struct device_type rbd_device_type = {
+ 	.name		= "rbd",
+ 	.groups		= rbd_attr_groups,
+-	.release	= rbd_sysfs_dev_release,
++	.release	= rbd_dev_release,
+ };
+ 
+ static struct rbd_spec *rbd_spec_get(struct rbd_spec *spec)
+@@ -4443,7 +4441,6 @@ static struct rbd_device *rbd_dev_create
+ 	rbd_dev->dev.bus = &rbd_bus_type;
+ 	rbd_dev->dev.type = &rbd_device_type;
+ 	rbd_dev->dev.parent = &rbd_root_dev;
+-	rbd_dev->dev.release = rbd_dev_release;
+ 	device_initialize(&rbd_dev->dev);
+ 
+ 	rbd_dev->rbd_client = rbdc;

@@ -1,0 +1,452 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Fri, 12 Jun 2015 13:21:07 +0300
+Subject: [PATCH] crush: sync up with userspace
+Git-commit: b459be739f97e2062b2ba77cfe8ea198dbd58904
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+.. up to ceph.git commit 1db1abc8328d ("crush: eliminate ad hoc diff
+between kernel and userspace").  This fixes a bunch of recently pulled
+coding style issues and makes includes a bit cleaner.
+
+A patch "crush:Make the function crush_ln static" from Nicholas Krause
+<xerofoify@gmail.com> is folded in as crush_ln() has been made static
+in userspace as well.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ include/linux/crush/crush.h     |   40 +++++++++++
+ include/linux/crush/hash.h      |    6 +
+ include/linux/crush/mapper.h    |    2 
+ net/ceph/crush/crush.c          |   13 +--
+ net/ceph/crush/crush_ln_table.h |   32 ++++-----
+ net/ceph/crush/hash.c           |    8 +-
+ net/ceph/crush/mapper.c         |  137 +++++++++++++++++++++++++---------------
+ 7 files changed, 160 insertions(+), 78 deletions(-)
+
+--- a/include/linux/crush/crush.h
++++ b/include/linux/crush/crush.h
+@@ -1,7 +1,11 @@
+ #ifndef CEPH_CRUSH_CRUSH_H
+ #define CEPH_CRUSH_CRUSH_H
+ 
+-#include <linux/types.h>
++#ifdef __KERNEL__
++# include <linux/types.h>
++#else
++# include "crush_compat.h"
++#endif
+ 
+ /*
+  * CRUSH is a pseudo-random data distribution algorithm that
+@@ -20,7 +24,11 @@
+ #define CRUSH_MAGIC 0x00010000ul   /* for detecting algorithm revisions */
+ 
+ #define CRUSH_MAX_DEPTH 10  /* max crush hierarchy depth */
++#define CRUSH_MAX_RULESET (1<<8)  /* max crush ruleset number */
++#define CRUSH_MAX_RULES CRUSH_MAX_RULESET  /* should be the same as max rulesets */
+ 
++#define CRUSH_MAX_DEVICE_WEIGHT (100u * 0x10000u)
++#define CRUSH_MAX_BUCKET_WEIGHT (65535u * 0x10000u)
+ 
+ #define CRUSH_ITEM_UNDEF  0x7ffffffe  /* undefined result (internal use only) */
+ #define CRUSH_ITEM_NONE   0x7fffffff  /* no result */
+@@ -108,6 +116,15 @@ enum {
+ };
+ extern const char *crush_bucket_alg_name(int alg);
+ 
++/*
++ * although tree was a legacy algorithm, it has been buggy, so
++ * exclude it.
++ */
++#define CRUSH_LEGACY_ALLOWED_BUCKET_ALGS (	\
++		(1 << CRUSH_BUCKET_UNIFORM) |	\
++		(1 << CRUSH_BUCKET_LIST) |	\
++		(1 << CRUSH_BUCKET_STRAW))
++
+ struct crush_bucket {
+ 	__s32 id;        /* this'll be negative */
+ 	__u16 type;      /* non-zero; type=0 is reserved for devices */
+@@ -174,7 +191,7 @@ struct crush_map {
+ 	/* choose local attempts using a fallback permutation before
+ 	 * re-descent */
+ 	__u32 choose_local_fallback_tries;
+-	/* choose attempts before giving up */ 
++	/* choose attempts before giving up */
+ 	__u32 choose_total_tries;
+ 	/* attempt chooseleaf inner descent once for firstn mode; on
+ 	 * reject retry outer descent.  Note that this does *not*
+@@ -187,6 +204,25 @@ struct crush_map {
+ 	 * that want to limit reshuffling, a value of 3 or 4 will make the
+ 	 * mappings line up a bit better with previous mappings. */
+ 	__u8 chooseleaf_vary_r;
++
++#ifndef __KERNEL__
++	/*
++	 * version 0 (original) of straw_calc has various flaws.  version 1
++	 * fixes a few of them.
++	 */
++	__u8 straw_calc_version;
++
++	/*
++	 * allowed bucket algs is a bitmask, here the bit positions
++	 * are CRUSH_BUCKET_*.  note that these are *bits* and
++	 * CRUSH_BUCKET_* values are not, so we need to or together (1
++	 * << CRUSH_BUCKET_WHATEVER).  The 0th bit is not used to
++	 * minimize confusion (bucket type values start at 1).
++	 */
++	__u32 allowed_bucket_algs;
++
++	__u32 *choose_tries;
++#endif
+ };
+ 
+ 
+--- a/include/linux/crush/hash.h
++++ b/include/linux/crush/hash.h
+@@ -1,6 +1,12 @@
+ #ifndef CEPH_CRUSH_HASH_H
+ #define CEPH_CRUSH_HASH_H
+ 
++#ifdef __KERNEL__
++# include <linux/types.h>
++#else
++# include "crush_compat.h"
++#endif
++
+ #define CRUSH_HASH_RJENKINS1   0
+ 
+ #define CRUSH_HASH_DEFAULT CRUSH_HASH_RJENKINS1
+--- a/include/linux/crush/mapper.h
++++ b/include/linux/crush/mapper.h
+@@ -8,7 +8,7 @@
+  * LGPL2
+  */
+ 
+-#include <linux/crush/crush.h>
++#include "crush.h"
+ 
+ extern int crush_find_rule(const struct crush_map *map, int ruleset, int type, int size);
+ extern int crush_do_rule(const struct crush_map *map,
+--- a/net/ceph/crush/crush.c
++++ b/net/ceph/crush/crush.c
+@@ -1,15 +1,11 @@
+-
+ #ifdef __KERNEL__
+ # include <linux/slab.h>
++# include <linux/crush/crush.h>
+ #else
+-# include <stdlib.h>
+-# include <assert.h>
+-# define kfree(x) do { if (x) free(x); } while (0)
+-# define BUG_ON(x) assert(!(x))
++# include "crush_compat.h"
++# include "crush.h"
+ #endif
+ 
+-#include <linux/crush/crush.h>
+-
+ const char *crush_bucket_alg_name(int alg)
+ {
+ 	switch (alg) {
+@@ -134,6 +130,9 @@ void crush_destroy(struct crush_map *map
+ 		kfree(map->rules);
+ 	}
+ 
++#ifndef __KERNEL__
++	kfree(map->choose_tries);
++#endif
+ 	kfree(map);
+ }
+ 
+--- a/net/ceph/crush/crush_ln_table.h
++++ b/net/ceph/crush/crush_ln_table.h
+@@ -10,20 +10,20 @@
+  *
+  */
+ 
+-#if defined(__linux__)
+-#include <linux/types.h>
+-#elif defined(__FreeBSD__)
+-#include <sys/types.h>
+-#endif
+-
+ #ifndef CEPH_CRUSH_LN_H
+ #define CEPH_CRUSH_LN_H
+ 
++#ifdef __KERNEL__
++# include <linux/types.h>
++#else
++# include "crush_compat.h"
++#endif
+ 
+-// RH_LH_tbl[2*k] = 2^48/(1.0+k/128.0)
+-// RH_LH_tbl[2*k+1] = 2^48*log2(1.0+k/128.0)
+-
+-static int64_t __RH_LH_tbl[128*2+2] = {
++/*
++ * RH_LH_tbl[2*k] = 2^48/(1.0+k/128.0)
++ * RH_LH_tbl[2*k+1] = 2^48*log2(1.0+k/128.0)
++ */
++static __s64 __RH_LH_tbl[128*2+2] = {
+   0x0001000000000000ll, 0x0000000000000000ll, 0x0000fe03f80fe040ll, 0x000002dfca16dde1ll,
+   0x0000fc0fc0fc0fc1ll, 0x000005b9e5a170b4ll, 0x0000fa232cf25214ll, 0x0000088e68ea899all,
+   0x0000f83e0f83e0f9ll, 0x00000b5d69bac77ell, 0x0000f6603d980f67ll, 0x00000e26fd5c8555ll,
+@@ -89,11 +89,12 @@ static int64_t __RH_LH_tbl[128*2+2] = {
+   0x0000820820820821ll, 0x0000fa2f045e7832ll, 0x000081848da8faf1ll, 0x0000fba577877d7dll,
+   0x0000810204081021ll, 0x0000fd1a708bbe11ll, 0x0000808080808081ll, 0x0000fe8df263f957ll,
+   0x0000800000000000ll, 0x0000ffff00000000ll,
+-  };
+-
++};
+ 
+-    // LL_tbl[k] = 2^48*log2(1.0+k/2^15);
+-static int64_t __LL_tbl[256] = {
++/*
++ * LL_tbl[k] = 2^48*log2(1.0+k/2^15)
++ */
++static __s64 __LL_tbl[256] = {
+   0x0000000000000000ull, 0x00000002e2a60a00ull, 0x000000070cb64ec5ull, 0x00000009ef50ce67ull,
+   0x0000000cd1e588fdull, 0x0000000fb4747e9cull, 0x0000001296fdaf5eull, 0x0000001579811b58ull,
+   0x000000185bfec2a1ull, 0x0000001b3e76a552ull, 0x0000001e20e8c380ull, 0x0000002103551d43ull,
+@@ -160,7 +161,4 @@ static int64_t __LL_tbl[256] = {
+   0x000002d4562d2ec6ull, 0x000002d73330209dull, 0x000002da102d63b0ull, 0x000002dced24f814ull,
+ };
+ 
+-
+-
+-
+ #endif
+--- a/net/ceph/crush/hash.c
++++ b/net/ceph/crush/hash.c
+@@ -1,6 +1,8 @@
+-
+-#include <linux/types.h>
+-#include <linux/crush/hash.h>
++#ifdef __KERNEL__
++# include <linux/crush/hash.h>
++#else
++# include "hash.h"
++#endif
+ 
+ /*
+  * Robert Jenkins' function for mixing 32-bit values
+--- a/net/ceph/crush/mapper.c
++++ b/net/ceph/crush/mapper.c
+@@ -1,27 +1,31 @@
++/*
++ * Ceph - scalable distributed file system
++ *
++ * Copyright (C) 2015 Intel Corporation All Rights Reserved
++ *
++ * This is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License version 2.1, as published by the Free Software
++ * Foundation.  See file COPYING.
++ *
++ */
+ 
+ #ifdef __KERNEL__
+ # include <linux/string.h>
+ # include <linux/slab.h>
+ # include <linux/bug.h>
+ # include <linux/kernel.h>
+-# ifndef dprintk
+-#  define dprintk(args...)
+-# endif
++# include <linux/crush/crush.h>
++# include <linux/crush/hash.h>
+ #else
+-# include <string.h>
+-# include <stdio.h>
+-# include <stdlib.h>
+-# include <assert.h>
+-# define BUG_ON(x) assert(!(x))
+-# define dprintk(args...) /* printf(args) */
+-# define kmalloc(x, f) malloc(x)
+-# define kfree(x) free(x)
++# include "crush_compat.h"
++# include "crush.h"
++# include "hash.h"
+ #endif
+-
+-#include <linux/crush/crush.h>
+-#include <linux/crush/hash.h>
+ #include "crush_ln_table.h"
+ 
++#define dprintk(args...) /* printf(args) */
++
+ /*
+  * Implement the core CRUSH mapping algorithm.
+  */
+@@ -139,7 +143,7 @@ static int bucket_list_choose(struct cru
+ 	int i;
+ 
+ 	for (i = bucket->h.size-1; i >= 0; i--) {
+-		__u64 w = crush_hash32_4(bucket->h.hash,x, bucket->h.items[i],
++		__u64 w = crush_hash32_4(bucket->h.hash, x, bucket->h.items[i],
+ 					 r, bucket->h.id);
+ 		w &= 0xffff;
+ 		dprintk("list_choose i=%d x=%d r=%d item %d weight %x "
+@@ -238,43 +242,46 @@ static int bucket_straw_choose(struct cr
+ 	return bucket->h.items[high];
+ }
+ 
+-// compute 2^44*log2(input+1)
+-uint64_t crush_ln(unsigned xin)
++/* compute 2^44*log2(input+1) */
++static __u64 crush_ln(unsigned int xin)
+ {
+-    unsigned x=xin, x1;
+-    int iexpon, index1, index2;
+-    uint64_t RH, LH, LL, xl64, result;
++	unsigned int x = xin, x1;
++	int iexpon, index1, index2;
++	__u64 RH, LH, LL, xl64, result;
+ 
+-    x++;
++	x++;
+ 
+-    // normalize input
+-    iexpon = 15;
+-    while(!(x&0x18000)) { x<<=1; iexpon--; }
++	/* normalize input */
++	iexpon = 15;
++	while (!(x & 0x18000)) {
++		x <<= 1;
++		iexpon--;
++	}
+ 
+-    index1 = (x>>8)<<1;
+-    // RH ~ 2^56/index1
+-    RH = __RH_LH_tbl[index1 - 256];
+-    // LH ~ 2^48 * log2(index1/256)
+-    LH = __RH_LH_tbl[index1 + 1 - 256];
++	index1 = (x >> 8) << 1;
++	/* RH ~ 2^56/index1 */
++	RH = __RH_LH_tbl[index1 - 256];
++	/* LH ~ 2^48 * log2(index1/256) */
++	LH = __RH_LH_tbl[index1 + 1 - 256];
+ 
+-    // RH*x ~ 2^48 * (2^15 + xf), xf<2^8
+-    xl64 = (int64_t)x * RH;
+-    xl64 >>= 48;
+-    x1 = xl64;
++	/* RH*x ~ 2^48 * (2^15 + xf), xf<2^8 */
++	xl64 = (__s64)x * RH;
++	xl64 >>= 48;
++	x1 = xl64;
+ 
+-    result = iexpon;
+-    result <<= (12 + 32);
++	result = iexpon;
++	result <<= (12 + 32);
+ 
+-    index2 = x1 & 0xff;
+-    // LL ~ 2^48*log2(1.0+index2/2^15)
+-    LL = __LL_tbl[index2];
++	index2 = x1 & 0xff;
++	/* LL ~ 2^48*log2(1.0+index2/2^15) */
++	LL = __LL_tbl[index2];
+ 
+-    LH = LH + LL;
++	LH = LH + LL;
+ 
+-    LH >>= (48-12 - 32);
+-    result += LH;
++	LH >>= (48 - 12 - 32);
++	result += LH;
+ 
+-    return result;
++	return result;
+ }
+ 
+ 
+@@ -290,9 +297,9 @@ uint64_t crush_ln(unsigned xin)
+ static int bucket_straw2_choose(struct crush_bucket_straw2 *bucket,
+ 				int x, int r)
+ {
+-	unsigned i, high = 0;
+-	unsigned u;
+-	unsigned w;
++	unsigned int i, high = 0;
++	unsigned int u;
++	unsigned int w;
+ 	__s64 ln, draw, high_draw = 0;
+ 
+ 	for (i = 0; i < bucket->h.size; i++) {
+@@ -567,6 +574,10 @@ reject:
+ 		out[outpos] = item;
+ 		outpos++;
+ 		count--;
++#ifndef __KERNEL__
++		if (map->choose_tries && ftotal <= map->choose_total_tries)
++			map->choose_tries[ftotal]++;
++#endif
+ 	}
+ 
+ 	dprintk("CHOOSE returns %d\n", outpos);
+@@ -610,6 +621,20 @@ static void crush_choose_indep(const str
+ 	}
+ 
+ 	for (ftotal = 0; left > 0 && ftotal < tries; ftotal++) {
++#ifdef DEBUG_INDEP
++		if (out2 && ftotal) {
++			dprintk("%u %d a: ", ftotal, left);
++			for (rep = outpos; rep < endpos; rep++) {
++				dprintk(" %d", out[rep]);
++			}
++			dprintk("\n");
++			dprintk("%u %d b: ", ftotal, left);
++			for (rep = outpos; rep < endpos; rep++) {
++				dprintk(" %d", out2[rep]);
++			}
++			dprintk("\n");
++		}
++#endif
+ 		for (rep = outpos; rep < endpos; rep++) {
+ 			if (out[rep] != CRUSH_ITEM_UNDEF)
+ 				continue;
+@@ -726,6 +751,24 @@ static void crush_choose_indep(const str
+ 			out2[rep] = CRUSH_ITEM_NONE;
+ 		}
+ 	}
++#ifndef __KERNEL__
++	if (map->choose_tries && ftotal <= map->choose_total_tries)
++		map->choose_tries[ftotal]++;
++#endif
++#ifdef DEBUG_INDEP
++	if (out2) {
++		dprintk("%u %d a: ", ftotal, left);
++		for (rep = outpos; rep < endpos; rep++) {
++			dprintk(" %d", out[rep]);
++		}
++		dprintk("\n");
++		dprintk("%u %d b: ", ftotal, left);
++		for (rep = outpos; rep < endpos; rep++) {
++			dprintk(" %d", out2[rep]);
++		}
++		dprintk("\n");
++	}
++#endif
+ }
+ 
+ /**
+@@ -884,7 +927,7 @@ int crush_do_rule(const struct crush_map
+ 						0);
+ 				} else {
+ 					out_size = ((numrep < (result_max-osize)) ?
+-                                                    numrep : (result_max-osize));
++						    numrep : (result_max-osize));
+ 					crush_choose_indep(
+ 						map,
+ 						map->buckets[-1-w[i]],
+@@ -930,5 +973,3 @@ int crush_do_rule(const struct crush_map
+ 	}
+ 	return result_len;
+ }
+-
+-

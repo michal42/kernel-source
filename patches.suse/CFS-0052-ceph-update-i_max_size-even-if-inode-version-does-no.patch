@@ -1,0 +1,57 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Sat, 8 Mar 2014 20:12:23 +0800
+Subject: [PATCH] ceph: update i_max_size even if inode version does not change
+Git-commit: 8c93cd610c6c5a4c0dddfc6fe906814331b3af87
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+handle following sequence of events:
+ - client releases a inode with i_max_size > 0. The release message
+   is queued. (is not sent to the auth MDS)
+ - a 'lookup' request reply from non-auth MDS returns the same inode.
+ - client opens the inode in write mode. The version of inode trace
+   in 'open' request reply is equal to the cached inode's version.
+ - client requests new max size. The MDS ignores the request because
+   it does not affect client's write range
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/inode.c |   16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -657,14 +657,6 @@ static int fill_inode(struct inode *inod
+ 			    le32_to_cpu(info->time_warp_seq),
+ 			    &ctime, &mtime, &atime);
+ 
+-	/* only update max_size on auth cap */
+-	if ((info->cap.flags & CEPH_CAP_FLAG_AUTH) &&
+-	    ci->i_max_size != le64_to_cpu(info->max_size)) {
+-		dout("max_size %lld -> %llu\n", ci->i_max_size,
+-		     le64_to_cpu(info->max_size));
+-		ci->i_max_size = le64_to_cpu(info->max_size);
+-	}
+-
+ 	ci->i_layout = info->layout;
+ 	inode->i_blkbits = fls(le32_to_cpu(info->layout.fl_stripe_unit)) - 1;
+ 
+@@ -753,6 +745,14 @@ static int fill_inode(struct inode *inod
+ 		ci->i_max_offset = 2;
+ 	}
+ no_change:
++	/* only update max_size on auth cap */
++	if ((info->cap.flags & CEPH_CAP_FLAG_AUTH) &&
++	    ci->i_max_size != le64_to_cpu(info->max_size)) {
++		dout("max_size %lld -> %llu\n", ci->i_max_size,
++		     le64_to_cpu(info->max_size));
++		ci->i_max_size = le64_to_cpu(info->max_size);
++	}
++
+ 	spin_unlock(&ci->i_ceph_lock);
+ 
+ 	/* queue truncate if we saw i_size decrease */

@@ -11,16 +11,14 @@ Reviewed-by: Murthy Bhat <Murthy.Bhat@pmcs.com>
 Signed-off-by: James Bottomley <JBottomley@Odin.com>
 Signed-off-by: Johannes Thumshirn <jthumshirn@suse.de>
 ---
- drivers/scsi/aacraid/aacraid.h  |  80 ++++++++-
- drivers/scsi/aacraid/comminit.c |  95 +++++++++-
- drivers/scsi/aacraid/commsup.c  |  20 ++-
- drivers/scsi/aacraid/dpcsup.c   |   9 +-
- drivers/scsi/aacraid/linit.c    |  20 ++-
- drivers/scsi/aacraid/src.c      | 386 ++++++++++++++++++++++++++++++----------
- 6 files changed, 504 insertions(+), 106 deletions(-)
+ drivers/scsi/aacraid/aacraid.h  |   80 +++++++-
+ drivers/scsi/aacraid/comminit.c |   95 +++++++++
+ drivers/scsi/aacraid/commsup.c  |   20 +-
+ drivers/scsi/aacraid/dpcsup.c   |    9 
+ drivers/scsi/aacraid/linit.c    |   20 +-
+ drivers/scsi/aacraid/src.c      |  389 ++++++++++++++++++++++++++++++----------
+ 6 files changed, 506 insertions(+), 107 deletions(-)
 
-diff --git a/drivers/scsi/aacraid/aacraid.h b/drivers/scsi/aacraid/aacraid.h
-index 5a92061..c32fbff 100644
 --- a/drivers/scsi/aacraid/aacraid.h
 +++ b/drivers/scsi/aacraid/aacraid.h
 @@ -6,11 +6,61 @@
@@ -171,7 +169,7 @@ index 5a92061..c32fbff 100644
  };
  
  #define aac_adapter_interrupt(dev) \
-@@ -2036,6 +2101,7 @@ void aac_consumer_free(struct aac_dev * dev, struct aac_queue * q, u32 qnum);
+@@ -2036,6 +2101,7 @@ void aac_consumer_free(struct aac_dev *
  int aac_fib_complete(struct fib * context);
  #define fib_data(fibctx) ((void *)(fibctx)->hw_fib_va->data)
  struct aac_dev *aac_init_adapter(struct aac_dev *dev);
@@ -179,8 +177,6 @@ index 5a92061..c32fbff 100644
  int aac_get_config_status(struct aac_dev *dev, int commit_flag);
  int aac_get_containers(struct aac_dev *dev);
  int aac_scsi_cmd(struct scsi_cmnd *cmd);
-diff --git a/drivers/scsi/aacraid/comminit.c b/drivers/scsi/aacraid/comminit.c
-index 177b094..fdd9524 100644
 --- a/drivers/scsi/aacraid/comminit.c
 +++ b/drivers/scsi/aacraid/comminit.c
 @@ -43,6 +43,8 @@
@@ -192,7 +188,7 @@ index 177b094..fdd9524 100644
  struct aac_common aac_config = {
  	.irq_mod = 1
  };
-@@ -91,7 +93,7 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
+@@ -91,7 +93,7 @@ static int aac_alloc_comm(struct aac_dev
  	init->InitStructRevision = cpu_to_le32(ADAPTER_INIT_STRUCT_REVISION);
  	if (dev->max_fib_size != sizeof(struct hw_fib))
  		init->InitStructRevision = cpu_to_le32(ADAPTER_INIT_STRUCT_REVISION_4);
@@ -201,7 +197,7 @@ index 177b094..fdd9524 100644
  	init->fsrev = cpu_to_le32(dev->fsrev);
  
  	/*
-@@ -140,7 +142,8 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
+@@ -140,7 +142,8 @@ static int aac_alloc_comm(struct aac_dev
  			INITFLAGS_NEW_COMM_TYPE2_SUPPORTED | INITFLAGS_FAST_JBOD_SUPPORTED);
  		init->HostRRQ_AddrHigh = cpu_to_le32((u32)((u64)dev->host_rrq_pa >> 32));
  		init->HostRRQ_AddrLow = cpu_to_le32((u32)(dev->host_rrq_pa & 0xffffffff));
@@ -211,7 +207,7 @@ index 177b094..fdd9524 100644
  		dprintk((KERN_WARNING"aacraid: New Comm Interface type2 enabled\n"));
  	}
  
-@@ -228,6 +231,11 @@ int aac_send_shutdown(struct aac_dev * dev)
+@@ -228,6 +231,11 @@ int aac_send_shutdown(struct aac_dev * d
  	/* FIB should be freed only after getting the response from the F/W */
  	if (status != -ERESTARTSYS)
  		aac_fib_free(fibctx);
@@ -223,7 +219,7 @@ index 177b094..fdd9524 100644
  	return status;
  }
  
-@@ -388,6 +396,8 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
+@@ -388,6 +396,8 @@ struct aac_dev *aac_init_adapter(struct
  			}
  		}
  	}
@@ -232,7 +228,7 @@ index 177b094..fdd9524 100644
  	if ((!aac_adapter_sync_cmd(dev, GET_COMM_PREFERRED_SETTINGS,
  	  0, 0, 0, 0, 0, 0,
  	  status+0, status+1, status+2, status+3, status+4))
-@@ -461,6 +471,11 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
+@@ -461,6 +471,11 @@ struct aac_dev *aac_init_adapter(struct
  	if (host->can_queue > AAC_NUM_IO_FIB)
  		host->can_queue = AAC_NUM_IO_FIB;
  
@@ -244,7 +240,7 @@ index 177b094..fdd9524 100644
  	/*
  	 *	Ok now init the communication subsystem
  	 */
-@@ -489,4 +504,78 @@ struct aac_dev *aac_init_adapter(struct aac_dev *dev)
+@@ -489,4 +504,78 @@ struct aac_dev *aac_init_adapter(struct
  	return dev;
  }
  
@@ -324,11 +320,9 @@ index 177b094..fdd9524 100644
 +		(dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB) /
 +		msi_count;
 +}
-diff --git a/drivers/scsi/aacraid/commsup.c b/drivers/scsi/aacraid/commsup.c
-index 8ac7998..152879c 100644
 --- a/drivers/scsi/aacraid/commsup.c
 +++ b/drivers/scsi/aacraid/commsup.c
-@@ -868,7 +868,7 @@ void aac_printf(struct aac_dev *dev, u32 val)
+@@ -868,7 +868,7 @@ void aac_printf(struct aac_dev *dev, u32
   *	dispatches it to the appropriate routine for handling.
   */
  
@@ -346,7 +340,7 @@ index 8ac7998..152879c 100644
  	struct Scsi_Host *host;
  	struct scsi_device *dev;
  	struct scsi_cmnd *command;
-@@ -1319,7 +1319,21 @@ static int _aac_reset_adapter(struct aac_dev *aac, int forced)
+@@ -1319,7 +1319,21 @@ static int _aac_reset_adapter(struct aac
  	aac->comm_phys = 0;
  	kfree(aac->queues);
  	aac->queues = NULL;
@@ -369,11 +363,9 @@ index 8ac7998..152879c 100644
  	if (aac->msi)
  		pci_disable_msi(aac->pdev);
  	kfree(aac->fsa_dev);
-diff --git a/drivers/scsi/aacraid/dpcsup.c b/drivers/scsi/aacraid/dpcsup.c
-index d81b281..2e39466 100644
 --- a/drivers/scsi/aacraid/dpcsup.c
 +++ b/drivers/scsi/aacraid/dpcsup.c
-@@ -389,8 +389,13 @@ unsigned int aac_intr_normal(struct aac_dev *dev, u32 index,
+@@ -389,8 +389,13 @@ unsigned int aac_intr_normal(struct aac_
  			 *	NOTE:  we cannot touch the fib after this
  			 *	    call, because it may have been deallocated.
  			 */
@@ -389,11 +381,9 @@ index d81b281..2e39466 100644
  		} else {
  			unsigned long flagv;
  	  		dprintk((KERN_INFO "event_wait up\n"));
-diff --git a/drivers/scsi/aacraid/linit.c b/drivers/scsi/aacraid/linit.c
-index a8bd870..358b750 100644
 --- a/drivers/scsi/aacraid/linit.c
 +++ b/drivers/scsi/aacraid/linit.c
-@@ -1086,6 +1086,8 @@ static struct scsi_host_template aac_driver_template = {
+@@ -1086,6 +1086,8 @@ static struct scsi_host_template aac_dri
  
  static void __aac_shutdown(struct aac_dev * aac)
  {
@@ -402,7 +392,7 @@ index a8bd870..358b750 100644
  	if (aac->aif_thread) {
  		int i;
  		/* Clear out events first */
-@@ -1099,9 +1101,25 @@ static void __aac_shutdown(struct aac_dev * aac)
+@@ -1099,9 +1101,25 @@ static void __aac_shutdown(struct aac_de
  	}
  	aac_send_shutdown(aac);
  	aac_adapter_disable_int(aac);
@@ -429,8 +419,6 @@ index a8bd870..358b750 100644
  }
  
  static int aac_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
-diff --git a/drivers/scsi/aacraid/src.c b/drivers/scsi/aacraid/src.c
-index 7e17107..5ff2972 100644
 --- a/drivers/scsi/aacraid/src.c
 +++ b/drivers/scsi/aacraid/src.c
 @@ -44,98 +44,128 @@
@@ -636,7 +624,7 @@ index 7e17107..5ff2972 100644
  }
  
  /**
-@@ -155,7 +185,7 @@ static void aac_src_disable_interrupt(struct aac_dev *dev)
+@@ -155,7 +185,7 @@ static void aac_src_disable_interrupt(st
  
  static void aac_src_enable_interrupt_message(struct aac_dev *dev)
  {
@@ -645,7 +633,7 @@ index 7e17107..5ff2972 100644
  }
  
  /**
-@@ -191,7 +221,10 @@ static int src_sync_cmd(struct aac_dev *dev, u32 command,
+@@ -191,7 +221,10 @@ static int src_sync_cmd(struct aac_dev *
  	/*
  	 *	Clear the synch command doorbell to start on a clean slate.
  	 */
@@ -657,7 +645,7 @@ index 7e17107..5ff2972 100644
  
  	/*
  	 *	Disable doorbell interrupts
-@@ -221,11 +254,17 @@ static int src_sync_cmd(struct aac_dev *dev, u32 command,
+@@ -221,11 +254,17 @@ static int src_sync_cmd(struct aac_dev *
  			/*
  			 *	Mon960 will set doorbell0 bit when it has completed the command.
  			 */
@@ -677,7 +665,7 @@ index 7e17107..5ff2972 100644
  				ok = 1;
  				break;
  			}
-@@ -254,11 +293,16 @@ static int src_sync_cmd(struct aac_dev *dev, u32 command,
+@@ -254,11 +293,16 @@ static int src_sync_cmd(struct aac_dev *
  			*r3 = readl(&dev->IndexRegs->Mailbox[3]);
  		if (r4)
  			*r4 = readl(&dev->IndexRegs->Mailbox[4]);
@@ -696,7 +684,7 @@ index 7e17107..5ff2972 100644
  	}
  
  	/*
-@@ -335,9 +379,14 @@ static void aac_src_notify_adapter(struct aac_dev *dev, u32 event)
+@@ -335,9 +379,14 @@ static void aac_src_notify_adapter(struc
  static void aac_src_start_adapter(struct aac_dev *dev)
  {
  	struct aac_init *init;
@@ -712,7 +700,7 @@ index 7e17107..5ff2972 100644
  
  	init = dev->init;
  	init->HostElapsedSeconds = cpu_to_le32(get_seconds());
-@@ -400,6 +449,33 @@ static int aac_src_deliver_message(struct fib *fib)
+@@ -400,6 +449,33 @@ static int aac_src_deliver_message(struc
  	q->numpending++;
  	spin_unlock_irqrestore(q->lock, qflags);
  
@@ -746,7 +734,7 @@ index 7e17107..5ff2972 100644
  	if (dev->comm_interface == AAC_COMM_MESSAGE_TYPE2) {
  		/* Calculate the amount to the fibsize bits */
  		fibsize = (hdr_size + 127) / 128 - 1;
-@@ -502,10 +578,19 @@ static int aac_src_restart_adapter(struct aac_dev *dev, int bled)
+@@ -502,10 +578,19 @@ static int aac_src_restart_adapter(struc
  			0, 0, 0, 0, 0, 0, &var, &reset_mask, NULL, NULL, NULL);
  			if (bled || (var != 0x00000001))
  				return -EINVAL;
@@ -767,7 +755,7 @@ index 7e17107..5ff2972 100644
  		}
  	}
  
-@@ -646,6 +731,9 @@ int aac_src_init(struct aac_dev *dev)
+@@ -646,8 +731,12 @@ int aac_src_init(struct aac_dev *dev)
  
  	dev->msi = aac_msi && !pci_enable_msi(dev->pdev);
  
@@ -775,9 +763,13 @@ index 7e17107..5ff2972 100644
 +	dev->aac_msix[0].dev = dev;
 +
  	if (request_irq(dev->pdev->irq, dev->a_ops.adapter_intr,
- 			IRQF_SHARED|IRQF_DISABLED, "aacraid", dev) < 0) {
+-			IRQF_SHARED|IRQF_DISABLED, "aacraid", dev) < 0) {
++			IRQF_SHARED|IRQF_DISABLED, "aacraid",
++			&(dev->aac_msix[0])) < 0) {
  
-@@ -688,6 +776,7 @@ int aac_srcv_init(struct aac_dev *dev)
+ 		if (dev->msi)
+ 			pci_disable_msi(dev->pdev);
+@@ -688,6 +777,7 @@ int aac_srcv_init(struct aac_dev *dev)
  	unsigned long status;
  	int restart = 0;
  	int instance = dev->id;
@@ -785,7 +777,7 @@ index 7e17107..5ff2972 100644
  	const char *name = dev->name;
  
  	dev->a_ops.adapter_ioremap = aac_srcv_ioremap;
-@@ -802,14 +891,41 @@ int aac_srcv_init(struct aac_dev *dev)
+@@ -802,14 +892,41 @@ int aac_srcv_init(struct aac_dev *dev)
  		goto error_iounmap;
  	if (dev->comm_interface != AAC_COMM_MESSAGE_TYPE2)
  		goto error_iounmap;
@@ -835,7 +827,7 @@ index 7e17107..5ff2972 100644
  	}
  	dev->dbg_base = dev->base_start;
  	dev->dbg_base_mapped = dev->base;
-@@ -831,3 +947,93 @@ error_iounmap:
+@@ -831,3 +948,93 @@ error_iounmap:
  	return -1;
  }
  
@@ -929,6 +921,3 @@ index 7e17107..5ff2972 100644
 +
 +	return val;
 +}
--- 
-2.4.3
-

@@ -1,0 +1,30 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 1 Jul 2015 17:03:23 +0800
+Subject: [PATCH] ceph: invalidate dirty pages after forced umount
+Git-commit: a341d4df87487ae68189e0be869c39a2b0cb9aaa
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+After forced umount, ceph_writepages_start() skips flushing dirty
+pages. To make sure inode's reference count get dropped to zero,
+we need to invalidate dirty pages.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -729,6 +729,8 @@ static int ceph_writepages_start(struct
+ 
+ 	if (ACCESS_ONCE(fsc->mount_state) == CEPH_MOUNT_SHUTDOWN) {
+ 		pr_warn("writepage_start %p on forced umount\n", inode);
++		truncate_pagecache(inode, 0);
++		mapping_set_error(mapping, -EIO);
+ 		return -EIO; /* we're in a forced umount, don't write! */
+ 	}
+ 	if (fsc->mount_options->wsize && fsc->mount_options->wsize < wsize)

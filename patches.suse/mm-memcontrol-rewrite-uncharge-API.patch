@@ -91,7 +91,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  mm/filemap.c                         |    4 
  mm/memcontrol.c                      |  856 +++++++++++++----------------------
  mm/memory.c                          |    2 
- mm/migrate.c                         |   38 -
+ mm/migrate.c                         |   36 -
  mm/rmap.c                            |    1 
  mm/shmem.c                           |    8 
  mm/swap.c                            |    6 
@@ -100,7 +100,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  mm/truncate.c                        |    9 
  mm/vmscan.c                          |   12 
  mm/zswap.c                           |    2 
- 16 files changed, 404 insertions(+), 779 deletions(-)
+ 16 files changed, 404 insertions(+), 777 deletions(-)
 
 --- a/Documentation/cgroups/memcg_test.txt
 +++ b/Documentation/cgroups/memcg_test.txt
@@ -1390,7 +1390,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		css_put(&mz->memcg->css);
  		loop++;
  		/*
-@@ -6231,9 +5852,9 @@ static enum mc_target_type get_mctgt_typ
+@@ -6232,9 +5853,9 @@ static enum mc_target_type get_mctgt_typ
  	if (page) {
  		pc = lookup_page_cgroup(page);
  		/*
@@ -1403,7 +1403,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		 */
  		if (PageCgroupUsed(pc) && pc->mem_cgroup == mc.from) {
  			ret = MC_TARGET_PAGE;
-@@ -6697,6 +6318,68 @@ static void __init enable_swap_cgroup(vo
+@@ -6698,6 +6319,68 @@ static void __init enable_swap_cgroup(vo
  }
  #endif
  
@@ -1472,7 +1472,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  /**
   * mem_cgroup_try_charge - try charging a page
   * @page: page to charge
-@@ -6799,7 +6482,7 @@ void mem_cgroup_commit_charge(struct pag
+@@ -6800,7 +6483,7 @@ void mem_cgroup_commit_charge(struct pag
  		VM_BUG_ON(!PageTransHuge(page));
  	}
  
@@ -1481,7 +1481,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  	if (do_swap_account && PageSwapCache(page)) {
  		swp_entry_t entry = { .val = page_private(page) };
-@@ -6841,6 +6524,141 @@ void mem_cgroup_cancel_charge(struct pag
+@@ -6842,6 +6525,141 @@ void mem_cgroup_cancel_charge(struct pag
  	cancel_charge(memcg, nr_pages);
  }
  
@@ -1709,19 +1709,17 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		}
  		goto skip_unmap;
  	}
-@@ -915,10 +912,7 @@ skip_unmap:
+@@ -915,8 +912,7 @@ skip_unmap:
  	if (anon_vma)
  		put_anon_vma(anon_vma);
  
 -uncharge:
--	mem_cgroup_end_migration(mem, page, newpage,
--				 (rc == MIGRATEPAGE_SUCCESS ||
--				  rc == MIGRATEPAGE_BALLOON_SUCCESS));
+-	mem_cgroup_end_migration(mem, page, newpage, rc == MIGRATEPAGE_SUCCESS);
 +out_unlock:
  	unlock_page(page);
  out:
  	return rc;
-@@ -1744,7 +1738,6 @@ int migrate_misplaced_transhuge_page(str
+@@ -1734,7 +1730,6 @@ int migrate_misplaced_transhuge_page(str
  	pg_data_t *pgdat = NODE_DATA(node);
  	int isolated = 0;
  	struct page *new_page = NULL;
@@ -1729,7 +1727,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	int page_lru = page_is_file_cache(page);
  	unsigned long mmun_start = address & HPAGE_PMD_MASK;
  	unsigned long mmun_end = mmun_start + HPAGE_PMD_SIZE;
-@@ -1810,15 +1803,6 @@ fail_putback:
+@@ -1800,15 +1795,6 @@ fail_putback:
  		goto out_unlock;
  	}
  
@@ -1745,7 +1743,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	orig_entry = *pmd;
  	entry = mk_pmd(new_page, vma->vm_page_prot);
  	entry = pmd_mkhuge(entry);
-@@ -1846,14 +1830,10 @@ fail_putback:
+@@ -1836,14 +1822,10 @@ fail_putback:
  		goto fail_putback;
  	}
  
@@ -2015,7 +2013,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  		if (freepage != NULL)
  			freepage(page);
-@@ -1094,6 +1094,7 @@ free_it:
+@@ -1090,6 +1090,7 @@ free_it:
  		/* See release_pages on why this clear may be necessary */
  		__ClearPageWaiters(page);
  
@@ -2023,7 +2021,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		nr_reclaimed++;
  
  		/*
-@@ -1123,13 +1124,14 @@ keep:
+@@ -1119,13 +1120,14 @@ keep:
  		list_add(&page->lru, &ret_pages);
  		VM_BUG_ON(PageLRU(page) || PageUnevictable(page));
  	}
@@ -2039,7 +2037,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	*ret_nr_dirty += nr_dirty;
  	*ret_nr_congested += nr_congested;
  	*ret_nr_unqueued_dirty += nr_unqueued_dirty;
-@@ -1429,6 +1431,8 @@ putback_inactive_pages(struct lruvec *lr
+@@ -1426,6 +1428,8 @@ putback_inactive_pages(struct lruvec *lr
  			__ClearPageWaiters(page);
  			del_page_from_lru_list(page, lruvec, lru);
  
@@ -2048,7 +2046,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  			if (unlikely(PageCompound(page))) {
  				spin_unlock_irq(&zone->lru_lock);
  				(*get_compound_page_dtor(page))(page);
-@@ -1638,6 +1642,8 @@ static void move_active_pages_to_lru(str
+@@ -1635,6 +1639,8 @@ static void move_active_pages_to_lru(str
  			__ClearPageWaiters(page);
  			del_page_from_lru_list(page, lruvec, lru);
  

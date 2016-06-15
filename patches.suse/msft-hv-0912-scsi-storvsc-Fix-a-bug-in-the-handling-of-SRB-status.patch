@@ -1,0 +1,50 @@
+From: "K. Y. Srinivasan" <kys@microsoft.com>
+Date: Tue, 6 Oct 2015 18:04:01 -0700
+Patch-mainline: v4.4-rc1
+Subject: scsi: storvsc: Fix a bug in the handling of SRB status flags
+Git-commit: 3209f9d780d137cdb54c85e0a776cb19e723a170
+
+SRB status can have additional information. Mask these out before processing
+SRB status.
+
+This patch was sent as part of a collection of patches more than a year ago.
+While the rest of the patches in the set were comitted, this patch was not.
+I woulod like to thank Olaf for noticing that this patch was not committed
+upstream.
+
+Signed-off-by: K. Y. Srinivasan <kys@microsoft.com>
+Reviewed-by: Long Li <longli@microsoft.com>
+Signed-off-by: James Bottomley <JBottomley@Odin.com>
+Acked-by: <ohering@suse.de>
+---
+ drivers/scsi/storvsc_drv.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
+index f56b89a..3fba42a 100644
+--- a/drivers/scsi/storvsc_drv.c
++++ b/drivers/scsi/storvsc_drv.c
+@@ -349,11 +349,14 @@ enum storvsc_request_type {
+  */
+ 
+ #define SRB_STATUS_AUTOSENSE_VALID	0x80
++#define SRB_STATUS_QUEUE_FROZEN		0x40
+ #define SRB_STATUS_INVALID_LUN	0x20
+ #define SRB_STATUS_SUCCESS	0x01
+ #define SRB_STATUS_ABORTED	0x02
+ #define SRB_STATUS_ERROR	0x04
+ 
++#define SRB_STATUS(status) \
++	(status & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN))
+ /*
+  * This is the end of Protocol specific defines.
+  */
+@@ -858,7 +861,7 @@ static void storvsc_handle_error(struct vmscsi_request *vm_srb,
+ 	void (*process_err_fn)(struct work_struct *work);
+ 	bool do_work = false;
+ 
+-	switch (vm_srb->srb_status) {
++	switch (SRB_STATUS(vm_srb->srb_status)) {
+ 	case SRB_STATUS_ERROR:
+ 		/*
+ 		 * If there is an error; offline the device since all

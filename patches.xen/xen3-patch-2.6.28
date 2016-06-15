@@ -8,6 +8,7 @@ Acked-by: Jeff Mahoney <jeffm@suse.com>
 Automatically created from "patches.kernel.org/patch-2.6.28" by xen-port-patches.py
 
 3.4/arch/x86/Kconfig.cpu
+0017-acpi-processor-introduce-apic_id-in-struct-processor-to-save-parsed-apic-id/drivers/acpi/processor_core.c (needs re-implementation)
 
 --- a/arch/ia64/Kconfig
 +++ b/arch/ia64/Kconfig
@@ -10245,7 +10246,7 @@ Automatically created from "patches.kernel.org/patch-2.6.28" by xen-port-patches
  static unsigned long __meminitdata table_cur;
  static unsigned long __meminitdata table_top;
  
-+pteval_t __supported_pte_mask __read_mostly = ~0UL;
++pteval_t __supported_pte_mask __read_mostly = ~_PAGE_GLOBAL;
 +EXPORT_SYMBOL_GPL(__supported_pte_mask);
 +
 +static int do_not_nx __cpuinitdata;
@@ -12278,39 +12279,12 @@ Automatically created from "patches.kernel.org/patch-2.6.28" by xen-port-patches
  	default n
  	help
  	  Enable statistics output and various tuning options in debugfs.
---- a/drivers/acpi/processor_core.c
-+++ b/drivers/acpi/processor_core.c
-@@ -164,15 +164,19 @@ exit:
- 
- int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
- {
--#ifdef CONFIG_SMP
--	int i;
--#endif
--	int apic_id = -1;
-+	int i = 0, apic_id = -1;
-+
-+	if (type < 0) {
-+		if (!processor_cntl_external())
-+			return -1;
-+		type = ~type;
-+		i = 1;
-+	}
- 
- 	apic_id = map_mat_entry(handle, type, acpi_id);
- 	if (apic_id == -1)
- 		apic_id = map_madt_entry(type, acpi_id);
--	if (apic_id == -1) {
-+	if (apic_id == -1 || i) {
- 		/*
- 		 * On UP processor, there is no _MAT or MADT table.
- 		 * So above apic_id is always set to -1.
 --- a/drivers/acpi/acpi_processor.c
 +++ b/drivers/acpi/acpi_processor.c
-@@ -289,7 +289,9 @@ static int acpi_processor_get_info(struc
+@@ -291,7 +291,9 @@ static int acpi_processor_get_info(struc
  	 */
  	if (pr->id == -1) {
- 		int ret = acpi_processor_hotadd_init(pr);
+ 		int ret = acpi_processor_hotadd_init(pr, device_declaration);
 -		if (ret && (!processor_cntl_external() || ret != -ENODEV))
 +		if (ret && (ret != -ENODEV ||
 +			    get_cpu_id(pr->handle, ~device_declaration,

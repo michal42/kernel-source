@@ -1,0 +1,60 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 26 Oct 2015 16:08:43 +0800
+Subject: [PATCH] ceph: don't invalidate page cache when inode is no longer
+ used
+Git-commit: 5e804ac4824302efc3038e086cb21f2e93ab8900
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+ceph_check_caps() invalidate page cache when inode is not used
+by any open file. This behaviour is not friendly for workload
+that repeatly read files.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c       |    5 ++---
+ fs/ceph/mds_client.c |    9 ++++++++-
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -1655,9 +1655,8 @@ retry_locked:
+ 	    !S_ISDIR(inode->i_mode) &&		/* ignore readdir cache */
+ 	    ci->i_wrbuffer_ref == 0 &&		/* no dirty pages... */
+ 	    inode->i_data.nrpages &&		/* have cached pages */
+-	    (file_wanted == 0 ||		/* no open files */
+-	     (revoking & (CEPH_CAP_FILE_CACHE|
+-			  CEPH_CAP_FILE_LAZYIO))) && /*  or revoking cache */
++	    (revoking & (CEPH_CAP_FILE_CACHE|
++			 CEPH_CAP_FILE_LAZYIO)) && /*  or revoking cache */
+ 	    !tried_invalidate) {
+ 		dout("check_caps trying to invalidate on %p\n", inode);
+ 		if (try_nonblocking_invalidate(inode) < 0) {
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1432,6 +1432,13 @@ static int trim_caps_cb(struct inode *in
+ 		if ((used | wanted) & CEPH_CAP_ANY_WR)
+ 			goto out;
+ 	}
++	/* The inode has cached pages, but it's no longer used.
++	 * we can safely drop it */
++	if (wanted == 0 && used == CEPH_CAP_FILE_CACHE &&
++	    !(oissued & CEPH_CAP_FILE_CACHE)) {
++	  used = 0;
++	  oissued = 0;
++	}
+ 	if ((used | wanted) & ~oissued & mine)
+ 		goto out;   /* we need these caps */
+ 
+@@ -1440,7 +1447,7 @@ static int trim_caps_cb(struct inode *in
+ 		/* we aren't the only cap.. just remove us */
+ 		__ceph_remove_cap(cap, true);
+ 	} else {
+-		/* try to drop referring dentries */
++		/* try dropping referring dentries */
+ 		spin_unlock(&ci->i_ceph_lock);
+ 		d_prune_aliases(inode);
+ 		dout("trim_caps_cb %p cap %p  pruned, count now %d\n",

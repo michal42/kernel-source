@@ -1,0 +1,51 @@
+From: =?UTF-8?q?Beno=C3=AEt=20Canet?= <benoit.canet@nodalink.com>
+Date: Thu, 25 Jun 2015 20:32:34 +0300
+Subject: [PATCH] libceph: Fix ceph_tcp_sendpage()'s more boolean usage
+Mime-version: 1.0
+Content-type: text/plain; charset=UTF-8
+Content-transfer-encoding: 8bit
+Git-commit: c2cfa19400979dc1a14bba75f83b451b0cd9507a
+Patch-mainline: v4.2
+References: Fate#318586
+
+
+From struct ceph_msg_data_cursor in include/linux/ceph/messenger.h:
+
+bool    last_piece;     /* current is last piece */
+
+In ceph_msg_data_next():
+
+*last_piece = cursor->last_piece;
+
+A call to ceph_msg_data_next() is followed by:
+
+ret = ceph_tcp_sendpage(con->sock, page, page_offset,
+                        length, last_piece);
+
+while ceph_tcp_sendpage() is:
+
+static int ceph_tcp_sendpage(struct socket *sock, struct page *page,
+                             int offset, size_t size, bool more)
+
+The logic is inverted: correct it.
+
+Signed-off-by: Benoît Canet <benoit.canet@nodalink.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/ceph/messenger.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/net/ceph/messenger.c
++++ b/net/ceph/messenger.c
+@@ -1630,7 +1630,7 @@ static int write_partial_message_data(st
+ 		page = ceph_msg_data_next(&msg->cursor, &page_offset, &length,
+ 							&last_piece);
+ 		ret = ceph_tcp_sendpage(con->sock, page, page_offset,
+-				      length, last_piece);
++					length, !last_piece);
+ 		if (ret <= 0) {
+ 			if (do_datacrc)
+ 				msg->footer.data_crc = cpu_to_le32(crc);

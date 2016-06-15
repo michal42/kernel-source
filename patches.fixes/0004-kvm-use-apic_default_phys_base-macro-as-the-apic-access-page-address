@@ -1,0 +1,58 @@
+From: Tang Chen <tangchen@cn.fujitsu.com>
+Date: Thu, 11 Sep 2014 13:38:00 +0800
+Subject: kvm: Use APIC_DEFAULT_PHYS_BASE macro as the apic access page address.
+Git-commit: 73a6d9416279f138833574f11dc82134fb56908d
+Patch-mainline: v3.18-rc1
+References: bsc#959463
+
+We have APIC_DEFAULT_PHYS_BASE defined as 0xfee00000, which is also the address of
+apic access page. So use this macro.
+
+Signed-off-by: Tang Chen <tangchen@cn.fujitsu.com>
+Reviewed-by: Gleb Natapov <gleb@kernel.org>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ arch/x86/kvm/svm.c | 3 ++-
+ arch/x86/kvm/vmx.c | 6 +++---
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -1261,7 +1261,8 @@
+ 	svm->asid_generation = 0;
+ 	init_vmcb(svm);
+ 
+-	svm->vcpu.arch.apic_base = 0xfee00000 | MSR_IA32_APICBASE_ENABLE;
++	svm->vcpu.arch.apic_base = APIC_DEFAULT_PHYS_BASE |
++				   MSR_IA32_APICBASE_ENABLE;
+ 	if (kvm_vcpu_is_bsp(&svm->vcpu))
+ 		svm->vcpu.arch.apic_base |= MSR_IA32_APICBASE_BSP;
+ 
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -3940,13 +3940,13 @@
+ 		goto out;
+ 	kvm_userspace_mem.slot = APIC_ACCESS_PAGE_PRIVATE_MEMSLOT;
+ 	kvm_userspace_mem.flags = 0;
+-	kvm_userspace_mem.guest_phys_addr = 0xfee00000ULL;
++	kvm_userspace_mem.guest_phys_addr = APIC_DEFAULT_PHYS_BASE;
+ 	kvm_userspace_mem.memory_size = PAGE_SIZE;
+ 	r = __kvm_set_memory_region(kvm, &kvm_userspace_mem);
+ 	if (r)
+ 		goto out;
+ 
+-	page = gfn_to_page(kvm, 0xfee00);
++	page = gfn_to_page(kvm, APIC_DEFAULT_PHYS_BASE >> PAGE_SHIFT);
+ 	if (is_error_page(page)) {
+ 		r = -EFAULT;
+ 		goto out;
+@@ -4419,7 +4419,7 @@
+ 
+ 	vmx->vcpu.arch.regs[VCPU_REGS_RDX] = get_rdx_init_val();
+ 	kvm_set_cr8(&vmx->vcpu, 0);
+-	msr = 0xfee00000 | MSR_IA32_APICBASE_ENABLE;
++	msr = APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE;
+ 	if (kvm_vcpu_is_bsp(&vmx->vcpu))
+ 		msr |= MSR_IA32_APICBASE_BSP;
+ 	kvm_set_apic_base(&vmx->vcpu, msr);

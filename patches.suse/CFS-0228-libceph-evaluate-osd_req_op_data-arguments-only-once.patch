@@ -1,0 +1,42 @@
+From: Ioana Ciornei <ciorneiioana@gmail.com>
+Date: Thu, 22 Oct 2015 18:06:07 +0300
+Subject: [PATCH] libceph: evaluate osd_req_op_data() arguments only once
+Git-commit: 8a703a383dd3458753e0ad71860ed3a5097692b3
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+This patch changes the osd_req_op_data() macro to not evaluate
+arguments more than once in order to follow the kernel coding style.
+
+Signed-off-by: Ioana Ciornei <ciorneiioana@gmail.com>
+Reviewed-by: Alex Elder <elder@linaro.org>
+[idryomov@gmail.com: changelog, formatting]
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/ceph/osd_client.c |   12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+--- a/net/ceph/osd_client.c
++++ b/net/ceph/osd_client.c
+@@ -138,11 +138,13 @@ static void ceph_osd_data_sg_init(struct
+ 	osd_data->sgl_init_offset = init_sg_offset;
+ }
+ 
+-#define osd_req_op_data(oreq, whch, typ, fld)	\
+-	({						\
+-		BUG_ON(whch >= (oreq)->r_num_ops);	\
+-		&(oreq)->r_ops[whch].typ.fld;		\
+-	})
++#define osd_req_op_data(oreq, whch, typ, fld)				\
++({									\
++	struct ceph_osd_request *__oreq = (oreq);			\
++	unsigned int __whch = (whch);					\
++	BUG_ON(__whch >= __oreq->r_num_ops);				\
++	&__oreq->r_ops[__whch].typ.fld;					\
++})
+ 
+ static struct ceph_osd_data *
+ osd_req_op_raw_data_in(struct ceph_osd_request *osd_req, unsigned int which)

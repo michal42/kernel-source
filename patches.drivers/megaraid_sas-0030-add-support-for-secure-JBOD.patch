@@ -19,16 +19,14 @@ Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
 Signed-off-by: Christoph Hellwig <hch@lst.de>
 Acked-by: Johannes Thumshirn <jthumshirn@suse.de>
 ---
- drivers/scsi/megaraid/megaraid_sas.h        | 57 ++++++++++++++++++----
- drivers/scsi/megaraid/megaraid_sas_base.c   | 28 +++++++----
- drivers/scsi/megaraid/megaraid_sas_fusion.c | 73 ++++++++++++++++-------------
+ drivers/scsi/megaraid/megaraid_sas.h        |   57 ++++++++++++++++++---
+ drivers/scsi/megaraid/megaraid_sas_base.c   |   28 ++++++----
+ drivers/scsi/megaraid/megaraid_sas_fusion.c |   73 +++++++++++++++-------------
  3 files changed, 107 insertions(+), 51 deletions(-)
 
-diff --git a/drivers/scsi/megaraid/megaraid_sas.h b/drivers/scsi/megaraid/megaraid_sas.h
-index 0d44d91..b8b378d 100644
 --- a/drivers/scsi/megaraid/megaraid_sas.h
 +++ b/drivers/scsi/megaraid/megaraid_sas.h
-@@ -969,7 +969,20 @@ struct megasas_ctrl_info {
+@@ -971,7 +971,20 @@ struct megasas_ctrl_info {
  
  	struct {
  #if defined(__BIG_ENDIAN_BITFIELD)
@@ -50,7 +48,7 @@ index 0d44d91..b8b378d 100644
  		u32     supportCrashDump:1;
  		u32     supportMaxExtLDs:1;
  		u32     supportT10RebuildAssist:1;
-@@ -981,9 +994,22 @@ struct megasas_ctrl_info {
+@@ -983,9 +996,22 @@ struct megasas_ctrl_info {
  		u32     supportThermalPollInterval:1;
  		u32     supportDisableImmediateIO:1;
  		u32     supportT10RebuildAssist:1;
@@ -76,7 +74,7 @@ index 0d44d91..b8b378d 100644
  #endif
  	} adapterOperations3;
  
-@@ -1022,6 +1048,13 @@ enum MR_MFI_MPT_PTHR_FLAGS {
+@@ -1024,6 +1050,13 @@ enum MR_MFI_MPT_PTHR_FLAGS {
  	MFI_MPT_ATTACHED = 2,
  };
  
@@ -90,7 +88,7 @@ index 0d44d91..b8b378d 100644
  /* Frame Type */
  #define IO_FRAME				0
  #define PTHRU_FRAME				1
-@@ -1194,19 +1227,23 @@ union megasas_sgl_frame {
+@@ -1196,19 +1229,23 @@ union megasas_sgl_frame {
  typedef union _MFI_CAPABILITIES {
  	struct {
  #if   defined(__BIG_ENDIAN_BITFIELD)
@@ -118,7 +116,7 @@ index 0d44d91..b8b378d 100644
  #endif
  	} mfi_capabilities;
  	u32     reg;
-@@ -1638,13 +1675,14 @@ struct megasas_instance {
+@@ -1640,13 +1677,14 @@ struct megasas_instance {
  	u32 crash_dump_fw_support;
  	u32 crash_dump_drv_support;
  	u32 crash_dump_app_support;
@@ -134,18 +132,16 @@ index 0d44d91..b8b378d 100644
  	s8 init_id;
  
  	u16 max_num_sge;
-@@ -1946,5 +1984,6 @@ void __megasas_return_cmd(struct megasas_instance *instance,
+@@ -1948,5 +1986,6 @@ void __megasas_return_cmd(struct megasas
  
  void megasas_return_mfi_mpt_pthr(struct megasas_instance *instance,
  	struct megasas_cmd *cmd_mfi, struct megasas_cmd_fusion *cmd_fusion);
 +int megasas_cmd_type(struct scsi_cmnd *cmd);
  
  #endif				/*LSI_MEGARAID_SAS_H */
-diff --git a/drivers/scsi/megaraid/megaraid_sas_base.c b/drivers/scsi/megaraid/megaraid_sas_base.c
-index 2162a85..b056788 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_base.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_base.c
-@@ -1428,16 +1428,15 @@ megasas_build_ldio(struct megasas_instance *instance, struct scsi_cmnd *scp,
+@@ -1428,16 +1428,15 @@ megasas_build_ldio(struct megasas_instan
  }
  
  /**
@@ -167,7 +163,7 @@ index 2162a85..b056788 100644
  	switch (cmd->cmnd[0]) {
  	case READ_10:
  	case WRITE_10:
-@@ -1447,10 +1446,14 @@ inline int megasas_is_ldio(struct scsi_cmnd *cmd)
+@@ -1447,10 +1446,14 @@ inline int megasas_is_ldio(struct scsi_c
  	case WRITE_6:
  	case READ_16:
  	case WRITE_16:
@@ -184,7 +180,7 @@ index 2162a85..b056788 100644
  }
  
   /**
-@@ -1482,7 +1485,7 @@ megasas_dump_pending_frames(struct megasas_instance *instance)
+@@ -1482,7 +1485,7 @@ megasas_dump_pending_frames(struct megas
  		if(!cmd->scmd)
  			continue;
  		printk(KERN_ERR "megasas[%d]: Frame addr :0x%08lx : ",instance->host->host_no,(unsigned long)cmd->frame_phys_addr);
@@ -193,7 +189,7 @@ index 2162a85..b056788 100644
  			ldio = (struct megasas_io_frame *)cmd->frame;
  			mfi_sgl = &ldio->sgl;
  			sgcount = ldio->sge_count;
-@@ -1542,7 +1545,7 @@ megasas_build_and_issue_cmd(struct megasas_instance *instance,
+@@ -1542,7 +1545,7 @@ megasas_build_and_issue_cmd(struct megas
  	/*
  	 * Logical drive command
  	 */
@@ -202,7 +198,7 @@ index 2162a85..b056788 100644
  		frame_count = megasas_build_ldio(instance, scmd, cmd);
  	else
  		frame_count = megasas_build_dcdb(instance, scmd, cmd);
-@@ -4667,6 +4670,11 @@ static int megasas_init_fw(struct megasas_instance *instance)
+@@ -4669,6 +4672,11 @@ static int megasas_init_fw(struct megasa
  				instance->crash_dump_h);
  		instance->crash_dump_buf = NULL;
  	}
@@ -212,13 +208,11 @@ index 2162a85..b056788 100644
 +	if (instance->secure_jbod_support)
 +		dev_info(&instance->pdev->dev, "Firmware supports Secure JBOD\n");
  	instance->max_sectors_per_req = instance->max_num_sge *
- 						PAGE_SIZE / 512;
+ 						SGE_BUFFER_SIZE / 512;
  	if (tmp_sectors && (instance->max_sectors_per_req > tmp_sectors))
-diff --git a/drivers/scsi/megaraid/megaraid_sas_fusion.c b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-index 34a99f2..edb7de5 100644
 --- a/drivers/scsi/megaraid/megaraid_sas_fusion.c
 +++ b/drivers/scsi/megaraid/megaraid_sas_fusion.c
-@@ -63,7 +63,6 @@ extern struct megasas_cmd *megasas_get_cmd(struct megasas_instance
+@@ -63,7 +63,6 @@ extern struct megasas_cmd *megasas_get_c
  extern void
  megasas_complete_cmd(struct megasas_instance *instance,
  		     struct megasas_cmd *cmd, u8 alt_status);
@@ -226,7 +220,7 @@ index 34a99f2..edb7de5 100644
  int
  wait_and_poll(struct megasas_instance *instance, struct megasas_cmd *cmd,
  	      int seconds);
-@@ -197,6 +196,7 @@ inline void megasas_return_cmd_fusion(struct megasas_instance *instance,
+@@ -197,6 +196,7 @@ inline void megasas_return_cmd_fusion(st
  
  	cmd->scmd = NULL;
  	cmd->sync_cmd_idx = (u32)ULONG_MAX;
@@ -234,7 +228,7 @@ index 34a99f2..edb7de5 100644
  	list_add(&cmd->list, (&fusion->cmd_pool)->next);
  
  	spin_unlock_irqrestore(&fusion->mpt_pool_lock, flags);
-@@ -691,6 +691,8 @@ megasas_ioc_init_fusion(struct megasas_instance *instance)
+@@ -691,6 +691,8 @@ megasas_ioc_init_fusion(struct megasas_i
  		= 1;
  	init_frame->driver_operations.mfi_capabilities.support_ndrive_r1_lb
  		= 1;
@@ -243,7 +237,7 @@ index 34a99f2..edb7de5 100644
  	/* Convert capability to LE32 */
  	cpu_to_le32s((u32 *)&init_frame->driver_operations.mfi_capabilities);
  
-@@ -1286,6 +1288,7 @@ megasas_make_sgl_fusion(struct megasas_instance *instance,
+@@ -1286,6 +1288,7 @@ megasas_make_sgl_fusion(struct megasas_i
  
  			sgl_ptr =
  			  (struct MPI25_IEEE_SGE_CHAIN64 *)cmd->sg_frame;
@@ -251,7 +245,7 @@ index 34a99f2..edb7de5 100644
  		}
  	}
  
-@@ -1659,6 +1662,8 @@ megasas_build_dcdb_fusion(struct megasas_instance *instance,
+@@ -1659,6 +1662,8 @@ megasas_build_dcdb_fusion(struct megasas
  	u32 device_id;
  	struct MPI2_RAID_SCSI_IO_REQUEST *io_request;
  	u16 pd_index = 0;
@@ -260,7 +254,7 @@ index 34a99f2..edb7de5 100644
  	struct MR_DRV_RAID_MAP_ALL *local_map_ptr;
  	struct fusion_context *fusion = instance->ctrl_context;
  	u8                          span, physArm;
-@@ -1675,44 +1680,48 @@ megasas_build_dcdb_fusion(struct megasas_instance *instance,
+@@ -1675,44 +1680,48 @@ megasas_build_dcdb_fusion(struct megasas
  
  	io_request->DataLength = cpu_to_le32(scsi_bufflen(scmd));
  
@@ -339,7 +333,7 @@ index 34a99f2..edb7de5 100644
  		}
  	} else {
  		if (scmd->device->channel < MEGASAS_MAX_PD_CHANNELS)
-@@ -1812,7 +1821,7 @@ megasas_build_io_fusion(struct megasas_instance *instance,
+@@ -1812,7 +1821,7 @@ megasas_build_io_fusion(struct megasas_i
  	 */
  	io_request->IoFlags = cpu_to_le16(scp->cmd_len);
  
@@ -348,6 +342,3 @@ index 34a99f2..edb7de5 100644
  		megasas_build_ldio_fusion(instance, scp, cmd);
  	else
  		megasas_build_dcdb_fusion(instance, scp, cmd);
--- 
-2.4.2
-

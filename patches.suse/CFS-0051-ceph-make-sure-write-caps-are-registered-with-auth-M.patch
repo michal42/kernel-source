@@ -1,0 +1,32 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Sat, 8 Mar 2014 09:51:45 +0800
+Subject: [PATCH] ceph: make sure write caps are registered with auth MDS
+Git-commit: a255060451dcb416c8097218b40d86d613d84bfc
+Patch-mainline: v3.15
+References: Fate#318586
+
+
+Only auth MDS can issue write caps to clients, so don't consider
+write caps registered with non-auth MDS as valid.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -885,7 +885,10 @@ int __ceph_caps_mds_wanted(struct ceph_i
+ 		cap = rb_entry(p, struct ceph_cap, ci_node);
+ 		if (!__cap_is_valid(cap))
+ 			continue;
+-		mds_wanted |= cap->mds_wanted;
++		if (cap == ci->i_auth_cap)
++			mds_wanted |= cap->mds_wanted;
++		else
++			mds_wanted |= (cap->mds_wanted & ~CEPH_CAP_ANY_FILE_WR);
+ 	}
+ 	return mds_wanted;
+ }

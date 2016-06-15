@@ -1,41 +1,79 @@
-From: Petr Tesarik <ptesarik@suse.cz>
-Date: Fri Sep 5 18:05:16 2014 +0200
-Subject: Put each per-cpu kdump ELF notes into a single page
+From: Baoquan He <bhe@redhat.com>
+Date: Wed Sep 9 15:39:00 2015 -0700
+Subject: kexec: align crash_notes allocation to make it be inside one physical page
 References: bnc#879460
-Patch-mainline: submitted 2014-09-05
+Patch-mainline: v4.3-rc1
+Git-commit: bbb78b8f3f4ea8eca14937b693bfe244838e1d4d
 
-On architectures that use percpu-vm, the percpu region is not guaranteed
-to be contiguous in physical space. However, fs/proc/vmcore.c expects
-all ELF notes to be contiguous. If the ELF note happens to occupy
-two non-adjacent physical pages, part of the note may be read from an
-incorrect memory location by the kdump kernel, resulting in failure to
-initialize /proc/vmcore (if the content of the following physical page,
-incorrectly interpreted as an ELF note specifies a large number), wrong
-register values or other apparent random memory corruption.
+People reported that crash_notes in /proc/vmcore were corrupted and this
+cause crash kdump failure.  With code debugging and log we got the root
+cause.  This is because percpu variable crash_notes are allocated in 2
+vmalloc pages.  Currently percpu is based on vmalloc by default.  Vmalloc
+can't guarantee 2 continuous vmalloc pages are also on 2 continuous
+physical pages.  So when 1st kernel exports the starting address and size
+of crash_notes through sysfs like below:
 
-There is currently no mechanism to pass the virtual-to-physical mapping
-of the percpu allocation to the kdump kernel. So, instead, I'm changing
-the alignment of the ELF note buffer. Since sizeof(note_buf_t) is less
-than PAGE_SIZE, aligning the buffer to the nearest higher power of 2
-is enough to make sure that the buffer cannot cross a page boundary,
-effectively ensuring that the whole buffer is contiguous in physical
-space.
+/sys/devices/system/cpu/cpux/crash_notes
+/sys/devices/system/cpu/cpux/crash_notes_size
 
-Signed-off-by: Petr Tesarik <ptesarik@suse.cz>
+kdump kernel use them to get the content of crash_notes.  However the 2nd
+part may not be in the next neighbouring physical page as we expected if
+crash_notes are allocated accross 2 vmalloc pages.  That's why
+nhdr_ptr->n_namesz or nhdr_ptr->n_descsz could be very huge in
+update_note_header_size_elf64() and cause note header merging failure or
+some warnings.
+
+In this patch change to call __alloc_percpu() to passed in the align value
+by rounding crash_notes_size up to the nearest power of two.  This makes
+sure the crash_notes is allocated inside one physical page since
+sizeof(note_buf_t) in all ARCHS is smaller than PAGE_SIZE.  Meanwhile add
+a BUILD_BUG_ON to break compile if size is bigger than PAGE_SIZE since
+crash_notes definitely will be in 2 pages.  That need be avoided, and need
+be reported if it's unavoidable.
+
+[akpm@linux-foundation.org: use correct comment layout]
+Signed-off-by: Baoquan He <bhe@redhat.com>
+Cc: Eric W. Biederman <ebiederm@xmission.com>
+Cc: Vivek Goyal <vgoyal@redhat.com>
+Cc: Dave Young <dyoung@redhat.com>
+Cc: Lisa Mitchell <lisa.mitchell@hp.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Petr Tesarik <ptesarik@suse.com>
 
 ---
- kernel/kexec.c |    3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
+ kernel/kexec.c |   23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
 
 --- a/kernel/kexec.c
 +++ b/kernel/kexec.c
-@@ -1226,7 +1226,8 @@ void crash_save_cpu(struct pt_regs *regs
+@@ -1226,7 +1226,28 @@ void crash_save_cpu(struct pt_regs *regs
  static int __init crash_notes_memory_init(void)
  {
  	/* Allocate memory for saving cpu registers. */
 -	crash_notes = alloc_percpu(note_buf_t);
-+	crash_notes = __alloc_percpu(sizeof(note_buf_t),
-+				     roundup_pow_of_two(sizeof(note_buf_t)));
++	size_t size, align;
++
++	/*
++	 * crash_notes could be allocated across 2 vmalloc pages when percpu
++	 * is vmalloc based . vmalloc doesn't guarantee 2 continuous vmalloc
++	 * pages are also on 2 continuous physical pages. In this case the
++	 * 2nd part of crash_notes in 2nd page could be lost since only the
++	 * starting address and size of crash_notes are exported through sysfs.
++	 * Here round up the size of crash_notes to the nearest power of two
++	 * and pass it to __alloc_percpu as align value. This can make sure
++	 * crash_notes is allocated inside one physical page.
++	 */
++	size = sizeof(note_buf_t);
++	align = min(roundup_pow_of_two(sizeof(note_buf_t)), PAGE_SIZE);
++
++	/*
++	 * Break compile if size is bigger than PAGE_SIZE since crash_notes
++	 * definitely will be in 2 pages with that.
++	 */
++	BUILD_BUG_ON(size > PAGE_SIZE);
++
++	crash_notes = __alloc_percpu(size, align);
  	if (!crash_notes) {
  		printk("Kexec: Memory allocation for saving cpu register"
  		" states failed\n");

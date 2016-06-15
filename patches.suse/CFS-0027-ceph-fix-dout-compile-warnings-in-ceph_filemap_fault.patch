@@ -1,0 +1,48 @@
+From: Ilya Dryomov <ilya.dryomov@inktank.com>
+Date: Tue, 28 Jan 2014 18:29:29 +0200
+Subject: [PATCH] ceph: fix dout() compile warnings in ceph_filemap_fault()
+Git-commit: 37b52fe60838b135913e877b0c849e59fae587c3
+Patch-mainline: v3.14
+References: Fate#318586
+
+
+PAGE_CACHE_SIZE is unsigned long on all architectures, however size_t
+is either unsigned int or unsigned long.  Rather than change format
+strings, cast PAGE_CACHE_SIZE to size_t to be in line with dout()s in
+ceph_page_mkwrite().
+
+Cc: Yan, Zheng <zheng.z.yan@intel.com>
+Signed-off-by: Ilya Dryomov <ilya.dryomov@inktank.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -1223,7 +1223,7 @@ static int ceph_filemap_fault(struct vm_
+ 	int want, got, ret;
+ 
+ 	dout("filemap_fault %p %llx.%llx %llu~%zd trying to get caps\n",
+-	     inode, ceph_vinop(inode), off, PAGE_CACHE_SIZE);
++	     inode, ceph_vinop(inode), off, (size_t)PAGE_CACHE_SIZE);
+ 	if (fi->fmode & CEPH_FILE_MODE_LAZY)
+ 		want = CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO;
+ 	else
+@@ -1239,12 +1239,12 @@ static int ceph_filemap_fault(struct vm_
+ 		}
+ 	}
+ 	dout("filemap_fault %p %llu~%zd got cap refs on %s\n",
+-	     inode, off, PAGE_CACHE_SIZE, ceph_cap_string(got));
++	     inode, off, (size_t)PAGE_CACHE_SIZE, ceph_cap_string(got));
+ 
+ 	ret = filemap_fault(vma, vmf);
+ 
+ 	dout("filemap_fault %p %llu~%zd dropping cap refs on %s ret %d\n",
+-	     inode, off, PAGE_CACHE_SIZE, ceph_cap_string(got), ret);
++	     inode, off, (size_t)PAGE_CACHE_SIZE, ceph_cap_string(got), ret);
+ 	ceph_put_cap_refs(ci, got);
+ 
+ 	return ret;

@@ -1,0 +1,69 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 27 Oct 2015 17:18:00 +0800
+Subject: [PATCH] ceph: add request to i_unsafe_dirops when getting unsafe
+ reply
+Git-commit: 4c06ace81a60636dec358c288ef6aaf3aa6dc599
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+Previously we add request to i_unsafe_dirops when registering
+request. So ceph_fsync() also waits for imcomplete requests.
+This is unnecessary, ceph_fsync() only needs to wait unsafe
+requests.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |   18 +++++++++++-------
+ 1 file changed, 11 insertions(+), 7 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -634,13 +634,8 @@ static void __register_request(struct ce
+ 		mdsc->oldest_tid = req->r_tid;
+ 
+ 	if (dir) {
+-		struct ceph_inode_info *ci = ceph_inode(dir);
+-
+ 		ihold(dir);
+-		spin_lock(&ci->i_unsafe_lock);
+ 		req->r_unsafe_dir = dir;
+-		list_add_tail(&req->r_unsafe_dir_item, &ci->i_unsafe_dirops);
+-		spin_unlock(&ci->i_unsafe_lock);
+ 	}
+ }
+ 
+@@ -666,13 +661,14 @@ static void __unregister_request(struct
+ 	rb_erase(&req->r_node, &mdsc->request_tree);
+ 	RB_CLEAR_NODE(&req->r_node);
+ 
+-	if (req->r_unsafe_dir) {
++	if (req->r_unsafe_dir && req->r_got_unsafe) {
+ 		struct ceph_inode_info *ci = ceph_inode(req->r_unsafe_dir);
+-
+ 		spin_lock(&ci->i_unsafe_lock);
+ 		list_del_init(&req->r_unsafe_dir_item);
+ 		spin_unlock(&ci->i_unsafe_lock);
++	}
+ 
++	if (req->r_unsafe_dir) {
+ 		iput(req->r_unsafe_dir);
+ 		req->r_unsafe_dir = NULL;
+ 	}
+@@ -2486,6 +2482,14 @@ static void handle_reply(struct ceph_mds
+ 	} else {
+ 		req->r_got_unsafe = true;
+ 		list_add_tail(&req->r_unsafe_item, &req->r_session->s_unsafe);
++		if (req->r_unsafe_dir) {
++			struct ceph_inode_info *ci =
++					ceph_inode(req->r_unsafe_dir);
++			spin_lock(&ci->i_unsafe_lock);
++			list_add_tail(&req->r_unsafe_dir_item,
++				      &ci->i_unsafe_dirops);
++			spin_unlock(&ci->i_unsafe_lock);
++		}
+ 	}
+ 
+ 	dout("handle_reply tid %lld result %d\n", tid, result);

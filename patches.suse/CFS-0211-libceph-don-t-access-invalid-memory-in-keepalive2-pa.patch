@@ -1,0 +1,67 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Mon, 14 Sep 2015 16:01:05 +0300
+Subject: [PATCH] libceph: don't access invalid memory in keepalive2 path
+Git-commit: 7f61f545657281a3a1b0faf68993165ebdecc51b
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+This
+
+    struct ceph_timespec ceph_ts;
+    ...
+    con_out_kvec_add(con, sizeof(ceph_ts), &ceph_ts);
+
+wraps ceph_ts into a kvec and adds it to con->out_kvec array, yet
+ceph_ts becomes invalid on return from prepare_write_keepalive().  As
+a result, we send out bogus keepalive2 stamps.  Fix this by encoding
+into a ceph_timespec member, similar to how acks are read and written.
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Reviewed-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ include/linux/ceph/messenger.h |    4 +++-
+ net/ceph/messenger.c           |    9 +++++----
+ 2 files changed, 8 insertions(+), 5 deletions(-)
+
+--- a/include/linux/ceph/messenger.h
++++ b/include/linux/ceph/messenger.h
+@@ -247,6 +247,8 @@ struct ceph_connection {
+ 	bool out_kvec_is_msg; /* kvec refers to out_msg */
+ 	int out_more;        /* there is more data after the kvecs */
+ 	__le64 out_temp_ack; /* for writing an ack */
++	struct ceph_timespec out_temp_keepalive2; /* for writing keepalive2
++						     stamp */
+ 
+ 	/* message in temps */
+ 	struct ceph_msg_header in_hdr;
+@@ -257,7 +259,7 @@ struct ceph_connection {
+ 	int in_base_pos;     /* bytes read */
+ 	__le64 in_temp_ack;  /* for reading an ack */
+ 
+-	struct timespec last_keepalive_ack;
++	struct timespec last_keepalive_ack; /* keepalive2 ack stamp */
+ 
+ 	struct delayed_work work;	    /* send|recv work */
+ 	unsigned long       delay;          /* current delay interval */
+--- a/net/ceph/messenger.c
++++ b/net/ceph/messenger.c
+@@ -1438,11 +1438,12 @@ static void prepare_write_keepalive(stru
+ 	dout("prepare_write_keepalive %p\n", con);
+ 	con_out_kvec_reset(con);
+ 	if (con->peer_features & CEPH_FEATURE_MSGR_KEEPALIVE2) {
+-		struct timespec ts = CURRENT_TIME;
+-		struct ceph_timespec ceph_ts;
+-		ceph_encode_timespec(&ceph_ts, &ts);
++		struct timespec now = CURRENT_TIME;
++
+ 		con_out_kvec_add(con, sizeof(tag_keepalive2), &tag_keepalive2);
+-		con_out_kvec_add(con, sizeof(ceph_ts), &ceph_ts);
++		ceph_encode_timespec(&con->out_temp_keepalive2, &now);
++		con_out_kvec_add(con, sizeof(con->out_temp_keepalive2),
++				 &con->out_temp_keepalive2);
+ 	} else {
+ 		con_out_kvec_add(con, sizeof(tag_keepalive), &tag_keepalive);
+ 	}

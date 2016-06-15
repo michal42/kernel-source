@@ -1,0 +1,48 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Tue, 13 Jan 2015 15:20:52 +0800
+Subject: [PATCH] ceph: fix request time stamp encoding
+Git-commit: 1f041a89b4f22cf2e701514f4b8f73a8b1e06a3e
+Patch-mainline: v4.0
+References: Fate#318586
+
+
+struct timespec uses 'long' to present second and nanosecond. 'long'
+is 64 bits on 64bits machine. ceph MDS expects time stamp to be
+encoded as struct ceph_timespec, which uses 'u32' to present second
+and nanosecond.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |   12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -1941,7 +1941,11 @@ static struct ceph_msg *create_request_m
+ 	head->num_releases = cpu_to_le16(releases);
+ 
+ 	/* time stamp */
+-	ceph_encode_copy(&p, &req->r_stamp, sizeof(req->r_stamp));
++	{
++		struct ceph_timespec ts;
++		ceph_encode_timespec(&ts, &req->r_stamp);
++		ceph_encode_copy(&p, &ts, sizeof(ts));
++	}
+ 
+ 	BUG_ON(p > end);
+ 	msg->front.iov_len = p - msg->front.iov_base;
+@@ -2030,7 +2034,11 @@ static int __prepare_send_request(struct
+ 
+ 		/* time stamp */
+ 		p = msg->front.iov_base + req->r_request_release_offset;
+-		ceph_encode_copy(&p, &req->r_stamp, sizeof(req->r_stamp));
++		{
++			struct ceph_timespec ts;
++			ceph_encode_timespec(&ts, &req->r_stamp);
++			ceph_encode_copy(&p, &ts, sizeof(ts));
++		}
+ 
+ 		msg->front.iov_len = p - msg->front.iov_base;
+ 		msg->hdr.front_len = cpu_to_le32(msg->front.iov_len);

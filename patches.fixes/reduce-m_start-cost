@@ -1,0 +1,89 @@
+From: Al Viro <viro@zeniv.linux.org.uk>
+Date: Thu, 27 Feb 2014 14:40:10 -0500
+Subject: reduce m_start() cost...
+Git-commit: c7999c3627bc6d49aa6fb9451063938cfd2c2082
+Patch-mainline: v3.15-rc1
+References: bsc#966573
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Acked-by: Jeff Mahoney <jeffm@suse.com>
+---
+ fs/mount.h          |    5 ++++-
+ fs/namespace.c      |   21 ++++++++++++++++++---
+ fs/proc_namespace.c |    1 +
+ 3 files changed, 23 insertions(+), 4 deletions(-)
+
+--- a/fs/mount.h
++++ b/fs/mount.h
+@@ -10,7 +10,7 @@ struct mnt_namespace {
+ 	struct user_namespace	*user_ns;
+ 	u64			seq;	/* Sequence number to prevent loops */
+ 	wait_queue_head_t poll;
+-	int event;
++	u64 event;
+ };
+ 
+ struct mnt_pcp {
+@@ -88,6 +88,9 @@ struct proc_mounts {
+ 	struct mnt_namespace *ns;
+ 	struct path root;
+ 	int (*show)(struct seq_file *, struct vfsmount *);
++	void *cached_mount;
++	u64 cached_event;
++	loff_t cached_index;
+ };
+ 
+ #define proc_mounts(p) (container_of((p), struct proc_mounts, m))
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -29,7 +29,7 @@
+ #define HASH_SHIFT ilog2(PAGE_SIZE / sizeof(struct list_head))
+ #define HASH_SIZE (1UL << HASH_SHIFT)
+ 
+-static int event;
++static u64 event;
+ static DEFINE_IDA(mnt_id_ida);
+ static DEFINE_IDA(mnt_group_ida);
+ static DEFINE_SPINLOCK(mnt_id_lock);
+@@ -1051,14 +1051,29 @@ static void *m_start(struct seq_file *m,
+ 	struct proc_mounts *p = proc_mounts(m);
+ 
+ 	down_read(&namespace_sem);
+-	return seq_list_start(&p->ns->list, *pos);
++	if (p->cached_event == p->ns->event) {
++		void *v = p->cached_mount;
++		if (*pos == p->cached_index)
++			return v;
++		if (*pos == p->cached_index + 1) {
++			v = seq_list_next(v, &p->ns->list, &p->cached_index);
++			return p->cached_mount = v;
++		}
++	}
++
++	p->cached_event = p->ns->event;
++	p->cached_mount = seq_list_start(&p->ns->list, *pos);
++	p->cached_index = *pos;
++	return p->cached_mount;
+ }
+ 
+ static void *m_next(struct seq_file *m, void *v, loff_t *pos)
+ {
+ 	struct proc_mounts *p = proc_mounts(m);
+ 
+-	return seq_list_next(v, &p->ns->list, pos);
++	p->cached_mount = seq_list_next(v, &p->ns->list, pos);
++	p->cached_index = *pos;
++	return p->cached_mount;
+ }
+ 
+ static void m_stop(struct seq_file *m, void *v)
+--- a/fs/proc_namespace.c
++++ b/fs/proc_namespace.c
+@@ -265,6 +265,7 @@ static int mounts_open_common(struct ino
+ 	p->root = root;
+ 	p->m.poll_event = ns->event;
+ 	p->show = show;
++	p->cached_event = ~0ULL;
+ 
+ 	return 0;
+ 

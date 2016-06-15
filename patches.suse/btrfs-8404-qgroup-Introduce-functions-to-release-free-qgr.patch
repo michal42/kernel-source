@@ -1,0 +1,105 @@
+Patch-mainline: v4.4
+Git-commit: f695fdcef83ac6972e0eda1d6588a56348f521a2
+From: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Date: Mon, 12 Oct 2015 16:28:06 +0800
+References: bsc#963193
+Subject: [PATCH 05/20] btrfs: qgroup: Introduce functions to release/free
+ qgroup reserve data space
+
+Introduce functions btrfs_qgroup_release/free_data() to release/free
+reserved data range.
+
+Release means, just remove the data range from io_tree, but doesn't
+free the reserved space.
+This is for normal buffered write case, when data is written into disc
+and its metadata is added into tree, its reserved space should still be
+kept until commit_trans().
+So in that case, we only release dirty range, but keep the reserved
+space recorded some other place until commit_tran().
+
+Free means not only remove data range, but also free reserved space.
+This is used for case for cleanup and invalidate page.
+
+Signed-off-by: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+---
+ fs/btrfs/qgroup.c | 60 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ fs/btrfs/qgroup.h |  2 ++
+ 2 files changed, 62 insertions(+)
+
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
+@@ -2363,3 +2363,63 @@ cleanup:
+ 	ulist_free(changeset.range_changed);
+ 	return ret;
+ }
++
++static int __btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len,
++				       int free)
++{
++	struct extent_changeset changeset;
++	int ret;
++
++	changeset.bytes_changed = 0;
++	changeset.range_changed = ulist_alloc(GFP_NOFS);
++	if (!changeset.range_changed)
++		return -ENOMEM;
++
++	ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree, start, 
++			start + len -1, EXTENT_QGROUP_RESERVED, GFP_NOFS,
++			&changeset);
++	if (ret < 0)
++		goto out;
++
++	if (free)
++		btrfs_qgroup_free(BTRFS_I(inode)->root,
++				  changeset.bytes_changed);
++out:
++	ulist_free(changeset.range_changed);
++	return ret;
++}
++
++/*
++ * Free a reserved space range from io_tree and related qgroups
++ *
++ * Should be called when a range of pages get invalidated before reaching disk.
++ * Or for error cleanup case.
++ *
++ * For data written to disk, use btrfs_qgroup_release_data().
++ *
++ * NOTE: This function may sleep for memory allocation.
++ */
++int btrfs_qgroup_free_data(struct inode *inode, u64 start, u64 len)
++{
++	return __btrfs_qgroup_release_data(inode, start, len, 1);
++}
++
++/*
++ * Release a reserved space range from io_tree only.
++ *
++ * Should be called when a range of pages get written to disk and corresponding
++ * FILE_EXTENT is inserted into corresponding root.
++ *
++ * Since new qgroup accounting framework will only update qgroup numbers at
++ * commit_transaction() time, its reserved space shouldn't be freed from
++ * related qgroups.
++ *
++ * But we should release the range from io_tree, to allow further write to be
++ * COWed.
++ *
++ * NOTE: This function may sleep for memory allocation.
++ */
++int btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len)
++{
++	return __btrfs_qgroup_release_data(inode, start, len, 0);
++}
+--- a/fs/btrfs/qgroup.h
++++ b/fs/btrfs/qgroup.h
+@@ -84,4 +84,6 @@ int btrfs_verify_qgroup_counts(struct bt
+ 
+ /* New io_tree based accurate qgroup reserve API */
+ int btrfs_qgroup_reserve_data(struct inode *inode, u64 start, u64 len);
++int btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len);
++int btrfs_qgroup_free_data(struct inode *inode, u64 start, u64 len);
+ #endif /* __BTRFS_QGROUP__ */

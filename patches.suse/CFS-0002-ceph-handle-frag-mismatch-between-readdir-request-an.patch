@@ -1,0 +1,98 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Wed, 18 Sep 2013 09:44:13 +0800
+Subject: [PATCH] ceph: handle frag mismatch between readdir request and reply
+Git-commit: 81c6aea5275eae453719d7f3924da07e668265c5
+Patch-mainline: v3.13
+References: Fate#318586
+
+
+If client has outdated directory fragments information, it may request
+readdir an non-existent directory fragment. In this case, the MDS finds
+an approximate directory fragment and sends its contents back to the
+client. When receiving a reply with fragment that is different than the
+requested one, the client need to reset the 'readdir offset'.
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Reviewed-by: Sage Weil <sage@inktank.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/dir.c        |   11 ++++++++++-
+ fs/ceph/inode.c      |   16 ++++++++++++++--
+ fs/ceph/mds_client.c |    3 +--
+ 3 files changed, 25 insertions(+), 5 deletions(-)
+
+--- a/fs/ceph/dir.c
++++ b/fs/ceph/dir.c
+@@ -352,8 +352,18 @@ more:
+ 		}
+ 
+ 		/* note next offset and last dentry name */
++		rinfo = &req->r_reply_info;
++		if (le32_to_cpu(rinfo->dir_dir->frag) != frag) {
++			frag = le32_to_cpu(rinfo->dir_dir->frag);
++			if (ceph_frag_is_leftmost(frag))
++				fi->next_offset = 2;
++			else
++				fi->next_offset = 0;
++			off = fi->next_offset;
++		}
+ 		fi->offset = fi->next_offset;
+ 		fi->last_readdir = req;
++		fi->frag = frag;
+ 
+ 		if (req->r_reply_info.dir_end) {
+ 			kfree(fi->last_name);
+@@ -363,7 +373,6 @@ more:
+ 			else
+ 				fi->next_offset = 0;
+ 		} else {
+-			rinfo = &req->r_reply_info;
+ 			err = note_last_dentry(fi,
+ 				       rinfo->dir_dname[rinfo->dir_nr-1],
+ 				       rinfo->dir_dname_len[rinfo->dir_nr-1]);
+--- a/fs/ceph/inode.c
++++ b/fs/ceph/inode.c
+@@ -1275,8 +1275,20 @@ int ceph_readdir_prepopulate(struct ceph
+ 	int err = 0, i;
+ 	struct inode *snapdir = NULL;
+ 	struct ceph_mds_request_head *rhead = req->r_request->front.iov_base;
+-	u64 frag = le32_to_cpu(rhead->args.readdir.frag);
+ 	struct ceph_dentry_info *di;
++	u64 r_readdir_offset = req->r_readdir_offset;
++	u32 frag = le32_to_cpu(rhead->args.readdir.frag);
++
++	if (rinfo->dir_dir &&
++	    le32_to_cpu(rinfo->dir_dir->frag) != frag) {
++		dout("readdir_prepopulate got new frag %x -> %x\n",
++		     frag, le32_to_cpu(rinfo->dir_dir->frag));
++		frag = le32_to_cpu(rinfo->dir_dir->frag);
++		if (ceph_frag_is_leftmost(frag))
++			r_readdir_offset = 2;
++		else
++			r_readdir_offset = 0;
++	}
+ 
+ 	if (req->r_aborted)
+ 		return readdir_prepopulate_inodes_only(req, session);
+@@ -1340,7 +1352,7 @@ retry_lookup:
+ 		}
+ 
+ 		di = dn->d_fsdata;
+-		di->offset = ceph_make_fpos(frag, i + req->r_readdir_offset);
++		di->offset = ceph_make_fpos(frag, i + r_readdir_offset);
+ 
+ 		/* inode */
+ 		if (dn->d_inode) {
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -2247,8 +2247,7 @@ static void handle_reply(struct ceph_mds
+ 	err = ceph_fill_trace(mdsc->fsc->sb, req, req->r_session);
+ 	if (err == 0) {
+ 		if (result == 0 && (req->r_op == CEPH_MDS_OP_READDIR ||
+-				    req->r_op == CEPH_MDS_OP_LSSNAP) &&
+-		    rinfo->dir_nr)
++				    req->r_op == CEPH_MDS_OP_LSSNAP))
+ 			ceph_readdir_prepopulate(req, req->r_session);
+ 		ceph_unreserve_caps(mdsc, &req->r_caps_reservation);
+ 	}

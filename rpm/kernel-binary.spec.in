@@ -95,6 +95,8 @@ Provides:       kernel-base = %version-%source_rel
 # 11.2 - 11.4, but we primarily care about the supported upgrade path.
 Obsoletes:      %name-base < 3.1
 %endif
+# The following is copied to the -base subpackage as well
+# BEGIN COMMON DEPS
 Requires(pre):  coreutils awk
 # For /usr/lib/module-init-tools/weak-modules2
 Requires(post): suse-module-tools
@@ -117,6 +119,7 @@ Requires(post): mkinitrd >= 2.7.1
 # Install the package providing /etc/SuSE-release early enough, so that
 # the grub entry has correct title (bnc#757565)
 Requires(post): distribution-release
+# END COMMON DEPS
 # Do not install p-b and mkinitrd for the install check, the %post script is
 # able to handle this
 #!BuildIgnore: perl-Bootloader mkinitrd distribution-release
@@ -517,6 +520,12 @@ if test %CONFIG_MODULE_SIG = "y"; then
     done
 fi
 
+# Install the frontend driver selector file for xen/ec2
+%if %build_xen
+mkdir -p %buildroot/etc/modprobe.d
+cp %_sourcedir/modprobe-xen.conf %buildroot/etc/modprobe.d/50-xen.conf
+%endif
+
 for sub in '-base' '' '-extra'; do
     case "$sub" in
     '-base' | '') base_package=1 ;;
@@ -775,6 +784,10 @@ done | add_dirs_to_filelist >%my_builddir/kernel-devel.files
     if test %CONFIG_MODULE_SIG = "y" -a -d etc/uefi/certs; then
         find etc/uefi/certs -type f -printf '/%%p\n'
     fi
+    # optional per-kernel-release module config workarounds
+    if test -d etc/modprobe.d; then
+        find etc/modprobe.d -type f -printf '%%%%config(noreplace) /%%p\n'
+    fi
     test -d lib/firmware/%kernelrelease-%build_flavor && \
     find lib/firmware/%kernelrelease-%build_flavor \
 	-type d -o \
@@ -822,10 +835,7 @@ Url:            http://www.kernel.org/
 Provides:       kernel-base = %version-%source_rel
 Provides:       multiversion(kernel)
 Conflicts:      %name = %version-%release
-Requires(pre):  coreutils awk
-Requires(post): modutils
-Requires(post): perl-Bootloader
-Requires(post): mkinitrd
+@COMMON_DEPS@
 @PROVIDES_OBSOLETES_BASE@
 %obsolete_rebuilds %name-base
 

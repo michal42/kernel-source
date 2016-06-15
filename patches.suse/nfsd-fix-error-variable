@@ -1,0 +1,34 @@
+From: Mark Tinguely <tinguely@sgi.com>
+Subject: nfsd: fix nfsd_setattr return code for HSM
+Patch-mainline: Never, depends on DMAPI
+References: bsc#969992
+
+The DMAPI support code converted select EAGAIN errors into
+ETIMEDOUT.
+
+In nfsd_setattr() the wrong variable is used. err at this
+part of the code will always be 0. The host_err varible
+just did a notify_change() call and that return value should
+be checked to EAGAIN.
+
+Found by visual inpection. No test is available.
+
+Acked-by: Jeff Mahoney <jeffm@suse.com>
+---
+
+ fs/nfsd/vfs.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -481,8 +481,8 @@ nfsd_setattr(struct svc_rqst *rqstp, str
+ 	fh_unlock(fhp);
+ 
+ 	/* to get NFSERR_JUKEBOX on the wire, need -ETIMEDOUT */
+-	if (err == -EAGAIN)
+-		err = -ETIMEDOUT;
++	if (host_err == -EAGAIN)
++		host_err = -ETIMEDOUT;
+ 
+ out_put_write_access_nfserror:
+ 	err = nfserrno(host_err);

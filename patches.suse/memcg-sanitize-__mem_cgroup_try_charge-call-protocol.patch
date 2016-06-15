@@ -20,8 +20,8 @@ Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 
 ---
- mm/memcontrol.c |  211 +++++++++++++++++++++++++++-----------------------------
- 1 file changed, 104 insertions(+), 107 deletions(-)
+ mm/memcontrol.c |  215 +++++++++++++++++++++++++++-----------------------------
+ 1 file changed, 106 insertions(+), 109 deletions(-)
 
 --- a/mm/memcontrol.c
 +++ b/mm/memcontrol.c
@@ -34,7 +34,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  enum {
  	CHARGE_OK,		/* success */
  	CHARGE_RETRY,		/* need to retry but retry is not bad */
-@@ -2658,45 +2658,34 @@ static int mem_cgroup_do_charge(struct m
+@@ -2658,46 +2658,35 @@ static int mem_cgroup_do_charge(struct m
  	return CHARGE_NOMEM;
  }
  
@@ -89,19 +89,22 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 -	 * Unlike gloval-vm's OOM-kill, we're not in memory shortage
 -	 * in system level. So, allow to go ahead dying process in addition to
 -	 * MEMDIE process.
+-	 */
+-	if (unlikely(test_thread_flag(TIF_MEMDIE)
+-		     || fatal_signal_pending(current)
+-		     || current->flags & PF_EXITING))
 +	 * Unlike in global OOM situations, memcg is not in a physical
 +	 * memory shortage.  Allow dying and OOM-killed tasks to
 +	 * bypass the last charges so that they can exit quickly and
 +	 * free their memory.
- 	 */
--	if (unlikely(test_thread_flag(TIF_MEMDIE)
--		     || fatal_signal_pending(current)))
++	 */
 +	if (unlikely(test_thread_flag(TIF_MEMDIE) ||
-+		     fatal_signal_pending(current)))
++		     fatal_signal_pending(current) ||
++		     current->flags & PF_EXITING))
  		goto bypass;
  
  	if (unlikely(task_in_memcg_oom(current)))
-@@ -2705,14 +2694,6 @@ static int __mem_cgroup_try_charge(struc
+@@ -2706,14 +2695,6 @@ static int __mem_cgroup_try_charge(struc
  	if (gfp_mask & __GFP_NOFAIL)
  		oom = false;
  again:
@@ -116,7 +119,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	if (consume_stock(memcg, nr_pages))
  		goto done;
  
-@@ -2720,10 +2701,8 @@ again:
+@@ -2721,10 +2702,8 @@ again:
  		bool invoke_oom = oom && !nr_oom_retries;
  
  		/* If killed, bypass charge */
@@ -128,7 +131,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  		ret = mem_cgroup_do_charge(memcg, gfp_mask, batch,
  					   nr_pages, invoke_oom);
-@@ -2732,17 +2711,12 @@ again:
+@@ -2733,17 +2712,12 @@ again:
  			break;
  		case CHARGE_RETRY: /* not in OOM situation but retry */
  			batch = nr_pages;
@@ -147,7 +150,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  			nr_oom_retries--;
  			break;
  		}
-@@ -2751,19 +2725,43 @@ again:
+@@ -2752,19 +2726,43 @@ again:
  	if (batch > nr_pages)
  		refill_stock(memcg, batch - nr_pages);
  done:
@@ -197,7 +200,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  /*
   * Somemtimes we have to undo a charge we got by try_charge().
   * This function is for that and do uncharge, put css's refcnt.
-@@ -2960,7 +2958,6 @@ static int mem_cgroup_slabinfo_read(stru
+@@ -2961,7 +2959,6 @@ static int mem_cgroup_slabinfo_read(stru
  static int memcg_charge_kmem(struct mem_cgroup *memcg, gfp_t gfp, u64 size)
  {
  	struct res_counter *fail_res;
@@ -205,7 +208,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	int ret = 0;
  	bool may_oom;
  
-@@ -2974,13 +2971,11 @@ static int memcg_charge_kmem(struct mem_
+@@ -2975,13 +2972,11 @@ static int memcg_charge_kmem(struct mem_
  	 */
  	may_oom = (gfp & __GFP_FS) && !(gfp & __GFP_NORETRY);
  
@@ -222,7 +225,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		 * OOM kill or fatal signal.  Since our only options are to
  		 * either fail the allocation or charge it to this cgroup, do
  		 * it as a temporary condition. But we can't fail. From a
-@@ -2990,7 +2985,7 @@ static int memcg_charge_kmem(struct mem_
+@@ -2991,7 +2986,7 @@ static int memcg_charge_kmem(struct mem_
  		 *
  		 * This condition will only trigger if the task entered
  		 * memcg_charge_kmem in a sane state, but was OOM-killed during
@@ -231,7 +234,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  		 * dying when the allocation triggers should have been already
  		 * directed to the root cgroup in memcontrol.h
  		 */
-@@ -3852,10 +3847,9 @@ out:
+@@ -3853,10 +3848,9 @@ out:
  int mem_cgroup_newpage_charge(struct page *page,
  			      struct mm_struct *mm, gfp_t gfp_mask)
  {
@@ -243,7 +246,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  
  	if (mem_cgroup_disabled())
  		return 0;
-@@ -3874,9 +3868,9 @@ int mem_cgroup_newpage_charge(struct pag
+@@ -3875,9 +3869,9 @@ int mem_cgroup_newpage_charge(struct pag
  		oom = false;
  	}
  
@@ -256,7 +259,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	__mem_cgroup_commit_charge(memcg, page, nr_pages,
  				   MEM_CGROUP_CHARGE_TYPE_ANON, false);
  	return 0;
-@@ -3893,7 +3887,7 @@ static int __mem_cgroup_try_charge_swapi
+@@ -3894,7 +3888,7 @@ static int __mem_cgroup_try_charge_swapi
  					  gfp_t mask,
  					  struct mem_cgroup **memcgp)
  {
@@ -265,7 +268,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	struct page_cgroup *pc;
  	int ret;
  
-@@ -3906,31 +3900,29 @@ static int __mem_cgroup_try_charge_swapi
+@@ -3907,31 +3901,29 @@ static int __mem_cgroup_try_charge_swapi
  	 * in turn serializes uncharging.
  	 */
  	if (PageCgroupUsed(pc))
@@ -311,7 +314,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	/*
  	 * A racing thread's fault, or swapoff, may have already
  	 * updated the pte, and even removed page from swap cache: in
-@@ -3938,12 +3930,13 @@ int mem_cgroup_try_charge_swapin(struct
+@@ -3939,12 +3931,13 @@ int mem_cgroup_try_charge_swapin(struct
  	 * there's also a KSM case which does need to charge the page.
  	 */
  	if (!PageSwapCache(page)) {
@@ -330,7 +333,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	}
  	return __mem_cgroup_try_charge_swapin(mm, page, gfp_mask, memcgp);
  }
-@@ -3990,8 +3983,8 @@ void mem_cgroup_commit_charge_swapin(str
+@@ -3991,8 +3984,8 @@ void mem_cgroup_commit_charge_swapin(str
  int mem_cgroup_cache_charge(struct page *page, struct mm_struct *mm,
  				gfp_t gfp_mask)
  {
@@ -340,7 +343,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  	int ret;
  
  	if (mem_cgroup_disabled())
-@@ -3999,23 +3992,28 @@ int mem_cgroup_cache_charge(struct page
+@@ -4000,23 +3993,28 @@ int mem_cgroup_cache_charge(struct page
  	if (PageCompound(page))
  		return 0;
  
@@ -383,7 +386,7 @@ Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
  }
  
  static void mem_cgroup_do_uncharge(struct mem_cgroup *memcg,
-@@ -6403,8 +6401,7 @@ one_by_one:
+@@ -6405,8 +6403,7 @@ one_by_one:
  			batch_count = PRECHARGE_COUNT_AT_ONCE;
  			cond_resched();
  		}

@@ -1,0 +1,44 @@
+From: Bjorn Helgaas <bhelgaas@google.com>
+Date: Fri, 7 Mar 2014 09:22:19 -0700
+Patch-mainline: v3.15-rc1
+Subject: resources: Set type in __request_region()
+Git-commit: 6404e88e8385638123f4b18b104430480870601a)
+References: bnc#965924
+
+We don't set the type (I/O, memory, etc.) of resources added by
+__request_region(), which leads to confusing messages like this:
+
+    address space collision: [io  0x1000-0x107f] conflicts with ACPI CPU throttle [??? 0x00001010-0x00001015 flags 0x80000000]
+
+Set the type of a new resource added by __request_region() (used by
+request_region() and request_mem_region()) to the type of its parent.  This
+makes the resource tree internally consistent and fixes messages like the
+above, where the ACPI CPU throttle resource really is an I/O port region,
+but request_region() didn't fill in the type, so %pR didn't know how to
+print it.
+
+Sample dmesg showing the issue at the link below.
+
+Link: https://bugzilla.kernel.org/show_bug.cgi?id=71611
+Reported-by: Paul Bolle <pebolle@tiscali.nl>
+Signed-off-by: Bjorn Helgaas <bhelgaas@google.com>
+Acked-by: <ohering@suse.de>
+---
+ kernel/resource.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/resource.c b/kernel/resource.c
+index 26e7ea3..06a330f 100644
+--- a/kernel/resource.c
++++ b/kernel/resource.c
+@@ -1068,8 +1068,8 @@ struct resource * __request_region(struct resource *parent,
+ 	res->name = name;
+ 	res->start = start;
+ 	res->end = start + n - 1;
+-	res->flags = IORESOURCE_BUSY;
+-	res->flags |= flags;
++	res->flags = resource_type(parent);
++	res->flags |= IORESOURCE_BUSY | flags;
+ 
+ 	write_lock(&resource_lock);
+ 

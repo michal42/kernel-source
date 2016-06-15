@@ -1,0 +1,74 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 23 Mar 2015 20:12:20 +0800
+Subject: [PATCH] ceph: keep i_snap_realm while there are writers
+Git-commit: db40cc1702d6a7049740d269cf6c1a42f979c7a7
+Patch-mainline: v4.1
+References: Fate#318586
+
+
+when reconnecting to MDS is denied, we remove session caps
+forcibly. But it's possible there are ongoing write, the
+write code needs to reference i_snap_realm. So if there are
+ongoing write, we keep i_snap_realm.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/caps.c |   31 ++++++++++++++++++++++---------
+ 1 file changed, 22 insertions(+), 9 deletions(-)
+
+--- a/fs/ceph/caps.c
++++ b/fs/ceph/caps.c
+@@ -896,6 +896,18 @@ int ceph_is_any_caps(struct inode *inode
+ 	return ret;
+ }
+ 
++static void drop_inode_snap_realm(struct ceph_inode_info *ci)
++{
++	struct ceph_snap_realm *realm = ci->i_snap_realm;
++	spin_lock(&realm->inodes_with_caps_lock);
++	list_del_init(&ci->i_snap_realm_item);
++	ci->i_snap_realm_counter++;
++	ci->i_snap_realm = NULL;
++	spin_unlock(&realm->inodes_with_caps_lock);
++	ceph_put_snap_realm(ceph_sb_to_client(ci->vfs_inode.i_sb)->mdsc,
++			    realm);
++}
++
+ /*
+  * Remove a cap.  Take steps to deal with a racing iterate_session_caps.
+  *
+@@ -946,15 +958,13 @@ void __ceph_remove_cap(struct ceph_cap *
+ 	if (removed)
+ 		ceph_put_cap(mdsc, cap);
+ 
+-	if (!__ceph_is_any_caps(ci) && ci->i_snap_realm) {
+-		struct ceph_snap_realm *realm = ci->i_snap_realm;
+-		spin_lock(&realm->inodes_with_caps_lock);
+-		list_del_init(&ci->i_snap_realm_item);
+-		ci->i_snap_realm_counter++;
+-		ci->i_snap_realm = NULL;
+-		spin_unlock(&realm->inodes_with_caps_lock);
+-		ceph_put_snap_realm(mdsc, realm);
+-	}
++	/* when reconnect denied, we remove session caps forcibly,
++	 * i_wr_ref can be non-zero. If there are ongoing write,
++	 * keep i_snap_realm.
++	 */
++	if (!__ceph_is_any_caps(ci) && ci->i_wr_ref == 0 && ci->i_snap_realm)
++		drop_inode_snap_realm(ci);
++
+ 	if (!__ceph_is_any_real_caps(ci))
+ 		__cap_delay_cancel(mdsc, ci);
+ }
+@@ -2309,6 +2319,9 @@ void ceph_put_cap_refs(struct ceph_inode
+ 					wake = 1;
+ 				}
+ 			}
++			/* see comment in __ceph_remove_cap() */
++			if (!__ceph_is_any_caps(ci) && ci->i_snap_realm)
++				drop_inode_snap_realm(ci);
+ 		}
+ 	spin_unlock(&ci->i_ceph_lock);
+ 

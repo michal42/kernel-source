@@ -1,0 +1,48 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 20 Jul 2015 10:14:06 +0800
+Subject: [PATCH] ceph: fix queuing inode to mdsdir's snaprealm
+Git-commit: 23078637e05460428f803be7d0f46908df8a970a
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+During MDS failovers, MClientSnap message may cause kclient to move
+some inodes from root directory's snaprealm to mdsdir's snaprealm
+and queue snapshots for these inodes. For a FS has never created any
+snapshot, both root directory's snaprealm and mdsdir's snaprealm
+share the same snapshot contexts (both are ceph_empty_snapc). This
+confuses ceph_put_wrbuffer_cap_refs(), make it unable to distinguish
+snapshot buffers from head buffers.
+
+The fix is do not use ceph_empty_snapc as snaprealm's cached context.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/snap.c |    7 -------
+ 1 file changed, 7 deletions(-)
+
+--- a/fs/ceph/snap.c
++++ b/fs/ceph/snap.c
+@@ -338,12 +338,6 @@ static int build_snap_context(struct cep
+ 		return 0;
+ 	}
+ 
+-	if (num == 0 && realm->seq == ceph_empty_snapc->seq) {
+-		ceph_get_snap_context(ceph_empty_snapc);
+-		snapc = ceph_empty_snapc;
+-		goto done;
+-	}
+-
+ 	/* alloc new snap context */
+ 	err = -ENOMEM;
+ 	if (num > (SIZE_MAX - sizeof(*snapc)) / sizeof(u64))
+@@ -381,7 +375,6 @@ static int build_snap_context(struct cep
+ 	     realm->ino, realm, snapc, snapc->seq,
+ 	     (unsigned int) snapc->num_snaps);
+ 
+-done:
+ 	if (realm->cached_context)
+ 		ceph_put_snap_context(realm->cached_context);
+ 	realm->cached_context = snapc;

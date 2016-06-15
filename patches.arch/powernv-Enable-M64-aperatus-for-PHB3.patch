@@ -25,11 +25,15 @@ Signed-off-by: Guo Chao <yan@linux.vnet.ibm.com>
 Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
 Acked-by: Dinar Valeev <dvaleev@suse.com>
 
-diff --git a/arch/powerpc/include/asm/opal.h b/arch/powerpc/include/asm/opal.h
-index 9d14aab..44e5083 100644
+---
+ arch/powerpc/include/asm/opal.h           |    8 
+ arch/powerpc/platforms/powernv/pci-ioda.c |  301 +++++++++++++++++++++++++++---
+ arch/powerpc/platforms/powernv/pci.h      |   20 +
+ 3 files changed, 307 insertions(+), 22 deletions(-)
+
 --- a/arch/powerpc/include/asm/opal.h
 +++ b/arch/powerpc/include/asm/opal.h
-@@ -340,6 +340,12 @@ enum OpalMveEnableAction {
+@@ -371,6 +371,12 @@ enum OpalMveEnableAction {
  	OPAL_ENABLE_MVE = 1
  };
  
@@ -42,7 +46,7 @@ index 9d14aab..44e5083 100644
  enum OpalPciResetScope {
  	OPAL_PHB_COMPLETE = 1, OPAL_PCI_LINK = 2, OPAL_PHB_ERROR = 3,
  	OPAL_PCI_HOT_RESET = 4, OPAL_PCI_FUNDAMENTAL_RESET = 5,
-@@ -768,7 +774,7 @@ int64_t opal_pci_set_phb_mem_window(uint64_t phb_id, uint16_t window_type,
+@@ -847,7 +853,7 @@ int64_t opal_pci_set_phb_mem_window(uint
  				    uint16_t window_num,
  				    uint64_t starting_real_address,
  				    uint64_t starting_pci_address,
@@ -51,8 +55,6 @@ index 9d14aab..44e5083 100644
  int64_t opal_pci_map_pe_mmio_window(uint64_t phb_id, uint16_t pe_number,
  				    uint16_t window_type, uint16_t window_num,
  				    uint16_t segment_num);
-diff --git a/arch/powerpc/platforms/powernv/pci-ioda.c b/arch/powerpc/platforms/powernv/pci-ioda.c
-index 0701f90..899fe40 100644
 --- a/arch/powerpc/platforms/powernv/pci-ioda.c
 +++ b/arch/powerpc/platforms/powernv/pci-ioda.c
 @@ -36,6 +36,7 @@
@@ -62,8 +64,8 @@ index 0701f90..899fe40 100644
 +#include <asm/firmware.h>
  
  #include <misc/cxl.h>
-
-@@ -82,6 +83,12 @@ static inline void __raw_rm_writeq(u64 val, volatile void __iomem *paddr)
+ 
+@@ -84,6 +85,12 @@ static inline void __raw_rm_writeq(u64 v
  		: : "r" (val), "r" (paddr) : "memory");
  }
  
@@ -76,7 +78,7 @@ index 0701f90..899fe40 100644
  static int pnv_ioda_alloc_pe(struct pnv_phb *phb)
  {
  	unsigned long pe;
-@@ -106,6 +113,240 @@ static void pnv_ioda_free_pe(struct pnv_phb *phb, int pe)
+@@ -108,6 +115,240 @@ static void pnv_ioda_free_pe(struct pnv_
  	clear_bit(pe, phb->ioda.pe_alloc);
  }
  
@@ -317,7 +319,7 @@ index 0701f90..899fe40 100644
  /* Currently those 2 are only used when MSIs are enabled, this will change
   * but in the meantime, we need to protect them to avoid warnings
   */
-@@ -363,9 +604,16 @@ static void pnv_ioda_setup_bus_PE(struct pci_bus *bus, int all)
+@@ -365,9 +606,16 @@ static void pnv_ioda_setup_bus_PE(struct
  	struct pci_controller *hose = pci_bus_to_host(bus);
  	struct pnv_phb *phb = hose->private_data;
  	struct pnv_ioda_pe *pe;
@@ -336,7 +338,7 @@ index 0701f90..899fe40 100644
  	if (pe_num == IODA_INVALID_PE) {
  		pr_warning("%s: Not enough PE# available for PCI bus %04x:%02x\n",
  			__func__, pci_domain_nr(bus), bus->number);
-@@ -373,7 +621,7 @@ static void pnv_ioda_setup_bus_PE(struct pci_bus *bus, int all)
+@@ -375,7 +623,7 @@ static void pnv_ioda_setup_bus_PE(struct
  	}
  
  	pe = &phb->ioda.pe_array[pe_num];
@@ -345,7 +347,7 @@ index 0701f90..899fe40 100644
  	pe->pbus = bus;
  	pe->pdev = NULL;
  	pe->tce32_seg = -1;
-@@ -441,8 +689,15 @@ static void pnv_ioda_setup_PEs(struct pci_bus *bus)
+@@ -443,8 +691,15 @@ static void pnv_ioda_setup_PEs(struct pc
  static void pnv_pci_ioda_setup_PEs(void)
  {
  	struct pci_controller *hose, *tmp;
@@ -361,7 +363,7 @@ index 0701f90..899fe40 100644
  		pnv_ioda_setup_PEs(hose->bus);
  	}
  }
-@@ -1071,9 +1326,6 @@ static void pnv_ioda_setup_pe_seg(struct pci_controller *hose,
+@@ -1214,9 +1469,6 @@ static void pnv_ioda_setup_pe_seg(struct
  				index++;
  			}
  		} else if (res->flags & IORESOURCE_MEM) {
@@ -371,7 +373,7 @@ index 0701f90..899fe40 100644
  			region.start = res->start -
  				       hose->mem_offset[0] -
  				       phb->ioda.m32_pci_base;
-@@ -1193,7 +1445,10 @@ static resource_size_t pnv_pci_window_alignment(struct pci_bus *bus,
+@@ -1337,7 +1589,10 @@ static resource_size_t pnv_pci_window_al
  		bridge = bridge->bus->self;
  	}
  
@@ -383,7 +385,7 @@ index 0701f90..899fe40 100644
  	if (type & IORESOURCE_MEM)
  		return phb->ioda.m32_segsize;
  
-@@ -1314,6 +1569,10 @@ void __init pnv_pci_init_ioda_phb(struct device_node *np,
+@@ -1458,6 +1713,10 @@ void __init pnv_pci_init_ioda_phb(struct
  	prop32 = of_get_property(np, "ibm,opal-reserved-pe", NULL);
  	if (prop32)
  		phb->ioda.reserved_pe = be32_to_cpup(prop32);
@@ -394,7 +396,7 @@ index 0701f90..899fe40 100644
  	phb->ioda.m32_size = resource_size(&hose->mem_resources[0]);
  	/* FW Has already off top 64k of M32 space (MSI space) */
  	phb->ioda.m32_size += 0x10000;
-@@ -1349,14 +1608,6 @@ void __init pnv_pci_init_ioda_phb(struct device_node *np,
+@@ -1493,14 +1752,6 @@ void __init pnv_pci_init_ioda_phb(struct
  	/* Calculate how many 32-bit TCE segments we have */
  	phb->ioda.tce32_count = phb->ioda.m32_pci_base >> 28;
  
@@ -409,7 +411,7 @@ index 0701f90..899fe40 100644
  #if 0 /* We should really do that ... */
  	rc = opal_pci_set_phb_mem_window(opal->phb_id,
  					 window_type,
-@@ -1366,12 +1617,16 @@ void __init pnv_pci_init_ioda_phb(struct device_node *np,
+@@ -1510,12 +1761,16 @@ void __init pnv_pci_init_ioda_phb(struct
  					 segment_size);
  #endif
  
@@ -432,9 +434,9 @@ index 0701f90..899fe40 100644
  
  	phb->hose->ops = &pnv_pci_ops;
  #ifdef CONFIG_EEH
-@@ -1419,6 +1674,10 @@ void __init pnv_pci_init_ioda_phb(struct device_node *np,
+@@ -1551,6 +1806,10 @@ void __init pnv_pci_init_ioda_phb(struct
  	rc = opal_pci_reset(phb_id, OPAL_PCI_IODA_TABLE_RESET, OPAL_ASSERT_RESET);
-	if (rc)
+ 	if (rc)
  		pr_warning("  OPAL Error %ld performing IODA table reset !\n", rc);
 +
 +	/* Configure M64 window */
@@ -443,8 +445,6 @@ index 0701f90..899fe40 100644
  }
  
  void __init pnv_pci_init_ioda2_phb(struct device_node *np)
-diff --git a/arch/powerpc/platforms/powernv/pci.h b/arch/powerpc/platforms/powernv/pci.h
-index 6f5ff69..49da9f1 100644
 --- a/arch/powerpc/platforms/powernv/pci.h
 +++ b/arch/powerpc/platforms/powernv/pci.h
 @@ -21,6 +21,8 @@ enum pnv_phb_model {
@@ -467,7 +467,7 @@ index 6f5ff69..49da9f1 100644
  	/* Link in list of PE#s */
  	struct list_head	dma_link;
  	struct list_head	list;
-@@ -119,6 +125,9 @@ struct pnv_phb {
+@@ -118,6 +124,9 @@ struct pnv_phb {
  	void (*fixup_phb)(struct pci_controller *hose);
  	u32 (*bdfn_to_pe)(struct pnv_phb *phb, struct pci_bus *bus, u32 devfn);
  	void (*shutdown)(struct pnv_phb *phb);
@@ -477,7 +477,7 @@ index 6f5ff69..49da9f1 100644
  
  	union {
  		struct {
-@@ -129,9 +138,20 @@ struct pnv_phb {
+@@ -128,9 +137,20 @@ struct pnv_phb {
  			/* Global bridge info */
  			unsigned int		total_pe;
  			unsigned int		reserved_pe;
@@ -498,5 +498,3 @@ index 6f5ff69..49da9f1 100644
  			unsigned int		io_size;
  			unsigned int		io_segsize;
  			unsigned int		io_pci_base;
--- 
-cgit v0.10.2

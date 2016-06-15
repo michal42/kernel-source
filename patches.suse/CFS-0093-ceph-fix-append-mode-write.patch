@@ -1,0 +1,69 @@
+From: "Yan, Zheng" <zheng.z.yan@intel.com>
+Date: Mon, 28 Jul 2014 14:33:46 +0800
+Subject: [PATCH] ceph: fix append mode write
+Git-commit: 06fee30f6a31f106bed5d24d21eb8f1c4d8ba1fc
+Patch-mainline: v3.17
+References: Fate#318586
+
+
+generic_write_checks() may update 'pos', so we need to pass 'pos'
+to ceph_sync_write() and ceph_sync_direct_write();
+
+Signed-off-by: Yan, Zheng <zheng.z.yan@intel.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/file.c |   13 ++++++-------
+ 1 file changed, 6 insertions(+), 7 deletions(-)
+
+--- a/fs/ceph/file.c
++++ b/fs/ceph/file.c
+@@ -576,7 +576,7 @@ static void ceph_sync_write_unsafe(struc
+  */
+ static ssize_t
+ ceph_sync_direct_write(struct kiocb *iocb, const struct iovec *iov,
+-		       unsigned long nr_segs, size_t count)
++		       unsigned long nr_segs, size_t count, loff_t pos)
+ {
+ 	struct file *file = iocb->ki_filp;
+ 	struct inode *inode = file_inode(file);
+@@ -593,7 +593,6 @@ ceph_sync_direct_write(struct kiocb *ioc
+ 	int page_align;
+ 	int ret;
+ 	struct timespec mtime = CURRENT_TIME;
+-	loff_t pos = iocb->ki_pos;
+ 	struct iov_iter i;
+ 
+ 	if (ceph_snap(file_inode(file)) != CEPH_NOSNAP)
+@@ -696,8 +695,9 @@ out:
+  * correct atomic write, we should e.g. take write locks on all
+  * objects, rollback on failure, etc.)
+  */
+-static ssize_t ceph_sync_write(struct kiocb *iocb, const struct iovec *iov,
+-			       unsigned long nr_segs, size_t count)
++static ssize_t
++ceph_sync_write(struct kiocb *iocb, const struct iovec *iov,
++			       unsigned long nr_segs, size_t count, loff_t pos)
+ {
+ 	struct file *file = iocb->ki_filp;
+ 	struct inode *inode = file_inode(file);
+@@ -714,7 +714,6 @@ static ssize_t ceph_sync_write(struct ki
+ 	int check_caps = 0;
+ 	int ret;
+ 	struct timespec mtime = CURRENT_TIME;
+-	loff_t pos = iocb->ki_pos;
+ 	struct iov_iter i;
+ 
+ 	if (ceph_snap(file_inode(file)) != CEPH_NOSNAP)
+@@ -993,9 +992,9 @@ retry_snap:
+ 		mutex_unlock(&inode->i_mutex);
+ 		if (kiocb_is_direct(iocb))
+ 			written = ceph_sync_direct_write(iocb, iov,
+-							 nr_segs, count);
++							 nr_segs, count, pos);
+ 		else
+-			written = ceph_sync_write(iocb, iov, nr_segs, count);
++			written = ceph_sync_write(iocb, iov, nr_segs, count, pos);
+ 		if (written == -EOLDSNAPC) {
+ 			dout("aio_write %p %llx.%llx %llu~%u"
+ 				"got EOLDSNAPC, retrying\n",

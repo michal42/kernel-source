@@ -1,0 +1,31 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Mon, 7 Sep 2015 15:46:24 +0800
+Subject: [PATCH] ceph: improve readahead for file holes
+Git-commit: 438386853d4c0c48fe73bf05a7d61c70ca5a3bfb
+Patch-mainline: v4.3
+References: Fate#318586
+
+
+When readahead encounters file holes, osd reply returns error -ENOENT,
+finish_read() skips adding pages to the the page cache. So readahead
+does not work for file holes. The fix is adding zero pages to the
+page cache when -ENOENT is returned.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/addr.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/fs/ceph/addr.c
++++ b/fs/ceph/addr.c
+@@ -286,7 +286,7 @@ static void finish_read(struct ceph_osd_
+ 	for (i = 0; i < num_pages; i++) {
+ 		struct page *page = osd_data->pages[i];
+ 
+-		if (rc < 0)
++		if (rc < 0 && rc != ENOENT)
+ 			goto unlock;
+ 		if (bytes < (int)PAGE_CACHE_SIZE) {
+ 			/* zero (remainder of) page */

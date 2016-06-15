@@ -1,0 +1,44 @@
+From: Ilya Dryomov <idryomov@gmail.com>
+Date: Thu, 15 Oct 2015 15:38:57 +0200
+Subject: [PATCH] rbd: return -ENOMEM instead of pool id if rbd_dev_create()
+ fails
+Git-commit: b51c83c241910f66b0c9a2ab17cd57db8109a98f
+Patch-mainline: v4.4
+References: Fate#318586
+
+
+Returning pool id (i.e. >= 0) from a sysfs ->store() callback makes
+userspace think it needs to retry the write.  Fix it - it's a leftover
+from the times when the equivalent of rbd_dev_create() was the first
+action in rbd_add().
+
+Signed-off-by: Ilya Dryomov <idryomov@gmail.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ drivers/block/rbd.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+--- a/drivers/block/rbd.c
++++ b/drivers/block/rbd.c
+@@ -5943,7 +5943,7 @@ static ssize_t do_rbd_add(struct bus_typ
+ 	struct rbd_spec *spec = NULL;
+ 	struct rbd_client *rbdc;
+ 	bool read_only;
+-	int rc = -ENOMEM;
++	int rc;
+ 
+ 	if (!try_module_get(THIS_MODULE))
+ 		return -ENODEV;
+@@ -5978,8 +5978,10 @@ static ssize_t do_rbd_add(struct bus_typ
+ 	}
+ 
+ 	rbd_dev = rbd_dev_create(rbdc, spec, rbd_opts);
+-	if (!rbd_dev)
++	if (!rbd_dev) {
++		rc = -ENOMEM;
+ 		goto err_out_client;
++	}
+ 	rbdc = NULL;		/* rbd_dev now owns this */
+ 	spec = NULL;		/* rbd_dev now owns this */
+ 	rbd_opts = NULL;	/* rbd_dev now owns this */

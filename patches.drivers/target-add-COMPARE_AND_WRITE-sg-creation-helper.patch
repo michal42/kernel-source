@@ -13,13 +13,13 @@ Signed-off-by: Mike Christie <michaelc@cs.wisc.edu>
 Acked-by: David Disseldorp <ddiss@suse.de>
 
 ---
- drivers/target/target_core_sbc.c     |   73 +++++++++++++++++++++++------------
+ drivers/target/target_core_sbc.c     |   74 +++++++++++++++++++++++------------
  include/target/target_core_backend.h |    1 
- 2 files changed, 49 insertions(+), 25 deletions(-)
+ 2 files changed, 50 insertions(+), 25 deletions(-)
 
 --- a/drivers/target/target_core_sbc.c
 +++ b/drivers/target/target_core_sbc.c
-@@ -404,12 +404,58 @@ static sense_reason_t compare_and_write_
+@@ -408,13 +408,60 @@ static sense_reason_t compare_and_write_
  	return TCM_NO_SENSE;
  }
  
@@ -56,10 +56,11 @@ Acked-by: David Disseldorp <ddiss@suse.de>
 +
 +		if (block_size < PAGE_SIZE) {
 +			sg_set_page(&write_sg[i], m.page, block_size,
-+				    block_size);
++				    m.piter.sg->offset + block_size);
 +		} else {
 +			sg_miter_next(&m);
-+			sg_set_page(&write_sg[i], m.page, block_size, 0);
++			sg_set_page(&write_sg[i], m.page, block_size,
++				    m.piter.sg->offset);
 +		}
 +		len -= block_size;
 +		i++;
@@ -70,7 +71,8 @@ Acked-by: David Disseldorp <ddiss@suse.de>
 +}
 +EXPORT_SYMBOL(sbc_create_compare_and_write_sg);
 +
- static sense_reason_t compare_and_write_callback(struct se_cmd *cmd, bool success)
+ static sense_reason_t compare_and_write_callback(struct se_cmd *cmd, bool success,
+ 						 int *post_ret)
  {
  	struct se_device *dev = cmd->se_dev;
  	struct scatterlist *write_sg = NULL, *sg;
@@ -79,7 +81,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  	unsigned int offset = 0, len;
  	unsigned int nlbas = cmd->t_task_nolb;
  	unsigned int block_size = dev->dev_attrib.block_size;
-@@ -445,14 +491,12 @@ static sense_reason_t compare_and_write_
+@@ -450,14 +497,12 @@ static sense_reason_t compare_and_write_
  		goto out;
  	}
  
@@ -95,7 +97,7 @@ Acked-by: David Disseldorp <ddiss@suse.de>
  	/*
  	 * Setup verify and write data payloads from total NumberLBAs.
  	 */
-@@ -489,27 +533,6 @@ static sense_reason_t compare_and_write_
+@@ -494,27 +539,6 @@ static sense_reason_t compare_and_write_
  			break;
  	}
  
@@ -110,11 +112,11 @@ Acked-by: David Disseldorp <ddiss@suse.de>
 -
 -		if (block_size < PAGE_SIZE) {
 -			sg_set_page(&write_sg[i], m.page, block_size,
--				    block_size);
+-				    m.piter.sg->offset + block_size);
 -		} else {
 -			sg_miter_next(&m);
 -			sg_set_page(&write_sg[i], m.page, block_size,
--				    0);
+-				    m.piter.sg->offset);
 -		}
 -		len -= block_size;
 -		i++;

@@ -1,0 +1,39 @@
+From: Jan Kara <jack@suse.cz>
+Subject: ext4: Fix softlockups in SEEK_HOLE and SEEK_DATA implementations
+References: bsc#942262
+Patch-mainline: Never, fixed by more efficient implementation which is more
+  intrusive
+
+Implementation of SEEK_DATA in ext4 is rather inefficient since it iterates
+holes in a file block-by-block. Thus files with large holes can trigger
+softlockup warnings. So we add cond_resched() there to silence them. The real
+fix is more efficient implementation of the functionality however that is
+more intrusive so avoid it for now.
+
+SEEK_HOLE implementation is more efficient but let's add cond_resched() there
+as well to avoid unpleasant surprises.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/ext4/file.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/fs/ext4/file.c
++++ b/fs/ext4/file.c
+@@ -474,6 +474,7 @@ static loff_t ext4_seek_data(struct file
+ 
+ 		last++;
+ 		dataoff = (loff_t)last << blkbits;
++		cond_resched();
+ 	} while (last <= end);
+ 
+ 	mutex_unlock(&inode->i_mutex);
+@@ -512,6 +513,7 @@ static loff_t ext4_seek_hole(struct file
+ 	holeoff = offset;
+ 
+ 	do {
++		cond_resched();
+ 		map.m_lblk = last;
+ 		map.m_len = end - last + 1;
+ 		ret = ext4_map_blocks(NULL, inode, &map, 0);

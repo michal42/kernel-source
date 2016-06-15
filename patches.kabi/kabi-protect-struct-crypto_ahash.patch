@@ -1,0 +1,83 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect struct crypto_ahash
+Patch-mainline: never, kabi
+
+In 3.12.55, commit f382cd5ac26674877143fa7d9c0ea23c6640e706 (crypto:
+hash - Add crypto_ahash_has_setkey), upstream commit
+a5596d6332787fd383b3b5427b41f94254430827 added one member to struct
+crypto_ahash. It indeed changed the layout of that structure.
+
+Even though the structure is supposed to be allocated by
+crypto_alloc_ahash, the layout is kind of predefined, because the
+drivers expect some predefined members after the structure (allocated
+by ->extsize). Soe remove the member use crt_flags from embedded base
+(struct crypto_tfm).
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ crypto/ahash.c         |    4 ++--
+ crypto/shash.c         |    2 +-
+ include/crypto/hash.h  |    3 +--
+ include/linux/crypto.h |    1 +
+ 4 files changed, 5 insertions(+), 5 deletions(-)
+
+--- a/crypto/ahash.c
++++ b/crypto/ahash.c
+@@ -369,7 +369,7 @@ static int crypto_ahash_init_tfm(struct
+ 	struct ahash_alg *alg = crypto_ahash_alg(hash);
+ 
+ 	hash->setkey = ahash_nosetkey;
+-	hash->has_setkey = false;
++	hash->base.crt_flags &= ~CRYPTO_HAS_SETKEY;
+ 	hash->export = ahash_no_export;
+ 	hash->import = ahash_no_import;
+ 
+@@ -384,7 +384,7 @@ static int crypto_ahash_init_tfm(struct
+ 
+ 	if (alg->setkey) {
+ 		hash->setkey = alg->setkey;
+-		hash->has_setkey = true;
++		hash->base.crt_flags |= CRYPTO_HAS_SETKEY;
+ 	}
+ 	if (alg->export)
+ 		hash->export = alg->export;
+--- a/crypto/shash.c
++++ b/crypto/shash.c
+@@ -356,7 +356,7 @@ int crypto_init_shash_ops_async(struct c
+ 
+ 	if (alg->setkey) {
+ 		crt->setkey = shash_async_setkey;
+-		crt->has_setkey = true;
++		crt->base.crt_flags |= CRYPTO_HAS_SETKEY;
+ 	}
+ 	if (alg->export)
+ 		crt->export = shash_async_export;
+--- a/include/crypto/hash.h
++++ b/include/crypto/hash.h
+@@ -94,7 +94,6 @@ struct crypto_ahash {
+ 		      unsigned int keylen);
+ 
+ 	unsigned int reqsize;
+-	bool has_setkey;
+ 	struct crypto_tfm base;
+ };
+ 
+@@ -185,7 +184,7 @@ int crypto_ahash_setkey(struct crypto_ah
+ 
+ static inline bool crypto_ahash_has_setkey(struct crypto_ahash *tfm)
+ {
+-	return tfm->has_setkey;
++	return tfm->base.crt_flags & CRYPTO_HAS_SETKEY;
+ }
+ 
+ int crypto_ahash_finup(struct ahash_request *req);
+--- a/include/linux/crypto.h
++++ b/include/linux/crypto.h
+@@ -100,6 +100,7 @@
+ #define CRYPTO_TFM_REQ_MASK		0x000fff00
+ #define CRYPTO_TFM_RES_MASK		0xfff00000
+ 
++#define CRYPTO_HAS_SETKEY		0x00000010
+ #define CRYPTO_TFM_REQ_WEAK_KEY		0x00000100
+ #define CRYPTO_TFM_REQ_MAY_SLEEP	0x00000200
+ #define CRYPTO_TFM_REQ_MAY_BACKLOG	0x00000400

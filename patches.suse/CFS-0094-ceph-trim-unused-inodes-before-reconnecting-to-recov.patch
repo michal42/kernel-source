@@ -1,0 +1,58 @@
+From: "Yan, Zheng" <zyan@redhat.com>
+Date: Wed, 10 Sep 2014 16:56:23 +0800
+Subject: [PATCH] ceph: trim unused inodes before reconnecting to recovering
+ MDS
+Git-commit: 5d23371fdb7dc03fa6fe054da3467efb0d347945
+Patch-mainline: v3.18
+References: Fate#318586
+
+
+So the recovering MDS does not need to fetch these ununsed inodes during
+cache rejoin. This may reduce MDS recovery time.
+
+Signed-off-by: Yan, Zheng <zyan@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/ceph/mds_client.c |   23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+--- a/fs/ceph/mds_client.c
++++ b/fs/ceph/mds_client.c
+@@ -2697,16 +2697,6 @@ static void send_mds_reconnect(struct ce
+ 	session->s_state = CEPH_MDS_SESSION_RECONNECTING;
+ 	session->s_seq = 0;
+ 
+-	ceph_con_close(&session->s_con);
+-	ceph_con_open(&session->s_con,
+-		      CEPH_ENTITY_TYPE_MDS, mds,
+-		      ceph_mdsmap_get_addr(mdsc->mdsmap, mds));
+-
+-	/* replay unsafe requests */
+-	replay_unsafe_requests(mdsc, session);
+-
+-	down_read(&mdsc->snap_rwsem);
+-
+ 	dout("session %p state %s\n", session,
+ 	     session_state_name(session->s_state));
+ 
+@@ -2725,6 +2715,19 @@ static void send_mds_reconnect(struct ce
+ 	discard_cap_releases(mdsc, session);
+ 	spin_unlock(&session->s_cap_lock);
+ 
++	/* trim unused caps to reduce MDS's cache rejoin time */
++	shrink_dcache_parent(mdsc->fsc->sb->s_root);
++
++	ceph_con_close(&session->s_con);
++	ceph_con_open(&session->s_con,
++		      CEPH_ENTITY_TYPE_MDS, mds,
++		      ceph_mdsmap_get_addr(mdsc->mdsmap, mds));
++
++	/* replay unsafe requests */
++	replay_unsafe_requests(mdsc, session);
++
++	down_read(&mdsc->snap_rwsem);
++
+ 	/* traverse this session's caps */
+ 	s_nr_caps = session->s_nr_caps;
+ 	err = ceph_pagelist_encode_32(pagelist, s_nr_caps);
