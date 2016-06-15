@@ -1,0 +1,141 @@
+From 4fc5ab2197b1197f0f51815a58e801547f52be79 Mon Sep 17 00:00:00 2001
+From: Jie Liu <jeff.liu@oracle.com>
+Date: Fri, 13 Dec 2013 15:51:48 +1100
+Subject: [PATCH 2/3] xfs: get rid of XFS_IALLOC_BLOCKS macros
+References: bsc#984148
+Git-commit: 126cd105d4408ff52437a72d681aecdb29cc80e8
+Patch-mainline: v3.14-rc1
+
+
+Get rid of XFS_IALLOC_BLOCKS() marcos, use mp->m_ialloc_blks directly.
+
+Signed-off-by: Jie Liu <jeff.liu@oracle.com>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Signed-off-by: Dirk Mueller <dmueller@suse.com>
+---
+ fs/xfs/xfs_ialloc.c      | 12 ++++++------
+ fs/xfs/xfs_inode.c       |  4 ++--
+ fs/xfs/xfs_trans_resv.c  |  8 ++++----
+ fs/xfs/xfs_trans_space.h |  2 +-
+ 4 files changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/fs/xfs/xfs_ialloc.c b/fs/xfs/xfs_ialloc.c
+index 0f9efdc..3a77e5c 100644
+--- a/fs/xfs/xfs_ialloc.c
++++ b/fs/xfs/xfs_ialloc.c
+@@ -334,7 +334,7 @@ xfs_ialloc_ag_alloc(
+ 	if (args.mp->m_maxicount &&
+ 	    args.mp->m_sb.sb_icount + newlen > args.mp->m_maxicount)
+ 		return XFS_ERROR(ENOSPC);
+-	args.minlen = args.maxlen = XFS_IALLOC_BLOCKS(args.mp);
++	args.minlen = args.maxlen = args.mp->m_ialloc_blks;
+ 	/*
+ 	 * First try to allocate inodes contiguous with the last-allocated
+ 	 * chunk of inodes.  If the filesystem is striped, this will fill
+@@ -344,7 +344,7 @@ xfs_ialloc_ag_alloc(
+ 	newino = be32_to_cpu(agi->agi_newino);
+ 	agno = be32_to_cpu(agi->agi_seqno);
+ 	args.agbno = XFS_AGINO_TO_AGBNO(args.mp, newino) +
+-			XFS_IALLOC_BLOCKS(args.mp);
++		     args.mp->m_ialloc_blks;
+ 	if (likely(newino != NULLAGINO &&
+ 		  (args.agbno < be32_to_cpu(agi->agi_length)))) {
+ 		args.fsbno = XFS_AGB_TO_FSB(args.mp, agno, args.agbno);
+@@ -598,7 +598,7 @@ xfs_ialloc_ag_select(
+ 		 * Is there enough free space for the file plus a block of
+ 		 * inodes? (if we need to allocate some)?
+ 		 */
+-		ineed = XFS_IALLOC_BLOCKS(mp);
++		ineed = mp->m_ialloc_blks;
+ 		longest = pag->pagf_longest;
+ 		if (!longest)
+ 			longest = pag->pagf_flcount > 0;
+@@ -1241,9 +1241,9 @@ xfs_difree(
+ 			goto error0;
+ 		}
+ 
+-		xfs_bmap_add_free(XFS_AGB_TO_FSB(mp,
+-				agno, XFS_AGINO_TO_AGBNO(mp, rec.ir_startino)),
+-				XFS_IALLOC_BLOCKS(mp), flist, mp);
++		xfs_bmap_add_free(XFS_AGB_TO_FSB(mp, agno,
++				  XFS_AGINO_TO_AGBNO(mp, rec.ir_startino)),
++				  mp->m_ialloc_blks, flist, mp);
+ 	} else {
+ 		*delete = 0;
+ 
+diff --git a/fs/xfs/xfs_inode.c b/fs/xfs/xfs_inode.c
+index 475bf42..0a24d09 100644
+--- a/fs/xfs/xfs_inode.c
++++ b/fs/xfs/xfs_inode.c
+@@ -2166,12 +2166,12 @@ xfs_ifree_cluster(
+ 	if (mp->m_sb.sb_blocksize >= mp->m_inode_cluster_size) {
+ 		blks_per_cluster = 1;
+ 		ninodes = mp->m_sb.sb_inopblock;
+-		nbufs = XFS_IALLOC_BLOCKS(mp);
++		nbufs = mp->m_ialloc_blks;
+ 	} else {
+ 		blks_per_cluster = mp->m_inode_cluster_size /
+ 				   mp->m_sb.sb_blocksize;
+ 		ninodes = blks_per_cluster * mp->m_sb.sb_inopblock;
+-		nbufs = XFS_IALLOC_BLOCKS(mp) / blks_per_cluster;
++		nbufs = mp->m_ialloc_blks / blks_per_cluster;
+ 	}
+ 
+ 	for (j = 0; j < nbufs; j++, inum += ninodes) {
+diff --git a/fs/xfs/xfs_trans_resv.c b/fs/xfs/xfs_trans_resv.c
+index 6f3f43a..296860e 100644
+--- a/fs/xfs/xfs_trans_resv.c
++++ b/fs/xfs/xfs_trans_resv.c
+@@ -190,7 +190,7 @@ xfs_calc_itruncate_reservation(
+ 		    xfs_calc_buf_res(5, 0) +
+ 		    xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+ 				     XFS_FSB_TO_B(mp, 1)) +
+-		    xfs_calc_buf_res(2 + XFS_IALLOC_BLOCKS(mp) +
++		    xfs_calc_buf_res(2 + mp->m_ialloc_blks +
+ 				     mp->m_in_maxlevels, 0)));
+ }
+ 
+@@ -298,7 +298,7 @@ xfs_calc_create_resv_modify(
+  * For create we can allocate some inodes giving:
+  *    the agi and agf of the ag getting the new inodes: 2 * sectorsize
+  *    the superblock for the nlink flag: sector size
+- *    the inode blocks allocated: XFS_IALLOC_BLOCKS * blocksize
++ *    the inode blocks allocated: mp->m_ialloc_blks * blocksize
+  *    the inode btree: max depth * blocksize
+  *    the allocation btrees: 2 trees * (max depth - 1) * block size
+  */
+@@ -308,7 +308,7 @@ xfs_calc_create_resv_alloc(
+ {
+ 	return xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+ 		mp->m_sb.sb_sectsize +
+-		xfs_calc_buf_res(XFS_IALLOC_BLOCKS(mp), XFS_FSB_TO_B(mp, 1)) +
++		xfs_calc_buf_res(mp->m_ialloc_blks, XFS_FSB_TO_B(mp, 1)) +
+ 		xfs_calc_buf_res(mp->m_in_maxlevels, XFS_FSB_TO_B(mp, 1)) +
+ 		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+ 				 XFS_FSB_TO_B(mp, 1));
+@@ -403,7 +403,7 @@ xfs_calc_ifree_reservation(
+ 		xfs_calc_buf_res(1, XFS_FSB_TO_B(mp, 1)) +
+ 		max_t(uint, XFS_FSB_TO_B(mp, 1), mp->m_inode_cluster_size) +
+ 		xfs_calc_buf_res(1, 0) +
+-		xfs_calc_buf_res(2 + XFS_IALLOC_BLOCKS(mp) +
++		xfs_calc_buf_res(2 + mp->m_ialloc_blks +
+ 				 mp->m_in_maxlevels, 0) +
+ 		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+ 				 XFS_FSB_TO_B(mp, 1));
+diff --git a/fs/xfs/xfs_trans_space.h b/fs/xfs/xfs_trans_space.h
+index 7d2c920..af5dbe0 100644
+--- a/fs/xfs/xfs_trans_space.h
++++ b/fs/xfs/xfs_trans_space.h
+@@ -47,7 +47,7 @@
+ #define	XFS_DIRREMOVE_SPACE_RES(mp)	\
+ 	XFS_DAREMOVE_SPACE_RES(mp, XFS_DATA_FORK)
+ #define	XFS_IALLOC_SPACE_RES(mp)	\
+-	(XFS_IALLOC_BLOCKS(mp) + (mp)->m_in_maxlevels - 1)
++	((mp)->m_ialloc_blks + (mp)->m_in_maxlevels - 1)
+ 
+ /*
+  * Space reservation values for various transactions.
+-- 
+2.7.4
+
