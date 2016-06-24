@@ -1,0 +1,135 @@
+From a8adb43f7b9f91c1fd49d9d990664ccc8c446b75 Mon Sep 17 00:00:00 2001
+From: Dave Chinner <dchinner@redhat.com>
+Date: Thu, 4 Dec 2014 09:42:21 +1100
+Subject: [PATCH 3/3] xfs: fix premature enospc on inode allocation
+References: bsc#984148
+Git-commit: 7a1df1561609c14ac457d65d9a4a2b6c0f4204ad
+Patch-mainline: v3.19-rc1
+
+
+After growing a filesystem, XFS can fail to allocate inodes even
+though there is a large amount of space available in the filesystem
+for inodes. The issue is caused by a nearly full allocation group
+having enough free space in it to be considered for inode
+allocation, but not enough contiguous free space to actually
+allocation inodes.  This situation results in successful selection
+of the AG for allocation, then failure of the allocation resulting
+in ENOSPC being reported to the caller.
+
+It is caused by two possible issues. Firstly, we only consider the
+lognest free extent and whether it would fit an inode chunk. If the
+extent is not correctly aligned, then we can't allocate an inode
+chunk in it regardless of the fact that it is large enough. This
+tends to be a permanent error until space in the AG is freed.
+
+The second issue is that we don't actually lock the AGI or AGF when
+we are doing these checks, and so by the time we get to actually
+allocating the inode chunk the space we thought we had in the AG may
+have been allocated. This tends to be a spurious error as it
+requires a race to trigger. Hence this case is ignored in this patch
+as the reported problem is for permanent errors.
+
+The first issue could be addressed by simply taking into account the
+alignment when checking the longest extent. This, however, would
+prevent allocation in AGs that have aligned, exact sized extents
+free. However, this case should be fairly rare compared to the
+number of allocations that occur near ENOSPC that would trigger this
+condition.
+
+Hence, when selecting the inode AG, take into account the inode
+cluster alignment when checking the lognest free extent in the AG.
+If we can't find any AGs with a contiguous free space large
+enough to be aligned, drop the alignment addition and just try for
+an AG that has enough contiguous free space available for an inode
+chunk. This won't prevent issues from occurring, but should avoid
+situations where other AGs have lots of free space but the selected
+AG can't allocate due to alignment constraints.
+
+Reported-by: Arkadiusz Miskiewicz <arekm@maven.pl>
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+Reviewed-by: Brian Foster <bfoster@redhat.com>
+Signed-off-by: Dave Chinner <david@fromorbit.com>
+Signed-off-by: Dirk Mueller <dmueller@suse.com>
+---
+ fs/xfs/xfs_ialloc.c | 34 ++++++++++++++++++++++++----------
+ 1 file changed, 24 insertions(+), 10 deletions(-)
+
+diff --git a/fs/xfs/xfs_ialloc.c b/fs/xfs/xfs_ialloc.c
+index 3a77e5c..51c72c2 100644
+--- a/fs/xfs/xfs_ialloc.c
++++ b/fs/xfs/xfs_ialloc.c
+@@ -49,12 +49,12 @@
+  */
+ static inline int
+ xfs_ialloc_cluster_alignment(
+-	xfs_alloc_arg_t	*args)
++	struct xfs_mount	*mp)
+ {
+-	if (xfs_sb_version_hasalign(&args->mp->m_sb) &&
+-	    args->mp->m_sb.sb_inoalignmt >=
+-	     XFS_B_TO_FSBT(args->mp, args->mp->m_inode_cluster_size))
+-		return args->mp->m_sb.sb_inoalignmt;
++	if (xfs_sb_version_hasalign(&mp->m_sb) &&
++	    mp->m_sb.sb_inoalignmt >=
++			XFS_B_TO_FSBT(mp, mp->m_inode_cluster_size))
++		return mp->m_sb.sb_inoalignmt;
+ 	return 1;
+ }
+ 
+@@ -365,7 +365,7 @@ xfs_ialloc_ag_alloc(
+ 		 * but not to use them in the actual exact allocation.
+ 		 */
+ 		args.alignment = 1;
+-		args.minalignslop = xfs_ialloc_cluster_alignment(&args) - 1;
++		args.minalignslop = xfs_ialloc_cluster_alignment(args.mp) - 1;
+ 
+ 		/* Allow space for the inode btree to split. */
+ 		args.minleft = args.mp->m_in_maxlevels - 1;
+@@ -401,7 +401,7 @@ xfs_ialloc_ag_alloc(
+ 			args.alignment = args.mp->m_dalign;
+ 			isaligned = 1;
+ 		} else
+-			args.alignment = xfs_ialloc_cluster_alignment(&args);
++			args.alignment = xfs_ialloc_cluster_alignment(args.mp);
+ 		/*
+ 		 * Need to figure out where to allocate the inode blocks.
+ 		 * Ideally they should be spaced out through the a.g.
+@@ -430,7 +430,7 @@ xfs_ialloc_ag_alloc(
+ 		args.type = XFS_ALLOCTYPE_NEAR_BNO;
+ 		args.agbno = be32_to_cpu(agi->agi_root);
+ 		args.fsbno = XFS_AGB_TO_FSB(args.mp, agno, args.agbno);
+-		args.alignment = xfs_ialloc_cluster_alignment(&args);
++		args.alignment = xfs_ialloc_cluster_alignment(args.mp);
+ 		if ((error = xfs_alloc_vextent(&args)))
+ 			return error;
+ 	}
+@@ -595,10 +595,24 @@ xfs_ialloc_ag_select(
+ 		}
+ 
+ 		/*
+-		 * Is there enough free space for the file plus a block of
+-		 * inodes? (if we need to allocate some)?
++		 * Check that there is enough free space for the file plus a
++		 * chunk of inodes if we need to allocate some. If this is the
++		 * first pass across the AGs, take into account the potential
++		 * space needed for alignment of inode chunks when checking the
++		 * longest contiguous free space in the AG - this prevents us
++		 * from getting ENOSPC because we have free space larger than
++		 * m_ialloc_blks but alignment constraints prevent us from using
++		 * it.
++		 *
++		 * If we can't find an AG with space for full alignment slack to
++		 * be taken into account, we must be near ENOSPC in all AGs.
++		 * Hence we don't include alignment for the second pass and so
++		 * if we fail allocation due to alignment issues then it is most
++		 * likely a real ENOSPC condition.
+ 		 */
+ 		ineed = mp->m_ialloc_blks;
++		if (flags && ineed > 1)
++			ineed += xfs_ialloc_cluster_alignment(mp);
+ 		longest = pag->pagf_longest;
+ 		if (!longest)
+ 			longest = pag->pagf_flcount > 0;
+-- 
+2.7.4
+
