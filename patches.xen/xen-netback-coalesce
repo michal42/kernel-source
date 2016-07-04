@@ -82,20 +82,22 @@ TBD: perhaps avoid (when possible) to coalesce SKBs not originating from an exte
  	struct xen_netbk_rx *netbk;
  
  	BUG_ON(skb->dev != dev);
-@@ -396,15 +400,24 @@ int netif_be_start_xmit(struct sk_buff *
- 	if (unlikely(!netif_schedulable(netif) || netbk_queue_full(netif)))
- 		goto drop;
+@@ -398,12 +402,21 @@ int netif_be_start_xmit(struct sk_buff *
  
--	/*
--	 * Copy the packet here if it's destined for a flipping interface
+ 	/*
+ 	 * Copy the packet here if it's destined for a flipping interface
 -	 * but isn't flippable (e.g. extra references to data).
 -	 * XXX For now we also copy skbuffs whose head crosses a page
 -	 * boundary, because netbk_gop_skb can't handle them.
--	 */
++	 * but isn't flippable (e.g. extra references to data; XXX for now,
++	 * copy always when flipping).
++	 * XXX For now we also copy skbuffs whose head exceeds PAGE_SIZE,
++	 * because netbk_gop_skb can't handle them.
+ 	 */
 -	if (!netif->copying_receiver ||
 -	    ((offset_in_page(skb->data) + skb_headlen(skb)) > PAGE_SIZE)) {
 +	netbk_rx_cb(skb)->coalesce = false;
-+	if (netif->copying_receiver) {
++	if (netif->copying_receiver && skb_headlen(skb) <= PAGE_SIZE) {
 +		slots = 1 + netbk_count_slots(skb_shinfo(skb), true);
 +		if (always_coalesce || slots >= XEN_NETIF_NR_SLOTS_MIN ||
 +		    offset_in_page(skb->data) + skb_headlen(skb) > PAGE_SIZE) {
@@ -104,17 +106,9 @@ TBD: perhaps avoid (when possible) to coalesce SKBs not originating from an exte
 +			slots = PFN_UP(skb->len);
 +		}
 +	} else {
-+		/*
-+		 * Copy the packet here if it's destined for a flipping
-+		 * interface but isn't flippable (e.g. extra references to
-+		 * data or head crossing a page boundary).
-+		 * XXX For now, copy always.
-+		 */
  		struct sk_buff *nskb = netbk_copy_skb(skb);
-+
  		if ( unlikely(nskb == NULL) )
  			goto drop;
- 		/* Copy only the header fields we use in this driver. */
 @@ -413,12 +426,11 @@ int netif_be_start_xmit(struct sk_buff *
  		dev_kfree_skb(skb);
  		skb = nskb;
