@@ -48,7 +48,7 @@ Acked-by: jbeulich@suse.com
  GLOBAL(stub32_clone)
 --- a/arch/x86/include/asm/efi.h
 +++ b/arch/x86/include/asm/efi.h
-@@ -153,7 +153,11 @@ extern void parse_efi_setup(u64 phys_add
+@@ -151,7 +151,11 @@ extern u64 efi_setup;
  
  static inline bool efi_is_native(void)
  {
@@ -5374,6 +5374,22 @@ Acked-by: jbeulich@suse.com
  }
  EXPORT_SYMBOL_GPL(gnttab_reset_grant_page);
  
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
+@@ -1007,9 +1007,10 @@ static int network_start_xmit(struct sk_
+ 
+ 	slots = PFN_UP(offset + len) + xennet_count_skb_frag_slots(skb);
+ 	if (unlikely(slots > MAX_SKB_FRAGS + 1)) {
+-		net_alert_ratelimited("xennet: skb rides the rocket: %u slots\n",
+-				      slots);
+-		goto drop;
++		net_dbg_ratelimited("xennet: skb rides the rocket: %u slots, %u bytes\n",
++				    slots, skb->len);
++		if (skb_linearize(skb))
++			goto drop;
+ 	}
+ 
+ 	spin_lock_irqsave(&np->tx_lock, flags);
 --- a/drivers/xen/pcifront/pci_op.c
 +++ b/drivers/xen/pcifront/pci_op.c
 @@ -364,14 +364,16 @@ void pci_frontend_disable_msix(struct pc
@@ -5416,7 +5432,7 @@ Acked-by: jbeulich@suse.com
  {
  #ifndef CONFIG_XEN
  	struct xen_pcibk_dev_data *dev_data;
-@@ -157,13 +158,17 @@ int xen_pcibk_enable_msi(struct xen_pcib
+@@ -169,13 +170,17 @@ int xen_pcibk_enable_msi(struct xen_pcib
  	else if (dev->msix_enabled)
  		status = -ENXIO;
  	else
@@ -5439,7 +5455,7 @@ Acked-by: jbeulich@suse.com
  		return XEN_PCI_ERR_op_failed;
  	}
  
-@@ -368,7 +373,11 @@ void xen_pcibk_do_op(struct work_struct
+@@ -407,7 +412,11 @@ void xen_pcibk_do_op(struct work_struct
  			break;
  #ifdef CONFIG_PCI_MSI
  		case XEN_PCI_OP_enable_msi:
