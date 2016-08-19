@@ -233,13 +233,13 @@ Signed-off-by: Jan Kara <jack@suse.cz>
 @@ -2026,6 +2127,8 @@ void console_unlock(void)
  	unsigned long flags;
  	bool wake_klogd = false;
- 	bool retry;
+ 	bool do_cond_resched, retry;
 +	bool hand_over = false;
 +	int printed_chars = 0;
  
  	if (console_suspended) {
  		up(&console_sem);
-@@ -2042,6 +2145,11 @@ again:
+@@ -2053,6 +2156,11 @@ again:
  		size_t len;
  		int level;
  
@@ -251,7 +251,7 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  		raw_spin_lock_irqsave(&logbuf_lock, flags);
  		if (seen_seq != log_next_seq) {
  			wake_klogd = true;
-@@ -2055,8 +2163,10 @@ again:
+@@ -2066,8 +2174,10 @@ again:
  			console_prev = 0;
  		}
  skip:
@@ -263,12 +263,15 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  
  		msg = log_from_idx(console_idx);
  		if (msg->flags & LOG_NOCONS) {
-@@ -2087,31 +2197,39 @@ skip:
+@@ -2098,34 +2208,42 @@ skip:
  		stop_critical_timings();	/* don't trace print latency */
  		call_console_drivers(level, text, len);
  		start_critical_timings();
 +		printed_chars += len;
  		local_irq_restore(flags);
+ 
+ 		if (do_cond_resched)
+ 			cond_resched();
  	}
 -	console_locked = 0;
 -	mutex_release(&console_lock_dep_map, 1, _RET_IP_);
@@ -316,7 +319,7 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  
  	if (wake_klogd)
  		wake_up_klogd();
-@@ -2149,6 +2267,7 @@ void console_unblank(void)
+@@ -2163,6 +2281,7 @@ void console_unblank(void)
  		console_lock();
  
  	console_locked = 1;
@@ -324,7 +327,7 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  	console_may_schedule = 0;
  	for_each_console(c)
  		if ((c->flags & CON_ENABLED) && c->unblank)
-@@ -2425,9 +2544,38 @@ int unregister_console(struct console *c
+@@ -2458,9 +2577,38 @@ int unregister_console(struct console *c
  }
  EXPORT_SYMBOL(unregister_console);
  
@@ -363,7 +366,7 @@ Signed-off-by: Jan Kara <jack@suse.cz>
  
  	for_each_console(con) {
  		if (!keep_bootcon && con->flags & CON_BOOT) {
-@@ -2437,6 +2585,19 @@ static int __init printk_late_init(void)
+@@ -2470,6 +2618,19 @@ static int __init printk_late_init(void)
  		}
  	}
  	hotcpu_notifier(console_cpu_notify, 0);

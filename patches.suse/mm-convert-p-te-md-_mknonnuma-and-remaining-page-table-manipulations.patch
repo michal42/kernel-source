@@ -27,37 +27,18 @@ Cc: Rik van Riel <riel@redhat.com>
 Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
 Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
 ---
- arch/arm/include/asm/pgtable-3level.h |  5 ++++-
- include/linux/huge_mm.h               |  3 +--
- mm/huge_memory.c                      | 34 +++++++---------------------------
- mm/memory.c                           | 10 ++++++----
- mm/mempolicy.c                        |  2 +-
- mm/migrate.c                          |  2 +-
- mm/mprotect.c                         |  2 +-
- mm/pgtable-generic.c                  |  2 --
- 8 files changed, 21 insertions(+), 39 deletions(-)
+ include/linux/huge_mm.h |    3 +--
+ mm/huge_memory.c        |   34 +++++++---------------------------
+ mm/memory.c             |   10 ++++++----
+ mm/mempolicy.c          |    2 +-
+ mm/migrate.c            |    2 +-
+ mm/mprotect.c           |    2 +-
+ mm/pgtable-generic.c    |    2 --
+ 7 files changed, 17 insertions(+), 38 deletions(-)
 
-diff --git a/arch/arm/include/asm/pgtable-3level.h b/arch/arm/include/asm/pgtable-3level.h
-index 6a171d0afc12..ae4ab4f5ab2f 100644
---- a/arch/arm/include/asm/pgtable-3level.h
-+++ b/arch/arm/include/asm/pgtable-3level.h
-@@ -237,7 +237,10 @@ PMD_BIT_FUNC(mkyoung,   |= PMD_SECT_AF);
- #define mk_pmd(page,prot)	pfn_pmd(page_to_pfn(page),prot)
- 
- /* represent a notpresent pmd by zero, this is used by pmdp_invalidate */
--#define pmd_mknotpresent(pmd)	(__pmd(0))
-+static inline pmd_t pmd_mknotpresent(pmd_t pmd)
-+{
-+	return __pmd(0);
-+}
- 
- static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
- {
-diff --git a/include/linux/huge_mm.h b/include/linux/huge_mm.h
-index 63579cb8d3dc..2a2ac91eafde 100644
 --- a/include/linux/huge_mm.h
 +++ b/include/linux/huge_mm.h
-@@ -31,8 +31,7 @@ extern int move_huge_pmd(struct vm_area_struct *vma,
+@@ -31,8 +31,7 @@ extern int move_huge_pmd(struct vm_area_
  			 unsigned long new_addr, unsigned long old_end,
  			 pmd_t *old_pmd, pmd_t *new_pmd);
  extern int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
@@ -67,11 +48,9 @@ index 63579cb8d3dc..2a2ac91eafde 100644
  
  enum transparent_hugepage_flag {
  	TRANSPARENT_HUGEPAGE_FLAG,
-diff --git a/mm/huge_memory.c b/mm/huge_memory.c
-index d430f129be04..22ffe263bb8c 100644
 --- a/mm/huge_memory.c
 +++ b/mm/huge_memory.c
-@@ -1392,9 +1392,8 @@ int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -1392,9 +1392,8 @@ int do_huge_pmd_numa_page(struct mm_stru
  	goto out;
  clear_pmdnuma:
  	BUG_ON(!PageLocked(page));
@@ -91,7 +70,7 @@ index d430f129be04..22ffe263bb8c 100644
  {
  	struct mm_struct *mm = vma->vm_mm;
  	spinlock_t *ptl;
-@@ -1537,30 +1536,11 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
+@@ -1537,30 +1536,11 @@ int change_huge_pmd(struct vm_area_struc
  	if (__pmd_trans_huge_lock(pmd, vma, &ptl) == 1) {
  		pmd_t entry;
  		ret = 1;
@@ -127,11 +106,9 @@ index d430f129be04..22ffe263bb8c 100644
  		spin_unlock(ptl);
  	}
  
-diff --git a/mm/memory.c b/mm/memory.c
-index 0940ee93df4e..62cbfbb5da50 100644
 --- a/mm/memory.c
 +++ b/mm/memory.c
-@@ -3551,9 +3551,9 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -3558,9 +3558,9 @@ int do_numa_page(struct mm_struct *mm, s
  	* validation through pte_unmap_same(). It's of NUMA type but
  	* the pfn may be screwed if the read is non atomic.
  	*
@@ -144,7 +121,7 @@ index 0940ee93df4e..62cbfbb5da50 100644
  	*/
  	ptl = pte_lockptr(mm, pmd);
  	spin_lock(ptl);
-@@ -3562,7 +3562,9 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -3569,7 +3569,9 @@ int do_numa_page(struct mm_struct *mm, s
  		goto out;
  	}
  
@@ -155,11 +132,9 @@ index 0940ee93df4e..62cbfbb5da50 100644
  	set_pte_at(mm, addr, ptep, pte);
  	update_mmu_cache(vma, addr, ptep);
  
-diff --git a/mm/mempolicy.c b/mm/mempolicy.c
-index 37b4604d05f6..89d0b5ae3eda 100644
 --- a/mm/mempolicy.c
 +++ b/mm/mempolicy.c
-@@ -632,7 +632,7 @@ unsigned long change_prot_numa(struct vm_area_struct *vma,
+@@ -632,7 +632,7 @@ unsigned long change_prot_numa(struct vm
  {
  	int nr_updated;
  
@@ -168,11 +143,9 @@ index 37b4604d05f6..89d0b5ae3eda 100644
  	if (nr_updated)
  		count_vm_numa_events(NUMA_PTE_UPDATES, nr_updated);
  
-diff --git a/mm/migrate.c b/mm/migrate.c
-index 3dfa6fe3f7e8..6b3e96d11dc7 100644
 --- a/mm/migrate.c
 +++ b/mm/migrate.c
-@@ -1899,7 +1899,7 @@ out_fail:
+@@ -1902,7 +1902,7 @@ out_fail:
  out_dropref:
  	ptl = pmd_lock(mm, pmd);
  	if (pmd_same(*pmd, entry)) {
@@ -181,11 +154,9 @@ index 3dfa6fe3f7e8..6b3e96d11dc7 100644
  		set_pmd_at(mm, mmun_start, pmd, entry);
  		update_mmu_cache_pmd(vma, address, &entry);
  	}
-diff --git a/mm/mprotect.c b/mm/mprotect.c
-index 408f70266f87..4eb9083c3b77 100644
 --- a/mm/mprotect.c
 +++ b/mm/mprotect.c
-@@ -146,7 +146,7 @@ static inline unsigned long change_pmd_range(struct vm_area_struct *vma,
+@@ -146,7 +146,7 @@ static inline unsigned long change_pmd_r
  				split_huge_page_pmd(vma, addr, pmd);
  			else {
  				int nr_ptes = change_huge_pmd(vma, pmd, addr,
@@ -194,11 +165,9 @@ index 408f70266f87..4eb9083c3b77 100644
  
  				if (nr_ptes) {
  					if (nr_ptes == HPAGE_PMD_NR) {
-diff --git a/mm/pgtable-generic.c b/mm/pgtable-generic.c
-index 4b8ad760dde3..c25f94b33811 100644
 --- a/mm/pgtable-generic.c
 +++ b/mm/pgtable-generic.c
-@@ -193,8 +193,6 @@ void pmdp_invalidate(struct vm_area_struct *vma, unsigned long address,
+@@ -193,8 +193,6 @@ void pmdp_invalidate(struct vm_area_stru
  		     pmd_t *pmdp)
  {
  	pmd_t entry = *pmdp;
