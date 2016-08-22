@@ -1,0 +1,271 @@
+From: Michal Kubecek <mkubecek@suse.cz>
+Date: Thu, 14 Jul 2016 14:41:55 +0200
+Subject: kabi: work around kabi changes from commit 53f9ff48f636
+Patch-mainline: Never, kabi workaround
+References: bsc#988617
+
+1. Function tcp_is_cwnd_limited() (exported symbol) was made inline. The
+easiest way around would be to put it back (and make exported). For
+performance reasons, the inline version is left in place under
+a modified name and called from in-tree code. A non-inline instance is
+also provided for potential out-of-tree callers.
+
+2. New member lsnd_pending (u32) was added to struct tcp_sock. Worked
+around by dividing it into two u16 members lsnd_pending_lo and
+lsnd_pending_hi for lower and higher half of the 32-bit values. These
+are placed so that they fit into existing holes on all relevant
+architectures.
+
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+---
+ include/linux/tcp.h      | 18 +++++++++++++++++-
+ include/net/tcp.h        |  7 +++++--
+ net/ipv4/tcp_bic.c       |  2 +-
+ net/ipv4/tcp_cong.c      |  9 ++++++++-
+ net/ipv4/tcp_cubic.c     |  2 +-
+ net/ipv4/tcp_highspeed.c |  2 +-
+ net/ipv4/tcp_htcp.c      |  2 +-
+ net/ipv4/tcp_hybla.c     |  2 +-
+ net/ipv4/tcp_illinois.c  |  2 +-
+ net/ipv4/tcp_output.c    |  4 ++--
+ net/ipv4/tcp_scalable.c  |  2 +-
+ net/ipv4/tcp_veno.c      |  2 +-
+ net/ipv4/tcp_yeah.c      |  2 +-
+ 13 files changed, 41 insertions(+), 15 deletions(-)
+
+diff --git a/include/linux/tcp.h b/include/linux/tcp.h
+index 389cabd3048b..7dd1cae9a4b9 100644
+--- a/include/linux/tcp.h
++++ b/include/linux/tcp.h
+@@ -198,6 +198,9 @@ struct tcp_sock {
+ 		syn_data:1,	/* SYN includes data */
+ 		syn_fastopen:1,	/* SYN includes Fast Open option */
+ 		syn_data_acked:1;/* data in SYN is acked by SYN-ACK */
++#ifndef __GENKSYMS__
++	u16	lsnd_pending_lo;/* packets inflight or unsent since last xmit */
++#endif
+ 	u32	tlp_high_seq;	/* snd_nxt at the time of TLP retransmit. */
+ 
+ /* RTT measurement */
+@@ -216,6 +219,9 @@ struct tcp_sock {
+ 	u32	snd_up;		/* Urgent pointer		*/
+ 
+ 	u8	keepalive_probes; /* num of allowed keep alive probes	*/
++#ifndef __GENKSYMS__
++	u16	lsnd_pending_hi;/* packets inflight or unsent since last xmit */
++#endif
+ /*
+  *      Options received (usually on last packet, some only on SYN packets).
+  */
+@@ -230,7 +236,6 @@ struct tcp_sock {
+ 	u32	snd_cwnd_clamp; /* Do not allow snd_cwnd to grow above this */
+ 	u32	snd_cwnd_used;
+ 	u32	snd_cwnd_stamp;
+-	u32	lsnd_pending;	/* packets inflight or unsent since last xmit */
+ 	u32	prior_cwnd;	/* Congestion window at start of Recovery. */
+ 	u32	prr_delivered;	/* Number of newly delivered packets to
+ 				 * receiver in Recovery. */
+@@ -322,6 +327,17 @@ struct tcp_sock {
+ 	struct request_sock *fastopen_rsk;
+ };
+ 
++static inline u32 tcp_get_lsnd_pending(const struct tcp_sock *tp)
++{
++	return (tp->lsnd_pending_hi << 16) | tp->lsnd_pending_lo;
++}
++
++static inline void tcp_set_lsnd_pending(struct tcp_sock *tp, u32 val)
++{
++	tp->lsnd_pending_hi = val >> 16;
++	tp->lsnd_pending_lo = val & 0xffff;
++}
++
+ enum tsq_flags {
+ 	TSQ_THROTTLED,
+ 	TSQ_QUEUED,
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 68fb361aca0a..eb8184223246 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -1030,13 +1030,16 @@ static inline u32 tcp_wnd_end(const struct tcp_sock *tp)
+  *
+  * TODO: remove in_flight once we can fix all callers, and their callers...
+  */
+-static inline bool tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
++static inline bool __tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
+ {
+ 	const struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	return tp->snd_cwnd < 2 * tp->lsnd_pending;
++	return tp->snd_cwnd < 2 * tcp_get_lsnd_pending(tp);
+ }
+ 
++/* non-inline version just to preserve kABI */
++bool tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight);
++
+ static inline void tcp_minshall_update(struct tcp_sock *tp, unsigned int mss,
+ 				       const struct sk_buff *skb)
+ {
+diff --git a/net/ipv4/tcp_bic.c b/net/ipv4/tcp_bic.c
+index f45e1c242440..007afacc4a34 100644
+--- a/net/ipv4/tcp_bic.c
++++ b/net/ipv4/tcp_bic.c
+@@ -145,7 +145,7 @@ static void bictcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct bictcp *ca = inet_csk_ca(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (tp->snd_cwnd <= tp->snd_ssthresh)
+diff --git a/net/ipv4/tcp_cong.c b/net/ipv4/tcp_cong.c
+index e9aa17b9b12b..719621c6f4d7 100644
+--- a/net/ipv4/tcp_cong.c
++++ b/net/ipv4/tcp_cong.c
+@@ -357,6 +357,13 @@ int tcp_set_congestion_control(struct sock *sk, const char *name)
+ 	return err;
+ }
+ 
++/* non-inline wrapper to preserve kABI */
++bool tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
++{
++	return tcp_is_cwnd_limited(sk, in_flight);
++}
++EXPORT_SYMBOL_GPL(tcp_is_cwnd_limited);
++
+ /*
+  * Slow start is used when congestion window is less than slow start
+  * threshold. This version implements the basic RFC2581 version
+@@ -413,7 +420,7 @@ void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	/* In "safe" area, increase. */
+diff --git a/net/ipv4/tcp_cubic.c b/net/ipv4/tcp_cubic.c
+index 68a1242baa7b..23c95183fb34 100644
+--- a/net/ipv4/tcp_cubic.c
++++ b/net/ipv4/tcp_cubic.c
+@@ -309,7 +309,7 @@ static void bictcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct bictcp *ca = inet_csk_ca(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (tp->snd_cwnd <= tp->snd_ssthresh) {
+diff --git a/net/ipv4/tcp_highspeed.c b/net/ipv4/tcp_highspeed.c
+index 30f27f6b3655..ee3d397b7ddc 100644
+--- a/net/ipv4/tcp_highspeed.c
++++ b/net/ipv4/tcp_highspeed.c
+@@ -114,7 +114,7 @@ static void hstcp_cong_avoid(struct sock *sk, u32 adk, u32 in_flight)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct hstcp *ca = inet_csk_ca(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (tp->snd_cwnd <= tp->snd_ssthresh)
+diff --git a/net/ipv4/tcp_htcp.c b/net/ipv4/tcp_htcp.c
+index c1a8175361e8..f618bd888966 100644
+--- a/net/ipv4/tcp_htcp.c
++++ b/net/ipv4/tcp_htcp.c
+@@ -232,7 +232,7 @@ static void htcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct htcp *ca = inet_csk_ca(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (tp->snd_cwnd <= tp->snd_ssthresh)
+diff --git a/net/ipv4/tcp_hybla.c b/net/ipv4/tcp_hybla.c
+index ce2fae0f72d0..36c6b5d6a67a 100644
+--- a/net/ipv4/tcp_hybla.c
++++ b/net/ipv4/tcp_hybla.c
+@@ -100,7 +100,7 @@ static void hybla_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 		ca->minrtt_us = tp->srtt_us;
+ 	}
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (!ca->hybla_en) {
+diff --git a/net/ipv4/tcp_illinois.c b/net/ipv4/tcp_illinois.c
+index ea3b08330ea8..93b2daf41362 100644
+--- a/net/ipv4/tcp_illinois.c
++++ b/net/ipv4/tcp_illinois.c
+@@ -264,7 +264,7 @@ static void tcp_illinois_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 		update_params(sk);
+ 
+ 	/* RFC2861 only increase cwnd if fully utilized */
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	/* In slow start */
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index e8af25f991cc..772a2762ea3f 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -1369,9 +1369,9 @@ static void tcp_cwnd_validate(struct sock *sk, u32 unsent_segs)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	tp->lsnd_pending = tp->packets_out + unsent_segs;
++	tcp_set_lsnd_pending(tp, tp->packets_out + unsent_segs);
+ 
+-	if (tcp_is_cwnd_limited(sk, 0)) {
++	if (__tcp_is_cwnd_limited(sk, 0)) {
+ 		/* Network is feed fully. */
+ 		tp->snd_cwnd_used = 0;
+ 		tp->snd_cwnd_stamp = tcp_time_stamp;
+diff --git a/net/ipv4/tcp_scalable.c b/net/ipv4/tcp_scalable.c
+index 8ce55b8aaec8..0b872ba0d816 100644
+--- a/net/ipv4/tcp_scalable.c
++++ b/net/ipv4/tcp_scalable.c
+@@ -19,7 +19,7 @@ static void tcp_scalable_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (tp->snd_cwnd <= tp->snd_ssthresh)
+diff --git a/net/ipv4/tcp_veno.c b/net/ipv4/tcp_veno.c
+index 7259444f3faa..2fd0e1375938 100644
+--- a/net/ipv4/tcp_veno.c
++++ b/net/ipv4/tcp_veno.c
+@@ -125,7 +125,7 @@ static void tcp_veno_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 	}
+ 
+ 	/* limited by applications */
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	/* We do the Veno calculations only if we got enough rtt samples */
+diff --git a/net/ipv4/tcp_yeah.c b/net/ipv4/tcp_yeah.c
+index 6b61d1934a7b..276e3a2b4c98 100644
+--- a/net/ipv4/tcp_yeah.c
++++ b/net/ipv4/tcp_yeah.c
+@@ -74,7 +74,7 @@ static void tcp_yeah_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct yeah *yeah = inet_csk_ca(sk);
+ 
+-	if (!tcp_is_cwnd_limited(sk, in_flight))
++	if (!__tcp_is_cwnd_limited(sk, in_flight))
+ 		return;
+ 
+ 	if (tp->snd_cwnd <= tp->snd_ssthresh)
+-- 
+2.9.3
+
