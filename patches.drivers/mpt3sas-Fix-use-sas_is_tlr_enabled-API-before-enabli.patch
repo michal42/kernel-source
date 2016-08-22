@@ -1,7 +1,7 @@
 From: Sreekanth Reddy <sreekanth.reddy@avagotech.com>
 Date: Thu, 12 Nov 2015 23:40:37 +0530
 Subject: mpt3sas: Fix use sas_is_tlr_enabled API before enabling MPI2_SCSIIO_CONTROL_TLR_ON flag
-References: bsc#967640
+References: bsc#967640, bsc#992244
 Git-commit: 15de0de29f7ba5cce9699a8cc2344ca137beb25a
 Patch-Mainline: v4.4
 
@@ -20,6 +20,7 @@ instead we checking for TLR bit from flag field of driver's 'struct
 MPT3SAS_DEVIC' structure. which is corrected with this patch.
 
 [hare: ported to SLE12 SP1]
+[jthumshirn: updated due to bsc#992244]
 
 Signed-off-by: Sreekanth Reddy <Sreekanth.Reddy@avagotech.com>
 Reviewed-by: Hannes Reinecke <hare@suse.de>
@@ -27,23 +28,19 @@ Reviewed-by: Tomas Henzl <thenzl@redhat.com>
 Signed-off-by: Martin K. Petersen <martin.petersen@oracle.com>
 
 ---
- drivers/scsi/mpt3sas/mpt3sas_scsih.c | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
+ drivers/scsi/mpt3sas/mpt3sas_scsih.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
 
-diff --git a/drivers/scsi/mpt3sas/mpt3sas_scsih.c b/drivers/scsi/mpt3sas/mpt3sas_scsih.c
-index d75d2ac..ed8bf2c 100644
 --- a/drivers/scsi/mpt3sas/mpt3sas_scsih.c
 +++ b/drivers/scsi/mpt3sas/mpt3sas_scsih.c
-@@ -3762,8 +3762,7 @@ _scsih_qcmd(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
+@@ -3762,8 +3762,8 @@ _scsih_qcmd(struct Scsi_Host *shost, str
  	} else
  		mpi_control |= MPI2_SCSIIO_CONTROL_SIMPLEQ;
  
 -	if ((sas_device_priv_data->flags & MPT_DEVICE_TLR_ON) &&
 -	    scmd->cmd_len != 32)
-+	if (sas_is_tlr_enabled(scmd->device) && scmd->cmd_len != 32)
++	if (!_scsih_is_raid(&scmd->device->sdev_gendev) &&
++	    sas_is_tlr_enabled(scmd->device) && scmd->cmd_len != 32)
  		mpi_control |= MPI2_SCSIIO_CONTROL_TLR_ON;
  
  	smid = mpt3sas_base_get_smid_scsiio(ioc, ioc->scsi_io_cb_idx, scmd);
--- 
-1.8.5.6
-
