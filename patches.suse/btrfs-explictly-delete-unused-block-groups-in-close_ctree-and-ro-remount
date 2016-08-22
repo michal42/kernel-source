@@ -1,0 +1,63 @@
+From: Jeff Mahoney <jeffm@suse.com>
+Date: Fri, 22 May 2015 20:57:49 -0400
+Subject: btrfs: explictly delete unused block groups in close_ctree and ro-remount
+Git-commit: e44163e177960ee60e32a73bffdd53c3a5827406
+Patch-mainline: v4.3-rc1
+References: bsc#904489
+
+The cleaner thread may already be sleeping by the time we enter
+close_ctree.  If that's the case, we'll skip removing any unused
+block groups queued for removal, even during a normal umount.
+They'll be cleaned up automatically at next mount, but users
+expect a umount to be a clean synchronization point, especially
+when used on thin-provisioned storage with -odiscard.  We also
+explicitly remove unused block groups in the ro-remount path
+for the same reason.
+
+Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+Reviewed-by: Filipe Manana <fdmanana@suse.com>
+Tested-by: Filipe Manana <fdmanana@suse.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+---
+ fs/btrfs/disk-io.c |    9 +++++++++
+ fs/btrfs/super.c   |   11 +++++++++++
+ 2 files changed, 20 insertions(+)
+
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -3695,6 +3695,15 @@ int close_ctree(struct btrfs_root *root)
+ 	btrfs_cleanup_defrag_inodes(fs_info);
+ 
+ 	if (!(fs_info->sb->s_flags & MS_RDONLY)) {
++		/*
++		 * If the cleaner thread is stopped and there are
++		 * block groups queued for removal, the deletion will be
++		 * skipped when we quit the cleaner thread.
++		 */
++		mutex_lock(&root->fs_info->cleaner_mutex);
++		btrfs_delete_unused_bgs(root->fs_info);
++		mutex_unlock(&root->fs_info->cleaner_mutex);
++
+ 		ret = btrfs_commit_super(root);
+ 		if (ret)
+ 			btrfs_err(root->fs_info, "commit super ret %d", ret);
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -1450,6 +1450,17 @@ static int btrfs_remount(struct super_bl
+ 
+ 		sb->s_flags |= MS_RDONLY;
+ 
++		/*
++		 * Setting MS_RDONLY will put the cleaner thread to
++		 * sleep at the next loop if it's already active.
++		 * If it's already asleep, we'll leave unused block
++		 * groups on disk until we're mounted read-write again
++		 * unless we clean them up here.
++		 */
++		mutex_lock(&root->fs_info->cleaner_mutex);
++		btrfs_delete_unused_bgs(fs_info);
++		mutex_unlock(&root->fs_info->cleaner_mutex);
++
+ 		btrfs_dev_replace_suspend_for_unmount(fs_info);
+ 		btrfs_scrub_cancel(fs_info);
+ 		btrfs_pause_balance(fs_info);
