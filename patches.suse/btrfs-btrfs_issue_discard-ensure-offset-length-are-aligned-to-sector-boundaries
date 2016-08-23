@@ -1,0 +1,51 @@
+From: Jeff Mahoney <jeffm@suse.com>
+Date: Thu, 11 Jun 2015 16:38:23 -0400
+Subject: btrfs: btrfs_issue_discard ensure offset/length are aligned to sector boundaries
+Git-commit: 4d89d377bbb0e34cd1571b57a984c2326cab69b5
+Patch-mainline: v4.3-rc1
+References: bsc#904489
+
+It's possible, though unexpected, to pass unaligned offsets and lengths
+to btrfs_issue_discard.  We then shift the offset/length values to sector
+units.  If an unaligned offset has been passed, it will result in the
+entire sector being discarded, possibly losing data.  An unaligned
+length is safe but we'll end up returning an inaccurate number of
+discarded bytes.
+
+This patch aligns the offset to the 512B boundary, adjusts the length,
+and warns, since we shouldn't be discarding on an offset that isn't
+aligned with our sector size.
+
+Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+---
+ fs/btrfs/extent-tree.c |   17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -1888,12 +1888,21 @@ static int btrfs_issue_discard(struct bl
+ 			       u64 *discarded_bytes)
+ {
+ 	int ret = 0;
++	u64 aligned_start = ALIGN(start, 1 << 9);
+ 
+-	*discarded_bytes = 0;
+-	ret = blkdev_issue_discard(bdev, start >> 9, len >> 9, GFP_NOFS, 0);
+-	if (!ret)
+-		*discarded_bytes = len;
++	if (WARN_ON(start != aligned_start)) {
++		len -= aligned_start - start;
++		len = round_down(len, 1 << 9);
++		start = aligned_start;
++	}
+ 
++	*discarded_bytes = 0;
++	if (len) {
++		ret = blkdev_issue_discard(bdev, start >> 9, len >> 9,
++					   GFP_NOFS, 0);
++		if (!ret)
++			*discarded_bytes = len;
++	}
+ 	return ret;
+ }
+ 
