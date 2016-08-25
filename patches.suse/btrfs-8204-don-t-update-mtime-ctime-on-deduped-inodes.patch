@@ -17,7 +17,7 @@ This was tested with the btrfs-extent-same tool.
 
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
 ---
- fs/btrfs/ioctl.c | 24 ++++++++++++++----------
+ fs/btrfs/ioctl.c |   24 ++++++++++++++----------
  1 file changed, 14 insertions(+), 10 deletions(-)
 
 --- a/fs/btrfs/ioctl.c
@@ -32,16 +32,16 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  
  /* Mask out flags that are inappropriate for the given type of inode. */
  static inline __u32 btrfs_mask_flags(umode_t mode, __u32 flags)
-@@ -2850,7 +2851,7 @@ static int btrfs_extent_same(struct inod
+@@ -2892,7 +2893,7 @@ static int btrfs_extent_same(struct inod
  	/* pass original length for comparison so we stay within i_size */
  	ret = btrfs_cmp_data(src, loff, dst, dst_loff, olen, &cmp);
  	if (ret == 0)
 -		ret = btrfs_clone(src, dst, loff, olen, len, dst_loff);
 +		ret = btrfs_clone(src, dst, loff, olen, len, dst_loff, 1);
  
- 	btrfs_double_extent_unlock(src, loff, dst, dst_loff, len);
- 
-@@ -3008,13 +3009,15 @@ static int clone_finish_inode_update(str
+ 	if (same_inode)
+ 		unlock_extent(&BTRFS_I(src)->io_tree, same_lock_start,
+@@ -3059,13 +3060,15 @@ static int clone_finish_inode_update(str
  				     struct inode *inode,
  				     u64 endoff,
  				     const u64 destoff,
@@ -59,7 +59,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  	/*
  	 * We round up to the block size at eof when determining which
  	 * extents to clone above, but shouldn't round up the file size.
-@@ -3099,13 +3102,13 @@ static void clone_update_extent_map(stru
+@@ -3150,13 +3153,13 @@ static void clone_update_extent_map(stru
   * @inode: Inode to clone to
   * @off: Offset within source to start clone from
   * @olen: Original length, passed by user, of range to clone
@@ -76,7 +76,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  {
  	struct btrfs_root *root = BTRFS_I(inode)->root;
  	struct btrfs_path *path = NULL;
-@@ -3427,7 +3430,8 @@ process_slot:
+@@ -3480,7 +3483,8 @@ process_slot:
  					      root->sectorsize);
  			ret = clone_finish_inode_update(trans, inode,
  							last_dest_end,
@@ -86,7 +86,7 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  			if (ret)
  				goto out;
  			if (new_key.offset + datal >= destoff + len)
-@@ -3465,7 +3469,7 @@ process_slot:
+@@ -3518,7 +3522,7 @@ process_slot:
  		clone_update_extent_map(inode, trans, NULL, last_dest_end,
  					destoff + len - last_dest_end);
  		ret = clone_finish_inode_update(trans, inode, destoff + len,
@@ -95,8 +95,8 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  	}
  
  out:
-@@ -3595,7 +3599,7 @@ static noinline long btrfs_ioctl_clone(s
- 		btrfs_double_extent_lock(src, off, inode, destoff, len);
+@@ -3655,7 +3659,7 @@ static noinline long btrfs_ioctl_clone(s
+ 		lock_extent_range(inode, destoff, len);
  	}
  
 -	ret = btrfs_clone(src, inode, off, olen, len, destoff);

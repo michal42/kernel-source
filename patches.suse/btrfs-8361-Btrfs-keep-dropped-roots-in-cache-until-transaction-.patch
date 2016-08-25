@@ -26,16 +26,14 @@ Conflicts:
 
 Signed-off-by: Filipe Manana <fdmanana@suse.com>
 ---
- fs/btrfs/extent-tree.c |  2 +-
- fs/btrfs/transaction.c | 32 ++++++++++++++++++++++++++++++++
- fs/btrfs/transaction.h |  4 ++++
+ fs/btrfs/extent-tree.c |    2 +-
+ fs/btrfs/transaction.c |   32 ++++++++++++++++++++++++++++++++
+ fs/btrfs/transaction.h |    4 ++++
  3 files changed, 37 insertions(+), 1 deletion(-)
 
-diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
-index ac2663c..4598cba 100644
 --- a/fs/btrfs/extent-tree.c
 +++ b/fs/btrfs/extent-tree.c
-@@ -8091,7 +8091,7 @@ int btrfs_drop_snapshot(struct btrfs_root *root,
+@@ -8076,7 +8076,7 @@ int btrfs_drop_snapshot(struct btrfs_roo
  	}
  
  	if (test_bit(BTRFS_ROOT_IN_RADIX, &root->state)) {
@@ -44,13 +42,11 @@ index ac2663c..4598cba 100644
  	} else {
  		free_extent_buffer(root->node);
  		free_extent_buffer(root->commit_root);
-diff --git a/fs/btrfs/transaction.c b/fs/btrfs/transaction.c
-index b6a7899..ac205fc 100644
 --- a/fs/btrfs/transaction.c
 +++ b/fs/btrfs/transaction.c
-@@ -116,6 +116,18 @@ static noinline void switch_commit_roots(struct btrfs_transaction *trans,
- 		if (is_fstree(root->objectid))
+@@ -117,6 +117,18 @@ static noinline void switch_commit_roots
  			btrfs_unpin_free_ino(root);
+ 		clear_btree_io_tree(&root->dirty_log_pages);
  	}
 +
 +	/* We can free old roots now. */
@@ -67,17 +63,17 @@ index b6a7899..ac205fc 100644
  	up_write(&fs_info->commit_root_sem);
  }
  
-@@ -249,7 +261,9 @@ loop:
+@@ -250,7 +262,9 @@ loop:
+ 	INIT_LIST_HEAD(&cur_trans->pending_snapshots);
  	INIT_LIST_HEAD(&cur_trans->ordered_operations);
  	INIT_LIST_HEAD(&cur_trans->pending_chunks);
- 	INIT_LIST_HEAD(&cur_trans->pending_ordered);
 +	INIT_LIST_HEAD(&cur_trans->dropped_roots);
  	INIT_LIST_HEAD(&cur_trans->switch_commits);
 +	spin_lock_init(&cur_trans->dropped_roots_lock);
+ 	INIT_LIST_HEAD(&cur_trans->pending_ordered);
  	list_add_tail(&cur_trans->list, &fs_info->trans_list);
  	extent_io_tree_init(&cur_trans->dirty_pages,
- 			     fs_info->btree_inode->i_mapping);
-@@ -326,6 +340,24 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
+@@ -328,6 +342,24 @@ static int record_root_in_trans(struct b
  }
  
  
@@ -102,11 +98,9 @@ index b6a7899..ac205fc 100644
  int btrfs_record_root_in_trans(struct btrfs_trans_handle *trans,
  			       struct btrfs_root *root)
  {
-diff --git a/fs/btrfs/transaction.h b/fs/btrfs/transaction.h
-index 6bb436d..a8cf6d4 100644
 --- a/fs/btrfs/transaction.h
 +++ b/fs/btrfs/transaction.h
-@@ -59,6 +59,8 @@ struct btrfs_transaction {
+@@ -64,6 +64,8 @@ struct btrfs_transaction {
  	struct list_head pending_chunks;
  	struct list_head pending_ordered;
  	struct list_head switch_commits;
@@ -115,13 +109,10 @@ index 6bb436d..a8cf6d4 100644
  	struct btrfs_delayed_ref_root delayed_refs;
  	int aborted;
  };
-@@ -194,4 +196,6 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
+@@ -199,4 +201,6 @@ int btrfs_wait_marked_extents(struct btr
  int btrfs_transaction_blocked(struct btrfs_fs_info *info);
  int btrfs_transaction_in_commit(struct btrfs_fs_info *info);
  void btrfs_put_transaction(struct btrfs_transaction *transaction);
 +void btrfs_add_dropped_root(struct btrfs_trans_handle *trans,
 +			    struct btrfs_root *root);
  #endif
--- 
-1.8.4.5
-

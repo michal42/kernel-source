@@ -28,19 +28,17 @@ Conflicts:
 
 Signed-off-by: Filipe Manana <fdmanana@suse.com>
 ---
- fs/btrfs/ctree.h                  |   9 ++-
- fs/btrfs/disk-io.c                |   6 ++
- fs/btrfs/extent-tree.c            | 141 ++++++++++++++++++++++++++++++++++++--
- fs/btrfs/tests/free-space-tests.c |   2 +-
- fs/btrfs/volumes.c                | 115 ++++++++++++++++++++-----------
- fs/btrfs/volumes.h                |   3 +
+ fs/btrfs/ctree.h                  |    9 +-
+ fs/btrfs/disk-io.c                |    6 +
+ fs/btrfs/extent-tree.c            |  141 ++++++++++++++++++++++++++++++++++++--
+ fs/btrfs/tests/free-space-tests.c |    2 
+ fs/btrfs/volumes.c                |  115 ++++++++++++++++++++----------
+ fs/btrfs/volumes.h                |    3 
  6 files changed, 227 insertions(+), 49 deletions(-)
 
-diff --git a/fs/btrfs/ctree.h b/fs/btrfs/ctree.h
-index 8864ca7..5a1e2ab 100644
 --- a/fs/btrfs/ctree.h
 +++ b/fs/btrfs/ctree.h
-@@ -1294,8 +1294,8 @@ struct btrfs_block_group_cache {
+@@ -1295,8 +1295,8 @@ struct btrfs_block_group_cache {
  	 */
  	struct list_head cluster_list;
  
@@ -51,7 +49,7 @@ index 8864ca7..5a1e2ab 100644
  };
  
  /* delayed seq elem */
-@@ -1559,6 +1559,7 @@ struct btrfs_fs_info {
+@@ -1560,6 +1560,7 @@ struct btrfs_fs_info {
  	int do_barriers;
  	int closing;
  	int log_root_recovering;
@@ -59,7 +57,7 @@ index 8864ca7..5a1e2ab 100644
  
  	u64 total_pinned;
  
-@@ -1705,6 +1706,9 @@ struct btrfs_fs_info {
+@@ -1706,6 +1707,9 @@ struct btrfs_fs_info {
  
  	struct semaphore uuid_tree_rescan_sem;
  	unsigned int update_uuid_tree_gen:1;
@@ -69,7 +67,7 @@ index 8864ca7..5a1e2ab 100644
  };
  
  struct btrfs_subvolume_writers {
-@@ -3314,6 +3318,7 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
+@@ -3317,6 +3321,7 @@ int btrfs_make_block_group(struct btrfs_
  			   u64 size);
  int btrfs_remove_block_group(struct btrfs_trans_handle *trans,
  			     struct btrfs_root *root, u64 group_start);
@@ -77,8 +75,6 @@ index 8864ca7..5a1e2ab 100644
  void btrfs_create_pending_block_groups(struct btrfs_trans_handle *trans,
  				       struct btrfs_root *root);
  u64 btrfs_get_alloc_profile(struct btrfs_root *root, int data);
-diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
-index bfeacf8..99e5f5b 100644
 --- a/fs/btrfs/disk-io.c
 +++ b/fs/btrfs/disk-io.c
 @@ -1768,6 +1768,7 @@ static int cleaner_kthread(void *arg)
@@ -105,7 +101,7 @@ index bfeacf8..99e5f5b 100644
  	btrfs_mapping_init(&fs_info->mapping_tree);
  	btrfs_init_block_rsv(&fs_info->global_block_rsv,
  			     BTRFS_BLOCK_RSV_GLOBAL);
-@@ -3018,6 +3021,8 @@ retry_root_backup:
+@@ -3005,6 +3008,8 @@ retry_root_backup:
  		fs_info->update_uuid_tree_gen = 1;
  	}
  
@@ -114,7 +110,7 @@ index bfeacf8..99e5f5b 100644
  	return 0;
  
  fail_qgroup:
-@@ -3724,6 +3729,7 @@ int close_ctree(struct btrfs_root *root)
+@@ -3711,6 +3716,7 @@ int close_ctree(struct btrfs_root *root)
  	invalidate_inode_pages2(fs_info->btree_inode->i_mapping);
  	btrfs_stop_all_workers(fs_info);
  
@@ -122,11 +118,9 @@ index bfeacf8..99e5f5b 100644
  	free_root_pointers(fs_info, 1);
  
  	iput(fs_info->btree_inode);
-diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
-index 32d2c4e..54ced35 100644
 --- a/fs/btrfs/extent-tree.c
 +++ b/fs/btrfs/extent-tree.c
-@@ -5232,6 +5232,20 @@ static int update_block_group(struct btrfs_root *root,
+@@ -5245,6 +5245,20 @@ static int update_block_group(struct btr
  			spin_unlock(&cache->space_info->lock);
  		} else {
  			old_val -= num_bytes;
@@ -147,9 +141,9 @@ index 32d2c4e..54ced35 100644
  			btrfs_set_block_group_used(&cache->item, old_val);
  			cache->pinned += num_bytes;
  			cache->space_info->bytes_pinned += num_bytes;
-@@ -8673,6 +8687,16 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
+@@ -8685,6 +8699,16 @@ int btrfs_free_block_groups(struct btrfs
  	}
- 	up_write(&info->extent_commit_sem);
+ 	up_write(&info->commit_root_sem);
  
 +	spin_lock(&info->unused_bgs_lock);
 +	while (!list_empty(&info->unused_bgs)) {
@@ -164,7 +158,7 @@ index 32d2c4e..54ced35 100644
  	spin_lock(&info->block_group_cache_lock);
  	while ((n = rb_last(&info->block_group_cache_tree)) != NULL) {
  		block_group = rb_entry(n, struct btrfs_block_group_cache,
-@@ -8807,7 +8831,7 @@ btrfs_create_block_group_cache(struct btrfs_root *root, u64 start, u64 size)
+@@ -8819,7 +8843,7 @@ btrfs_create_block_group_cache(struct bt
  	init_rwsem(&cache->data_rwsem);
  	INIT_LIST_HEAD(&cache->list);
  	INIT_LIST_HEAD(&cache->cluster_list);
@@ -173,7 +167,7 @@ index 32d2c4e..54ced35 100644
  	btrfs_init_free_space_ctl(cache);
  
  	return cache;
-@@ -8948,8 +8972,18 @@ int btrfs_read_block_groups(struct btrfs_root *root)
+@@ -8960,8 +8984,18 @@ int btrfs_read_block_groups(struct btrfs
  		__link_block_group(space_info, cache);
  
  		set_avail_alloc_bits(root->fs_info, cache->flags);
@@ -193,7 +187,7 @@ index 32d2c4e..54ced35 100644
  	}
  
  	list_for_each_entry_rcu(space_info, &root->fs_info->space_info, list) {
-@@ -8990,10 +9024,8 @@ void btrfs_create_pending_block_groups(struct btrfs_trans_handle *trans,
+@@ -9002,10 +9036,8 @@ void btrfs_create_pending_block_groups(s
  	struct btrfs_key key;
  	int ret = 0;
  
@@ -206,7 +200,7 @@ index 32d2c4e..54ced35 100644
  		if (ret)
  			continue;
  
-@@ -9079,7 +9111,7 @@ int btrfs_make_block_group(struct btrfs_trans_handle *trans,
+@@ -9091,7 +9123,7 @@ int btrfs_make_block_group(struct btrfs_
  
  	__link_block_group(cache->space_info, cache);
  
@@ -215,7 +209,7 @@ index 32d2c4e..54ced35 100644
  
  	set_avail_alloc_bits(extent_root->fs_info, type);
  
-@@ -9248,6 +9280,101 @@ out:
+@@ -9260,6 +9292,101 @@ out:
  	return ret;
  }
  
@@ -317,11 +311,9 @@ index 32d2c4e..54ced35 100644
  int btrfs_init_space_info(struct btrfs_fs_info *fs_info)
  {
  	struct btrfs_space_info *space_info;
-diff --git a/fs/btrfs/tests/free-space-tests.c b/fs/btrfs/tests/free-space-tests.c
-index 6fc8201..52c4111 100644
 --- a/fs/btrfs/tests/free-space-tests.c
 +++ b/fs/btrfs/tests/free-space-tests.c
-@@ -44,7 +44,7 @@ static struct btrfs_block_group_cache *init_test_block_group(void)
+@@ -45,7 +45,7 @@ static struct btrfs_block_group_cache *i
  	spin_lock_init(&cache->lock);
  	INIT_LIST_HEAD(&cache->list);
  	INIT_LIST_HEAD(&cache->cluster_list);
@@ -330,11 +322,9 @@ index 6fc8201..52c4111 100644
  
  	btrfs_init_free_space_ctl(cache);
  
-diff --git a/fs/btrfs/volumes.c b/fs/btrfs/volumes.c
-index f2b7749..499a6d5 100644
 --- a/fs/btrfs/volumes.c
 +++ b/fs/btrfs/volumes.c
-@@ -2473,58 +2473,49 @@ static int btrfs_del_sys_chunk(struct btrfs_root *root, u64 chunk_objectid, u64
+@@ -2473,58 +2473,49 @@ static int btrfs_del_sys_chunk(struct bt
  	return ret;
  }
  
@@ -417,7 +407,7 @@ index f2b7749..499a6d5 100644
  
  		if (device->bytes_used > 0) {
  			lock_chunks(root);
-@@ -2538,23 +2529,34 @@ static int btrfs_relocate_chunk(struct btrfs_root *root,
+@@ -2538,23 +2529,34 @@ static int btrfs_relocate_chunk(struct b
  
  		if (map->stripes[i].dev) {
  			ret = btrfs_update_device(trans, map->stripes[i].dev);
@@ -457,7 +447,7 @@ index f2b7749..499a6d5 100644
  
  	write_lock(&em_tree->lock);
  	remove_extent_mapping(em_tree, em);
-@@ -2562,11 +2564,46 @@ static int btrfs_relocate_chunk(struct btrfs_root *root,
+@@ -2562,11 +2564,46 @@ static int btrfs_relocate_chunk(struct b
  
  	/* once for the tree */
  	free_extent_map(em);
@@ -474,7 +464,7 @@ index f2b7749..499a6d5 100644
 +	struct btrfs_root *extent_root;
 +	struct btrfs_trans_handle *trans;
 +	int ret;
-+
+ 
 +	root = root->fs_info->chunk_root;
 +	extent_root = root->fs_info->extent_root;
 +
@@ -486,7 +476,7 @@ index f2b7749..499a6d5 100644
 +	ret = btrfs_relocate_block_group(extent_root, chunk_offset);
 +	if (ret)
 +		return ret;
- 
++
 +	trans = btrfs_start_transaction(root, 0);
 +	if (IS_ERR(trans)) {
 +		ret = PTR_ERR(trans);
@@ -505,11 +495,9 @@ index f2b7749..499a6d5 100644
  }
  
  static int btrfs_relocate_sys_chunks(struct btrfs_root *root)
-diff --git a/fs/btrfs/volumes.h b/fs/btrfs/volumes.h
-index 80754f9..cc7a287 100644
 --- a/fs/btrfs/volumes.h
 +++ b/fs/btrfs/volumes.h
-@@ -356,6 +356,9 @@ unsigned long btrfs_full_stripe_len(struct btrfs_root *root,
+@@ -356,6 +356,9 @@ unsigned long btrfs_full_stripe_len(stru
  int btrfs_finish_chunk_alloc(struct btrfs_trans_handle *trans,
  				struct btrfs_root *extent_root,
  				u64 chunk_offset, u64 chunk_size);
@@ -519,6 +507,3 @@ index 80754f9..cc7a287 100644
  static inline void btrfs_dev_stat_inc(struct btrfs_device *dev,
  				      int index)
  {
--- 
-1.8.4.5
-

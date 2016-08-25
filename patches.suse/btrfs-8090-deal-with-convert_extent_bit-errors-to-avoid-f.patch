@@ -1,10 +1,9 @@
 From: Filipe Manana <fdmanana@suse.com>
-Date: Tue, 21 Oct 2014 11:42:29 +0100
-Patch-mainline: 3.19
+Date: Mon, 13 Oct 2014 12:28:37 +0100
+Subject: Btrfs: deal with convert_extent_bit errors to avoid fs corruption
 Git-commit: 663dfbb07774e0fe1049e8db3054a08500122f18
+Patch-mainline: v3.19-rc1
 References: bnc#902016
-Subject: [PATCH 1/3] Btrfs: deal with convert_extent_bit errors to avoid fs
- corruption
 
 When committing a transaction or a log, we look for btree extents that
 need to be durably persisted by searching for ranges in a io tree that
@@ -31,16 +30,15 @@ case we end up getting error messages like "parent transid verify failed on
 X wanted Y found Z" when reading btree nodes/leafs from disk).
 
 Signed-off-by: Filipe Manana <fdmanana@suse.com>
+Signed-off-by: Chris Mason <clm@fb.com>
 ---
- fs/btrfs/transaction.c | 93 +++++++++++++++++++++++++++++++++++++++++---------
- fs/btrfs/transaction.h |  2 --
- 2 files changed, 77 insertions(+), 18 deletions(-)
+ fs/btrfs/transaction.c |   92 ++++++++++++++++++++++++++++++++++++++++---------
+ fs/btrfs/transaction.h |    2 -
+ 2 files changed, 76 insertions(+), 18 deletions(-)
 
-diff --git a/fs/btrfs/transaction.c b/fs/btrfs/transaction.c
-index 4614f6d..b55e742 100644
 --- a/fs/btrfs/transaction.c
 +++ b/fs/btrfs/transaction.c
-@@ -76,6 +76,32 @@ void btrfs_put_transaction(struct btrfs_transaction *transaction)
+@@ -76,6 +76,32 @@ void btrfs_put_transaction(struct btrfs_
  	}
  }
  
@@ -70,10 +68,18 @@ index 4614f6d..b55e742 100644
 +	spin_unlock(&tree->lock);
 +}
 +
- static noinline void switch_commit_root(struct btrfs_root *root)
+ static noinline void switch_commit_roots(struct btrfs_transaction *trans,
+ 					 struct btrfs_fs_info *fs_info)
  {
- 	free_extent_buffer(root->commit_root);
-@@ -795,17 +821,38 @@ int btrfs_write_marked_extents(struct btrfs_root *root,
+@@ -89,6 +115,7 @@ static noinline void switch_commit_roots
+ 		root->commit_root = btrfs_root_node(root);
+ 		if (is_fstree(root->objectid))
+ 			btrfs_unpin_free_ino(root);
++		clear_btree_io_tree(&root->dirty_log_pages);
+ 	}
+ 	up_write(&fs_info->commit_root_sem);
+ }
+@@ -813,17 +840,38 @@ int btrfs_write_marked_extents(struct bt
  
  	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
  				      mark, &cached_state)) {
@@ -118,7 +124,7 @@ index 4614f6d..b55e742 100644
  	return werr;
  }
  
-@@ -829,9 +876,21 @@ int btrfs_wait_marked_extents(struct btrfs_root *root,
+@@ -847,9 +895,21 @@ int btrfs_wait_marked_extents(struct btr
  
  	while (!find_first_extent_bit(dirty_pages, start, &start, &end,
  				      EXTENT_NEED_WAIT, &cached_state)) {
@@ -143,7 +149,7 @@ index 4614f6d..b55e742 100644
  		if (err)
  			werr = err;
  		cond_resched();
-@@ -886,17 +945,17 @@ static int btrfs_write_and_wait_marked_extents(struct btrfs_root *root,
+@@ -904,17 +964,17 @@ static int btrfs_write_and_wait_marked_e
  	return 0;
  }
  
@@ -168,20 +174,9 @@ index 4614f6d..b55e742 100644
  }
  
  /*
-@@ -942,6 +1001,8 @@ static int update_cowonly_root(struct btrfs_trans_handle *trans,
- 	if (root != root->fs_info->extent_root)
- 		switch_commit_root(root);
- 
-+	clear_btree_io_tree(&root->dirty_log_pages);
-+
- 	return 0;
- }
- 
-diff --git a/fs/btrfs/transaction.h b/fs/btrfs/transaction.h
-index 0a1a3de..2149858 100644
 --- a/fs/btrfs/transaction.h
 +++ b/fs/btrfs/transaction.h
-@@ -143,8 +143,6 @@ struct btrfs_trans_handle *btrfs_attach_transaction_barrier(
+@@ -144,8 +144,6 @@ struct btrfs_trans_handle *btrfs_attach_
  					struct btrfs_root *root);
  struct btrfs_trans_handle *btrfs_start_ioctl_transaction(struct btrfs_root *root);
  int btrfs_wait_for_commit(struct btrfs_root *root, u64 transid);
@@ -190,6 +185,3 @@ index 0a1a3de..2149858 100644
  
  void btrfs_add_dead_root(struct btrfs_root *root);
  int btrfs_defrag_root(struct btrfs_root *root);
--- 
-1.8.4.5
-
