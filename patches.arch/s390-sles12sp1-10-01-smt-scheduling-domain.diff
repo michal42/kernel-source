@@ -1,0 +1,68 @@
+From: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Subject: s390: add SMT support
+Patch-mainline: v4.0-rc1
+Git-commit: 10ad34bc76dfbc49bda327a13012f6754c0c72e0
+References: bnc#994438, LTC#144756
+
+Description:  kernel: no SMT scheduling domain
+Symptom:      Performance degrade on a Systemz z13 machine with SMT enabled.
+Problem:      The topology definition of the kernel misses the entry for
+              the SMT scheduling domain. Due to this the scheduler will
+              not distinguish between threads and cores.
+Solution:     Add the missing topology definition for the SMT scheduling
+              domain.
+Reproduction: Start the system with the 'sched_debug' kernel paramter.
+              The debug output of the generated scheduling domans does
+              not have the 'domain <x>: span <y>-<z> level SMT' lines.
+
+Upstream-Description:
+
+              s390: add SMT support
+
+              The multi-threading facility is introduced with the z13 processor family.
+              This patch adds code to detect the multi-threading facility. With the
+              facility enabled each core will surface multiple hardware threads to the
+              system. Each hardware threads looks like a normal CPU to the operating
+              system with all its registers and properties.
+
+              The SCLP interface reports the SMT topology indirectly via the maximum
+              thread id. Each reported CPU in the result of a read-scp-information
+              is a core representing a number of hardware threads.
+
+              To reflect the reduced CPU capacity if two hardware threads run on a
+              single core the MT utilization counter set is used to normalize the
+              raw cputime obtained by the CPU timer deltas. This scaled cputime is
+              reported via the taskstats interface. The normal /proc/stat numbers
+              are based on the raw cputime and are not affected by the normalization.
+
+              Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+
+
+Signed-off-by: Martin Schwidefsky <schwidefsky@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.de>
+---
+ arch/s390/kernel/topology.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/arch/s390/kernel/topology.c
++++ b/arch/s390/kernel/topology.c
+@@ -463,6 +463,11 @@ int topology_cpu_init(struct cpu *cpu)
+ 	return sysfs_create_group(&cpu->dev.kobj, &topology_cpu_attr_group);
+ }
+ 
++const struct cpumask *cpu_thread_mask(int cpu)
++{
++	return &cpu_topology[cpu].thread_mask;
++}
++
+ const struct cpumask *cpu_coregroup_mask(int cpu)
+ {
+ 	return &cpu_topology[cpu].core_mask;
+@@ -474,6 +479,7 @@ static const struct cpumask *cpu_book_ma
+ }
+ 
+ static struct sched_domain_topology_level s390_topology[] = {
++	{ cpu_thread_mask, cpu_smt_flags, SD_INIT_NAME(SMT) },
+ 	{ cpu_coregroup_mask, cpu_core_flags, SD_INIT_NAME(MC) },
+ 	{ cpu_book_mask, SD_INIT_NAME(BOOK) },
+ 	{ cpu_cpu_mask, SD_INIT_NAME(DIE) },
