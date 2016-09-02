@@ -1,5 +1,7 @@
 # The version of the main tarball to use
 SRCVERSION=3.12
+# specfile release string
+RELEASE="60.<RELEASE>"
 # variant of the kernel-source package, either empty or "-rt"
 VARIANT=
 # buildservice projects to build the kernel against
