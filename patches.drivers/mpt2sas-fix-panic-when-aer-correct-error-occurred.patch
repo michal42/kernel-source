@@ -1,0 +1,39 @@
+From: Johannes Thumshirn <jthumshirn@suse.com>
+Date: Tue, 12 Jul 2016 17:43:25 +0800
+Subject: mpt2sas: Fix panic when aer correct error occurred
+Patch-mainline: Never, mpt2sas is merged into mpt3sas
+References: bsc#997708
+
+The _scsih_pci_mmio_enabled called if scsih_pci_error_detected returns
+PCI_ERS_RESULT_CAN_RECOVER, at this point, read/write to the device
+still works, no need to reset slot.
+
+Or the mpt3sas_base_map_resources in scsih_pci_slot_reset will fail,
+and iounamp ioc->chip, then we will meet issue when read ioc->chip
+in mpt3sas_base_get_iocstate from _base_fault_reset_work.
+
+Original upstream unified mpt2sas and mpt3sas driver by:
+Signed-off-by: Kefeng Wang <wangkefeng.wang@huawei.com>
+
+[jth: changed mpt3sas to mpt2sas]
+Signed-off-by: Johannes Thumshirn <jthumshirn@suse.com>
+---
+ drivers/scsi/mpt2sas/mpt2sas_scsih.c |    7 +++++--
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+
+--- a/drivers/scsi/mpt2sas/mpt2sas_scsih.c
++++ b/drivers/scsi/mpt2sas/mpt2sas_scsih.c
+@@ -8512,8 +8512,11 @@ _scsih_pci_mmio_enabled(struct pci_dev *
+ 
+ 	/* TODO - dump whatever for debugging purposes */
+ 
+-	/* Request a slot reset. */
+-	return PCI_ERS_RESULT_NEED_RESET;
++	/* This called only if scsih_pci_error_detected returns
++	 * PCI_ERS_RESULT_CAN_RECOVER. Read/write to the device still
++	 * works, no need to reset slot.
++	 */
++	return PCI_ERS_RESULT_RECOVERED;
+ }
+ 
+ static const struct pci_error_handlers _scsih_err_handler = {
