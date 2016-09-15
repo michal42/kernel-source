@@ -182,14 +182,14 @@ Acked-by: jbeulich@novell.com
 +				      unsigned int idx)
  {
 -	unsigned long idx = (unsigned long)pg->mapping;
--
++	union page_ext ext = { .e = { .grp = group + 1, .idx = idx } };
+ 
 -	if (!PageForeign(pg))
 -		return -1;
 -
 -	if ((idx >= MAX_PENDING_REQS) || (mmap_pages[idx] != pg))
 -		return -1;
-+	union page_ext ext = { .e = { .grp = group + 1, .idx = idx } };
- 
+-
 -	return idx;
 +	BUILD_BUG_ON(sizeof(ext) > sizeof(ext.mapping));
 +	pg->mapping = ext.mapping;
@@ -381,9 +381,15 @@ Acked-by: jbeulich@novell.com
  		}
  		copy_gop->source.offset = offset;
  		copy_gop->dest.domid = netif->domid;
-@@ -518,7 +497,8 @@ static void netbk_gop_frag(netif_t *neti
+@@ -517,8 +496,14 @@ static void netbk_gop_frag(netif_t *neti
+ 		copy_gop->dest.u.ref = req->gref;
  		copy_gop->len = size;
  	} else {
++		gop = npo->trans - npo->trans_prod++;
++		gop->mfn = pfn_to_mfn(page_to_pfn(page));
++		gop->domid = netif->domid;
++		gop->ref = req->gref;
++
  		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
 -			new_mfn = alloc_mfn();
 +			unsigned long new_mfn =
@@ -391,17 +397,18 @@ Acked-by: jbeulich@novell.com
  
  			/*
  			 * Set the new P2M table entry before
-@@ -539,8 +519,8 @@ static void netbk_gop_frag(netif_t *neti
+@@ -538,11 +523,6 @@ static void netbk_gop_frag(netif_t *neti
+ 				MMU_MACHPHYS_UPDATE;
  			mmu->val = page_to_pfn(page);
  		}
- 
+-
 -		gop = npo->trans + npo->trans_prod++;
 -		gop->mfn = old_mfn;
-+		gop = npo->trans - npo->trans_prod++;
-+		gop->mfn = pfn_to_mfn(page_to_pfn(page));
- 		gop->domid = netif->domid;
- 		gop->ref = req->gref;
+-		gop->domid = netif->domid;
+-		gop->ref = req->gref;
  	}
+ 	meta->id = req->id;
+ }
 @@ -673,7 +653,7 @@ static int netbk_check_gop(unsigned int
  				BUG_ON(mcl->result != 0);
  			}
@@ -1346,18 +1353,18 @@ Acked-by: jbeulich@novell.com
 +		netbk->tx.pending_timer.data = group;
 +		netbk->tx.pending_timer.function =
 +			netbk_tx_pending_timeout;
-+
-+		netbk->tx.pending_prod = MAX_PENDING_REQS;
  
 -	pending_cons = 0;
 -	pending_prod = MAX_PENDING_REQS;
 -	for (i = 0; i < MAX_PENDING_REQS; i++)
 -		pending_ring[i] = i;
-+		INIT_LIST_HEAD(&netbk->tx.pending_inuse_head);
-+		INIT_LIST_HEAD(&netbk->tx.schedule_list);
++		netbk->tx.pending_prod = MAX_PENDING_REQS;
  
 -	spin_lock_init(&net_schedule_list_lock);
 -	INIT_LIST_HEAD(&net_schedule_list);
++		INIT_LIST_HEAD(&netbk->tx.pending_inuse_head);
++		INIT_LIST_HEAD(&netbk->tx.schedule_list);
++
 +		spin_lock_init(&netbk->tx.schedule_list_lock);
 +		spin_lock_init(&netbk->tx.release_lock);
 +
