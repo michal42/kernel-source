@@ -114,7 +114,7 @@ Automatically created from "patches.suse/x86-mm-Rip-out-complicated-out-of-date-
  	const cpumask_t *mask = mm_cpumask(mm);
  	cpumask_var_t temp;
  
-@@ -31,34 +43,21 @@ void flush_tlb_mm_range(struct mm_struct
+@@ -34,38 +46,25 @@ void flush_tlb_mm_range(struct mm_struct
  		}
  	}
  
@@ -135,6 +135,10 @@ Automatically created from "patches.suse/x86-mm-Rip-out-complicated-out-of-date-
 +	if ((end != TLB_FLUSH_ALL) && !(vmflag & VM_HUGETLB))
 +		base_pages_to_flush = (end - start) >> PAGE_SHIFT;
  
+ 	/*
+ 	 * Both branches below are implicit full barriers (MOV to CR or
+ 	 * INVLPG) that synchronize with switch_mm.
+ 	 */
 -	/* tlb_flushall_shift is on balance point, details in commit log */
 -	if (nr_base_pages <= act_entries) {
 +	if (base_pages_to_flush > tlb_single_page_flush_ceiling) {
@@ -157,7 +161,7 @@ Automatically created from "patches.suse/x86-mm-Rip-out-complicated-out-of-date-
  	if (mask != mm_cpumask(mm))
  		free_cpumask_var(temp);
  	preempt_enable();
-@@ -66,17 +65,12 @@ flush_all:
+@@ -73,17 +72,12 @@ flush_all:
  
  void flush_tlb_kernel_range(unsigned long start, unsigned long end)
  {
@@ -178,7 +182,7 @@ Automatically created from "patches.suse/x86-mm-Rip-out-complicated-out-of-date-
  		unsigned long addr;
  
  		/* flush range by one by one 'invlpg' */
-@@ -85,14 +79,13 @@ void flush_tlb_kernel_range(unsigned lon
+@@ -92,14 +86,13 @@ void flush_tlb_kernel_range(unsigned lon
  	}
  }
  
@@ -194,7 +198,7 @@ Automatically created from "patches.suse/x86-mm-Rip-out-complicated-out-of-date-
  	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
  }
  
-@@ -101,20 +94,20 @@ static ssize_t tlbflush_write_file(struc
+@@ -108,20 +101,20 @@ static ssize_t tlbflush_write_file(struc
  {
  	char buf[32];
  	ssize_t len;
@@ -219,7 +223,7 @@ Automatically created from "patches.suse/x86-mm-Rip-out-complicated-out-of-date-
  	return count;
  }
  
-@@ -124,11 +117,10 @@ static const struct file_operations fops
+@@ -131,11 +124,10 @@ static const struct file_operations fops
  	.llseek = default_llseek,
  };
  

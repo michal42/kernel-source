@@ -1,0 +1,83 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: xen: Linux 3.12.63
+Patch-mainline: Never, SUSE-Xen specific
+References: CVE-2016-2069 CVE-2016-4997 CVE-2016-4998 CVE-2016-5696 FATE#316924 FATE#318586 Functionality LTC#143590 VM bnc#875631 bnc#876145 bnc#963767 bnc#986445 bnc#988215 bsc#986362 bsc#986365 bsc#989152
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+Automatically created from "patches.kernel.org/patch-3.12.62-63" by xen-port-patches.py
+
+--- a/arch/x86/include/mach-xen/asm/mmu_context.h
++++ b/arch/x86/include/mach-xen/asm/mmu_context.h
+@@ -137,7 +137,32 @@ static inline void switch_mm(struct mm_s
+ #endif
+ 		cpumask_set_cpu(cpu, mm_cpumask(next));
+ 
+-		/* Re-load page tables: load_cr3(next->pgd) */
++		/*
++		 * Re-load page tables: load_cr3(next->pgd)
++		 *
++		 * This logic has an ordering constraint:
++		 *
++		 *  CPU 0: Write to a PTE for 'next'
++		 *  CPU 0: load bit 1 in mm_cpumask.  if nonzero, send IPI.
++		 *  CPU 1: set bit 1 in next's mm_cpumask
++		 *  CPU 1: load from the PTE that CPU 0 writes (implicit)
++		 *
++		 * We need to prevent an outcome in which CPU 1 observes
++		 * the new PTE value and CPU 0 observes bit 1 clear in
++		 * mm_cpumask.  (If that occurs, then the IPI will never
++		 * be sent, and CPU 0's TLB will contain a stale entry.)
++		 *
++		 * The bad outcome can occur if either CPU's load is
++		 * reordered before that CPU's store, so both CPUs much
++		 * execute full barriers to prevent this from happening.
++		 *
++		 * Thus, switch_mm needs a full barrier between the
++		 * store to mm_cpumask and any operation that could load
++		 * from next->pgd.  This barrier synchronizes with
++		 * remote TLB flushers.  Fortunately, load_cr3 is
++		 * serializing and thus acts as a full barrier.
++		 *
++		 */
+ 		op->cmd = MMUEXT_NEW_BASEPTR;
+ 		op->arg1.mfn = virt_to_mfn(next->pgd);
+ 		op++;
+@@ -185,10 +210,15 @@ static inline void switch_mm(struct mm_s
+ 			 * schedule, protecting us from simultaneous changes.
+ 			 */
+ 			cpumask_set_cpu(cpu, mm_cpumask(next));
++
+ 			/*
+ 			 * We were in lazy tlb mode and leave_mm disabled
+ 			 * tlb flush IPI delivery. We must reload CR3
+ 			 * to make sure to use no freed page tables.
++			 *
++			 * As above, this is a barrier that forces
++			 * TLB repopulation to be ordered after the
++			 * store to mm_cpumask.
+ 			 */
+ 			load_cr3(next->pgd);
+ 			xen_new_user_pt(__pa(__user_pgd(next->pgd)));
+--- a/arch/x86/mm/tlb-xen.c
++++ b/arch/x86/mm/tlb-xen.c
+@@ -20,6 +20,9 @@ void flush_tlb_mm_range(struct mm_struct
+ 
+ 	preempt_disable();
+ 	if (current->active_mm != mm || !current->mm) {
++		/* Synchronize with switch_mm. */
++		smp_mb();
++
+ 		if (cpumask_any_but(mask, smp_processor_id()) >= nr_cpu_ids) {
+ 			preempt_enable();
+ 			return;
+@@ -46,6 +49,10 @@ void flush_tlb_mm_range(struct mm_struct
+ 	act_entries = mm->total_vm > act_entries ? act_entries : mm->total_vm;
+ 	nr_base_pages = (end - start) >> PAGE_SHIFT;
+ 
++	/*
++	 * Both branches below are implicit full barriers (MOV to CR or
++	 * INVLPG) that synchronize with switch_mm.
++	 */
+ 	/* tlb_flushall_shift is on balance point, details in commit log */
+ 	if (nr_base_pages <= act_entries) {
+ 		/* flush range by one by one 'invlpg' */
