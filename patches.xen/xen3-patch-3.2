@@ -2260,18 +2260,17 @@ Acked-by: jbeulich@suse.com
  #include <linux/pci.h>
 --- a/drivers/acpi/processor_idle.c
 +++ b/drivers/acpi/processor_idle.c
-@@ -1053,6 +1053,10 @@ static int acpi_processor_setup_cpuidle_
+@@ -1053,6 +1053,9 @@ static int acpi_processor_setup_cpuidle_
  
  	return 0;
  }
 +#else
 +static void acpi_processor_setup_cpuidle_cx(struct acpi_processor *pr) {}
-+static void acpi_processor_setup_cpuidle_states(struct acpi_processor *pr) {}
 +#endif /* CONFIG_PROCESSOR_EXTERNAL_CONTROL */
  
  int acpi_processor_hotplug(struct acpi_processor *pr)
  {
-@@ -1092,7 +1096,6 @@ int acpi_processor_hotplug(struct acpi_p
+@@ -1092,12 +1095,9 @@ int acpi_processor_hotplug(struct acpi_p
  
  	return ret;
  }
@@ -2279,7 +2278,37 @@ Acked-by: jbeulich@suse.com
  
  int acpi_processor_cst_has_changed(struct acpi_processor *pr)
  {
-@@ -1161,7 +1164,6 @@ static int acpi_processor_registered;
+-	int cpu;
+-	struct acpi_processor *_pr;
+ 	struct cpuidle_device *dev;
+ 
+ 	if (disabled_by_idle_boot_param())
+@@ -1112,6 +1112,7 @@ int acpi_processor_cst_has_changed(struc
+ 	if (!pr->flags.power_setup_done)
+ 		return -ENODEV;
+ 
++#ifndef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+ 	/*
+ 	 * FIXME:  Design the ACPI notification to make it once per
+ 	 * system instead of once per-cpu.  This condition is a hack
+@@ -1119,6 +1120,8 @@ int acpi_processor_cst_has_changed(struc
+ 	 */
+ 
+ 	if (pr->id == 0 && cpuidle_get_driver() == &acpi_idle_driver) {
++		int cpu;
++		struct acpi_processor *_pr;
+ 
+ 		/* Protect against cpu-hotplug */
+ 		get_online_cpus();
+@@ -1152,6 +1155,7 @@ int acpi_processor_cst_has_changed(struc
+ 		cpuidle_resume_and_unlock();
+ 		put_online_cpus();
+ 	}
++#endif
+ 
+ 	return 0;
+ }
+@@ -1161,7 +1165,6 @@ static int acpi_processor_registered;
  int acpi_processor_power_init(struct acpi_processor *pr)
  {
  	acpi_status status = 0;
@@ -2287,7 +2316,7 @@ Acked-by: jbeulich@suse.com
  	struct cpuidle_device *dev;
  	static int first_run;
  
-@@ -1200,6 +1202,8 @@ int acpi_processor_power_init(struct acp
+@@ -1200,6 +1203,8 @@ int acpi_processor_power_init(struct acp
  	 * platforms that only support C1.
  	 */
  	if (pr->flags.power) {
@@ -3256,7 +3285,7 @@ Acked-by: jbeulich@suse.com
  }
  
  /* This is a twin to netbk_gop_skb.  Assume that netbk_gop_skb was
-@@ -1102,11 +1113,11 @@ static gnttab_map_grant_ref_t *netbk_get
+@@ -1103,11 +1114,11 @@ static gnttab_map_grant_ref_t *netbk_get
  {
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
  	skb_frag_t *frags = shinfo->frags;
@@ -3270,7 +3299,7 @@ Acked-by: jbeulich@suse.com
  
  	for (i = start; i < shinfo->nr_frags; i++, txp++) {
  		pending_idx = pending_ring[MASK_PEND_IDX(pending_cons++)];
-@@ -1118,7 +1129,7 @@ static gnttab_map_grant_ref_t *netbk_get
+@@ -1119,7 +1130,7 @@ static gnttab_map_grant_ref_t *netbk_get
  		memcpy(&pending_tx_info[pending_idx].req, txp, sizeof(*txp));
  		netif_get(netif);
  		pending_tx_info[pending_idx].netif = netif;
@@ -3279,7 +3308,7 @@ Acked-by: jbeulich@suse.com
  	}
  
  	return mop;
-@@ -1128,7 +1139,7 @@ static int netbk_tx_check_mop(struct sk_
+@@ -1129,7 +1140,7 @@ static int netbk_tx_check_mop(struct sk_
  			       gnttab_map_grant_ref_t **mopp)
  {
  	gnttab_map_grant_ref_t *mop = *mopp;
@@ -3288,7 +3317,7 @@ Acked-by: jbeulich@suse.com
  	netif_t *netif = pending_tx_info[pending_idx].netif;
  	netif_tx_request_t *txp;
  	struct skb_shared_info *shinfo = skb_shinfo(skb);
-@@ -1149,12 +1160,12 @@ static int netbk_tx_check_mop(struct sk_
+@@ -1150,12 +1161,12 @@ static int netbk_tx_check_mop(struct sk_
  	}
  
  	/* Skip first skb fragment if it is on same page as header fragment. */
@@ -3303,7 +3332,7 @@ Acked-by: jbeulich@suse.com
  
  		/* Check error status: if okay then remember grant handle. */
  		newerr = (++mop)->status;
-@@ -1182,7 +1193,7 @@ static int netbk_tx_check_mop(struct sk_
+@@ -1183,7 +1194,7 @@ static int netbk_tx_check_mop(struct sk_
  		pending_idx = *((u16 *)skb->data);
  		netif_idx_release(pending_idx);
  		for (j = start; j < i; j++) {
@@ -3312,7 +3341,7 @@ Acked-by: jbeulich@suse.com
  			netif_idx_release(pending_idx);
  		}
  
-@@ -1201,20 +1212,16 @@ static void netbk_fill_frags(struct sk_b
+@@ -1202,20 +1213,16 @@ static void netbk_fill_frags(struct sk_b
  	int i;
  
  	for (i = 0; i < nr_frags; i++) {
@@ -3336,7 +3365,7 @@ Acked-by: jbeulich@suse.com
  
  		skb->len += txp->size;
  		skb->data_len += txp->size;
-@@ -1447,14 +1454,11 @@ static void net_tx_action(unsigned long
+@@ -1448,14 +1455,11 @@ static void net_tx_action(unsigned long
  		__skb_put(skb, data_len);
  
  		skb_shinfo(skb)->nr_frags = ret;
@@ -4023,7 +4052,7 @@ Acked-by: jbeulich@suse.com
  #ifdef HAVE_XEN_PLATFORM_COMPAT_H
 --- a/include/linux/pci.h
 +++ b/include/linux/pci.h
-@@ -359,11 +359,13 @@ struct pci_dev {
+@@ -362,11 +362,13 @@ struct pci_dev {
  	struct kset *msi_kset;
  #endif
  	struct pci_vpd *vpd;
