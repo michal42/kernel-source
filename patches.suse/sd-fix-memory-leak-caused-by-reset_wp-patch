@@ -1,0 +1,42 @@
+From: Jeff Mahoney <jeffm@suse.com>
+Subject: sd: Fix memory leak caused by RESET_WP patch
+References: bsc#999779
+Patch-mainline: No, Depends on patches.suse/sd-Implement-new-RESET_WP-provisioning-mode.patch
+
+patches.suse/sd-Implement-new-RESET_WP-provisioning-mode.patch introduced
+a regression where the page allocated in sd_setup_discard_cmnd would
+never get freed.  This was due to scsi_setup_blk_pc_cmnd setting rq->buffer
+to NULL after we'd already saved the page address to it.  When the request
+was unpreped, there'd only be a NULL pointer there so the page would
+get lost.
+
+It was a simple ordering regression.  rq->buffer was set to the page
+address prior to the scsi_setup_blk_pc_cmnd call prior to the patch
+and the fix is to restore that ordering.
+
+Signed-off-by: Jeff Mahoney <jeffm@suse.com>
+---
+ drivers/scsi/sd.c |   10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -762,11 +762,15 @@ static int sd_setup_discard_cmnd(struct
+ 		goto out;
+ 	}
+ 
+-	if (len) {
++	if (len)
+ 		blk_add_request_payload(rq, page, len);
+-		rq->buffer = page_address(page);
+-	}
++
+ 	ret = scsi_setup_blk_pc_cmnd(sdp, rq);
++	if (ret)
++		goto out;
++
++	if (page)
++		rq->buffer = page_address(page);
+ 
+ 	rq->__data_len = nr_bytes;
+ 
