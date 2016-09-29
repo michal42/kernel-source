@@ -19,11 +19,11 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  drivers/infiniband/hw/mlx5/mlx5_ib.h              |    6 
  drivers/infiniband/hw/mlx5/mr.c                   |  163 ++++++++++++++++------
  drivers/infiniband/hw/mlx5/qp.c                   |    4 
- drivers/net/ethernet/mellanox/mlx5/core/cmd.c     |  106 ++++++++++----
+ drivers/net/ethernet/mellanox/mlx5/core/cmd.c     |  107 ++++++++++----
  drivers/net/ethernet/mellanox/mlx5/core/debugfs.c |    8 -
  drivers/net/ethernet/mellanox/mlx5/core/mr.c      |   32 ++--
  include/linux/mlx5/driver.h                       |   17 ++
- 8 files changed, 255 insertions(+), 84 deletions(-)
+ 8 files changed, 255 insertions(+), 85 deletions(-)
 --- a/drivers/infiniband/hw/mlx5/main.c
 +++ b/drivers/infiniband/hw/mlx5/main.c
 @@ -745,7 +745,8 @@ static int alloc_pa_mkey(struct mlx5_ib_
@@ -411,7 +411,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		goto err_free;
 --- a/drivers/infiniband/hw/mlx5/qp.c
 +++ b/drivers/infiniband/hw/mlx5/qp.c
-@@ -1744,6 +1744,7 @@ static void set_reg_umr_segment(struct m
+@@ -1746,6 +1746,7 @@ static void set_reg_umr_segment(struct m
  			MLX5_MKEY_MASK_PD		|
  			MLX5_MKEY_MASK_LR		|
  			MLX5_MKEY_MASK_LW		|
@@ -419,7 +419,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  			MLX5_MKEY_MASK_RR		|
  			MLX5_MKEY_MASK_RW		|
  			MLX5_MKEY_MASK_A		|
-@@ -1800,7 +1801,8 @@ static void set_reg_mkey_segment(struct
+@@ -1802,7 +1803,8 @@ static void set_reg_mkey_segment(struct
  	seg->start_addr = cpu_to_be64(wr->wr.fast_reg.iova_start);
  	seg->len = cpu_to_be64(wr->wr.fast_reg.length);
  	seg->log2_page_size = wr->wr.fast_reg.page_shift;
@@ -448,7 +448,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	ent->callback	= cbk;
  	ent->context	= context;
  	ent->cmd	= cmd;
-@@ -534,6 +537,7 @@ static void cmd_work_handler(struct work
+@@ -547,6 +550,7 @@ static void cmd_work_handler(struct work
  	ent->lay = lay;
  	memset(lay, 0, sizeof(*lay));
  	memcpy(lay->in, ent->in->first.data, sizeof(lay->in));
@@ -456,17 +456,17 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	if (ent->in->next)
  		lay->in_ptr = cpu_to_be64(ent->in->next->dma);
  	lay->inlen = cpu_to_be32(ent->in->len);
-@@ -628,7 +632,8 @@ static int wait_func(struct mlx5_core_de
+@@ -641,7 +645,8 @@ static int wait_func(struct mlx5_core_de
   *    2. page queue commands do not support asynchrous completion
   */
  static int mlx5_cmd_invoke(struct mlx5_core_dev *dev, struct mlx5_cmd_msg *in,
 -			   struct mlx5_cmd_msg *out, mlx5_cmd_cbk_t callback,
 +			   struct mlx5_cmd_msg *out, void *uout, int uout_size,
 +			   mlx5_cmd_cbk_t callback,
- 			   void *context, int page_queue, u8 *status)
+ 			   void *context, int page_queue, u8 *status,
+ 			   u8 token)
  {
- 	struct mlx5_cmd *cmd = &dev->cmd;
-@@ -642,7 +647,8 @@ static int mlx5_cmd_invoke(struct mlx5_c
+@@ -656,7 +661,8 @@ static int mlx5_cmd_invoke(struct mlx5_c
  	if (callback && page_queue)
  		return -EINVAL;
  
@@ -476,7 +476,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	if (IS_ERR(ent))
  		return PTR_ERR(ent);
  
-@@ -670,10 +676,10 @@ static int mlx5_cmd_invoke(struct mlx5_c
+@@ -686,10 +692,10 @@ static int mlx5_cmd_invoke(struct mlx5_c
  		op = be16_to_cpu(((struct mlx5_inbox_hdr *)in->first.data)->opcode);
  		if (op < ARRAY_SIZE(cmd->stats)) {
  			stats = &cmd->stats[op];
@@ -489,7 +489,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		}
  		mlx5_core_dbg_mask(dev, 1 << MLX5_CMD_TIME,
  				   "fw exec time for %s is %lld nsec\n",
-@@ -826,7 +832,7 @@ static struct mlx5_cmd_msg *mlx5_alloc_c
+@@ -845,7 +851,7 @@ static struct mlx5_cmd_msg *mlx5_alloc_c
  	int n;
  	int i;
  
@@ -498,7 +498,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	if (!msg)
  		return ERR_PTR(-ENOMEM);
  
-@@ -1109,6 +1115,19 @@ void mlx5_cmd_use_polling(struct mlx5_co
+@@ -1129,6 +1135,19 @@ void mlx5_cmd_use_polling(struct mlx5_co
  		up(&cmd->sem);
  }
  
@@ -518,7 +518,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  void mlx5_cmd_comp_handler(struct mlx5_core_dev *dev, unsigned long vector)
  {
  	struct mlx5_cmd *cmd = &dev->cmd;
-@@ -1117,6 +1136,10 @@ void mlx5_cmd_comp_handler(struct mlx5_c
+@@ -1137,6 +1156,10 @@ void mlx5_cmd_comp_handler(struct mlx5_c
  	void *context;
  	int err;
  	int i;
@@ -529,7 +529,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	for (i = 0; i < (1 << cmd->log_sz); i++) {
  		if (test_bit(i, &vector)) {
-@@ -1141,9 +1164,29 @@ void mlx5_cmd_comp_handler(struct mlx5_c
+@@ -1161,9 +1184,29 @@ void mlx5_cmd_comp_handler(struct mlx5_c
  			}
  			free_ent(cmd, ent->idx);
  			if (ent->callback) {
@@ -559,7 +559,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  				free_cmd(ent);
  				callback(err, context);
  			} else {
-@@ -1160,7 +1203,8 @@ static int status_to_err(u8 status)
+@@ -1180,7 +1223,8 @@ static int status_to_err(u8 status)
  	return status ? -1 : 0; /* TBD more meaningful codes */
  }
  
@@ -569,7 +569,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  {
  	struct mlx5_cmd_msg *msg = ERR_PTR(-ENOMEM);
  	struct mlx5_cmd *cmd = &dev->cmd;
-@@ -1172,7 +1216,7 @@ static struct mlx5_cmd_msg *alloc_msg(st
+@@ -1192,7 +1236,7 @@ static struct mlx5_cmd_msg *alloc_msg(st
  		ent = &cmd->cache.med;
  
  	if (ent) {
@@ -578,7 +578,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		if (!list_empty(&ent->head)) {
  			msg = list_entry(ent->head.next, typeof(*msg), list);
  			/* For cached lists, we must explicitly state what is
-@@ -1181,43 +1225,34 @@ static struct mlx5_cmd_msg *alloc_msg(st
+@@ -1201,44 +1245,35 @@ static struct mlx5_cmd_msg *alloc_msg(st
  			msg->len = in_size;
  			list_del(&msg->list);
  		}
@@ -587,8 +587,8 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	}
  
  	if (IS_ERR(msg))
--		msg = mlx5_alloc_cmd_msg(dev, GFP_KERNEL, in_size);
-+		msg = mlx5_alloc_cmd_msg(dev, gfp, in_size);
+-		msg = mlx5_alloc_cmd_msg(dev, GFP_KERNEL, in_size, 0);
++		msg = mlx5_alloc_cmd_msg(dev, gfp, in_size, 0);
  
  	return msg;
  }
@@ -620,6 +620,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +	gfp_t gfp;
  	int err;
  	u8 status = 0;
+ 	u8 token;
  
  	pages_queue = is_manage_pages(in);
 +	gfp = callback ? GFP_ATOMIC : GFP_KERNEL;
@@ -629,24 +630,25 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	if (IS_ERR(inb)) {
  		err = PTR_ERR(inb);
  		return err;
-@@ -1229,13 +1264,14 @@ int mlx5_cmd_exec(struct mlx5_core_dev *
+@@ -1252,14 +1287,14 @@ int mlx5_cmd_exec(struct mlx5_core_dev *
  		goto out_in;
  	}
  
--	outb = mlx5_alloc_cmd_msg(dev, GFP_KERNEL, out_size);
-+	outb = mlx5_alloc_cmd_msg(dev, gfp, out_size);
+-	outb = mlx5_alloc_cmd_msg(dev, GFP_KERNEL, out_size, token);
++	outb = mlx5_alloc_cmd_msg(dev, gfp, out_size, token);
  	if (IS_ERR(outb)) {
  		err = PTR_ERR(outb);
  		goto out_in;
  	}
  
--	err = mlx5_cmd_invoke(dev, inb, outb, NULL, NULL, pages_queue, &status);
+-	err = mlx5_cmd_invoke(dev, inb, outb, NULL, NULL, pages_queue, &status,
+-			      token);
 +	err = mlx5_cmd_invoke(dev, inb, outb, out, out_size, callback, context,
-+			      pages_queue, &status);
++			      pages_queue, &status, token);
  	if (err)
  		goto out_out;
  
-@@ -1248,14 +1284,30 @@ int mlx5_cmd_exec(struct mlx5_core_dev *
+@@ -1272,14 +1307,30 @@ int mlx5_cmd_exec(struct mlx5_core_dev *
  	err = mlx5_copy_from_msg(out, outb, out_size);
  
  out_out:
