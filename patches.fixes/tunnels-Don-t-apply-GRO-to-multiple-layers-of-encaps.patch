@@ -1,0 +1,82 @@
+From: Jesse Gross <jesse@kernel.org>
+Date: Sat, 19 Mar 2016 09:32:01 -0700
+Subject: tunnels: Don't apply GRO to multiple layers of encapsulation.
+Patch-mainline: v4.6-rc1
+Git-commit: fac8e0f579695a3ecbc4d3cac369139d7f819971
+References: bsc#1001486
+
+When drivers express support for TSO of encapsulated packets, they
+only mean that they can do it for one layer of encapsulation.
+Supporting additional levels would mean updating, at a minimum,
+more IP length fields and they are unaware of this.
+
+No encapsulation device expresses support for handling offloaded
+encapsulated packets, so we won't generate these types of frames
+in the transmit path. However, GRO doesn't have a check for
+multiple levels of encapsulation and will attempt to build them.
+
+UDP tunnel GRO actually does prevent this situation but it only
+handles multiple UDP tunnels stacked on top of each other. This
+generalizes that solution to prevent any kind of tunnel stacking
+that would cause problems.
+
+Fixes: bf5a755f ("net-gre-gro: Add GRE support to the GRO stack")
+Signed-off-by: Jesse Gross <jesse@kernel.org>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+
+SLE12-SP1: only GRE part is needed as there is no GRO support for IPIP
+or SIT. Also, keep the name "udp_mark" to avoid kABI/API issues with
+third party modules.
+
+---
+ include/linux/netdevice.h | 2 +-
+ net/ipv4/gre_offload.c    | 5 +++++
+ net/ipv4/udp_offload.c    | 2 +-
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 7b37c813af4d..b26ad7c2d20c 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1671,7 +1671,7 @@ struct napi_gro_cb {
+ 	/* Used in ipv6_gro_receive() */
+ 	u16	proto;
+ 
+-	/* Used in udp_gro_receive */
++	/* Used in tunnel GRO receive */
+ 	u16	udp_mark;
+ 
+ 	/* used to support CHECKSUM_COMPLETE for tunneling protocols */
+diff --git a/net/ipv4/gre_offload.c b/net/ipv4/gre_offload.c
+index fc7e2fd861e3..429eef884b5f 100644
+--- a/net/ipv4/gre_offload.c
++++ b/net/ipv4/gre_offload.c
+@@ -148,6 +148,11 @@ static struct sk_buff **gre_gro_receive(struct sk_buff **head,
+ 	struct packet_offload *ptype;
+ 	__be16 type;
+ 
++	if (NAPI_GRO_CB(skb)->udp_mark)
++		goto out;
++
++	NAPI_GRO_CB(skb)->udp_mark = 1;
++
+ 	off = skb_gro_offset(skb);
+ 	hlen = off + sizeof(*greh);
+ 	greh = skb_gro_header_fast(skb, off);
+diff --git a/net/ipv4/udp_offload.c b/net/ipv4/udp_offload.c
+index 88b4023ecfcf..9d388f880e4d 100644
+--- a/net/ipv4/udp_offload.c
++++ b/net/ipv4/udp_offload.c
+@@ -161,7 +161,7 @@ static struct sk_buff **udp_gro_receive(struct sk_buff **head, struct sk_buff *s
+ 	    (!skb->encapsulation && skb->ip_summed != CHECKSUM_COMPLETE))
+ 		goto out;
+ 
+-	/* mark that this skb passed once through the udp gro layer */
++	/* mark that this skb passed once through the tunnel gro layer */
+ 	NAPI_GRO_CB(skb)->udp_mark = 1;
+ 
+ 	off  = skb_gro_offset(skb);
+-- 
+2.10.0
+
