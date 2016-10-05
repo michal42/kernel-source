@@ -70,8 +70,8 @@ by the bunch of helper functions.
 
 Signed-off-by: Petr Mladek <pmladek@suse.cz>
 ---
- kernel/printk/printk.c |  283 +++++++++++++++++++++++++++++++++++++++++++++----
- 1 file changed, 262 insertions(+), 21 deletions(-)
+ kernel/printk/printk.c |  281 +++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 260 insertions(+), 21 deletions(-)
 
 --- a/kernel/printk/printk.c
 +++ b/kernel/printk/printk.c
@@ -370,22 +370,12 @@ Signed-off-by: Petr Mladek <pmladek@suse.cz>
  		/*
  		 * If a crash is occurring during printk() on this CPU,
  		 * then try to get the crash message out but make sure
-@@ -1901,18 +2106,46 @@ asmlinkage int vprintk_emit(int facility
+@@ -1901,18 +2106,44 @@ asmlinkage int vprintk_emit(int facility
  	}
  
  	lockdep_off();
 -	raw_spin_lock(&logbuf_lock);
 -	logbuf_cpu = this_cpu;
- 
--	if (recursion_bug) {
--		static const char recursion_msg[] =
--			"BUG: recent printk recursion!";
--
--		recursion_bug = 0;
--		text_len = strlen(recursion_msg);
--		/* emit KERN_CRIT message */
--		printed_len += log_store(log, 0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
--					 NULL, 0, recursion_msg, text_len);
 +	/*
 +	 * Get lock for a log buffer. Make sure we are not going to deadlock
 +	 * when we managed to preempt the currently running printk from NMI
@@ -408,27 +398,35 @@ Signed-off-by: Petr Mladek <pmladek@suse.cz>
 +			text = nmi_textbuf;
 +		}
 +	}
-+
+ 
+-	if (unlikely(recursion_bug)) {
+-		static const char recursion_msg[] =
+-			"BUG: recent printk recursion!";
+-
+-		recursion_bug = 0;
+-		/* emit KERN_CRIT message */
+-		printed_len += log_store(log, 0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
+-					 NULL, 0, recursion_msg,
+-					 strlen(recursion_msg));
 +	if (likely(log == MAIN_LOG)) {
 +		logbuf_cpu = this_cpu;
 +		merge_nmi_delayed_printk();
 +
-+		if (recursion_bug) {
++		if (unlikely(recursion_bug)) {
 +			static const char recursion_msg[] =
 +				"BUG: recent printk recursion!";
 +
 +			recursion_bug = 0;
-+			text_len = strlen(recursion_msg);
 +			/* emit KERN_CRIT message */
 +			printed_len += log_store(log, 0, 2,
 +						 LOG_PREFIX|LOG_NEWLINE, 0,
 +						 NULL, 0, recursion_msg,
-+						 text_len);
++					 	 strlen(recursion_msg));
 +		}
  	}
  
  	/*
-@@ -2000,13 +2233,21 @@ asmlinkage int vprintk_emit(int facility
+@@ -2000,13 +2231,21 @@ asmlinkage int vprintk_emit(int facility
  						 text, text_len);
  	}
  
