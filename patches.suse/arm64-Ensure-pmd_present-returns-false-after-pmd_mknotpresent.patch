@@ -1,0 +1,75 @@
+From 0b6759c8e5afc6cb9e355df3e779e2e5013d53f0 Mon Sep 17 00:00:00 2001
+From: Catalin Marinas <catalin.marinas@arm.com>
+Date: Thu, 5 May 2016 10:44:02 +0100
+Subject: [PATCH] arm64: Ensure pmd_present() returns false after
+ pmd_mknotpresent()
+
+References: Automatic NUMA Balancing (fate#315482)
+Patch-mainline: v4.7
+Git-commit: 5bb1cc0ff9a6b68871970737e6c4c16919928d8b
+
+Currently, pmd_present() only checks for a non-zero value, returning
+true even after pmd_mknotpresent() (which only clears the type bits).
+This patch converts pmd_present() to using pte_present(), similar to the
+other pmd_*() checks. As a side effect, it will return true for
+PROT_NONE mappings, though they are not yet used by the kernel with
+transparent huge pages.
+
+For consistency, also change pmd_mknotpresent() to only clear the
+PMD_SECT_VALID bit, even though the PMD_TABLE_BIT is already 0 for block
+mappings (no functional change). The unused PMD_SECT_PROT_NONE
+definition is removed as transparent huge pages use the pte page prot
+values.
+
+Fixes: 9c7e535fcc17 ("arm64: mm: Route pmd thp functions through pte equivalents")
+Cc: <stable@vger.kernel.org> # 3.15+
+Reviewed-by: Will Deacon <will.deacon@arm.com>
+Signed-off-by: Catalin Marinas <catalin.marinas@arm.com>
+Signed-off-by: Will Deacon <will.deacon@arm.com>
+Signed-off-by: Mel Gorman <mgorman@suse.de>
+---
+ arch/arm64/include/asm/pgtable-hwdef.h | 1 -
+ arch/arm64/include/asm/pgtable.h       | 4 ++--
+ 2 files changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/include/asm/pgtable-hwdef.h b/arch/arm64/include/asm/pgtable-hwdef.h
+index 2e9d83673ef6..1f4c54ae6af0 100644
+--- a/arch/arm64/include/asm/pgtable-hwdef.h
++++ b/arch/arm64/include/asm/pgtable-hwdef.h
+@@ -43,7 +43,6 @@
+  * Section
+  */
+ #define PMD_SECT_VALID		(_AT(pmdval_t, 1) << 0)
+-#define PMD_SECT_PROT_NONE	(_AT(pmdval_t, 1) << 58)
+ #define PMD_SECT_USER		(_AT(pmdval_t, 1) << 6)		/* AP[1] */
+ #define PMD_SECT_RDONLY		(_AT(pmdval_t, 1) << 7)		/* AP[2] */
+ #define PMD_SECT_S		(_AT(pmdval_t, 3) << 8)
+diff --git a/arch/arm64/include/asm/pgtable.h b/arch/arm64/include/asm/pgtable.h
+index 67c7f28e73fe..11d84a57e84f 100644
+--- a/arch/arm64/include/asm/pgtable.h
++++ b/arch/arm64/include/asm/pgtable.h
+@@ -213,6 +213,7 @@ static inline pmd_t pte_pmd(pte_t pte)
+ #define pmd_trans_splitting(pmd)	pte_special(pmd_pte(pmd))
+ #endif
+ 
++#define pmd_present(pmd)	pte_present(pmd_pte(pmd))
+ #define pmd_dirty(pmd)		pte_dirty(pmd_pte(pmd))
+ #define pmd_young(pmd)		pte_young(pmd_pte(pmd))
+ #define pmd_wrprotect(pmd)	pte_pmd(pte_wrprotect(pmd_pte(pmd)))
+@@ -221,7 +222,7 @@ static inline pmd_t pte_pmd(pte_t pte)
+ #define pmd_mkwrite(pmd)	pte_pmd(pte_mkwrite(pmd_pte(pmd)))
+ #define pmd_mkdirty(pmd)	pte_pmd(pte_mkdirty(pmd_pte(pmd)))
+ #define pmd_mkyoung(pmd)	pte_pmd(pte_mkyoung(pmd_pte(pmd)))
+-#define pmd_mknotpresent(pmd)	(__pmd(pmd_val(pmd) & ~PMD_TYPE_MASK))
++#define pmd_mknotpresent(pmd)	(__pmd(pmd_val(pmd) & ~PMD_SECT_VALID))
+ 
+ #define __HAVE_ARCH_PMD_WRITE
+ #define pmd_write(pmd)		pte_write(pmd_pte(pmd))
+@@ -256,7 +257,6 @@ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
+ 				     unsigned long size, pgprot_t vma_prot);
+ 
+ #define pmd_none(pmd)		(!pmd_val(pmd))
+-#define pmd_present(pmd)	(pmd_val(pmd))
+ 
+ #define pmd_bad(pmd)		(!(pmd_val(pmd) & 2))
+ 
