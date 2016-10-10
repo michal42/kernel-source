@@ -1,0 +1,62 @@
+From 62b03e0332f5f33fe6e7cc7a86beef1ab208debb Mon Sep 17 00:00:00 2001
+From: Liuhua Wang <lwang@suse.com>
+Date: Thu, 16 Jun 2016 17:22:15 +0800
+Subject: [PATCH] dm: fix AB-BA deadlock in __dm_destroy()
+Target: SLE12-SP1-Update
+
+__dm_destroy() takes io_barrier SRCU lock (dm_get_live_table) and
+suspend_lock in reverse order.  Doing so can cause AB-BA deadlock:
+
+  __dm_destroy                    dm_swap_table
+  ---------------------------------------------------
+                                  mutex_lock(suspend_lock)
+  dm_get_live_table()
+    srcu_read_lock(io_barrier)
+                                  dm_sync_table()
+                                    synchronize_srcu(io_barrier)
+                                      .. waiting for dm_put_live_table()
+  mutex_lock(suspend_lock)
+    .. waiting for suspend_lock
+
+Fix this by taking the locks in proper order.
+
+Patch-mainline: v4.3
+Git-commit: 2a708cff93f1845b9239bc7d6310aef54e716c6a
+References: bsc#970943
+---
+ drivers/md/dm.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 7ac7fac..d9d64fa 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -2508,7 +2508,6 @@ static void __dm_destroy(struct mapped_device *md, bool wait)
+ 	might_sleep();
+ 
+ 	spin_lock(&_minor_lock);
+-	map = dm_get_live_table(md, &srcu_idx);
+ 	idr_replace(&_minor_idr, MINOR_ALLOCED, MINOR(disk_devt(dm_disk(md))));
+ 	set_bit(DMF_FREEING, &md->flags);
+ 	spin_unlock(&_minor_lock);
+@@ -2518,15 +2517,15 @@ static void __dm_destroy(struct mapped_device *md, bool wait)
+ 	 * do not race with internal suspend.
+ 	 */
+ 	mutex_lock(&md->suspend_lock);
++    map = dm_get_live_table(md, &srcu_idx);
+ 	if (!dm_suspended_md(md)) {
+ 		dm_table_presuspend_targets(map);
+ 		dm_table_postsuspend_targets(map);
+ 	}
+-	mutex_unlock(&md->suspend_lock);
+ 
+ 	/* dm_put_live_table must be before msleep, otherwise deadlock is possible */
+ 	dm_put_live_table(md, srcu_idx);
+-
++    mutex_unlock(&md->suspend_lock);
+ 	/*
+ 	 * Rare, but there may be I/O requests still going to complete,
+ 	 * for example.  Wait for all references to disappear.
+-- 
+1.8.4.5
+
