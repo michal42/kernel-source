@@ -1,8 +1,9 @@
-From 62b03e0332f5f33fe6e7cc7a86beef1ab208debb Mon Sep 17 00:00:00 2001
-From: Liuhua Wang <lwang@suse.com>
-Date: Thu, 16 Jun 2016 17:22:15 +0800
+From: Junichi Nomura <j-nomura@ce.jp.nec.com> 
+Date: Thu, 1 Oct 2015 08:31:51 +0000 
 Subject: [PATCH] dm: fix AB-BA deadlock in __dm_destroy()
-Target: SLE12-SP1-Update
+Patch-mainline: v4.2.4
+Git-commit: 2a708cff93f1845b9239bc7d6310aef54e716c6a
+References: bsc#970943
 
 __dm_destroy() takes io_barrier SRCU lock (dm_get_live_table) and
 suspend_lock in reverse order.  Doing so can cause AB-BA deadlock:
@@ -20,15 +21,19 @@ suspend_lock in reverse order.  Doing so can cause AB-BA deadlock:
 
 Fix this by taking the locks in proper order.
 
-Patch-mainline: v4.3
-Git-commit: 2a708cff93f1845b9239bc7d6310aef54e716c6a
-References: bsc#970943
+Signed-off-by: Jun'ichi Nomura <j-nomura@ce.jp.nec.com>
+Fixes: ab7c7bb6f4ab ("dm: hold suspend_lock while suspending device during device deletion")
+Acked-by: Mikulas Patocka <mpatocka@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Cc: stable@vger.kernel.org
+
+Acked-by: Liuhua Wang <lwang@suse.com>
 ---
- drivers/md/dm.c | 5 ++---
- 1 file changed, 2 insertions(+), 3 deletions(-)
+ drivers/md/dm.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/md/dm.c b/drivers/md/dm.c
-index 7ac7fac..d9d64fa 100644
+index 7ac7fac..ee219fc 100644
 --- a/drivers/md/dm.c
 +++ b/drivers/md/dm.c
 @@ -2508,7 +2508,6 @@ static void __dm_destroy(struct mapped_device *md, bool wait)
@@ -39,11 +44,11 @@ index 7ac7fac..d9d64fa 100644
  	idr_replace(&_minor_idr, MINOR_ALLOCED, MINOR(disk_devt(dm_disk(md))));
  	set_bit(DMF_FREEING, &md->flags);
  	spin_unlock(&_minor_lock);
-@@ -2518,15 +2517,15 @@ static void __dm_destroy(struct mapped_device *md, bool wait)
+@@ -2518,14 +2517,15 @@ static void __dm_destroy(struct mapped_device *md, bool wait)
  	 * do not race with internal suspend.
  	 */
  	mutex_lock(&md->suspend_lock);
-+    map = dm_get_live_table(md, &srcu_idx);
++	map = dm_get_live_table(md, &srcu_idx);
  	if (!dm_suspended_md(md)) {
  		dm_table_presuspend_targets(map);
  		dm_table_postsuspend_targets(map);
@@ -52,11 +57,10 @@ index 7ac7fac..d9d64fa 100644
  
  	/* dm_put_live_table must be before msleep, otherwise deadlock is possible */
  	dm_put_live_table(md, srcu_idx);
--
-+    mutex_unlock(&md->suspend_lock);
++	mutex_unlock(&md->suspend_lock);
+ 
  	/*
  	 * Rare, but there may be I/O requests still going to complete,
- 	 * for example.  Wait for all references to disappear.
 -- 
 1.8.4.5
 
