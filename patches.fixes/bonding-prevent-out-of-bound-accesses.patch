@@ -1,0 +1,125 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Thu, 30 Jun 2016 16:13:41 +0200
+Subject: bonding: prevent out of bound accesses
+Patch-mainline: v4.7-rc7
+Git-commit: f87fda00b6ed232a817c655b8d179b48bde8fdbe
+References: fate#316924
+
+ether_addr_equal_64bits() requires some care about its arguments,
+namely that 8 bytes might be read, even if last 2 byte values are not
+used.
+
+KASan detected a violation with null_mac_addr and lacpdu_mcast_addr
+in bond_3ad.c
+
+Same problem with mac_bcast[] and mac_v6_allmcast[] in bond_alb.c :
+Although the 8-byte alignment was there, KASan would detect out
+of bound accesses.
+
+Fixes: 815117adaf5b ("bonding: use ether_addr_equal_unaligned for bond addr compare")
+Fixes: bb54e58929f3 ("bonding: Verify RX LACPDU has proper dest mac-addr")
+Fixes: 885a136c52a8 ("bonding: use compare_ether_addr_64bits() in ALB")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Reported-by: Dmitry Vyukov <dvyukov@google.com>
+Acked-by: Dmitry Vyukov <dvyukov@google.com>
+Acked-by: Nikolay Aleksandrov <nikolay@cumulusnetworks.com>
+Acked-by: Ding Tianhong <dingtianhong@huawei.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+SLE12-SP1: omit extending bond_params::ad_actor_system as that was
+introduced in v4.2-rc1 (and hasn't been backported). Also, replace
+one more MAC address initialization by eth_zero_addr().
+
+---
+ drivers/net/bonding/bond_3ad.c | 13 ++++++++-----
+ drivers/net/bonding/bond_alb.c |  7 ++-----
+ drivers/net/bonding/bonding.h  |  4 ++++
+ 3 files changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 3177498f3eab..ee5801d03e24 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -95,11 +95,14 @@
+ #define MAC_ADDRESS_EQUAL(A, B)	\
+ 	ether_addr_equal_64bits((const u8 *)A, (const u8 *)B)
+ 
+-static struct mac_addr null_mac_addr = { { 0, 0, 0, 0, 0, 0 } };
++static const u8 null_mac_addr[ETH_ALEN + 2] __long_aligned = {
++	0, 0, 0, 0, 0, 0
++};
+ static u16 ad_ticks_per_sec;
+ static const int ad_delta_in_ticks = (AD_TIMER_INTERVAL * HZ) / 1000;
+ 
+-static const u8 lacpdu_mcast_addr[ETH_ALEN] = MULTICAST_LACPDU_ADDR;
++static const u8 lacpdu_mcast_addr[ETH_ALEN + 2] __long_aligned =
++	MULTICAST_LACPDU_ADDR;
+ 
+ /* ================= main 802.3ad protocol functions ================== */
+ static int ad_lacpdu_send(struct port *port);
+@@ -1613,7 +1616,7 @@ static void ad_clear_agg(struct aggregator *aggregator)
+ 		aggregator->is_individual = false;
+ 		aggregator->actor_admin_aggregator_key = 0;
+ 		aggregator->actor_oper_aggregator_key = 0;
+-		aggregator->partner_system = null_mac_addr;
++		eth_zero_addr(aggregator->partner_system.mac_addr_value);
+ 		aggregator->partner_system_priority = 0;
+ 		aggregator->partner_oper_aggregator_key = 0;
+ 		aggregator->receive_state = 0;
+@@ -1635,7 +1638,7 @@ static void ad_initialize_agg(struct aggregator *aggregator)
+ 	if (aggregator) {
+ 		ad_clear_agg(aggregator);
+ 
+-		aggregator->aggregator_mac_address = null_mac_addr;
++		eth_zero_addr(aggregator->aggregator_mac_address.mac_addr_value);
+ 		aggregator->aggregator_identifier = 0;
+ 		aggregator->slave = NULL;
+ 	}
+@@ -1670,7 +1673,7 @@ static void ad_initialize_port(struct port *port, int lacp_fast)
+ 	if (port) {
+ 		port->actor_port_number = 1;
+ 		port->actor_port_priority = 0xff;
+-		port->actor_system = null_mac_addr;
++		eth_zero_addr(port->actor_system.mac_addr_value);
+ 		port->actor_system_priority = 0xffff;
+ 		port->actor_port_aggregator_identifier = 0;
+ 		port->ntt = false;
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index c67bbc9c36dc..220a3702d65d 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -44,13 +44,10 @@
+ 
+ 
+ 
+-#ifndef __long_aligned
+-#define __long_aligned __attribute__((aligned((sizeof(long)))))
+-#endif
+-static const u8 mac_bcast[ETH_ALEN] __long_aligned = {
++static const u8 mac_bcast[ETH_ALEN + 2] __long_aligned = {
+ 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+ };
+-static const u8 mac_v6_allmcast[ETH_ALEN] __long_aligned = {
++static const u8 mac_v6_allmcast[ETH_ALEN + 2] __long_aligned = {
+ 	0x33, 0x33, 0x00, 0x00, 0x00, 0x01
+ };
+ static const int alb_delta_in_ticks = HZ / ALB_TIMER_TICKS_PER_SEC;
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 3eeede846cdf..da003fc249a3 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -40,6 +40,10 @@
+ 
+ #define BOND_DEFAULT_MIIMON	100
+ 
++#ifndef __long_aligned
++#define __long_aligned __attribute__((aligned((sizeof(long)))))
++#endif
++
+ #define IS_UP(dev)					   \
+ 	      ((((dev)->flags & IFF_UP) == IFF_UP)	&& \
+ 	       netif_running(dev)			&& \
+-- 
+2.10.1
+

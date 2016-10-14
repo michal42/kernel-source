@@ -1,0 +1,43 @@
+From: Eric Dumazet <edumazet@google.com>
+Date: Mon, 9 May 2016 20:55:16 -0700
+Subject: tcp: refresh skb timestamp at retransmit time
+Patch-mainline: v4.6
+Git-commit: 10a81980fc47e64ffac26a073139813d3f697b64
+References: bsc#937086
+
+In the very unlikely case __tcp_retransmit_skb() can not use the cloning
+done in tcp_transmit_skb(), we need to refresh skb_mstamp before doing
+the copy and transmit, otherwise TCP TS val will be an exact copy of
+original transmit.
+
+Fixes: 7faee5c0d514 ("tcp: remove TCP_SKB_CB(skb)->when")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Yuchung Cheng <ycheng@google.com>
+Acked-by: Yuchung Cheng <ycheng@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/ipv4/tcp_output.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index a0ac0f40caba..4ef359cd7d30 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2423,8 +2423,10 @@ int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
+ 	 */
+ 	if (unlikely((NET_IP_ALIGN && ((unsigned long)skb->data & 3)) ||
+ 		     skb_headroom(skb) >= 0xFFFF)) {
+-		struct sk_buff *nskb = __pskb_copy(skb, MAX_TCP_HEADER,
+-						   GFP_ATOMIC);
++		struct sk_buff *nskb;
++
++		skb_mstamp_get(&skb->skb_mstamp);
++		nskb = __pskb_copy(skb, MAX_TCP_HEADER, GFP_ATOMIC);
+ 		return nskb ? tcp_transmit_skb(sk, nskb, 0, GFP_ATOMIC) :
+ 			      -ENOBUFS;
+ 	} else {
+-- 
+2.10.1
+
