@@ -1,0 +1,40 @@
+From: Thomas Graf <tgraf@suug.ch>
+Date: Thu, 27 Nov 2014 00:22:33 +0100
+Subject: bond: Check length of IFLA_BOND_ARP_IP_TARGET attributes
+Patch-mainline: v3.18
+Git-commit: f6c6fda4c9e17940b0a2ba206b0408babfdc930c
+References: fate#316924
+
+Fixes: 7f28fa10 ("bonding: add arp_ip_target netlink support")
+Reported-by: John Fastabend <john.fastabend@gmail.com>
+Cc: Scott Feldman <sfeldma@cumulusnetworks.com>
+Signed-off-by: Thomas Graf <tgraf@suug.ch>
+Acked-by: John Fastabend <john.r.fastabend@intel.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_netlink.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/bonding/bond_netlink.c b/drivers/net/bonding/bond_netlink.c
+index 70651f8e8e3b..97a833a6b455 100644
+--- a/drivers/net/bonding/bond_netlink.c
++++ b/drivers/net/bonding/bond_netlink.c
+@@ -197,7 +197,12 @@ static int bond_changelink(struct net_device *bond_dev,
+ 
+ 		bond_option_arp_ip_targets_clear(bond);
+ 		nla_for_each_nested(attr, data[IFLA_BOND_ARP_IP_TARGET], rem) {
+-			__be32 target = nla_get_be32(attr);
++			__be32 target;
++
++			if (nla_len(attr) < sizeof(target))
++				return -EINVAL;
++
++			target = nla_get_be32(attr);
+ 
+ 			bond_opt_initval(&newval, target);
+ 			err = __bond_opt_set(bond, BOND_OPT_ARP_TARGETS,
+-- 
+2.10.1
+
