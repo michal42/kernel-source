@@ -1,12 +1,24 @@
 From: jbeulich@suse.com
 Subject: allow non-pv-ops kernel to be built as bzImage
 Patch-mainline: Never, SUSE-Xen specific
+References: js has no idea
 
 This, by enabling the EFI_STUB config option, is a prerequisite for
 secure boot.
 
 The XEN_ADVANCED_COMPRESSION part could be merged into the 2.6.30
 patch (but is probably better kept here).
+
+---
+ arch/x86/Kconfig                  |   32 ++++++++++++++++++++++++++++++--
+ arch/x86/Makefile                 |    2 ++
+ arch/x86/boot/Makefile            |    4 +++-
+ arch/x86/boot/boot.h              |    4 ++++
+ arch/x86/boot/compressed/Makefile |    6 ++++++
+ arch/x86/boot/header.S            |    5 +++++
+ arch/x86/boot/tools/build.c       |    8 ++++++--
+ drivers/xen/Kconfig               |   11 +++++++++++
+ 8 files changed, 67 insertions(+), 5 deletions(-)
 
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
@@ -79,7 +91,7 @@ patch (but is probably better kept here).
  targets		+= $(setup-y)
  hostprogs-y	:= mkcpustr tools/build
  
-@@ -199,7 +201,7 @@ $(obj)/vmlinux-stripped: OBJCOPYFLAGS :=
+@@ -202,7 +204,7 @@ $(obj)/vmlinux-stripped: OBJCOPYFLAGS :=
  $(obj)/vmlinux-stripped: vmlinux FORCE
  	$(call if_changed,objcopy)
  
@@ -105,17 +117,17 @@ patch (but is probably better kept here).
  #include <asm/processor-flags.h>
 --- a/arch/x86/boot/compressed/Makefile
 +++ b/arch/x86/boot/compressed/Makefile
-@@ -21,6 +21,9 @@ KBUILD_AFLAGS  := $(KBUILD_CFLAGS) -D__A
- GCOV_PROFILE := n
- 
- LDFLAGS := -m elf_$(UTS_MACHINE)
+@@ -33,6 +33,9 @@ LDFLAGS += $(shell $(LD) --help 2>&1 | g
+ 	&& echo "-z noreloc-overflow -pie --no-dynamic-linker")
+ endif
+ endif
 +ifeq ($(CONFIG_XEN),y)
 +LDFLAGS += -e 0
 +endif
  LDFLAGS_vmlinux := -T
  
  hostprogs-y	:= mkpiggy
-@@ -38,6 +41,9 @@ endif
+@@ -50,6 +53,9 @@ endif
  ifeq ($(CONFIG_EFI_STUB), y)
  	VMLINUX_OBJS += $(obj)/eboot.o $(obj)/efi_stub_$(BITS).o
  endif
