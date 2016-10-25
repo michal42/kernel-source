@@ -1,0 +1,55 @@
+From: Marius Tomaschewski <mt@suse.de>
+Date: Mon, 31 Aug 2015 15:59:22 +0200
+Subject: ipv6: send NEWLINK on RA managed/otherconf changes
+Patch-mainline: v4.3-rc1
+Git-commit: a394eef562d781f37a50d99cf1dfe596dc1ed96d
+References: bsc#934067
+
+The kernel is applying the RA managed/otherconf flags silently and
+forgets to send ifinfo notify to inform about their change when the
+router provides a zero reachable_time and retrans_timer as dnsmasq
+and many routers send it, which just means unspecified by this router
+and the host should continue using whatever value it is already using.
+Userspace may monitor the ifinfo notifications to activate dhcpv6.
+
+Signed-off-by: Marius Tomaschewski <mt@suse.de>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ net/ipv6/ndisc.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index fda5d95e39f4..3812da2e13ba 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -1065,6 +1065,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
+ 	struct ndisc_options ndopts;
+ 	int optlen;
+ 	unsigned int pref = 0;
++	__u32 old_if_flags;
+ 
+ 	__u8 * opt = (__u8 *)(ra_msg + 1);
+ 
+@@ -1124,6 +1125,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
+ 	 * Remember the managed/otherconf flags from most recently
+ 	 * received RA message (RFC 2462) -- yoshfuji
+ 	 */
++	old_if_flags = in6_dev->if_flags;
+ 	in6_dev->if_flags = (in6_dev->if_flags & ~(IF_RA_MANAGED |
+ 				IF_RA_OTHERCONF)) |
+ 				(ra_msg->icmph.icmp6_addrconf_managed ?
+@@ -1131,6 +1133,9 @@ static void ndisc_router_discovery(struct sk_buff *skb)
+ 				(ra_msg->icmph.icmp6_addrconf_other ?
+ 					IF_RA_OTHERCONF : 0);
+ 
++	if (old_if_flags != in6_dev->if_flags)
++		inet6_ifinfo_notify(RTM_NEWLINK, in6_dev);
++
+ 	if (!in6_dev->cnf.accept_ra_defrtr)
+ 		goto skip_defrtr;
+ 
+-- 
+2.10.1
+
