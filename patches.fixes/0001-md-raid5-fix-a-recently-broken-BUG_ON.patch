@@ -1,0 +1,47 @@
+From 5af9bef72c074dbe946da8b74eabd79cd5a9ff19 Mon Sep 17 00:00:00 2001
+From: NeilBrown <neilb@suse.de>
+Date: Tue, 14 Jan 2014 15:16:10 +1100
+Subject: [PATCH] md/raid5: fix a recently broken BUG_ON().
+Git-commit: 5af9bef72c074dbe946da8b74eabd79cd5a9ff19
+Patch-mainline: v3.13
+References: bsc#1006691
+
+
+commit 6d183de4077191d1201283a9035ce57a9b05254d
+    md/raid5: fix newly-broken locking in get_active_stripe.
+
+simplified a BUG_ON, but removed too much so now it sometimes fires
+when it shouldn't.
+
+When the STRIPE_EXPANDING flag is set, the stripe_head might be on a
+special list while multiple stripe_heads are collected, or it might
+not be on any list, even a 'free' list when the refcount is zero.  As
+long as STRIPE_EXPANDING is set, it will be found and added back to a
+list eventually.
+
+So both of the BUG_ONs which test for the ->lru being empty or not
+need to avoid the case where STRIPE_EXPANDING is set.
+
+The patch which broke this was marked for -stable, so this patch needs
+to be applied to any branch that received 6d183de4
+
+Fixes: 6d183de4077191d1201283a9035ce57a9b05254d
+Cc: stable@vger.kernel.org (any release to which above was applied)
+Signed-off-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+---
+ drivers/md/raid5.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/md/raid5.c
++++ b/drivers/md/raid5.c
+@@ -701,7 +701,8 @@ get_active_stripe(struct r5conf *conf, s
+ 			if (!atomic_read(&sh->count)) {
+ 				if (!test_bit(STRIPE_HANDLE, &sh->state))
+ 					atomic_inc(&conf->active_stripes);
+-				BUG_ON(list_empty(&sh->lru));
++				BUG_ON(list_empty(&sh->lru) &&
++				       !test_bit(STRIPE_EXPANDING, &sh->state));
+ 				list_del_init(&sh->lru);
+ 				if (sh->group) {
+ 					sh->group->stripes_cnt--;
