@@ -1,0 +1,71 @@
+From: Trond Myklebust <trond.myklebust@primarydata.com>
+Date: Mon, 23 Mar 2015 16:10:00 -0400
+Subject: [PATCH] SUNRPC: Fix a regression when reconnecting
+Git-commit: 0695314ef0920b745423510f1e96bf60415a404a
+Patch-mainline: v4.1
+References: bsc#946309
+
+If the task needs to give up the socket lock in order to allow a
+reconnect to occur, then it must also clear the 'rq_bytes_sent' field
+so that when it retransmits, it knows to start from the beginning.
+
+Fixes: 718ba5b87343 ("SUNRPC: Add helpers to prevent socket create from racing")
+Signed-off-by: Trond Myklebust <trond.myklebust@primarydata.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/sunrpc/xprt.c |   22 ++++++++++++----------
+ 1 file changed, 12 insertions(+), 10 deletions(-)
+
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -348,6 +348,15 @@ out_unlock:
+ 	xprt_clear_locked(xprt);
+ }
+ 
++static void xprt_task_clear_bytes_sent(struct rpc_task *task)
++{
++	if (task != NULL) {
++		struct rpc_rqst *req = task->tk_rqstp;
++		if (req != NULL)
++			req->rq_bytes_sent = 0;
++	}
++}
++
+ /**
+  * xprt_release_xprt - allow other requests to use a transport
+  * @xprt: transport with other tasks potentially waiting
+@@ -358,11 +367,7 @@ out_unlock:
+ void xprt_release_xprt(struct rpc_xprt *xprt, struct rpc_task *task)
+ {
+ 	if (xprt->snd_task == task) {
+-		if (task != NULL) {
+-			struct rpc_rqst *req = task->tk_rqstp;
+-			if (req != NULL)
+-				req->rq_bytes_sent = 0;
+-		}
++		xprt_task_clear_bytes_sent(task);
+ 		xprt_clear_locked(xprt);
+ 		__xprt_lock_write_next(xprt);
+ 	}
+@@ -380,11 +385,7 @@ EXPORT_SYMBOL_GPL(xprt_release_xprt);
+ void xprt_release_xprt_cong(struct rpc_xprt *xprt, struct rpc_task *task)
+ {
+ 	if (xprt->snd_task == task) {
+-		if (task != NULL) {
+-			struct rpc_rqst *req = task->tk_rqstp;
+-			if (req != NULL)
+-				req->rq_bytes_sent = 0;
+-		}
++		xprt_task_clear_bytes_sent(task);
+ 		xprt_clear_locked(xprt);
+ 		__xprt_lock_write_next_cong(xprt);
+ 	}
+@@ -737,6 +738,7 @@ void xprt_connect(struct rpc_task *task)
+ 			return;
+ 		if (xprt_test_and_set_connecting(xprt))
+ 			return;
++		xprt_task_clear_bytes_sent(task);
+ 		xprt->stat.connect_start = jiffies;
+ 		xprt->ops->connect(xprt, task);
+ 	}
