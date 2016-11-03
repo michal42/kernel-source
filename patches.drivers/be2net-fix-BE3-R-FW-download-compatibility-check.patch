@@ -1,0 +1,47 @@
+From: Kalesh AP <kalesh.purayil@avagotech.com>
+Date: Mon, 12 Oct 2015 03:47:17 -0400
+Subject: [PATCH] be2net: fix BE3-R FW download compatibility check
+Patch-mainline: v4.3-rc7
+Git-commit: ae4a9d6a6362df4e4e492c297157498d299bdb68
+References: bsc#921784 FATE#318561
+
+In the BE3 FW image, unlike Skyhawk's, the "asic_type_rev" field doesn't
+track the asic_rev of chip it is compatible with. When asic_type_rev
+is 0 the image is compatible only with pre-BE3-R chips (asic_rev < 0x10).
+Fix the current compatibility check to take care of this.
+We hit this issue when we try to flash old BE3 images (used prior to the
+release of BE3-R) on pre-BE3-R adapters.
+
+Fixes: a6e6ff6eee12f3e ("be2net: simplify UFI compatibility checking")
+Signed-off-by: Kalesh AP <kalesh.purayil@avagotech.com>
+Signed-off-by: Sathya Perla <sathya.perla@avagotech.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/net/ethernet/emulex/benet/be_main.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/emulex/benet/be_main.c b/drivers/net/ethernet/emulex/benet/be_main.c
+index fc178f46d06a..773761b6b6ee 100644
+--- a/drivers/net/ethernet/emulex/benet/be_main.c
++++ b/drivers/net/ethernet/emulex/benet/be_main.c
+@@ -4699,7 +4699,15 @@ static bool be_check_ufi_compatibility(struct be_adapter *adapter,
+ 		return false;
+ 	}
+ 
+-	return (fhdr->asic_type_rev >= adapter->asic_rev);
++	/* In BE3 FW images the "asic_type_rev" field doesn't track the
++	 * asic_rev of the chips it is compatible with.
++	 * When asic_type_rev is 0 the image is compatible only with
++	 * pre-BE3-R chips (asic_rev < 0x10)
++	 */
++	if (BEx_chip(adapter) && fhdr->asic_type_rev == 0)
++		return adapter->asic_rev < 0x10;
++	else
++		return (fhdr->asic_type_rev >= adapter->asic_rev);
+ }
+ 
+ static int be_fw_download(struct be_adapter *adapter, const struct firmware* fw)
+-- 
+2.6.6
+
