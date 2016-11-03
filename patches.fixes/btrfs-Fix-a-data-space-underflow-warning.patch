@@ -1,0 +1,54 @@
+From 485290a734f14279fa9376b3d6021a2dc1f82356 Mon Sep 17 00:00:00 2001
+From: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Date: Thu, 29 Oct 2015 17:28:46 +0800
+Subject: [PATCH] btrfs: Fix a data space underflow warning
+Patch-mainline: v4.4-rc1
+Git-commit: 485290a734f14279fa9376b3d6021a2dc1f82356
+References: bsc#985562, bsc#975596, bsc#984779
+
+Even with quota disabled, generic/127 will trigger a kernel warning by
+underflow data space info.
+
+The bug is caused by buffered write, which in case of short copy, the
+start parameter for btrfs_delalloc_release_space() is wrong, and
+round_up/down() in btrfs_delalloc_release() extents the range to page
+aligned, decreasing one more page than expected.
+
+This patch will fix it by passing correct start.
+
+Signed-off-by: Qu Wenruo <quwenruo@cn.fujitsu.com>
+Signed-off-by: Chris Mason <clm@fb.com>
+Signed-off-by: Roberto Sassu <rsassu@suse.de>
+
+---
+ fs/btrfs/file.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/fs/btrfs/file.c b/fs/btrfs/file.c
+index 381be79..e6df6f1 100644
+--- a/fs/btrfs/file.c
++++ b/fs/btrfs/file.c
+@@ -1604,12 +1604,17 @@ static noinline ssize_t __btrfs_buffered_write(struct file *file,
+ 				BTRFS_I(inode)->outstanding_extents++;
+ 				spin_unlock(&BTRFS_I(inode)->lock);
+ 			}
+-			if (only_release_metadata)
++			if (only_release_metadata) {
+ 				btrfs_delalloc_release_metadata(inode,
+ 								release_bytes);
+-			else
+-				btrfs_delalloc_release_space(inode, pos,
++			} else {
++				u64 __pos;
++
++				__pos = round_down(pos, root->sectorsize) +
++					(dirty_pages << PAGE_CACHE_SHIFT);
++				btrfs_delalloc_release_space(inode, __pos,
+ 							     release_bytes);
++			}
+ 		}
+ 
+ 		release_bytes = dirty_pages << PAGE_CACHE_SHIFT;
+-- 
+2.1.4
+
