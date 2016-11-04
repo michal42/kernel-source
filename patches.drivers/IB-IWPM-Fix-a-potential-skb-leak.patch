@@ -1,0 +1,38 @@
+From: Mark Bloch <markb@mellanox.com>
+Date: Fri, 6 May 2016 22:45:24 +0300
+Subject: [PATCH] IB/IWPM: Fix a potential skb leak
+Patch-mainline: v4.7-rc1
+Git-commit: 5ed935e861a4cbf2158ad3386d6d26edd60d2658
+References: bsc#924381 FATE#318568 bsc#921338
+
+In case ibnl_put_msg fails in send_nlmsg_done,
+the function returns with -ENOMEM without freeing.
+
+This patch fixes this behavior.
+
+Fixes: 30dc5e63d6a5 ("RDMA/core: Add support for iWARP Port Mapper user space service")
+Signed-off-by: Mark Bloch <markb@mellanox.com>
+Reviewed-by: Leon Romanovsky <leonro@mellanox.com>
+Signed-off-by: Leon Romanovsky <leon@kernel.org>
+Reviewed-by: Steve Wise <swise@opengridcomputing.com>
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+Acked-by: David Chang <dchang@suse.com>
+---
+ drivers/infiniband/core/iwpm_util.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/infiniband/core/iwpm_util.c b/drivers/infiniband/core/iwpm_util.c
+index 69e9f84c1605..e532ba6d3627 100644
+--- a/drivers/infiniband/core/iwpm_util.c
++++ b/drivers/infiniband/core/iwpm_util.c
+@@ -484,6 +484,7 @@ static int send_nlmsg_done(struct sk_buff *skb, u8 nl_client, int iwpm_pid)
+ 	if (!(ibnl_put_msg(skb, &nlh, 0, 0, nl_client,
+ 			   RDMA_NL_IWPM_MAPINFO, NLM_F_MULTI))) {
+ 		pr_warn("%s Unable to put NLMSG_DONE\n", __func__);
++		dev_kfree_skb(skb);
+ 		return -ENOMEM;
+ 	}
+ 	nlh->nlmsg_type = NLMSG_DONE;
+-- 
+2.6.6
+
