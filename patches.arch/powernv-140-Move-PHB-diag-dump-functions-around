@@ -18,11 +18,15 @@ Signed-off-by: Gavin Shan <shangw@linux.vnet.ibm.com>
 Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
 Acked-by: Torsten Duwe <duwe@suse.de>
 
-diff --git a/arch/powerpc/platforms/powernv/eeh-ioda.c b/arch/powerpc/platforms/powernv/eeh-ioda.c
-index 02245ce..be33a16 100644
+---
+ arch/powerpc/platforms/powernv/eeh-ioda.c |  150 ----------------------
+ arch/powerpc/platforms/powernv/pci.c      |  196 +++++++++++++++++++++---------
+ arch/powerpc/platforms/powernv/pci.h      |    3 
+ 3 files changed, 144 insertions(+), 205 deletions(-)
+
 --- a/arch/powerpc/platforms/powernv/eeh-ioda.c
 +++ b/arch/powerpc/platforms/powernv/eeh-ioda.c
-@@ -681,164 +681,20 @@ static void ioda_eeh_hub_diag(struct pci_controller *hose)
+@@ -666,164 +666,20 @@ static void ioda_eeh_hub_diag(struct pci
  	}
  }
  
@@ -190,11 +194,9 @@ index 02245ce..be33a16 100644
  }
  
  static int ioda_eeh_get_phb_pe(struct pci_controller *hose,
-diff --git a/arch/powerpc/platforms/powernv/pci.c b/arch/powerpc/platforms/powernv/pci.c
-index 6f3d49c..bac289a 100644
 --- a/arch/powerpc/platforms/powernv/pci.c
 +++ b/arch/powerpc/platforms/powernv/pci.c
-@@ -124,77 +124,157 @@ static void pnv_teardown_msi_irqs(struct pci_dev *pdev)
+@@ -125,77 +125,157 @@ static void pnv_teardown_msi_irqs(struct
  }
  #endif /* CONFIG_PCI_MSI */
  
@@ -302,24 +304,20 @@ index 6f3d49c..bac289a 100644
 +	pr_info("  dma1ErrorLog1:        %016llx\n", data->dma1ErrorLog1);
  
  	for (i = 0; i < OPAL_P7IOC_NUM_PEST_REGS; i++) {
- 		if ((data->pestA[i] >> 63) == 0 &&
- 		    (data->pestB[i] >> 63) == 0)
+ 		if ((be64_to_cpu(data->pestA[i]) >> 63) == 0 &&
+ 		    (be64_to_cpu(data->pestB[i]) >> 63) == 0)
  			continue;
 -		pr_info("  PE[%3d] PESTA        = 0x%016llx\n", i, data->pestA[i]);
 -		pr_info("          PESTB        = 0x%016llx\n", data->pestB[i]);
 +
 +		pr_info("  PE[%3d] PESTA:        %016llx\n", i, data->pestA[i]);
 +		pr_info("          PESTB:        %016llx\n", data->pestB[i]);
- 	}
- }
- 
--static void pnv_pci_dump_phb_diag_data(struct pnv_phb *phb)
++	}
++}
++
 +static void pnv_pci_dump_phb3_diag_data(struct pci_controller *hose,
 +					struct OpalIoPhbErrorCommon *common)
- {
--	switch(phb->model) {
--	case PNV_PHB_MODEL_P7IOC:
--		pnv_pci_dump_p7ioc_diag_data(phb);
++{
 +	struct OpalIoPhb3ErrorData *data;
 +	int i;
 +
@@ -382,12 +380,16 @@ index 6f3d49c..bac289a 100644
 +
 +		pr_info("  PE[%3d] PESTA:        %016llx\n", i, data->pestA[i]);
 +		pr_info("          PESTB:        %016llx\n", data->pestB[i]);
-+	}
-+}
-+
+ 	}
+ }
+ 
+-static void pnv_pci_dump_phb_diag_data(struct pnv_phb *phb)
 +void pnv_pci_dump_phb_diag_data(struct pci_controller *hose,
 +				unsigned char *log_buff)
-+{
+ {
+-	switch(phb->model) {
+-	case PNV_PHB_MODEL_P7IOC:
+-		pnv_pci_dump_p7ioc_diag_data(phb);
 +	struct OpalIoPhbErrorCommon *common;
 +
 +	if (!hose || !log_buff)
@@ -409,7 +411,7 @@ index 6f3d49c..bac289a 100644
  	}
  }
  
-@@ -222,7 +302,7 @@ static void pnv_pci_handle_eeh_config(struct pnv_phb *phb, u32 pe_no)
+@@ -223,7 +303,7 @@ static void pnv_pci_handle_eeh_config(st
  		 * with the normal errors generated when probing empty slots
  		 */
  		if (has_diag)
@@ -418,8 +420,6 @@ index 6f3d49c..bac289a 100644
  		else
  			pr_warning("PCI %d: No diag data available\n",
  				   phb->hose->global_number);
-diff --git a/arch/powerpc/platforms/powernv/pci.h b/arch/powerpc/platforms/powernv/pci.h
-index 911c24e..9a11ff0 100644
 --- a/arch/powerpc/platforms/powernv/pci.h
 +++ b/arch/powerpc/platforms/powernv/pci.h
 @@ -176,6 +176,7 @@ struct pnv_phb {
