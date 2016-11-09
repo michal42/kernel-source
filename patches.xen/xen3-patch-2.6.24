@@ -3073,7 +3073,7 @@ Acked-by: jbeulich@novell.com
  		return -EINVAL; /* same return as native Linux */
  	}
  
-@@ -640,8 +638,7 @@ blktap_device_process_request(struct blk
+@@ -644,8 +642,7 @@ blktap_device_process_request(struct blk
  	request->nr_pages = 0;
  	blkif_req.nr_segments = blk_rq_map_sg(req->q, req, tap->sg);
  	BUG_ON(blkif_req.nr_segments > BLKIF_MAX_SEGMENTS_PER_REQUEST);
@@ -3083,7 +3083,7 @@ Acked-by: jbeulich@novell.com
  			fsect = sg->offset >> 9;
  			lsect = fsect + (sg->length >> 9) - 1;
  			nr_sects += sg->length >> 9;
-@@ -652,13 +649,13 @@ blktap_device_process_request(struct blk
+@@ -656,13 +653,13 @@ blktap_device_process_request(struct blk
  				.first_sect = fsect,
  				.last_sect  = lsect };
  
@@ -3099,7 +3099,7 @@ Acked-by: jbeulich@novell.com
  							&table))
  					goto out;
  			} else {
-@@ -666,7 +663,7 @@ blktap_device_process_request(struct blk
+@@ -670,7 +667,7 @@ blktap_device_process_request(struct blk
  				if (blktap_map(tap,
  					       request,
  					       i,
@@ -5461,7 +5461,7 @@ Acked-by: jbeulich@novell.com
  		}
  	}
  #endif
-@@ -1332,8 +1320,8 @@ static int print_device_status(struct de
+@@ -1331,24 +1319,24 @@ static int print_device_status(struct de
  
  	if (!dev->driver) {
  		/* Information only: is this too noisy? */
@@ -5469,10 +5469,7 @@ Acked-by: jbeulich@novell.com
 -		       xendev->nodename);
 +		pr_info("XENBUS: Device with no driver: %s\n",
 +			xendev->nodename);
- 		return 0;
- 	}
- 
-@@ -1341,15 +1329,15 @@ static int print_device_status(struct de
+ 	} else if (xendev->state < XenbusStateConnected) {
  		enum xenbus_state rstate = XenbusStateUnknown;
  		if (xendev->otherend)
  			rstate = xenbus_read_driver_state(xendev->otherend);
@@ -5482,18 +5479,23 @@ Acked-by: jbeulich@novell.com
 +		pr_warning("XENBUS: Timeout connecting to device: %s"
 +			   " (local state %d, remote state %d)\n",
 +			   xendev->nodename, xendev->state, rstate);
- 	}
+ 	} else if (xendev->state == XenbusStateConnected) {
+ 		struct xenbus_driver *xendrv = to_xenbus_driver(dev->driver);
  
- 	xendrv = to_xenbus_driver(dev->driver);
- 	if (xendrv->is_ready && !xendrv->is_ready(xendev))
--		printk(KERN_WARNING "XENBUS: Device not ready: %s\n",
--		       xendev->nodename);
-+		pr_warning("XENBUS: Device not ready: %s\n",
-+			   xendev->nodename);
+ 		if (xendrv->is_ready && !xendrv->is_ready(xendev))
+-			printk(KERN_WARNING "XENBUS: Device not ready: %s\n",
+-			       xendev->nodename);
++			pr_warning("XENBUS: Device not ready: %s\n",
++				   xendev->nodename);
+ 	} else
+-		printk(KERN_WARNING "XENBUS: Unexpected state %d: %s\n",
+-		       xendev->state, xendev->nodename);
++		pr_warning("XENBUS: Unexpected state %d: %s\n",
++			   xendev->state, xendev->nodename);
  
  	return 0;
  }
-@@ -1383,8 +1371,8 @@ static void wait_for_devices(struct xenb
+@@ -1382,8 +1370,8 @@ static void wait_for_devices(struct xenb
  	while (exists_connecting_device(drv)) {
  		if (time_after(jiffies, start + (seconds_waited+5)*HZ)) {
  			if (!seconds_waited)

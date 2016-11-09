@@ -2116,17 +2116,14 @@ Acked-by: jbeulich@suse.com
  		}
  	}
  	xenbus_backend_device_register();
-@@ -1487,8 +1485,7 @@ static int print_device_status(struct de
+@@ -1486,24 +1484,22 @@ static int print_device_status(struct de
  
  	if (!dev->driver) {
  		/* Information only: is this too noisy? */
 -		pr_info("XENBUS: Device with no driver: %s\n",
 -			xendev->nodename);
 +		pr_info("Device with no driver: %s\n", xendev->nodename);
- 		return 0;
- 	}
- 
-@@ -1496,15 +1493,14 @@ static int print_device_status(struct de
+ 	} else if (xendev->state < XenbusStateConnected) {
  		enum xenbus_state rstate = XenbusStateUnknown;
  		if (xendev->otherend)
  			rstate = xenbus_read_driver_state(xendev->otherend);
@@ -2136,17 +2133,22 @@ Acked-by: jbeulich@suse.com
 +		pr_warn("Timeout connecting to device: %s"
 +			" (local state %d, remote state %d)\n",
 +			xendev->nodename, xendev->state, rstate);
- 	}
+ 	} else if (xendev->state == XenbusStateConnected) {
+ 		struct xenbus_driver *xendrv = to_xenbus_driver(dev->driver);
  
- 	xendrv = to_xenbus_driver(dev->driver);
- 	if (xendrv->is_ready && !xendrv->is_ready(xendev))
--		pr_warning("XENBUS: Device not ready: %s\n",
--			   xendev->nodename);
-+		pr_warn("Device not ready: %s\n", xendev->nodename);
+ 		if (xendrv->is_ready && !xendrv->is_ready(xendev))
+-			pr_warning("XENBUS: Device not ready: %s\n",
+-				   xendev->nodename);
++			pr_warn("Device not ready: %s\n", xendev->nodename);
+ 	} else
+-		pr_warning("XENBUS: Unexpected state %d: %s\n",
+-			   xendev->state, xendev->nodename);
++		pr_warn("Unexpected state %d: %s\n",
++			xendev->state, xendev->nodename);
  
  	return 0;
  }
-@@ -1538,8 +1534,7 @@ static void wait_for_devices(struct xenb
+@@ -1537,8 +1533,7 @@ static void wait_for_devices(struct xenb
  	while (exists_connecting_device(drv)) {
  		if (time_after(jiffies, start + (seconds_waited+5)*HZ)) {
  			if (!seconds_waited)
