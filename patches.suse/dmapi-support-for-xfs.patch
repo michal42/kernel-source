@@ -26,7 +26,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  fs/xfs/xfs_inode.h      |    1 
  fs/xfs/xfs_ioctl.c      |   16 
  fs/xfs/xfs_ioctl32.c    |    7 
- fs/xfs/xfs_iops.c       |   29 
+ fs/xfs/xfs_iops.c       |   27 
  fs/xfs/xfs_itable.c     |   14 
  fs/xfs/xfs_itable.h     |    8 
  fs/xfs/xfs_ksyms.c      |   89 +
@@ -37,7 +37,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  fs/xfs/xfs_super.h      |    7 
  fs/xfs/xfs_symlink.c    |   33 
  fs/xfs/xfs_trace.c      |    5 
- 26 files changed, 4209 insertions(+), 48 deletions(-)
+ 26 files changed, 4207 insertions(+), 48 deletions(-)
  create mode 100644 fs/xfs/dmapi/Makefile
  create mode 100644 fs/xfs/dmapi/xfs_dm.c
  create mode 100644 fs/xfs/dmapi/xfs_dm.h
@@ -4036,7 +4036,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  
  	if (ret > 0) {
  		ssize_t err;
-@@ -967,6 +1079,23 @@ xfs_file_release(
+@@ -968,6 +1080,23 @@ xfs_file_release(
  	return -xfs_release(XFS_I(inode));
  }
  
@@ -4060,7 +4060,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  STATIC int
  xfs_file_readdir(
  	struct file	*file,
-@@ -1004,10 +1133,56 @@ xfs_file_mmap(
+@@ -1005,10 +1134,56 @@ xfs_file_mmap(
  {
  	vma->vm_ops = &xfs_file_vm_ops;
  
@@ -4117,7 +4117,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  /*
   * mmap()d file has taken write protection fault and is being made
   * writable. We can set the page state up correctly for a writable
-@@ -1019,6 +1194,21 @@ xfs_vm_page_mkwrite(
+@@ -1020,6 +1195,21 @@ xfs_vm_page_mkwrite(
  	struct vm_area_struct	*vma,
  	struct vm_fault		*vmf)
  {
@@ -4139,7 +4139,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	return block_page_mkwrite(vma, vmf, xfs_get_blocks);
  }
  
-@@ -1486,6 +1676,9 @@ const struct file_operations xfs_file_op
+@@ -1487,6 +1677,9 @@ const struct file_operations xfs_file_op
  	.release	= xfs_file_release,
  	.fsync		= xfs_file_fsync,
  	.fallocate	= xfs_file_fallocate,
@@ -4149,7 +4149,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  };
  
  const struct file_operations xfs_dir_file_operations = {
-@@ -1505,3 +1698,13 @@ static const struct vm_operations_struct
+@@ -1506,3 +1699,13 @@ static const struct vm_operations_struct
  	.page_mkwrite	= xfs_vm_page_mkwrite,
  	.remap_pages	= generic_file_remap_pages,
  };
@@ -4385,7 +4385,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  #include "xfs_mount.h"
  #include "xfs_bmap_btree.h"
  #include "xfs_dinode.h"
-@@ -716,8 +717,8 @@ xfs_ioc_bulkstat(
+@@ -717,8 +718,8 @@ xfs_ioc_bulkstat(
  						bulkreq.ubuffer, &done);
  	else	/* XFS_IOC_FSBULKSTAT */
  		error = xfs_bulkstat(mp, &inlast, &count, xfs_bulkstat_one,
@@ -4396,7 +4396,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  
  	if (error)
  		return -error;
-@@ -1188,7 +1189,16 @@ xfs_ioctl_setattr(
+@@ -1189,7 +1190,16 @@ xfs_ioctl_setattr(
  	xfs_qm_dqrele(udqp);
  	xfs_qm_dqrele(pdqp);
  
@@ -4449,7 +4449,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  
  #include <linux/capability.h>
  #include <linux/xattr.h>
-@@ -705,6 +706,13 @@ xfs_setattr_nonsize(
+@@ -716,6 +717,13 @@ xfs_setattr_nonsize(
  			return XFS_ERROR(error);
  	}
  
@@ -4463,7 +4463,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	return 0;
  
  out_trans_cancel:
-@@ -750,6 +758,17 @@ xfs_setattr_size(
+@@ -769,6 +777,15 @@ xfs_setattr_size(
  	ASSERT((mask & (ATTR_UID|ATTR_GID|ATTR_ATIME|ATTR_ATIME_SET|
  			ATTR_MTIME_SET|ATTR_KILL_PRIV|ATTR_TIMES_SET)) == 0);
  
@@ -4472,16 +4472,14 @@ Acked-by: Jan Kara <jack@suse.cz>
 +		int dmflags = AT_DELAY_FLAG(flags) | DM_SEM_FLAG_WR;
 +		error = XFS_SEND_DATA(mp, DM_EVENT_TRUNCATE, ip,
 +			iattr->ia_size, 0, dmflags, NULL);
-+		if (error) {
-+			lock_flags = 0;
++		if (error)
 +			goto out_unlock;
-+		}
 +	}
 +
- 	if (!(flags & XFS_ATTR_NOLOCK)) {
- 		lock_flags |= XFS_IOLOCK_EXCL;
- 		xfs_ilock(ip, lock_flags);
-@@ -927,9 +946,19 @@ xfs_setattr_size(
+ 	oldsize = inode->i_size;
+ 	newsize = iattr->ia_size;
+ 
+@@ -940,9 +957,19 @@ xfs_setattr_size(
  		xfs_trans_set_sync(tp);
  
  	error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
@@ -4873,7 +4871,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  		{ XFS_MOUNT_GRPID,		"," MNTOPT_GRPID },
  		{ XFS_MOUNT_DISCARD,		"," MNTOPT_DISCARD },
  		{ XFS_MOUNT_SMALL_INUMS,	"," MNTOPT_32BITINODE },
-@@ -1046,14 +1083,18 @@ xfs_fs_put_super(
+@@ -1051,14 +1088,18 @@ xfs_fs_put_super(
  {
  	struct xfs_mount	*mp = XFS_M(sb);
  
@@ -4893,7 +4891,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	kfree(mp);
  }
  
-@@ -1409,6 +1450,7 @@ xfs_fs_fill_super(
+@@ -1415,6 +1456,7 @@ xfs_fs_fill_super(
  	struct inode		*root;
  	struct xfs_mount	*mp = NULL;
  	int			flags = 0, error = ENOMEM;
@@ -4901,7 +4899,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  
  	mp = kzalloc(sizeof(struct xfs_mount), GFP_KERNEL);
  	if (!mp)
-@@ -1423,10 +1465,12 @@ xfs_fs_fill_super(
+@@ -1429,10 +1471,12 @@ xfs_fs_fill_super(
  	mp->m_super = sb;
  	sb->s_fs_info = mp;
  
@@ -4915,7 +4913,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	sb_min_blocksize(sb, BBSIZE);
  	sb->s_xattr = xfs_xattr_handlers;
  	sb->s_export_op = &xfs_export_operations;
-@@ -1435,12 +1479,16 @@ xfs_fs_fill_super(
+@@ -1441,12 +1485,16 @@ xfs_fs_fill_super(
  #endif
  	sb->s_op = &xfs_super_operations;
  
@@ -4933,7 +4931,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  
  	error = xfs_init_mount_workqueues(mp);
  	if (error)
-@@ -1491,6 +1539,9 @@ xfs_fs_fill_super(
+@@ -1497,6 +1545,9 @@ xfs_fs_fill_super(
  		error = ENOENT;
  		goto out_unmount;
  	}
@@ -4943,7 +4941,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	if (is_bad_inode(root)) {
  		error = EINVAL;
  		goto out_unmount;
-@@ -1513,8 +1564,11 @@ out_destroy_workqueues:
+@@ -1519,8 +1570,11 @@ out_destroy_workqueues:
  	xfs_destroy_mount_workqueues(mp);
   out_close_devices:
  	xfs_close_devices(mp);
@@ -4955,7 +4953,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	kfree(mp);
   out:
  	return -error;
-@@ -1568,7 +1622,7 @@ static const struct super_operations xfs
+@@ -1574,7 +1628,7 @@ static const struct super_operations xfs
  	.free_cached_objects	= xfs_fs_free_cached_objects,
  };
  
@@ -4964,7 +4962,7 @@ Acked-by: Jan Kara <jack@suse.cz>
  	.owner			= THIS_MODULE,
  	.name			= "xfs",
  	.mount			= xfs_fs_mount,
-@@ -1576,6 +1630,7 @@ static struct file_system_type xfs_fs_ty
+@@ -1582,6 +1636,7 @@ static struct file_system_type xfs_fs_ty
  	.fs_flags		= FS_REQUIRES_DEV,
  };
  MODULE_ALIAS_FS("xfs");

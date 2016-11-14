@@ -1,0 +1,79 @@
+From: Jan Kara <jack@suse.cz>
+Subject: xfs: Pass flags into xfs_setattr_size()
+Patch-mainline: Never (dmapi was refused upstream)
+References: fate#315263
+
+DMAPI needs to pass flags into xfs_setattr_size().
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_bmap_util.c |    3 ++-
+ fs/xfs/xfs_file.c      |    2 +-
+ fs/xfs/xfs_iops.c      |    8 +++++---
+ fs/xfs/xfs_iops.h      |    2 +-
+ 4 files changed, 9 insertions(+), 6 deletions(-)
+
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -1634,7 +1634,8 @@ xfs_change_file_space(
+ 		iattr.ia_valid = ATTR_SIZE;
+ 		iattr.ia_size = startoffset;
+ 
+-		error = xfs_setattr_size(ip, &iattr);
++		error = xfs_setattr_size(ip, &iattr, attr_flags |
++					 XFS_ATTR_NOLOCK);
+ 		xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+ 
+ 		if (error)
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -914,7 +914,7 @@ xfs_file_fallocate(
+ 
+ 		iattr.ia_valid = ATTR_SIZE;
+ 		iattr.ia_size = new_size;
+-		error = -xfs_setattr_size(ip, &iattr);
++		error = -xfs_setattr_size(ip, &iattr, attr_flags);
+ 	}
+ 
+ out_unlock:
+--- a/fs/xfs/xfs_iops.c
++++ b/fs/xfs/xfs_iops.c
+@@ -722,7 +722,8 @@ out_dqrele:
+ int
+ xfs_setattr_size(
+ 	struct xfs_inode	*ip,
+-	struct iattr		*iattr)
++	struct iattr		*iattr,
++	int flags)
+ {
+ 	struct xfs_mount	*mp = ip->i_mount;
+ 	struct inode		*inode = VFS_I(ip);
+@@ -936,14 +937,15 @@ out_trans_cancel:
+ STATIC int
+ xfs_vn_setattr(
+ 	struct dentry		*dentry,
+-	struct iattr		*iattr)
++	struct iattr		*iattr,
++	int flags)
+ {
+ 	struct xfs_inode	*ip = XFS_I(dentry->d_inode);
+ 	int			error;
+ 
+ 	if (iattr->ia_valid & ATTR_SIZE) {
+ 		xfs_ilock(ip, XFS_IOLOCK_EXCL);
+-		error = xfs_setattr_size(ip, iattr);
++		error = xfs_setattr_size(ip, iattr, XFS_ATTR_NOLOCK);
+ 		xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+ 	} else {
+ 		error = xfs_setattr_nonsize(ip, iattr, 0);
+--- a/fs/xfs/xfs_iops.h
++++ b/fs/xfs/xfs_iops.h
+@@ -38,6 +38,6 @@ extern void xfs_setup_inode(struct xfs_i
+ 
+ extern int xfs_setattr_nonsize(struct xfs_inode *ip, struct iattr *vap,
+ 			       int flags);
+-extern int xfs_setattr_size(struct xfs_inode *ip, struct iattr *vap);
++extern int xfs_setattr_size(struct xfs_inode *ip, struct iattr *vap, int flags);
+ 
+ #endif /* __XFS_IOPS_H__ */
