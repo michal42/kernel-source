@@ -48,31 +48,29 @@ Signed-off-by: Roland Dreier <roland@purestorage.com>
 Signed-off-by: Hadar Hen Zion <hadarh@mellanox.com>
 Acked-by: John Jolly <jjolly@suse.de>
 ---
- drivers/infiniband/core/addr.c              |   97 ++++++++++++++++++++++++++-
+ drivers/infiniband/core/addr.c              |   97 +++++++++++++++++++++++++++-
  drivers/infiniband/core/cm.c                |   50 ++++++++++++++
- drivers/infiniband/core/cma.c               |   60 +++++++++++++++--
- drivers/infiniband/core/sa_query.c          |   12 +++-
- drivers/infiniband/core/verbs.c             |   55 +++++++++++++++-
- drivers/infiniband/hw/ehca/ehca_qp.c        |    2 +-
- drivers/infiniband/hw/ipath/ipath_qp.c      |    2 +-
- drivers/infiniband/hw/mlx4/qp.c             |    9 ++-
- drivers/infiniband/hw/mlx5/qp.c             |    3 +-
- drivers/infiniband/hw/mthca/mthca_qp.c      |    3 +-
- drivers/infiniband/hw/ocrdma/ocrdma_verbs.c |    3 +-
- drivers/infiniband/hw/qib/qib_qp.c          |    2 +-
- include/linux/mlx4/device.h                 |    1 +
+ drivers/infiniband/core/cma.c               |   62 +++++++++++++++--
+ drivers/infiniband/core/sa_query.c          |   12 +++
+ drivers/infiniband/core/verbs.c             |   55 +++++++++++++++
+ drivers/infiniband/hw/ehca/ehca_qp.c        |    2 
+ drivers/infiniband/hw/ipath/ipath_qp.c      |    2 
+ drivers/infiniband/hw/mlx4/qp.c             |    9 ++
+ drivers/infiniband/hw/mlx5/qp.c             |    3 
+ drivers/infiniband/hw/mthca/mthca_qp.c      |    3 
+ drivers/infiniband/hw/ocrdma/ocrdma_verbs.c |    3 
+ drivers/infiniband/hw/qib/qib_qp.c          |    2 
+ include/linux/mlx4/device.h                 |    1 
  include/rdma/ib_addr.h                      |   42 +++++++++++-
- include/rdma/ib_cm.h                        |    1 +
- include/rdma/ib_pack.h                      |    1 +
- include/rdma/ib_sa.h                        |    3 +
+ include/rdma/ib_cm.h                        |    1 
+ include/rdma/ib_pack.h                      |    1 
+ include/rdma/ib_sa.h                        |    3 
  include/rdma/ib_verbs.h                     |   21 +++++-
- 18 files changed, 343 insertions(+), 24 deletions(-)
+ 18 files changed, 344 insertions(+), 25 deletions(-)
 
-diff --git a/drivers/infiniband/core/addr.c b/drivers/infiniband/core/addr.c
-index e90f2b2..8172d37 100644
 --- a/drivers/infiniband/core/addr.c
 +++ b/drivers/infiniband/core/addr.c
-@@ -86,6 +86,8 @@ int rdma_addr_size(struct sockaddr *addr)
+@@ -86,6 +86,8 @@ int rdma_addr_size(struct sockaddr *addr
  }
  EXPORT_SYMBOL(rdma_addr_size);
  
@@ -81,7 +79,7 @@ index e90f2b2..8172d37 100644
  void rdma_addr_register_client(struct rdma_addr_client *client)
  {
  	atomic_set(&client->refcount, 1);
-@@ -119,7 +121,8 @@ int rdma_copy_addr(struct rdma_dev_addr *dev_addr, struct net_device *dev,
+@@ -119,7 +121,8 @@ int rdma_copy_addr(struct rdma_dev_addr
  }
  EXPORT_SYMBOL(rdma_copy_addr);
  
@@ -91,7 +89,7 @@ index e90f2b2..8172d37 100644
  {
  	struct net_device *dev;
  	int ret = -EADDRNOTAVAIL;
-@@ -142,6 +145,8 @@ int rdma_translate_ip(struct sockaddr *addr, struct rdma_dev_addr *dev_addr)
+@@ -142,6 +145,8 @@ int rdma_translate_ip(struct sockaddr *a
  			return ret;
  
  		ret = rdma_copy_addr(dev_addr, dev, NULL);
@@ -100,7 +98,7 @@ index e90f2b2..8172d37 100644
  		dev_put(dev);
  		break;
  
-@@ -153,6 +158,8 @@ int rdma_translate_ip(struct sockaddr *addr, struct rdma_dev_addr *dev_addr)
+@@ -153,6 +158,8 @@ int rdma_translate_ip(struct sockaddr *a
  					  &((struct sockaddr_in6 *) addr)->sin6_addr,
  					  dev, 1)) {
  				ret = rdma_copy_addr(dev_addr, dev, NULL);
@@ -109,7 +107,7 @@ index e90f2b2..8172d37 100644
  				break;
  			}
  		}
-@@ -238,7 +245,7 @@ static int addr4_resolve(struct sockaddr_in *src_in,
+@@ -238,7 +245,7 @@ static int addr4_resolve(struct sockaddr
  	src_in->sin_addr.s_addr = fl4.saddr;
  
  	if (rt->dst.dev->flags & IFF_LOOPBACK) {
@@ -118,7 +116,7 @@ index e90f2b2..8172d37 100644
  		if (!ret)
  			memcpy(addr->dst_dev_addr, addr->src_dev_addr, MAX_ADDR_LEN);
  		goto put;
-@@ -286,7 +293,7 @@ static int addr6_resolve(struct sockaddr_in6 *src_in,
+@@ -286,7 +293,7 @@ static int addr6_resolve(struct sockaddr
  	}
  
  	if (dst->dev->flags & IFF_LOOPBACK) {
@@ -127,7 +125,7 @@ index e90f2b2..8172d37 100644
  		if (!ret)
  			memcpy(addr->dst_dev_addr, addr->src_dev_addr, MAX_ADDR_LEN);
  		goto put;
-@@ -437,6 +444,88 @@ void rdma_addr_cancel(struct rdma_dev_addr *addr)
+@@ -437,6 +444,88 @@ void rdma_addr_cancel(struct rdma_dev_ad
  }
  EXPORT_SYMBOL(rdma_addr_cancel);
  
@@ -230,8 +228,6 @@ index e90f2b2..8172d37 100644
  	unregister_netevent_notifier(&nb);
  	destroy_workqueue(addr_wq);
  }
-diff --git a/drivers/infiniband/core/cm.c b/drivers/infiniband/core/cm.c
-index 784b97c..d596a53 100644
 --- a/drivers/infiniband/core/cm.c
 +++ b/drivers/infiniband/core/cm.c
 @@ -47,6 +47,7 @@
@@ -242,7 +238,7 @@ index 784b97c..d596a53 100644
  
  #include <rdma/ib_cache.h>
  #include <rdma/ib_cm.h>
-@@ -177,6 +178,8 @@ struct cm_av {
+@@ -181,6 +182,8 @@ struct cm_av {
  	struct ib_ah_attr ah_attr;
  	u16 pkey_index;
  	u8 timeout;
@@ -251,7 +247,7 @@ index 784b97c..d596a53 100644
  };
  
  struct cm_work {
-@@ -346,6 +349,23 @@ static void cm_init_av_for_response(struct cm_port *port, struct ib_wc *wc,
+@@ -386,6 +389,23 @@ static void cm_init_av_for_response(stru
  			   grh, &av->ah_attr);
  }
  
@@ -272,30 +268,30 @@ index 784b97c..d596a53 100644
 +}
 +EXPORT_SYMBOL(ib_update_cm_av);
 +
- static int cm_init_av_by_path(struct ib_sa_path_rec *path, struct cm_av *av)
+ static int cm_init_av_by_path(struct ib_sa_path_rec *path, struct cm_av *av,
+ 			      struct cm_id_private *cm_id_priv)
  {
- 	struct cm_device *cm_dev;
-@@ -376,6 +396,9 @@ static int cm_init_av_by_path(struct ib_sa_path_rec *path, struct cm_av *av)
+@@ -417,6 +437,9 @@ static int cm_init_av_by_path(struct ib_
  	ib_init_ah_from_path(cm_dev->ib_device, port->port_num, path,
  			     &av->ah_attr);
  	av->timeout = path->packet_life_time + 1;
 +	memcpy(av->smac, path->smac, sizeof(av->smac));
 +
 +	av->valid = 1;
- 	return 0;
- }
  
-@@ -1557,6 +1580,9 @@ static int cm_req_handler(struct cm_work *work)
+ 	spin_lock_irqsave(&cm.lock, flags);
+ 	if (&cm_id_priv->av == av)
+@@ -1626,6 +1649,9 @@ static int cm_req_handler(struct cm_work
  
  	cm_process_routed_req(req_msg, work->mad_recv_wc->wc);
  	cm_format_paths_from_req(req_msg, &work->path[0], &work->path[1]);
 +
 +	memcpy(work->path[0].dmac, cm_id_priv->av.ah_attr.dmac, ETH_ALEN);
 +	work->path[0].vlan_id = cm_id_priv->av.ah_attr.vlan_id;
- 	ret = cm_init_av_by_path(&work->path[0], &cm_id_priv->av);
+ 	ret = cm_init_av_by_path(&work->path[0], &cm_id_priv->av,
+ 				 cm_id_priv);
  	if (ret) {
- 		ib_get_cached_gid(work->port->cm_dev->ib_device,
-@@ -3503,6 +3529,30 @@ static int cm_init_qp_rtr_attr(struct cm_id_private *cm_id_priv,
+@@ -3588,6 +3614,30 @@ static int cm_init_qp_rtr_attr(struct cm
  		*qp_attr_mask = IB_QP_STATE | IB_QP_AV | IB_QP_PATH_MTU |
  				IB_QP_DEST_QPN | IB_QP_RQ_PSN;
  		qp_attr->ah_attr = cm_id_priv->av.ah_attr;
@@ -326,11 +322,9 @@ index 784b97c..d596a53 100644
  		qp_attr->path_mtu = cm_id_priv->path_mtu;
  		qp_attr->dest_qp_num = be32_to_cpu(cm_id_priv->remote_qpn);
  		qp_attr->rq_psn = be32_to_cpu(cm_id_priv->rq_psn);
-diff --git a/drivers/infiniband/core/cma.c b/drivers/infiniband/core/cma.c
-index dab4b41..6378397 100644
 --- a/drivers/infiniband/core/cma.c
 +++ b/drivers/infiniband/core/cma.c
-@@ -362,7 +362,7 @@ static int cma_translate_addr(struct sockaddr *addr, struct rdma_dev_addr *dev_a
+@@ -362,7 +362,7 @@ static int cma_translate_addr(struct soc
  	int ret;
  
  	if (addr->sa_family != AF_IB) {
@@ -339,7 +333,7 @@ index dab4b41..6378397 100644
  	} else {
  		cma_translate_ib((struct sockaddr_ib *) addr, dev_addr);
  		ret = 0;
-@@ -602,6 +602,7 @@ static int cma_modify_qp_rtr(struct rdma_id_private *id_priv,
+@@ -602,6 +602,7 @@ static int cma_modify_qp_rtr(struct rdma
  {
  	struct ib_qp_attr qp_attr;
  	int qp_attr_mask, ret;
@@ -347,7 +341,7 @@ index dab4b41..6378397 100644
  
  	mutex_lock(&id_priv->qp_mutex);
  	if (!id_priv->id.qp) {
-@@ -624,6 +625,20 @@ static int cma_modify_qp_rtr(struct rdma_id_private *id_priv,
+@@ -624,6 +625,20 @@ static int cma_modify_qp_rtr(struct rdma
  	if (ret)
  		goto out;
  
@@ -368,7 +362,7 @@ index dab4b41..6378397 100644
  	if (conn_param)
  		qp_attr.max_dest_rd_atomic = conn_param->responder_resources;
  	ret = ib_modify_qp(id_priv->id.qp, &qp_attr, qp_attr_mask);
-@@ -724,6 +739,7 @@ int rdma_init_qp_attr(struct rdma_cm_id *id, struct ib_qp_attr *qp_attr,
+@@ -724,6 +739,7 @@ int rdma_init_qp_attr(struct rdma_cm_id
  		else
  			ret = ib_cm_init_qp_attr(id_priv->cm_id.ib, qp_attr,
  						 qp_attr_mask);
@@ -376,7 +370,7 @@ index dab4b41..6378397 100644
  		if (qp_attr->qp_state == IB_QPS_RTR)
  			qp_attr->rq_psn = id_priv->seq_num;
  		break;
-@@ -1265,6 +1281,15 @@ static int cma_req_handler(struct ib_cm_id *cm_id, struct ib_cm_event *ib_event)
+@@ -1272,6 +1288,15 @@ static int cma_req_handler(struct ib_cm_
  	struct rdma_id_private *listen_id, *conn_id;
  	struct rdma_cm_event event;
  	int offset, ret;
@@ -392,7 +386,7 @@ index dab4b41..6378397 100644
  
  	listen_id = cm_id->context;
  	if (!cma_check_req_qp_type(&listen_id->id, ib_event))
-@@ -1309,12 +1334,29 @@ static int cma_req_handler(struct ib_cm_id *cm_id, struct ib_cm_event *ib_event)
+@@ -1316,12 +1341,29 @@ static int cma_req_handler(struct ib_cm_
  	if (ret)
  		goto err3;
  
@@ -423,7 +417,7 @@ index dab4b41..6378397 100644
  		ib_send_cm_mra(cm_id, CMA_CM_MRA_SETTING, NULL, 0);
  	mutex_unlock(&lock);
  	mutex_unlock(&conn_id->handler_mutex);
-@@ -1474,7 +1516,7 @@ static int iw_conn_req_handler(struct iw_cm_id *cm_id,
+@@ -1481,7 +1523,7 @@ static int iw_conn_req_handler(struct iw
  	mutex_lock_nested(&conn_id->handler_mutex, SINGLE_DEPTH_NESTING);
  	conn_id->state = RDMA_CM_CONNECT;
  
@@ -432,7 +426,7 @@ index dab4b41..6378397 100644
  	if (ret) {
  		mutex_unlock(&conn_id->handler_mutex);
  		rdma_destroy_id(new_cm_id);
-@@ -1855,7 +1897,7 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
+@@ -1862,7 +1904,7 @@ static int cma_resolve_iboe_route(struct
  	struct cma_work *work;
  	int ret;
  	struct net_device *ndev = NULL;
@@ -441,17 +435,18 @@ index dab4b41..6378397 100644
  
  	work = kzalloc(sizeof *work, GFP_KERNEL);
  	if (!work)
-@@ -1879,10 +1921,14 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
+@@ -1886,10 +1928,14 @@ static int cma_resolve_iboe_route(struct
  		goto err2;
  	}
  
 -	vid = rdma_vlan_dev_vlan_id(ndev);
+-
+-	iboe_mac_vlan_to_ll(&route->path_rec->sgid, addr->dev_addr.src_dev_addr, vid);
+-	iboe_mac_vlan_to_ll(&route->path_rec->dgid, addr->dev_addr.dst_dev_addr, vid);
 +	route->path_rec->vlan_id = rdma_vlan_dev_vlan_id(ndev);
 +	memcpy(route->path_rec->dmac, addr->dev_addr.dst_dev_addr, ETH_ALEN);
 +	memcpy(route->path_rec->smac, ndev->dev_addr, ndev->addr_len);
- 
--	iboe_mac_vlan_to_ll(&route->path_rec->sgid, addr->dev_addr.src_dev_addr, vid);
--	iboe_mac_vlan_to_ll(&route->path_rec->dgid, addr->dev_addr.dst_dev_addr, vid);
++
 +	iboe_mac_vlan_to_ll(&route->path_rec->sgid, addr->dev_addr.src_dev_addr,
 +			    route->path_rec->vlan_id);
 +	iboe_mac_vlan_to_ll(&route->path_rec->dgid, addr->dev_addr.dst_dev_addr,
@@ -459,8 +454,6 @@ index dab4b41..6378397 100644
  
  	route->path_rec->hop_limit = 1;
  	route->path_rec->reversible = 1;
-diff --git a/drivers/infiniband/core/sa_query.c b/drivers/infiniband/core/sa_query.c
-index 9838ca4..f820958 100644
 --- a/drivers/infiniband/core/sa_query.c
 +++ b/drivers/infiniband/core/sa_query.c
 @@ -42,7 +42,7 @@
@@ -472,7 +465,7 @@ index 9838ca4..f820958 100644
  #include <rdma/ib_pack.h>
  #include <rdma/ib_cache.h>
  #include "sa.h"
-@@ -556,6 +556,13 @@ int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
+@@ -556,6 +556,13 @@ int ib_init_ah_from_path(struct ib_devic
  		ah_attr->grh.hop_limit     = rec->hop_limit;
  		ah_attr->grh.traffic_class = rec->traffic_class;
  	}
@@ -486,7 +479,7 @@ index 9838ca4..f820958 100644
  	return 0;
  }
  EXPORT_SYMBOL(ib_init_ah_from_path);
-@@ -670,6 +677,9 @@ static void ib_sa_path_rec_callback(struct ib_sa_query *sa_query,
+@@ -670,6 +677,9 @@ static void ib_sa_path_rec_callback(stru
  
  		ib_unpack(path_rec_table, ARRAY_SIZE(path_rec_table),
  			  mad->data, &rec);
@@ -496,8 +489,6 @@ index 9838ca4..f820958 100644
  		query->callback(status, &rec, query->context);
  	} else
  		query->callback(status, NULL, query->context);
-diff --git a/drivers/infiniband/core/verbs.c b/drivers/infiniband/core/verbs.c
-index 6def038..699c805 100644
 --- a/drivers/infiniband/core/verbs.c
 +++ b/drivers/infiniband/core/verbs.c
 @@ -44,6 +44,7 @@
@@ -508,7 +499,7 @@ index 6def038..699c805 100644
  
  int ib_rate_to_mult(enum ib_rate rate)
  {
-@@ -195,8 +196,28 @@ int ib_init_ah_from_wc(struct ib_device *device, u8 port_num, struct ib_wc *wc,
+@@ -189,8 +190,28 @@ int ib_init_ah_from_wc(struct ib_device
  	u32 flow_class;
  	u16 gid_index;
  	int ret;
@@ -537,7 +528,7 @@ index 6def038..699c805 100644
  	ah_attr->dlid = wc->slid;
  	ah_attr->sl = wc->sl;
  	ah_attr->src_path_bits = wc->dlid_path_bits;
-@@ -479,7 +500,9 @@ EXPORT_SYMBOL(ib_create_qp);
+@@ -473,7 +494,9 @@ EXPORT_SYMBOL(ib_create_qp);
  static const struct {
  	int			valid;
  	enum ib_qp_attr_mask	req_param[IB_QPT_MAX];
@@ -547,7 +538,7 @@ index 6def038..699c805 100644
  } qp_state_table[IB_QPS_ERR + 1][IB_QPS_ERR + 1] = {
  	[IB_QPS_RESET] = {
  		[IB_QPS_RESET] = { .valid = 1 },
-@@ -560,6 +583,12 @@ static const struct {
+@@ -554,6 +577,12 @@ static const struct {
  						IB_QP_MAX_DEST_RD_ATOMIC	|
  						IB_QP_MIN_RNR_TIMER),
  			},
@@ -560,7 +551,7 @@ index 6def038..699c805 100644
  			.opt_param = {
  				 [IB_QPT_UD]  = (IB_QP_PKEY_INDEX		|
  						 IB_QP_QKEY),
-@@ -579,7 +608,21 @@ static const struct {
+@@ -573,7 +602,21 @@ static const struct {
  						 IB_QP_QKEY),
  				 [IB_QPT_GSI] = (IB_QP_PKEY_INDEX		|
  						 IB_QP_QKEY),
@@ -583,7 +574,7 @@ index 6def038..699c805 100644
  		}
  	},
  	[IB_QPS_RTR]   = {
-@@ -782,7 +825,8 @@ static const struct {
+@@ -776,7 +819,8 @@ static const struct {
  };
  
  int ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
@@ -593,7 +584,7 @@ index 6def038..699c805 100644
  {
  	enum ib_qp_attr_mask req_param, opt_param;
  
-@@ -801,6 +845,13 @@ int ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
+@@ -795,6 +839,13 @@ int ib_modify_qp_is_ok(enum ib_qp_state
  	req_param = qp_state_table[cur_state][next_state].req_param[type];
  	opt_param = qp_state_table[cur_state][next_state].opt_param[type];
  
@@ -607,11 +598,9 @@ index 6def038..699c805 100644
  	if ((mask & req_param) != req_param)
  		return 0;
  
-diff --git a/drivers/infiniband/hw/ehca/ehca_qp.c b/drivers/infiniband/hw/ehca/ehca_qp.c
-index 00d6861..2e89356 100644
 --- a/drivers/infiniband/hw/ehca/ehca_qp.c
 +++ b/drivers/infiniband/hw/ehca/ehca_qp.c
-@@ -1329,7 +1329,7 @@ static int internal_modify_qp(struct ib_qp *ibqp,
+@@ -1329,7 +1329,7 @@ static int internal_modify_qp(struct ib_
  	qp_new_state = attr_mask & IB_QP_STATE ? attr->qp_state : qp_cur_state;
  	if (!smi_reset2init &&
  	    !ib_modify_qp_is_ok(qp_cur_state, qp_new_state, ibqp->qp_type,
@@ -620,11 +609,9 @@ index 00d6861..2e89356 100644
  		ret = -EINVAL;
  		ehca_err(ibqp->device,
  			 "Invalid qp transition new_state=%x cur_state=%x "
-diff --git a/drivers/infiniband/hw/ipath/ipath_qp.c b/drivers/infiniband/hw/ipath/ipath_qp.c
-index 0857a9c..face876 100644
 --- a/drivers/infiniband/hw/ipath/ipath_qp.c
 +++ b/drivers/infiniband/hw/ipath/ipath_qp.c
-@@ -463,7 +463,7 @@ int ipath_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+@@ -463,7 +463,7 @@ int ipath_modify_qp(struct ib_qp *ibqp,
  	new_state = attr_mask & IB_QP_STATE ? attr->qp_state : cur_state;
  
  	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type,
@@ -633,11 +620,9 @@ index 0857a9c..face876 100644
  		goto inval;
  
  	if (attr_mask & IB_QP_AV) {
-diff --git a/drivers/infiniband/hw/mlx4/qp.c b/drivers/infiniband/hw/mlx4/qp.c
-index 387fbf2..065f60e 100644
 --- a/drivers/infiniband/hw/mlx4/qp.c
 +++ b/drivers/infiniband/hw/mlx4/qp.c
-@@ -1599,13 +1599,18 @@ int mlx4_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+@@ -1599,13 +1599,18 @@ int mlx4_ib_modify_qp(struct ib_qp *ibqp
  	struct mlx4_ib_qp *qp = to_mqp(ibqp);
  	enum ib_qp_state cur_state, new_state;
  	int err = -EINVAL;
@@ -658,11 +643,9 @@ index 387fbf2..065f60e 100644
  		pr_debug("qpn 0x%x: invalid attribute mask specified "
  			 "for transition %d to %d. qp_type %d,"
  			 " attr_mask 0x%x\n",
-diff --git a/drivers/infiniband/hw/mlx5/qp.c b/drivers/infiniband/hw/mlx5/qp.c
-index d465f0d..7dfe8a1 100644
 --- a/drivers/infiniband/hw/mlx5/qp.c
 +++ b/drivers/infiniband/hw/mlx5/qp.c
-@@ -1672,7 +1672,8 @@ int mlx5_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+@@ -1657,7 +1657,8 @@ int mlx5_ib_modify_qp(struct ib_qp *ibqp
  	new_state = attr_mask & IB_QP_STATE ? attr->qp_state : cur_state;
  
  	if (ibqp->qp_type != MLX5_IB_QPT_REG_UMR &&
@@ -672,11 +655,9 @@ index d465f0d..7dfe8a1 100644
  		goto out;
  
  	if ((attr_mask & IB_QP_PORT) &&
-diff --git a/drivers/infiniband/hw/mthca/mthca_qp.c b/drivers/infiniband/hw/mthca/mthca_qp.c
-index 26a6845..e354b2f 100644
 --- a/drivers/infiniband/hw/mthca/mthca_qp.c
 +++ b/drivers/infiniband/hw/mthca/mthca_qp.c
-@@ -860,7 +860,8 @@ int mthca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
+@@ -860,7 +860,8 @@ int mthca_modify_qp(struct ib_qp *ibqp,
  
  	new_state = attr_mask & IB_QP_STATE ? attr->qp_state : cur_state;
  
@@ -686,11 +667,9 @@ index 26a6845..e354b2f 100644
  		mthca_dbg(dev, "Bad QP transition (transport %d) "
  			  "%d->%d with attr 0x%08x\n",
  			  qp->transport, cur_state, new_state,
-diff --git a/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c b/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c
-index 69f1d12..cbc1af0 100644
 --- a/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c
 +++ b/drivers/infiniband/hw/ocrdma/ocrdma_verbs.c
-@@ -1326,7 +1326,8 @@ int ocrdma_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+@@ -1326,7 +1326,8 @@ int ocrdma_modify_qp(struct ib_qp *ibqp,
  		new_qps = old_qps;
  	spin_unlock_irqrestore(&qp->q_lock, flags);
  
@@ -700,11 +679,9 @@ index 69f1d12..cbc1af0 100644
  		pr_err("%s(%d) invalid attribute mask=0x%x specified for\n"
  		       "qpn=0x%x of type=0x%x old_qps=0x%x, new_qps=0x%x\n",
  		       __func__, dev->id, attr_mask, qp->id, ibqp->qp_type,
-diff --git a/drivers/infiniband/hw/qib/qib_qp.c b/drivers/infiniband/hw/qib/qib_qp.c
-index 3cca55b..0cad0c4 100644
 --- a/drivers/infiniband/hw/qib/qib_qp.c
 +++ b/drivers/infiniband/hw/qib/qib_qp.c
-@@ -585,7 +585,7 @@ int qib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+@@ -585,7 +585,7 @@ int qib_modify_qp(struct ib_qp *ibqp, st
  	new_state = attr_mask & IB_QP_STATE ? attr->qp_state : cur_state;
  
  	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type,
@@ -713,11 +690,9 @@ index 3cca55b..0cad0c4 100644
  		goto inval;
  
  	if (attr_mask & IB_QP_AV) {
-diff --git a/include/linux/mlx4/device.h b/include/linux/mlx4/device.h
-index 0fcccb9..90a4494 100644
 --- a/include/linux/mlx4/device.h
 +++ b/include/linux/mlx4/device.h
-@@ -1132,6 +1132,7 @@ int mlx4_SET_PORT_PRIO2TC(struct mlx4_dev *dev, u8 port, u8 *prio2tc);
+@@ -1132,6 +1132,7 @@ int mlx4_SET_PORT_PRIO2TC(struct mlx4_de
  int mlx4_SET_PORT_SCHEDULER(struct mlx4_dev *dev, u8 port, u8 *tc_tx_bw,
  		u8 *pg, u16 *ratelimit);
  int mlx4_SET_PORT_VXLAN(struct mlx4_dev *dev, u8 port, u8 steering);
@@ -725,8 +700,6 @@ index 0fcccb9..90a4494 100644
  int mlx4_find_cached_vlan(struct mlx4_dev *dev, u8 port, u16 vid, int *idx);
  int mlx4_register_vlan(struct mlx4_dev *dev, u8 port, u16 vlan, int *index);
  void mlx4_unregister_vlan(struct mlx4_dev *dev, u8 port, u16 vlan);
-diff --git a/include/rdma/ib_addr.h b/include/rdma/ib_addr.h
-index f3ac0f2..a071560 100644
 --- a/include/rdma/ib_addr.h
 +++ b/include/rdma/ib_addr.h
 @@ -42,6 +42,7 @@
@@ -747,7 +720,7 @@ index f3ac0f2..a071560 100644
  
  /**
   * rdma_resolve_ip - Resolve source and destination IP addresses to
-@@ -104,6 +106,10 @@ int rdma_copy_addr(struct rdma_dev_addr *dev_addr, struct net_device *dev,
+@@ -104,6 +106,10 @@ int rdma_copy_addr(struct rdma_dev_addr
  
  int rdma_addr_size(struct sockaddr *addr);
  
@@ -758,7 +731,7 @@ index f3ac0f2..a071560 100644
  static inline u16 ib_addr_get_pkey(struct rdma_dev_addr *dev_addr)
  {
  	return ((u16)dev_addr->broadcast[8] << 8) | (u16)dev_addr->broadcast[9];
-@@ -142,6 +148,40 @@ static inline void iboe_mac_vlan_to_ll(union ib_gid *gid, u8 *mac, u16 vid)
+@@ -142,6 +148,40 @@ static inline void iboe_mac_vlan_to_ll(u
  	gid->raw[8] ^= 2;
  }
  
@@ -799,8 +772,6 @@ index f3ac0f2..a071560 100644
  static inline u16 rdma_vlan_dev_vlan_id(const struct net_device *dev)
  {
  	return dev->priv_flags & IFF_802_1Q_VLAN ?
-diff --git a/include/rdma/ib_cm.h b/include/rdma/ib_cm.h
-index 0e3ff30..f29e3a2 100644
 --- a/include/rdma/ib_cm.h
 +++ b/include/rdma/ib_cm.h
 @@ -601,4 +601,5 @@ struct ib_cm_sidr_rep_param {
@@ -809,8 +780,6 @@ index 0e3ff30..f29e3a2 100644
  
 +int ib_update_cm_av(struct ib_cm_id *id, const u8 *smac, const u8 *alt_smac);
  #endif /* IB_CM_H */
-diff --git a/include/rdma/ib_pack.h b/include/rdma/ib_pack.h
-index b37fe3b..b1f7592 100644
 --- a/include/rdma/ib_pack.h
 +++ b/include/rdma/ib_pack.h
 @@ -34,6 +34,7 @@
@@ -821,8 +790,6 @@ index b37fe3b..b1f7592 100644
  
  enum {
  	IB_LRH_BYTES  = 8,
-diff --git a/include/rdma/ib_sa.h b/include/rdma/ib_sa.h
-index 125f871..7e071a6 100644
 --- a/include/rdma/ib_sa.h
 +++ b/include/rdma/ib_sa.h
 @@ -154,6 +154,9 @@ struct ib_sa_path_rec {
@@ -835,8 +802,6 @@ index 125f871..7e071a6 100644
  };
  
  #define IB_SA_MCMEMBER_REC_MGID				IB_SA_COMP_MASK( 0)
-diff --git a/include/rdma/ib_verbs.h b/include/rdma/ib_verbs.h
-index 51f705c..d1e1b87 100644
 --- a/include/rdma/ib_verbs.h
 +++ b/include/rdma/ib_verbs.h
 @@ -48,6 +48,7 @@
@@ -847,7 +812,7 @@ index 51f705c..d1e1b87 100644
  
  #include <linux/atomic.h>
  #include <asm/uaccess.h>
-@@ -477,6 +478,8 @@ struct ib_ah_attr {
+@@ -470,6 +471,8 @@ struct ib_ah_attr {
  	u8			static_rate;
  	u8			ah_flags;
  	u8			port_num;
@@ -856,7 +821,7 @@ index 51f705c..d1e1b87 100644
  };
  
  enum ib_wc_status {
-@@ -529,6 +532,8 @@ enum ib_wc_flags {
+@@ -522,6 +525,8 @@ enum ib_wc_flags {
  	IB_WC_WITH_IMM		= (1<<1),
  	IB_WC_WITH_INVALIDATE	= (1<<2),
  	IB_WC_IP_CSUM_OK	= (1<<3),
@@ -865,7 +830,7 @@ index 51f705c..d1e1b87 100644
  };
  
  struct ib_wc {
-@@ -549,6 +554,8 @@ struct ib_wc {
+@@ -542,6 +547,8 @@ struct ib_wc {
  	u8			sl;
  	u8			dlid_path_bits;
  	u8			port_num;	/* valid only for DR SMPs on switches */
@@ -874,7 +839,7 @@ index 51f705c..d1e1b87 100644
  };
  
  enum ib_cq_notify_flags {
-@@ -727,7 +734,11 @@ enum ib_qp_attr_mask {
+@@ -720,7 +727,11 @@ enum ib_qp_attr_mask {
  	IB_QP_MAX_DEST_RD_ATOMIC	= (1<<17),
  	IB_QP_PATH_MIG_STATE		= (1<<18),
  	IB_QP_CAP			= (1<<19),
@@ -887,7 +852,7 @@ index 51f705c..d1e1b87 100644
  };
  
  enum ib_qp_state {
-@@ -777,6 +788,10 @@ struct ib_qp_attr {
+@@ -770,6 +781,10 @@ struct ib_qp_attr {
  	u8			rnr_retry;
  	u8			alt_port_num;
  	u8			alt_timeout;
@@ -898,7 +863,7 @@ index 51f705c..d1e1b87 100644
  };
  
  enum ib_wr_opcode {
-@@ -1513,6 +1528,7 @@ static inline int ib_copy_to_udata(struct ib_udata *udata, void *src, size_t len
+@@ -1501,6 +1516,7 @@ static inline int ib_copy_to_udata(struc
   * @next_state: Next QP state
   * @type: QP type
   * @mask: Mask of supplied QP attributes
@@ -906,7 +871,7 @@ index 51f705c..d1e1b87 100644
   *
   * This function is a helper function that a low-level driver's
   * modify_qp method can use to validate the consumer's input.  It
-@@ -1521,7 +1537,8 @@ static inline int ib_copy_to_udata(struct ib_udata *udata, void *src, size_t len
+@@ -1509,7 +1525,8 @@ static inline int ib_copy_to_udata(struc
   * and that the attribute mask supplied is allowed for the transition.
   */
  int ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
@@ -916,6 +881,3 @@ index 51f705c..d1e1b87 100644
  
  int ib_register_event_handler  (struct ib_event_handler *event_handler);
  int ib_unregister_event_handler(struct ib_event_handler *event_handler);
--- 
-1.7.8.2
-

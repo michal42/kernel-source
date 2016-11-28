@@ -31,15 +31,13 @@ Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: Michal Kubecek <mkubecek@suse.cz>
 
 ---
- include/linux/netdevice.h |  5 +++++
- net/core/dev.c            | 53 +++++++++++++++++++++++++++++++++++++----------
- 2 files changed, 47 insertions(+), 11 deletions(-)
+ include/linux/netdevice.h |    5 ++++
+ net/core/dev.c            |   51 ++++++++++++++++++++++++++++++++++++----------
+ 2 files changed, 45 insertions(+), 11 deletions(-)
 
-diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
-index 311702e..b304c0e 100644
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
-@@ -2882,8 +2882,13 @@ extern int netdev_upper_dev_link(struct net_device *dev,
+@@ -2894,8 +2894,13 @@ extern int netdev_upper_dev_link(struct
  				 struct net_device *upper_dev);
  extern int netdev_master_upper_dev_link(struct net_device *dev,
  					struct net_device *upper_dev);
@@ -53,11 +51,9 @@ index 311702e..b304c0e 100644
  extern int skb_checksum_help(struct sk_buff *skb);
  extern struct sk_buff *__skb_gso_segment(struct sk_buff *skb,
  	netdev_features_t features, bool tx_path);
-diff --git a/net/core/dev.c b/net/core/dev.c
-index f9f6aa6..fc5a4e7 100644
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -4391,6 +4391,9 @@ struct netdev_adjacent {
+@@ -4438,6 +4438,9 @@ struct netdev_adjacent {
  	/* counter for the number of times this device was added to us */
  	u16 ref_nr;
  
@@ -67,25 +63,25 @@ index f9f6aa6..fc5a4e7 100644
  	struct list_head list;
  	struct rcu_head rcu;
  };
-@@ -4512,7 +4515,7 @@ EXPORT_SYMBOL(netdev_master_upper_dev_get_rcu);
- static int __netdev_adjacent_dev_insert(struct net_device *dev,
+@@ -4560,7 +4563,7 @@ static int __netdev_adjacent_dev_insert(
  					struct net_device *adj_dev,
+ 					u16 ref_nr,
  					struct list_head *dev_list,
 -					bool master)
 +					void *private, bool master)
  {
  	struct netdev_adjacent *adj;
  
-@@ -4530,6 +4533,7 @@ static int __netdev_adjacent_dev_insert(struct net_device *dev,
+@@ -4578,6 +4581,7 @@ static int __netdev_adjacent_dev_insert(
  	adj->dev = adj_dev;
  	adj->master = master;
- 	adj->ref_nr = 1;
+ 	adj->ref_nr = ref_nr;
 +	adj->private = private;
  	dev_hold(adj_dev);
  
  	pr_debug("dev_hold for %s, because of link added from %s to %s\n",
-@@ -4576,15 +4580,17 @@ int __netdev_adjacent_dev_link_lists(struct net_device *dev,
- 				     struct net_device *upper_dev,
+@@ -4625,17 +4629,17 @@ int __netdev_adjacent_dev_link_lists(str
+ 				     u16 ref_nr,
  				     struct list_head *up_list,
  				     struct list_head *down_list,
 -				     bool master)
@@ -93,20 +89,20 @@ index f9f6aa6..fc5a4e7 100644
  {
  	int ret;
  
--	ret = __netdev_adjacent_dev_insert(dev, upper_dev, up_list, master);
-+	ret = __netdev_adjacent_dev_insert(dev, upper_dev, up_list, private,
-+					   master);
+ 	ret = __netdev_adjacent_dev_insert(dev, upper_dev, ref_nr, up_list,
+-					   master);
++					   private, master);
  	if (ret)
  		return ret;
  
--	ret = __netdev_adjacent_dev_insert(upper_dev, dev, down_list, false);
-+	ret = __netdev_adjacent_dev_insert(upper_dev, dev, down_list, private,
-+					   false);
+ 	ret = __netdev_adjacent_dev_insert(upper_dev, dev, ref_nr, down_list,
+-					   false);
++					   private, false);
  	if (ret) {
- 		__netdev_adjacent_dev_remove(dev, upper_dev, up_list);
+ 		__netdev_adjacent_dev_remove(dev, upper_dev, ref_nr, up_list);
  		return ret;
-@@ -4599,7 +4605,7 @@ int __netdev_adjacent_dev_link(struct net_device *dev,
- 	return __netdev_adjacent_dev_link_lists(dev, upper_dev,
+@@ -4651,7 +4655,7 @@ int __netdev_adjacent_dev_link(struct ne
+ 	return __netdev_adjacent_dev_link_lists(dev, upper_dev, ref_nr,
  						&dev->all_adj_list.upper,
  						&upper_dev->all_adj_list.lower,
 -						false);
@@ -114,25 +110,25 @@ index f9f6aa6..fc5a4e7 100644
  }
  
  void __netdev_adjacent_dev_unlink_lists(struct net_device *dev,
-@@ -4621,7 +4627,7 @@ void __netdev_adjacent_dev_unlink(struct net_device *dev,
+@@ -4674,7 +4678,7 @@ void __netdev_adjacent_dev_unlink(struct
  
  int __netdev_adjacent_dev_link_neighbour(struct net_device *dev,
  					 struct net_device *upper_dev,
 -					 bool master)
 +					 void *private, bool master)
  {
- 	int ret = __netdev_adjacent_dev_link(dev, upper_dev);
+ 	int ret = __netdev_adjacent_dev_link(dev, upper_dev, 1);
  
-@@ -4631,7 +4637,7 @@ int __netdev_adjacent_dev_link_neighbour(struct net_device *dev,
- 	ret = __netdev_adjacent_dev_link_lists(dev, upper_dev,
+@@ -4684,7 +4688,7 @@ int __netdev_adjacent_dev_link_neighbour
+ 	ret = __netdev_adjacent_dev_link_lists(dev, upper_dev, 1,
  					       &dev->adj_list.upper,
  					       &upper_dev->adj_list.lower,
 -					       master);
 +					       private, master);
  	if (ret) {
- 		__netdev_adjacent_dev_unlink(dev, upper_dev);
+ 		__netdev_adjacent_dev_unlink(dev, upper_dev, 1);
  		return ret;
-@@ -4650,7 +4656,8 @@ void __netdev_adjacent_dev_unlink_neighbour(struct net_device *dev,
+@@ -4703,7 +4707,8 @@ void __netdev_adjacent_dev_unlink_neighb
  }
  
  static int __netdev_upper_dev_link(struct net_device *dev,
@@ -142,7 +138,7 @@ index f9f6aa6..fc5a4e7 100644
  {
  	struct netdev_adjacent *i, *j, *to_i, *to_j;
  	int ret = 0;
-@@ -4670,7 +4677,8 @@ static int __netdev_upper_dev_link(struct net_device *dev,
+@@ -4723,7 +4728,8 @@ static int __netdev_upper_dev_link(struc
  	if (master && netdev_master_upper_dev_get(dev))
  		return -EBUSY;
  
@@ -152,7 +148,7 @@ index f9f6aa6..fc5a4e7 100644
  	if (ret)
  		return ret;
  
-@@ -4761,7 +4769,7 @@ rollback_mesh:
+@@ -4815,7 +4821,7 @@ rollback_mesh:
  int netdev_upper_dev_link(struct net_device *dev,
  			  struct net_device *upper_dev)
  {
@@ -161,7 +157,7 @@ index f9f6aa6..fc5a4e7 100644
  }
  EXPORT_SYMBOL(netdev_upper_dev_link);
  
-@@ -4779,10 +4787,18 @@ EXPORT_SYMBOL(netdev_upper_dev_link);
+@@ -4833,10 +4839,18 @@ EXPORT_SYMBOL(netdev_upper_dev_link);
  int netdev_master_upper_dev_link(struct net_device *dev,
  				 struct net_device *upper_dev)
  {
@@ -181,7 +177,7 @@ index f9f6aa6..fc5a4e7 100644
  /**
   * netdev_upper_dev_unlink - Removes a link to upper device
   * @dev: device
-@@ -4820,6 +4836,21 @@ void netdev_upper_dev_unlink(struct net_device *dev,
+@@ -4874,6 +4888,21 @@ void netdev_upper_dev_unlink(struct net_
  }
  EXPORT_SYMBOL(netdev_upper_dev_unlink);
  
@@ -203,6 +199,3 @@ index f9f6aa6..fc5a4e7 100644
  static void dev_change_rx_flags(struct net_device *dev, int flags)
  {
  	const struct net_device_ops *ops = dev->netdev_ops;
--- 
-1.8.1.4
-

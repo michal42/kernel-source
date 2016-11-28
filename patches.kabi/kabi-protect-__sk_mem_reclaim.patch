@@ -1,0 +1,84 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Subject: kABI: protect __sk_mem_reclaim
+Patch-mainline: never, kabi
+References: kabi
+
+In 3.12.68, commit d7f754f86363bbcd43b7562e0181724c39c4b5ea (net: fix
+sk_mem_reclaim_partial()), upstream commit
+1a24e04e4b50939daa3041682b38b82c896ca438 added one parameter to
+__sk_mem_reclaim and it indeed changed kABI.
+
+Rename the new function to __sk_mem_reclaim2 and restore the old one
+to call the former.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/net/sock.h |    9 +++++----
+ net/core/sock.c    |    9 +++++++--
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -1381,7 +1381,8 @@ static inline struct inode *SOCK_INODE(s
+  * Functions for memory accounting
+  */
+ extern int __sk_mem_schedule(struct sock *sk, int size, int kind);
+-void __sk_mem_reclaim(struct sock *sk, int amount);
++void __sk_mem_reclaim2(struct sock *sk, int amount);
++void __sk_mem_reclaim(struct sock *sk);
+ 
+ #define SK_MEM_QUANTUM ((int)PAGE_SIZE)
+ #define SK_MEM_QUANTUM_SHIFT ilog2(SK_MEM_QUANTUM)
+@@ -1422,7 +1423,7 @@ static inline void sk_mem_reclaim(struct
+ 	if (!sk_has_account(sk))
+ 		return;
+ 	if (sk->sk_forward_alloc >= SK_MEM_QUANTUM)
+-		__sk_mem_reclaim(sk, sk->sk_forward_alloc);
++		__sk_mem_reclaim2(sk, sk->sk_forward_alloc);
+ }
+ 
+ static inline void sk_mem_reclaim_partial(struct sock *sk)
+@@ -1430,7 +1431,7 @@ static inline void sk_mem_reclaim_partia
+ 	if (!sk_has_account(sk))
+ 		return;
+ 	if (sk->sk_forward_alloc > SK_MEM_QUANTUM)
+-		__sk_mem_reclaim(sk, sk->sk_forward_alloc - 1);
++		__sk_mem_reclaim2(sk, sk->sk_forward_alloc - 1);
+ }
+ 
+ static inline void sk_mem_charge(struct sock *sk, int size)
+@@ -1454,7 +1455,7 @@ static inline void sk_mem_uncharge(struc
+ 	 * no need to hold that much forward allocation anyway.
+ 	 */
+ 	if (unlikely(sk->sk_forward_alloc >= 1 << 21))
+-		__sk_mem_reclaim(sk, 1 << 20);
++		__sk_mem_reclaim2(sk, 1 << 20);
+ }
+ 
+ static inline void sk_wmem_free_skb(struct sock *sk, struct sk_buff *skb)
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -2098,7 +2098,7 @@ EXPORT_SYMBOL(__sk_mem_schedule);
+  *	@sk: socket
+  *	@amount: number of bytes (rounded down to a SK_MEM_QUANTUM multiple)
+  */
+-void __sk_mem_reclaim(struct sock *sk, int amount)
++void __sk_mem_reclaim2(struct sock *sk, int amount)
+ {
+ 	amount >>= SK_MEM_QUANTUM_SHIFT;
+ 	sk_memory_allocated_sub(sk, amount);
+@@ -2108,8 +2108,13 @@ void __sk_mem_reclaim(struct sock *sk, i
+ 	    (sk_memory_allocated(sk) < sk_prot_mem_limits(sk, 0)))
+ 		sk_leave_memory_pressure(sk);
+ }
+-EXPORT_SYMBOL(__sk_mem_reclaim);
++EXPORT_SYMBOL(__sk_mem_reclaim2);
+ 
++void __sk_mem_reclaim(struct sock *sk)
++{
++	__sk_mem_reclaim2(sk, sk->sk_forward_alloc);
++}
++EXPORT_SYMBOL(__sk_mem_reclaim);
+ 
+ /*
+  * Set of default routines for initialising struct proto_ops when

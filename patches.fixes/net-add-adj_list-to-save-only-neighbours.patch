@@ -46,8 +46,8 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  drivers/net/bonding/bond_alb.c  |    2 
  drivers/net/bonding/bond_main.c |   10 +
  include/linux/netdevice.h       |   28 +++--
- net/core/dev.c                  |  207 ++++++++++++++++++++--------------------
- 4 files changed, 131 insertions(+), 116 deletions(-)
+ net/core/dev.c                  |  221 +++++++++++++++++++---------------------
+ 4 files changed, 135 insertions(+), 126 deletions(-)
 --- a/drivers/net/bonding/bond_alb.c
 +++ b/drivers/net/bonding/bond_alb.c
 @@ -1019,7 +1019,7 @@ static void alb_send_learning_packets(st
@@ -61,7 +61,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  					vlan_dev_vlan_id(upper));
 --- a/drivers/net/bonding/bond_main.c
 +++ b/drivers/net/bonding/bond_main.c
-@@ -2274,7 +2274,7 @@ static bool bond_has_this_ip(struct bond
+@@ -2297,7 +2297,7 @@ static bool bond_has_this_ip(struct bond
  		return true;
  
  	rcu_read_lock();
@@ -70,7 +70,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		if (ip == bond_confirm_addr(upper, 0, ip)) {
  			ret = true;
  			break;
-@@ -2349,10 +2349,12 @@ static void bond_arp_send_all(struct bon
+@@ -2372,10 +2372,12 @@ static void bond_arp_send_all(struct bon
  		 *
  		 * TODO: QinQ?
  		 */
@@ -85,7 +85,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  				if (upper == rt->dst.dev) {
  					vlan_id = vlan_dev_vlan_id(vlan_upper);
  					rcu_read_unlock();
-@@ -2365,7 +2367,7 @@ static void bond_arp_send_all(struct bon
+@@ -2388,7 +2390,7 @@ static void bond_arp_send_all(struct bon
  		 * our upper vlans, then just search for any dev that
  		 * matches, and in case it's a vlan - save the id
  		 */
@@ -96,7 +96,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  				if (is_vlan_dev(upper))
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
-@@ -1143,8 +1143,18 @@ struct net_device {
+@@ -1171,8 +1171,18 @@ struct net_device {
  	struct list_head	dev_list;
  	struct list_head	napi_list;
  	struct list_head	unreg_list;
@@ -117,7 +117,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  
  	/* currently active device features */
-@@ -2823,15 +2833,15 @@ extern int		bpf_jit_enable;
+@@ -2868,15 +2878,15 @@ extern int		bpf_jit_enable;
  extern bool netdev_has_upper_dev(struct net_device *dev,
  				 struct net_device *upper_dev);
  extern bool netdev_has_any_upper_dev(struct net_device *dev);
@@ -142,7 +142,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  extern struct net_device *netdev_master_upper_dev_get_rcu(struct net_device *dev);
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -4375,9 +4375,6 @@ struct netdev_adjacent {
+@@ -4435,9 +4435,6 @@ struct netdev_adjacent {
  	/* upper master flag, there can only be one master device per list */
  	bool master;
  
@@ -152,7 +152,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	/* counter for the number of times this device was added to us */
  	u16 ref_nr;
  
-@@ -4387,29 +4384,17 @@ struct netdev_adjacent {
+@@ -4447,29 +4444,17 @@ struct netdev_adjacent {
  
  static struct netdev_adjacent *__netdev_find_adj(struct net_device *dev,
  						 struct net_device *adj_dev,
@@ -184,7 +184,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  /**
   * netdev_has_upper_dev - Check if device is linked to an upper device
   * @dev: device
-@@ -4424,7 +4409,7 @@ bool netdev_has_upper_dev(struct net_dev
+@@ -4484,7 +4469,7 @@ bool netdev_has_upper_dev(struct net_dev
  {
  	ASSERT_RTNL();
  
@@ -193,7 +193,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  }
  EXPORT_SYMBOL(netdev_has_upper_dev);
  
-@@ -4439,7 +4424,7 @@ bool netdev_has_any_upper_dev(struct net
+@@ -4499,7 +4484,7 @@ bool netdev_has_any_upper_dev(struct net
  {
  	ASSERT_RTNL();
  
@@ -202,7 +202,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  }
  EXPORT_SYMBOL(netdev_has_any_upper_dev);
  
-@@ -4456,10 +4441,10 @@ struct net_device *netdev_master_upper_d
+@@ -4516,10 +4501,10 @@ struct net_device *netdev_master_upper_d
  
  	ASSERT_RTNL();
  
@@ -215,7 +215,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  				 struct netdev_adjacent, list);
  	if (likely(upper->master))
  		return upper->dev;
-@@ -4467,15 +4452,15 @@ struct net_device *netdev_master_upper_d
+@@ -4527,15 +4512,15 @@ struct net_device *netdev_master_upper_d
  }
  EXPORT_SYMBOL(netdev_master_upper_dev_get);
  
@@ -234,7 +234,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  {
  	struct netdev_adjacent *upper;
  
-@@ -4483,14 +4468,14 @@ struct net_device *netdev_upper_get_next
+@@ -4543,14 +4528,14 @@ struct net_device *netdev_upper_get_next
  
  	upper = list_entry_rcu((*iter)->next, struct netdev_adjacent, list);
  
@@ -251,7 +251,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  /**
   * netdev_master_upper_dev_get_rcu - Get master upper device
-@@ -4503,7 +4488,7 @@ struct net_device *netdev_master_upper_d
+@@ -4563,7 +4548,7 @@ struct net_device *netdev_master_upper_d
  {
  	struct netdev_adjacent *upper;
  
@@ -260,9 +260,9 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  				       struct netdev_adjacent, list);
  	if (upper && likely(upper->master))
  		return upper->dev;
-@@ -4514,14 +4499,13 @@ EXPORT_SYMBOL(netdev_master_upper_dev_ge
- static int __netdev_adjacent_dev_insert(struct net_device *dev,
+@@ -4575,14 +4560,13 @@ static int __netdev_adjacent_dev_insert(
  					struct net_device *adj_dev,
+ 					u16 ref_nr,
  					struct list_head *dev_list,
 -					bool neighbour, bool master)
 +					bool master)
@@ -273,15 +273,15 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	if (adj) {
 -		BUG_ON(neighbour);
- 		adj->ref_nr++;
+ 		adj->ref_nr += ref_nr;
  		return 0;
  	}
-@@ -4532,13 +4516,11 @@ static int __netdev_adjacent_dev_insert(
+@@ -4593,13 +4577,11 @@ static int __netdev_adjacent_dev_insert(
  
  	adj->dev = adj_dev;
  	adj->master = master;
 -	adj->neighbour = neighbour;
- 	adj->ref_nr = 1;
+ 	adj->ref_nr = ref_nr;
 -
  	dev_hold(adj_dev);
 -	pr_debug("dev_hold for %s, because of %s link added from %s to %s\n",
@@ -293,30 +293,34 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	/* Ensure that master link is always the first item in list. */
  	if (master)
-@@ -4549,22 +4531,6 @@ static int __netdev_adjacent_dev_insert(
+@@ -4610,26 +4592,6 @@ static int __netdev_adjacent_dev_insert(
  	return 0;
  }
  
 -static inline int __netdev_upper_dev_insert(struct net_device *dev,
 -					    struct net_device *udev,
+-					    u16 ref_nr,
 -					    bool master, bool neighbour)
 -{
--	return __netdev_adjacent_dev_insert(dev, udev, &dev->upper_dev_list,
+-	return __netdev_adjacent_dev_insert(dev, udev, ref_nr,
+-					    &dev->upper_dev_list,
 -					    neighbour, master);
 -}
 -
 -static inline int __netdev_lower_dev_insert(struct net_device *dev,
 -					    struct net_device *ldev,
+-					    u16 ref_nr,
 -					    bool neighbour)
 -{
--	return __netdev_adjacent_dev_insert(dev, ldev, &dev->lower_dev_list,
+-	return __netdev_adjacent_dev_insert(dev, ldev, ref_nr,
+-					    &dev->lower_dev_list,
 -					    neighbour, false);
 -}
 -
  void __netdev_adjacent_dev_remove(struct net_device *dev,
- 				  struct net_device *adj_dev,
+ 				  struct net_device *adj_dev, u16 ref_nr,
  				  struct list_head *dev_list)
-@@ -4573,73 +4539,102 @@ void __netdev_adjacent_dev_remove(struct
+@@ -4638,80 +4600,107 @@ void __netdev_adjacent_dev_remove(struct
  
  	adj = __netdev_find_adj(dev, adj_dev, dev_list);
  
@@ -327,10 +331,10 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		BUG();
 +	}
  
- 	if (adj->ref_nr > 1) {
+ 	if (adj->ref_nr > ref_nr) {
 +		pr_debug("%s to %s ref_nr-- = %d\n", dev->name, adj_dev->name,
 +			 adj->ref_nr-1);
- 		adj->ref_nr--;
+ 		adj->ref_nr -= ref_nr;
  		return;
  	}
  
@@ -345,38 +349,46 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  }
  
 -static inline void __netdev_upper_dev_remove(struct net_device *dev,
--					     struct net_device *udev)
+-					     struct net_device *udev,
+-					     u16 ref_nr)
 -{
--	return __netdev_adjacent_dev_remove(dev, udev, &dev->upper_dev_list);
+-	return __netdev_adjacent_dev_remove(dev, udev, ref_nr,
+-					    &dev->upper_dev_list);
 -}
 -
 -static inline void __netdev_lower_dev_remove(struct net_device *dev,
--					     struct net_device *ldev)
+-					     struct net_device *ldev,
+-					     u16 ref_nr)
 -{
--	return __netdev_adjacent_dev_remove(dev, ldev, &dev->lower_dev_list);
+-	return __netdev_adjacent_dev_remove(dev, ldev, ref_nr,
+-					    &dev->lower_dev_list);
 -}
 -
 -int __netdev_adjacent_dev_insert_link(struct net_device *dev,
 -				      struct net_device *upper_dev,
--				      bool master, bool neighbour)
+-				      u16 ref_nr, bool master, bool neighbour)
 +int __netdev_adjacent_dev_link_lists(struct net_device *dev,
 +				     struct net_device *upper_dev,
++				     u16 ref_nr,
 +				     struct list_head *up_list,
 +				     struct list_head *down_list,
 +				     bool master)
  {
  	int ret;
  
--	ret = __netdev_upper_dev_insert(dev, upper_dev, master, neighbour);
-+	ret = __netdev_adjacent_dev_insert(dev, upper_dev, up_list, master);
+-	ret = __netdev_upper_dev_insert(dev, upper_dev, ref_nr, master,
+-					neighbour);
++	ret = __netdev_adjacent_dev_insert(dev, upper_dev, ref_nr, up_list,
++					   master);
  	if (ret)
  		return ret;
  
--	ret = __netdev_lower_dev_insert(upper_dev, dev, neighbour);
-+	ret = __netdev_adjacent_dev_insert(upper_dev, dev, down_list, false);
+-	ret = __netdev_lower_dev_insert(upper_dev, dev, ref_nr, neighbour);
++	ret = __netdev_adjacent_dev_insert(upper_dev, dev, ref_nr, down_list,
++					   false);
  	if (ret) {
--		__netdev_upper_dev_remove(dev, upper_dev);
-+		__netdev_adjacent_dev_remove(dev, upper_dev, up_list);
+-		__netdev_upper_dev_remove(dev, upper_dev, ref_nr);
++		__netdev_adjacent_dev_remove(dev, upper_dev, ref_nr, up_list);
  		return ret;
  	}
  
@@ -384,38 +396,41 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  }
  
 -static inline int __netdev_adjacent_dev_link(struct net_device *dev,
--					     struct net_device *udev)
+-					     struct net_device *udev,
+-					     u16 ref_nr)
+-{
+-	return __netdev_adjacent_dev_insert_link(dev, udev, ref_nr, false,
+-						 false);
 +int __netdev_adjacent_dev_link(struct net_device *dev,
-+			       struct net_device *upper_dev)
- {
--	return __netdev_adjacent_dev_insert_link(dev, udev, false, false);
--}
--
--static inline int __netdev_adjacent_dev_link_neighbour(struct net_device *dev,
--						       struct net_device *udev,
--						       bool master)
-+	return __netdev_adjacent_dev_link_lists(dev, upper_dev,
++			       struct net_device *upper_dev,
++			       u16 ref_nr)
++{
++	return __netdev_adjacent_dev_link_lists(dev, upper_dev, ref_nr,
 +						&dev->all_adj_list.upper,
 +						&upper_dev->all_adj_list.lower,
 +						false);
-+}
-+
+ }
+ 
+-static inline int __netdev_adjacent_dev_link_neighbour(struct net_device *dev,
+-						       struct net_device *udev,
+-						       bool master)
 +void __netdev_adjacent_dev_unlink_lists(struct net_device *dev,
 +					struct net_device *upper_dev,
++					u16 ref_nr,
 +					struct list_head *up_list,
 +					struct list_head *down_list)
  {
--	return __netdev_adjacent_dev_insert_link(dev, udev, master, true);
-+	__netdev_adjacent_dev_remove(dev, upper_dev, up_list);
-+	__netdev_adjacent_dev_remove(upper_dev, dev, down_list);
+-	return __netdev_adjacent_dev_insert_link(dev, udev, 1, master, true);
++	__netdev_adjacent_dev_remove(dev, upper_dev, ref_nr, up_list);
++	__netdev_adjacent_dev_remove(upper_dev, dev, ref_nr, down_list);
  }
  
  void __netdev_adjacent_dev_unlink(struct net_device *dev,
- 				  struct net_device *upper_dev)
+ 				  struct net_device *upper_dev, u16 ref_nr)
  {
--	__netdev_upper_dev_remove(dev, upper_dev);
--	__netdev_lower_dev_remove(upper_dev, dev);
-+	__netdev_adjacent_dev_unlink_lists(dev, upper_dev,
+-	__netdev_upper_dev_remove(dev, upper_dev, ref_nr);
+-	__netdev_lower_dev_remove(upper_dev, dev, ref_nr);
++	__netdev_adjacent_dev_unlink_lists(dev, upper_dev, ref_nr,
 +					   &dev->all_adj_list.upper,
 +					   &upper_dev->all_adj_list.lower);
  }
@@ -424,17 +439,17 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +					 struct net_device *upper_dev,
 +					 bool master)
 +{
-+	int ret = __netdev_adjacent_dev_link(dev, upper_dev);
++	int ret = __netdev_adjacent_dev_link(dev, upper_dev, 1);
 +
 +	if (ret)
 +		return ret;
 +
-+	ret = __netdev_adjacent_dev_link_lists(dev, upper_dev,
++	ret = __netdev_adjacent_dev_link_lists(dev, upper_dev, 1,
 +					       &dev->adj_list.upper,
 +					       &upper_dev->adj_list.lower,
 +					       master);
 +	if (ret) {
-+		__netdev_adjacent_dev_unlink(dev, upper_dev);
++		__netdev_adjacent_dev_unlink(dev, upper_dev, 1);
 +		return ret;
 +	}
 +
@@ -444,15 +459,15 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +void __netdev_adjacent_dev_unlink_neighbour(struct net_device *dev,
 +					    struct net_device *upper_dev)
 +{
-+	__netdev_adjacent_dev_unlink(dev, upper_dev);
-+	__netdev_adjacent_dev_unlink_lists(dev, upper_dev,
++	__netdev_adjacent_dev_unlink(dev, upper_dev, 1);
++	__netdev_adjacent_dev_unlink_lists(dev, upper_dev, 1,
 +					   &dev->adj_list.upper,
 +					   &upper_dev->adj_list.lower);
 +}
  
  static int __netdev_upper_dev_link(struct net_device *dev,
  				   struct net_device *upper_dev, bool master)
-@@ -4653,10 +4648,10 @@ static int __netdev_upper_dev_link(struc
+@@ -4725,10 +4714,10 @@ static int __netdev_upper_dev_link(struc
  		return -EBUSY;
  
  	/* To prevent loops, check if dev is not upper device to upper_dev. */
@@ -465,7 +480,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  		return -EEXIST;
  
  	if (master && netdev_master_upper_dev_get(dev))
-@@ -4667,12 +4662,14 @@ static int __netdev_upper_dev_link(struc
+@@ -4739,12 +4728,14 @@ static int __netdev_upper_dev_link(struc
  		return ret;
  
  	/* Now that we linked these devs, make all the upper_dev's
@@ -480,10 +495,10 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +		list_for_each_entry(j, &upper_dev->all_adj_list.upper, list) {
 +			pr_debug("Interlinking %s with %s, non-neighbour\n",
 +				 i->dev->name, j->dev->name);
- 			ret = __netdev_adjacent_dev_link(i->dev, j->dev);
+ 			ret = __netdev_adjacent_dev_link(i->dev, j->dev,
+ 							 i->ref_nr);
  			if (ret)
- 				goto rollback_mesh;
-@@ -4680,14 +4677,18 @@ static int __netdev_upper_dev_link(struc
+@@ -4753,14 +4744,18 @@ static int __netdev_upper_dev_link(struc
  	}
  
  	/* add dev to every upper_dev's upper device */
@@ -491,7 +506,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +	list_for_each_entry(i, &upper_dev->all_adj_list.upper, list) {
 +		pr_debug("linking %s's upper device %s with %s\n",
 +			 upper_dev->name, i->dev->name, dev->name);
- 		ret = __netdev_adjacent_dev_link(dev, i->dev);
+ 		ret = __netdev_adjacent_dev_link(dev, i->dev, i->ref_nr);
  		if (ret)
  			goto rollback_upper_mesh;
  	}
@@ -501,10 +516,10 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +	list_for_each_entry(i, &dev->all_adj_list.lower, list) {
 +		pr_debug("linking %s's lower device %s with %s\n", dev->name,
 +			 i->dev->name, upper_dev->name);
- 		ret = __netdev_adjacent_dev_link(i->dev, upper_dev);
+ 		ret = __netdev_adjacent_dev_link(i->dev, upper_dev, i->ref_nr);
  		if (ret)
  			goto rollback_lower_mesh;
-@@ -4698,7 +4699,7 @@ static int __netdev_upper_dev_link(struc
+@@ -4771,7 +4766,7 @@ static int __netdev_upper_dev_link(struc
  
  rollback_lower_mesh:
  	to_i = i;
@@ -512,8 +527,8 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +	list_for_each_entry(i, &dev->all_adj_list.lower, list) {
  		if (i == to_i)
  			break;
- 		__netdev_adjacent_dev_unlink(i->dev, upper_dev);
-@@ -4708,7 +4709,7 @@ rollback_lower_mesh:
+ 		__netdev_adjacent_dev_unlink(i->dev, upper_dev, i->ref_nr);
+@@ -4781,7 +4776,7 @@ rollback_lower_mesh:
  
  rollback_upper_mesh:
  	to_i = i;
@@ -521,8 +536,8 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +	list_for_each_entry(i, &upper_dev->all_adj_list.upper, list) {
  		if (i == to_i)
  			break;
- 		__netdev_adjacent_dev_unlink(dev, i->dev);
-@@ -4719,8 +4720,8 @@ rollback_upper_mesh:
+ 		__netdev_adjacent_dev_unlink(dev, i->dev, i->ref_nr);
+@@ -4792,8 +4787,8 @@ rollback_upper_mesh:
  rollback_mesh:
  	to_i = i;
  	to_j = j;
@@ -532,21 +547,21 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 +		list_for_each_entry(j, &upper_dev->all_adj_list.upper, list) {
  			if (i == to_i && j == to_j)
  				break;
- 			__netdev_adjacent_dev_unlink(i->dev, j->dev);
-@@ -4729,7 +4730,7 @@ rollback_mesh:
+ 			__netdev_adjacent_dev_unlink(i->dev, j->dev, i->ref_nr);
+@@ -4802,7 +4797,7 @@ rollback_mesh:
  			break;
  	}
  
--	__netdev_adjacent_dev_unlink(dev, upper_dev);
+-	__netdev_adjacent_dev_unlink(dev, upper_dev, 1);
 +	__netdev_adjacent_dev_unlink_neighbour(dev, upper_dev);
  
  	return ret;
  }
-@@ -4783,23 +4784,23 @@ void netdev_upper_dev_unlink(struct net_
+@@ -4856,23 +4851,23 @@ void netdev_upper_dev_unlink(struct net_
  	struct netdev_adjacent *i, *j;
  	ASSERT_RTNL();
  
--	__netdev_adjacent_dev_unlink(dev, upper_dev);
+-	__netdev_adjacent_dev_unlink(dev, upper_dev, 1);
 +	__netdev_adjacent_dev_unlink_neighbour(dev, upper_dev);
  
  	/* Here is the tricky part. We must remove all dev's lower
@@ -557,21 +572,21 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
 -		list_for_each_entry(j, &upper_dev->upper_dev_list, list)
 +	list_for_each_entry(i, &dev->all_adj_list.lower, list)
 +		list_for_each_entry(j, &upper_dev->all_adj_list.upper, list)
- 			__netdev_adjacent_dev_unlink(i->dev, j->dev);
+ 			__netdev_adjacent_dev_unlink(i->dev, j->dev, i->ref_nr);
  
  	/* remove also the devices itself from lower/upper device
  	 * list
  	 */
 -	list_for_each_entry(i, &dev->lower_dev_list, list)
 +	list_for_each_entry(i, &dev->all_adj_list.lower, list)
- 		__netdev_adjacent_dev_unlink(i->dev, upper_dev);
+ 		__netdev_adjacent_dev_unlink(i->dev, upper_dev, i->ref_nr);
  
 -	list_for_each_entry(i, &upper_dev->upper_dev_list, list)
 +	list_for_each_entry(i, &upper_dev->all_adj_list.upper, list)
- 		__netdev_adjacent_dev_unlink(dev, i->dev);
+ 		__netdev_adjacent_dev_unlink(dev, i->dev, i->ref_nr);
  
  	call_netdevice_notifiers(NETDEV_CHANGEUPPER, dev);
-@@ -6064,8 +6065,10 @@ struct net_device *alloc_netdev_mqs(int
+@@ -6138,8 +6133,10 @@ struct net_device *alloc_netdev_mqs(int
  	INIT_LIST_HEAD(&dev->napi_list);
  	INIT_LIST_HEAD(&dev->unreg_list);
  	INIT_LIST_HEAD(&dev->link_watch_list);

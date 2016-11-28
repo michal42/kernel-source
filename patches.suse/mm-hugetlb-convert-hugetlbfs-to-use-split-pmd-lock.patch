@@ -42,11 +42,11 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  fs/proc/meminfo.c       |    2 
  include/linux/hugetlb.h |   25 ++++++++++
  include/linux/swapops.h |    7 +--
- mm/hugetlb.c            |  112 +++++++++++++++++++++++++++++-------------------
+ mm/hugetlb.c            |  111 ++++++++++++++++++++++++++++--------------------
  mm/mempolicy.c          |    5 +-
  mm/migrate.c            |    7 +--
  mm/rmap.c               |    2 
- 7 files changed, 106 insertions(+), 54 deletions(-)
+ 7 files changed, 105 insertions(+), 54 deletions(-)
 
 --- a/fs/proc/meminfo.c
 +++ b/fs/proc/meminfo.c
@@ -62,9 +62,9 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  #include <linux/proc_fs.h>
 --- a/include/linux/hugetlb.h
 +++ b/include/linux/hugetlb.h
-@@ -405,6 +405,15 @@ static inline bool hugepages_supported(v
- 	return HPAGE_SHIFT != 0;
- }
+@@ -404,6 +404,15 @@ static inline int hugepage_migration_sup
+ #define hugepages_supported() (HPAGE_SHIFT != 0)
+ #endif
  
 +static inline spinlock_t *huge_pte_lockptr(struct hstate *h,
 +					   struct mm_struct *mm, pte_t *pte)
@@ -78,7 +78,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  #else	/* CONFIG_HUGETLB_PAGE */
  struct hstate {};
  #define alloc_huge_page_node(h, nid) NULL
-@@ -434,6 +443,22 @@ static inline pgoff_t basepage_index(str
+@@ -433,6 +442,22 @@ static inline pgoff_t basepage_index(str
  }
  #define dissolve_free_huge_pages(s, e)	do {} while (0)
  #define hugepage_migration_support(h)	0
@@ -126,7 +126,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	return 0;
 --- a/mm/hugetlb.c
 +++ b/mm/hugetlb.c
-@@ -2399,6 +2399,7 @@ int copy_hugetlb_page_range(struct mm_st
+@@ -2400,6 +2400,7 @@ int copy_hugetlb_page_range(struct mm_st
  	cow = (vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE;
  
  	for (addr = vma->vm_start; addr < vma->vm_end; addr += sz) {
@@ -134,7 +134,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		src_pte = huge_pte_offset(src, addr);
  		if (!src_pte)
  			continue;
-@@ -2410,8 +2411,9 @@ int copy_hugetlb_page_range(struct mm_st
+@@ -2411,8 +2412,9 @@ int copy_hugetlb_page_range(struct mm_st
  		if (dst_pte == src_pte)
  			continue;
  
@@ -146,7 +146,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		entry = huge_ptep_get(src_pte);
  		if (huge_pte_none(entry)) { /* skip none entry */
  			;
-@@ -2438,8 +2440,8 @@ int copy_hugetlb_page_range(struct mm_st
+@@ -2439,8 +2441,8 @@ int copy_hugetlb_page_range(struct mm_st
  			page_dup_rmap(ptepage);
  			set_huge_pte_at(dst, addr, dst_pte, entry);
  		}
@@ -157,7 +157,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	}
  	return 0;
  
-@@ -2456,6 +2458,7 @@ void __unmap_hugepage_range(struct mmu_g
+@@ -2457,6 +2459,7 @@ void __unmap_hugepage_range(struct mmu_g
  	unsigned long address;
  	pte_t *ptep;
  	pte_t pte;
@@ -165,7 +165,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	struct page *page;
  	struct hstate *h = hstate_vma(vma);
  	unsigned long sz = huge_page_size(h);
-@@ -2469,18 +2472,18 @@ void __unmap_hugepage_range(struct mmu_g
+@@ -2470,18 +2473,18 @@ void __unmap_hugepage_range(struct mmu_g
  	tlb_start_vma(tlb, vma);
  	mmu_notifier_invalidate_range_start(mm, mmun_start, mmun_end);
  again:
@@ -187,7 +187,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  		/*
  		 * Migrating hugepage or HWPoisoned hugepage is already
-@@ -2488,7 +2491,7 @@ again:
+@@ -2489,7 +2492,7 @@ again:
  		 */
  		if (unlikely(!pte_present(pte))) {
  			huge_pte_clear(mm, address, ptep);
@@ -196,7 +196,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		}
  
  		page = pte_page(pte);
-@@ -2499,7 +2502,7 @@ again:
+@@ -2500,7 +2503,7 @@ again:
  		 */
  		if (ref_page) {
  			if (page != ref_page)
@@ -205,7 +205,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  			/*
  			 * Mark the VMA as having unmapped its page so that
-@@ -2516,13 +2519,18 @@ again:
+@@ -2517,13 +2520,18 @@ again:
  
  		page_remove_rmap(page);
  		force_flush = !__tlb_remove_page(tlb, page);
@@ -227,7 +227,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	/*
  	 * mmu_gather ran out of room to batch pages, we break out of
  	 * the PTE lock to avoid doing the potential expensive TLB invalidate
-@@ -2628,7 +2636,7 @@ static int unmap_ref_private(struct mm_s
+@@ -2637,7 +2645,7 @@ static int unmap_ref_private(struct mm_s
   */
  static int hugetlb_cow(struct mm_struct *mm, struct vm_area_struct *vma,
  			unsigned long address, pte_t *ptep, pte_t pte,
@@ -236,7 +236,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  {
  	struct hstate *h = hstate_vma(vma);
  	struct page *old_page, *new_page;
-@@ -2662,8 +2670,8 @@ retry_avoidcopy:
+@@ -2671,8 +2679,8 @@ retry_avoidcopy:
  
  	page_cache_get(old_page);
  
@@ -247,7 +247,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	new_page = alloc_huge_page(vma, address, outside_reserve);
  
  	if (IS_ERR(new_page)) {
-@@ -2681,13 +2689,13 @@ retry_avoidcopy:
+@@ -2690,13 +2698,13 @@ retry_avoidcopy:
  			BUG_ON(huge_pte_none(pte));
  			if (unmap_ref_private(mm, vma, old_page, address)) {
  				BUG_ON(huge_pte_none(pte));
@@ -264,7 +264,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  				 */
  				return 0;
  			}
-@@ -2695,7 +2703,7 @@ retry_avoidcopy:
+@@ -2704,7 +2712,7 @@ retry_avoidcopy:
  		}
  
  		/* Caller expects lock to be held */
@@ -273,7 +273,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		if (err == -ENOMEM)
  			return VM_FAULT_OOM;
  		else
-@@ -2710,7 +2718,7 @@ retry_avoidcopy:
+@@ -2719,7 +2727,7 @@ retry_avoidcopy:
  		page_cache_release(new_page);
  		page_cache_release(old_page);
  		/* Caller expects lock to be held */
@@ -282,7 +282,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		return VM_FAULT_OOM;
  	}
  
-@@ -2722,10 +2730,10 @@ retry_avoidcopy:
+@@ -2731,10 +2739,10 @@ retry_avoidcopy:
  	mmun_end = mmun_start + huge_page_size(h);
  	mmu_notifier_invalidate_range_start(mm, mmun_start, mmun_end);
  	/*
@@ -295,7 +295,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	ptep = huge_pte_offset(mm, address & huge_page_mask(h));
  	if (likely(pte_same(huge_ptep_get(ptep), pte))) {
  		ClearPagePrivate(new_page);
-@@ -2739,13 +2747,13 @@ retry_avoidcopy:
+@@ -2748,13 +2756,13 @@ retry_avoidcopy:
  		/* Make the old page be freed below */
  		new_page = old_page;
  	}
@@ -311,7 +311,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	return 0;
  }
  
-@@ -2793,6 +2801,7 @@ static int hugetlb_no_page(struct mm_str
+@@ -2802,6 +2810,7 @@ static int hugetlb_no_page(struct mm_str
  	struct page *page;
  	struct address_space *mapping;
  	pte_t new_pte;
@@ -319,7 +319,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	/*
  	 * Currently, we are forced to kill the process in the event the
-@@ -2879,7 +2888,8 @@ retry:
+@@ -2888,7 +2897,8 @@ retry:
  			goto backout_unlocked;
  		}
  
@@ -329,7 +329,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	size = i_size_read(mapping->host) >> huge_page_shift(h);
  	if (idx >= size)
  		goto backout;
-@@ -2900,16 +2910,16 @@ retry:
+@@ -2909,16 +2919,16 @@ retry:
  
  	if ((flags & FAULT_FLAG_WRITE) && !(vma->vm_flags & VM_SHARED)) {
  		/* Optimization, do the COW without a second fault */
@@ -349,7 +349,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  backout_unlocked:
  	unlock_page(page);
  	put_page(page);
-@@ -2921,6 +2931,7 @@ int hugetlb_fault(struct mm_struct *mm,
+@@ -2930,6 +2940,7 @@ int hugetlb_fault(struct mm_struct *mm,
  {
  	pte_t *ptep;
  	pte_t entry;
@@ -357,7 +357,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	int ret;
  	struct page *page = NULL;
  	struct page *pagecache_page = NULL;
-@@ -2934,7 +2945,7 @@ int hugetlb_fault(struct mm_struct *mm,
+@@ -2943,7 +2954,7 @@ int hugetlb_fault(struct mm_struct *mm,
  	if (ptep) {
  		entry = huge_ptep_get(ptep);
  		if (unlikely(is_hugetlb_entry_migration(entry))) {
@@ -366,7 +366,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			return 0;
  		} else if (unlikely(is_hugetlb_entry_hwpoisoned(entry)))
  			return VM_FAULT_HWPOISON_LARGE |
-@@ -2988,11 +2999,11 @@ int hugetlb_fault(struct mm_struct *mm,
+@@ -2997,11 +3008,11 @@ int hugetlb_fault(struct mm_struct *mm,
  								vma, address);
  	}
  
@@ -380,7 +380,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	/*
  	 * hugetlb_cow() requires page locks of pte_page(entry) and
-@@ -3003,7 +3015,7 @@ int hugetlb_fault(struct mm_struct *mm,
+@@ -3012,7 +3023,7 @@ int hugetlb_fault(struct mm_struct *mm,
  	if (page != pagecache_page)
  		if (!trylock_page(page)) {
  			need_wait_lock = 1;
@@ -389,7 +389,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		}
  
  	get_page(page);
-@@ -3011,7 +3023,7 @@ int hugetlb_fault(struct mm_struct *mm,
+@@ -3020,7 +3031,7 @@ int hugetlb_fault(struct mm_struct *mm,
  	if (flags & FAULT_FLAG_WRITE) {
  		if (!huge_pte_write(entry)) {
  			ret = hugetlb_cow(mm, vma, address, ptep, entry,
@@ -398,7 +398,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			goto out_put_page;
  		}
  		entry = huge_pte_mkdirty(entry);
-@@ -3024,8 +3036,8 @@ out_put_page:
+@@ -3033,8 +3044,8 @@ out_put_page:
  	if (page != pagecache_page)
  		unlock_page(page);
  	put_page(page);
@@ -409,7 +409,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	if (pagecache_page) {
  		unlock_page(pagecache_page);
-@@ -3056,9 +3068,9 @@ long follow_hugetlb_page(struct mm_struc
+@@ -3065,9 +3076,9 @@ long follow_hugetlb_page(struct mm_struc
  	unsigned long remainder = *nr_pages;
  	struct hstate *h = hstate_vma(vma);
  
@@ -420,7 +420,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		int absent;
  		struct page *page;
  
-@@ -3066,8 +3078,12 @@ long follow_hugetlb_page(struct mm_struc
+@@ -3075,8 +3086,12 @@ long follow_hugetlb_page(struct mm_struc
  		 * Some archs (sparc64, sh*) have multiple pte_ts to
  		 * each hugepage.  We have to make sure we get the
  		 * first, for the page indexing below to work.
@@ -433,7 +433,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		absent = !pte || huge_pte_none(huge_ptep_get(pte));
  
  		/*
-@@ -3079,6 +3095,8 @@ long follow_hugetlb_page(struct mm_struc
+@@ -3088,6 +3103,8 @@ long follow_hugetlb_page(struct mm_struc
  		 */
  		if (absent && (flags & FOLL_DUMP) &&
  		    !hugetlbfs_pagecache_present(h, vma, vaddr)) {
@@ -442,7 +442,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			remainder = 0;
  			break;
  		}
-@@ -3098,10 +3116,10 @@ long follow_hugetlb_page(struct mm_struc
+@@ -3107,10 +3124,10 @@ long follow_hugetlb_page(struct mm_struc
  		      !huge_pte_write(huge_ptep_get(pte)))) {
  			int ret;
  
@@ -455,7 +455,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			if (!(ret & VM_FAULT_ERROR))
  				continue;
  
-@@ -3132,8 +3150,8 @@ same_page:
+@@ -3141,8 +3158,8 @@ same_page:
  			 */
  			goto same_page;
  		}
@@ -465,7 +465,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	*nr_pages = remainder;
  	*position = vaddr;
  
-@@ -3154,17 +3172,20 @@ unsigned long hugetlb_change_protection(
+@@ -3163,17 +3180,20 @@ unsigned long hugetlb_change_protection(
  	flush_cache_range(vma, address, end);
  
  	mutex_lock(&vma->vm_file->f_mapping->i_mmap_mutex);
@@ -487,7 +487,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			continue;
  		}
  		if (unlikely(is_hugetlb_entry_migration(pte))) {
-@@ -3178,6 +3199,7 @@ unsigned long hugetlb_change_protection(
+@@ -3187,6 +3207,7 @@ unsigned long hugetlb_change_protection(
  				set_huge_pte_at(mm, address, ptep, newpte);
  				pages++;
  			}
@@ -495,7 +495,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  			continue;
  		}
  		if (!huge_pte_none(pte)) {
-@@ -3187,8 +3209,8 @@ unsigned long hugetlb_change_protection(
+@@ -3196,8 +3217,8 @@ unsigned long hugetlb_change_protection(
  			set_huge_pte_at(mm, address, ptep, pte);
  			pages++;
  		}
@@ -505,7 +505,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	/*
  	 * Must flush TLB before releasing i_mmap_mutex: x86's huge_pmd_unshare
  	 * may have cleared our pud entry and done put_page on the page table:
-@@ -3351,6 +3373,7 @@ pte_t *huge_pmd_share(struct mm_struct *
+@@ -3360,6 +3381,7 @@ pte_t *huge_pmd_share(struct mm_struct *
  	unsigned long saddr;
  	pte_t *spte = NULL;
  	pte_t *pte;
@@ -513,7 +513,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	if (!vma_shareable(vma, addr))
  		return (pte_t *)pmd_alloc(mm, pud, addr);
-@@ -3373,13 +3396,14 @@ pte_t *huge_pmd_share(struct mm_struct *
+@@ -3382,13 +3404,14 @@ pte_t *huge_pmd_share(struct mm_struct *
  	if (!spte)
  		goto out;
  
@@ -530,7 +530,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  out:
  	pte = (pte_t *)pmd_alloc(mm, pud, addr);
  	mutex_unlock(&mapping->i_mmap_mutex);
-@@ -3393,7 +3417,7 @@ out:
+@@ -3402,7 +3425,7 @@ out:
   * indicated by page_count > 1, unmap is achieved by clearing pud and
   * decrementing the ref count. If count == 1, the pte page is not shared.
   *
@@ -564,7 +564,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  #endif
 --- a/mm/migrate.c
 +++ b/mm/migrate.c
-@@ -131,7 +131,7 @@ static int remove_migration_pte(struct p
+@@ -134,7 +134,7 @@ static int remove_migration_pte(struct p
  		ptep = huge_pte_offset(mm, addr);
  		if (!ptep)
  			goto out;
@@ -573,7 +573,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	} else {
  		pmd = mm_find_pmd(mm, addr);
  		if (!pmd)
-@@ -251,9 +251,10 @@ void migration_entry_wait(struct mm_stru
+@@ -254,9 +254,10 @@ void migration_entry_wait(struct mm_stru
  	__migration_entry_wait(mm, ptep, ptl);
  }
  

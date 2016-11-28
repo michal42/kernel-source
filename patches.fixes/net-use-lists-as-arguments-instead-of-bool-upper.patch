@@ -21,11 +21,11 @@ Signed-off-by: Veaceslav Falico <vfalico@redhat.com>
 Signed-off-by: David S. Miller <davem@davemloft.net>
 Acked-by: Benjamin Poirier <bpoirier@suse.de>
 ---
- net/core/dev.c |   54 ++++++++++++++++++++++--------------------------------
- 1 file changed, 22 insertions(+), 32 deletions(-)
+ net/core/dev.c |   57 +++++++++++++++++++++++++--------------------------------
+ 1 file changed, 25 insertions(+), 32 deletions(-)
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -4387,12 +4387,9 @@ struct netdev_adjacent {
+@@ -4447,12 +4447,9 @@ struct netdev_adjacent {
  
  static struct netdev_adjacent *__netdev_find_adj(struct net_device *dev,
  						 struct net_device *adj_dev,
@@ -39,7 +39,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	list_for_each_entry(adj, dev_list, list) {
  		if (adj->dev == adj_dev)
-@@ -4404,13 +4401,13 @@ static struct netdev_adjacent *__netdev_
+@@ -4464,13 +4461,13 @@ static struct netdev_adjacent *__netdev_
  static inline struct netdev_adjacent *__netdev_find_upper(struct net_device *dev,
  							  struct net_device *udev)
  {
@@ -55,10 +55,10 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  }
  
  /**
-@@ -4516,12 +4513,12 @@ EXPORT_SYMBOL(netdev_master_upper_dev_ge
- 
+@@ -4577,12 +4574,12 @@ EXPORT_SYMBOL(netdev_master_upper_dev_ge
  static int __netdev_adjacent_dev_insert(struct net_device *dev,
  					struct net_device *adj_dev,
+ 					u16 ref_nr,
 -					bool neighbour, bool master,
 -					bool upper)
 +					struct list_head *dev_list,
@@ -71,7 +71,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	if (adj) {
  		BUG_ON(neighbour);
-@@ -4540,19 +4537,14 @@ static int __netdev_adjacent_dev_insert(
+@@ -4601,19 +4598,14 @@ static int __netdev_adjacent_dev_insert(
  
  	dev_hold(adj_dev);
  	pr_debug("dev_hold for %s, because of %s link added from %s to %s\n",
@@ -96,29 +96,32 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	return 0;
  }
-@@ -4561,27 +4553,25 @@ static inline int __netdev_upper_dev_ins
- 					    struct net_device *udev,
+@@ -4623,8 +4615,9 @@ static inline int __netdev_upper_dev_ins
+ 					    u16 ref_nr,
  					    bool master, bool neighbour)
  {
--	return __netdev_adjacent_dev_insert(dev, udev, neighbour, master,
--					    true);
-+	return __netdev_adjacent_dev_insert(dev, udev, &dev->upper_dev_list,
+-	return __netdev_adjacent_dev_insert(dev, udev, ref_nr, neighbour,
+-					    master, true);
++	return __netdev_adjacent_dev_insert(dev, udev, ref_nr,
++					    &dev->upper_dev_list,
 +					    neighbour, master);
  }
  
  static inline int __netdev_lower_dev_insert(struct net_device *dev,
- 					    struct net_device *ldev,
+@@ -4632,20 +4625,18 @@ static inline int __netdev_lower_dev_ins
+ 					    u16 ref_nr,
  					    bool neighbour)
  {
--	return __netdev_adjacent_dev_insert(dev, ldev, neighbour, false,
+-	return __netdev_adjacent_dev_insert(dev, ldev, ref_nr, neighbour, false,
 -					    false);
-+	return __netdev_adjacent_dev_insert(dev, ldev, &dev->lower_dev_list,
++	return __netdev_adjacent_dev_insert(dev, ldev, ref_nr,
++					    &dev->lower_dev_list,
 +					    neighbour, false);
  }
  
  void __netdev_adjacent_dev_remove(struct net_device *dev,
--				  struct net_device *adj_dev, bool upper)
-+				  struct net_device *adj_dev,
+ 				  struct net_device *adj_dev, u16 ref_nr,
+-				  bool upper)
 +				  struct list_head *dev_list)
  {
  	struct netdev_adjacent *adj;
@@ -131,7 +134,7 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  
  	if (!adj)
  		BUG();
-@@ -4593,8 +4583,8 @@ void __netdev_adjacent_dev_remove(struct
+@@ -4657,8 +4648,8 @@ void __netdev_adjacent_dev_remove(struct
  
  	list_del_rcu(&adj->list);
  	pr_debug("dev_put for %s, because of %s link removed from %s to %s\n",
@@ -142,19 +145,22 @@ Acked-by: Benjamin Poirier <bpoirier@suse.de>
  	dev_put(adj_dev);
  	kfree_rcu(adj, rcu);
  }
-@@ -4602,13 +4592,13 @@ void __netdev_adjacent_dev_remove(struct
- static inline void __netdev_upper_dev_remove(struct net_device *dev,
- 					     struct net_device *udev)
+@@ -4667,14 +4658,16 @@ static inline void __netdev_upper_dev_re
+ 					     struct net_device *udev,
+ 					     u16 ref_nr)
  {
--	return __netdev_adjacent_dev_remove(dev, udev, true);
-+	return __netdev_adjacent_dev_remove(dev, udev, &dev->upper_dev_list);
+-	return __netdev_adjacent_dev_remove(dev, udev, ref_nr, true);
++	return __netdev_adjacent_dev_remove(dev, udev, ref_nr,
++					    &dev->upper_dev_list);
  }
  
  static inline void __netdev_lower_dev_remove(struct net_device *dev,
- 					     struct net_device *ldev)
+ 					     struct net_device *ldev,
+ 					     u16 ref_nr)
  {
--	return __netdev_adjacent_dev_remove(dev, ldev, false);
-+	return __netdev_adjacent_dev_remove(dev, ldev, &dev->lower_dev_list);
+-	return __netdev_adjacent_dev_remove(dev, ldev, ref_nr, false);
++	return __netdev_adjacent_dev_remove(dev, ldev, ref_nr,
++					    &dev->lower_dev_list);
  }
  
  int __netdev_adjacent_dev_insert_link(struct net_device *dev,
