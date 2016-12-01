@@ -1,0 +1,147 @@
+From: Michal Kubecek <mkubecek@suse.cz>
+Date: Thu, 1 Dec 2016 11:26:33 +0100
+Subject: tipc: check minimum bearer MTU
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Patch-mainline: Submitted - 20161201 (target 4.9)
+References: CVE-2016-8632 bsc#1008831
+
+Qian Zhang (张谦) reported a potential socket buffer overflow in
+tipc_msg_build() which is also known as CVE-2016-8632: due to
+insufficient checks, a buffer overflow can occur if MTU is too short for
+even tipc headers. As anyone can set device MTU in a user/net namespace,
+this issue can be abused by a regular user.
+
+As agreed in the discussion on Ben Hutchings' original patch, we should
+check the MTU at the moment a bearer is attached rather than for each
+processed packet. We also need to repeat the check when bearer MTU is
+adjusted to new device MTU. UDP case also needs a check to avoid
+overflow when calculating bearer MTU.
+
+Fixes: b97bf3fd8f6a ("[TIPC] Initial merge")
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+Reported-by: Qian Zhang (张谦) <zhangqian-c@360.cn>
+
+SLE12-SP1: no UDP media support, patched code duplicated for eth and ib
+media.
+
+---
+ net/tipc/bearer.h    | 12 ++++++++++++
+ net/tipc/eth_media.c | 15 ++++++++++++---
+ net/tipc/ib_media.c  | 15 ++++++++++++---
+ 3 files changed, 36 insertions(+), 6 deletions(-)
+
+diff --git a/net/tipc/bearer.h b/net/tipc/bearer.h
+index 5ba0a5675da1..3b336955a392 100644
+--- a/net/tipc/bearer.h
++++ b/net/tipc/bearer.h
+@@ -58,6 +58,9 @@
+ #define TIPC_MEDIA_TYPE_ETH	1
+ #define TIPC_MEDIA_TYPE_IB	2
+ 
++/* minimum bearer MTU */
++#define TIPC_MIN_BEARER_MTU	100	/* MAX_H_SIZE + INT_H_SIZE */
++
+ /**
+  * struct tipc_media_addr - destination address used by TIPC bearers
+  * @value: address info (format defined by media)
+@@ -202,4 +205,13 @@ static inline void tipc_bearer_send(struct tipc_bearer *b, struct sk_buff *buf,
+ 	b->media->send_msg(buf, b, dest);
+ }
+ 
++/* check if device MTU is too low for a TIPC bearer */
++static inline bool tipc_mtu_bad(struct net_device *dev, unsigned int reserve)
++{
++	if (dev->mtu >= TIPC_MIN_BEARER_MTU + reserve)
++		return false;
++	netdev_warn(dev, "MTU too low for tipc bearer\n");
++	return true;
++}
++
+ #endif	/* _TIPC_BEARER_H */
+diff --git a/net/tipc/eth_media.c b/net/tipc/eth_media.c
+index 4dd33f908524..b3f784462caa 100644
+--- a/net/tipc/eth_media.c
++++ b/net/tipc/eth_media.c
+@@ -180,6 +180,10 @@ static int enable_media(struct tipc_bearer *tb_ptr)
+ 	dev = dev_get_by_name(&init_net, driver_name);
+ 	if (!dev)
+ 		return -ENODEV;
++	if (tipc_mtu_bad(dev, 0)) {
++		dev_put(dev);
++		return -EINVAL;
++	}
+ 
+ 	/* Create Ethernet bearer for device */
+ 	eb_ptr->dev = dev;
+@@ -257,17 +261,22 @@ static int recv_notification(struct notifier_block *nb, unsigned long evt,
+ 	if (!eb_ptr->bearer)
+ 		return NOTIFY_DONE;		/* bearer had been disabled */
+ 
+-	eb_ptr->bearer->mtu = dev->mtu;
+-
+ 	switch (evt) {
+ 	case NETDEV_CHANGE:
+ 		if (netif_carrier_ok(dev))
+ 			break;
+ 	case NETDEV_DOWN:
+-	case NETDEV_CHANGEMTU:
+ 	case NETDEV_CHANGEADDR:
+ 		tipc_reset_bearer(eb_ptr->bearer);
+ 		break;
++	case NETDEV_CHANGEMTU:
++		if (tipc_mtu_bad(dev, 0)) {
++			tipc_disable_bearer(eb_ptr->bearer->name);
++			break;
++		}
++		eb_ptr->bearer->mtu = dev->mtu;
++		tipc_reset_bearer(eb_ptr->bearer);
++		break;
+ 	case NETDEV_UNREGISTER:
+ 	case NETDEV_CHANGENAME:
+ 		tipc_disable_bearer(eb_ptr->bearer->name);
+diff --git a/net/tipc/ib_media.c b/net/tipc/ib_media.c
+index 1fed837a1f13..f89e117db7a7 100644
+--- a/net/tipc/ib_media.c
++++ b/net/tipc/ib_media.c
+@@ -172,6 +172,10 @@ static int enable_media(struct tipc_bearer *tb_ptr)
+ 	dev = dev_get_by_name(&init_net, driver_name);
+ 	if (!dev)
+ 		return -ENODEV;
++	if (tipc_mtu_bad(dev, 0)) {
++		dev_put(dev);
++		return -EINVAL;
++	}
+ 
+ 	/* Create InfiniBand bearer for device */
+ 	ib_ptr->dev = dev;
+@@ -249,17 +253,22 @@ static int recv_notification(struct notifier_block *nb, unsigned long evt,
+ 	if (!ib_ptr->bearer)
+ 		return NOTIFY_DONE;		/* bearer had been disabled */
+ 
+-	ib_ptr->bearer->mtu = dev->mtu;
+-
+ 	switch (evt) {
+ 	case NETDEV_CHANGE:
+ 		if (netif_carrier_ok(dev))
+ 			break;
+ 	case NETDEV_DOWN:
+-	case NETDEV_CHANGEMTU:
+ 	case NETDEV_CHANGEADDR:
+ 		tipc_reset_bearer(ib_ptr->bearer);
+ 		break;
++	case NETDEV_CHANGEMTU:
++		if (tipc_mtu_bad(dev, 0)) {
++			tipc_disable_bearer(ib_ptr->bearer->name);
++			break;
++		}
++		ib_ptr->bearer->mtu = dev->mtu;
++		tipc_reset_bearer(ib_ptr->bearer);
++		break;
+ 	case NETDEV_UNREGISTER:
+ 	case NETDEV_CHANGENAME:
+ 		tipc_disable_bearer(ib_ptr->bearer->name);
+-- 
+2.10.2
+
