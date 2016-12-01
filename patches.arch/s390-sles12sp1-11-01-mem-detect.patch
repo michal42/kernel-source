@@ -1,0 +1,61 @@
+From: Heiko Carstens <heiko.carstens@de.ibm.com>
+Subject: kernel: remove broken memory detection sanity check
+Patch-mainline: Never, patched code removed w/Git-commit: 50be634507284eea38df78154d22615d21200b42
+References: bnc#1008567, LTC#148072
+
+Description:  kernel: remove broken memory detection sanity check
+Symptom:      Kernel crashes if "vmalloc=" parameter has been specified.
+Problem:      The memory detection code contains a sanity check which tests
+              if dynamic address translation (DAT) is switched on and
+              subsequently if an array is contained within the vmalloc area.
+              The test if DAT is switched on is done using a wrong memory
+              location. Therefore the result is random.
+              The subsequent check if the given array is within the vmalloc
+              area incorrectly will always be true iff the "vmalloc=" kernel
+              parameter has been specified (otherwise false).
+              If this check returns true the kernel will not detect any memory
+              and crash.
+Solution:     Remove the wrong check. This is a revert of upstream commit
+              0a694067111e8fcd3eda430f8fa2d0277edd231f. Upstream the check got
+              removed with 50be634507284eea38df78154d22615d21200b42.
+Reproduction: -
+
+
+Signed-off-by: Heiko Carstens <heiko.carstens@de.ibm.com>
+Acked-by: John Jolly <jjolly@suse.com>
+---
+ arch/s390/mm/mem_detect.c |   14 +-------------
+ 1 file changed, 1 insertion(+), 13 deletions(-)
+
+--- a/arch/s390/mm/mem_detect.c
++++ b/arch/s390/mm/mem_detect.c
+@@ -67,28 +67,16 @@ void detect_memory_layout(struct mem_chu
+ 	unsigned long flags, flags_dat, cr0;
+ 
+ 	memset(chunk, 0, MEMORY_CHUNKS * sizeof(struct mem_chunk));
+-	/*
+-	 * Disable IRQs, DAT and low address protection so tprot does the
++	/* Disable IRQs, DAT and low address protection so tprot does the
+ 	 * right thing and we don't get scheduled away with low address
+ 	 * protection disabled.
+ 	 */
+ 	local_irq_save(flags);
+ 	flags_dat = __arch_local_irq_stnsm(0xfb);
+-	/*
+-	 * In case DAT was enabled, make sure chunk doesn't reside in vmalloc
+-	 * space. We have disabled DAT and any access to vmalloc area will
+-	 * cause an exception.
+-	 * If DAT was disabled we are called from early ipl code.
+-	 */
+-	if (test_bit(5, &flags_dat)) {
+-		if (WARN_ON_ONCE(is_vmalloc_or_module_addr(chunk)))
+-			goto out;
+-	}
+ 	__ctl_store(cr0, 0, 0);
+ 	__ctl_clear_bit(0, 28);
+ 	find_memory_chunks(chunk, maxsize);
+ 	__ctl_load(cr0, 0, 0);
+-out:
+ 	__arch_local_irq_ssm(flags_dat);
+ 	local_irq_restore(flags);
+ }
