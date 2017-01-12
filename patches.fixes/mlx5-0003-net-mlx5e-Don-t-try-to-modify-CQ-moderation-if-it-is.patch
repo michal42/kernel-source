@@ -1,0 +1,78 @@
+From: Gal Pressman <galp@mellanox.com>
+Date: Wed, 2 Mar 2016 00:13:37 +0200
+Subject: [PATCH 3/7] net/mlx5e: Don't try to modify CQ moderation if it is not
+ supported
+Patch-mainline: v4.6-rc1
+Git-commit: 7524a5d88b94afef8397a79f1e664af5b7052c22
+References: bnc#923036 FATE#318772
+
+If CQ moderation is not supported by the device, print a warning on
+netdevice load, and return error when trying to modify/query cq
+moderation via ethtool.
+
+Fixes: f62b8bb8f2d3 ('net/mlx5: Extend mlx5_core to support ConnectX-4
+Ethernet functionality')
+Signed-off-by: Gal Pressman <galp@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+
+Signed-off-by: Gal Pressman <galp@mellanox.com>
+Signed-off-by: Saeed Mahameed <saeedm@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Cho, Yu-Chen <acho@suse.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c |    6 ++++++
+ drivers/net/ethernet/mellanox/mlx5/core/en_main.c    |   13 +++++++------
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_ethtool.c
+@@ -378,6 +378,9 @@ static int mlx5e_get_coalesce(struct net
+ {
+ 	struct mlx5e_priv *priv = netdev_priv(netdev);
+ 
++	if (!MLX5_CAP_GEN(priv->mdev, cq_moderation))
++		return -ENOTSUPP;
++
+ 	coal->rx_coalesce_usecs       = priv->params.rx_cq_moderation_usec;
+ 	coal->rx_max_coalesced_frames = priv->params.rx_cq_moderation_pkts;
+ 	coal->tx_coalesce_usecs       = priv->params.tx_cq_moderation_usec;
+@@ -395,6 +398,9 @@ static int mlx5e_set_coalesce(struct net
+ 	int tc;
+ 	int i;
+ 
++	if (!MLX5_CAP_GEN(mdev, cq_moderation))
++		return -ENOTSUPP;
++
+ 	priv->params.tx_cq_moderation_usec = coal->tx_coalesce_usecs;
+ 	priv->params.tx_cq_moderation_pkts = coal->tx_max_coalesced_frames;
+ 	priv->params.rx_cq_moderation_usec = coal->rx_coalesce_usecs;
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_main.c
+@@ -815,12 +815,10 @@ static int mlx5e_open_cq(struct mlx5e_ch
+ 	if (err)
+ 		goto err_destroy_cq;
+ 
+-	err = mlx5_core_modify_cq_moderation(mdev, &cq->mcq,
+-					     moderation_usecs,
+-					     moderation_frames);
+-	if (err)
+-		goto err_destroy_cq;
+-
++	if (MLX5_CAP_GEN(mdev, cq_moderation))
++		mlx5_core_modify_cq_moderation(mdev, &cq->mcq,
++					       moderation_usecs,
++					       moderation_frames);
+ 	return 0;
+ 
+ err_destroy_cq:
+@@ -1670,6 +1668,9 @@ static int mlx5e_check_required_hca_cap(
+ 			       "Not creating net device, some required device capabilities are missing\n");
+ 		return -ENOTSUPP;
+ 	}
++	if (!MLX5_CAP_GEN(mdev, cq_moderation))
++		mlx5_core_warn(mdev, "CQ modiration is not supported\n");
++
+ 	return 0;
+ }
+ 
