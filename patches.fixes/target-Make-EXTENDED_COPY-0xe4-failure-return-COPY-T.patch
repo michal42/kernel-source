@@ -1,0 +1,161 @@
+From 6be4810c567a794b8cfb4f1fb50e05bd42611c48 Mon Sep 17 00:00:00 2001
+From: Nicholas Bellinger <nab@linux-iscsi.org>
+Date: Sat, 8 Oct 2016 17:26:44 -0700
+Subject: [PATCH 01/11] target: Make EXTENDED_COPY 0xe4 failure return COPY
+ TARGET DEVICE NOT REACHABLE
+Patch-mainline: v4.9-rc2
+References: bsc#991273
+Git-commit: 449a137846c84829a328757cd21fd9ca65c08519
+
+This patch addresses a bug where EXTENDED_COPY across multiple LUNs
+results in a CHECK_CONDITION when the source + destination are not
+located on the same physical node.
+
+ESX Host environments expect sense COPY_ABORTED w/ COPY TARGET DEVICE
+NOT REACHABLE to be returned when this occurs, in order to signal
+fallback to local copy method.
+
+As described in section 6.3.3 of spc4r22:
+
+  "If it is not possible to complete processing of a segment because the
+   copy manager is unable to establish communications with a copy target
+   device, because the copy target device does not respond to INQUIRY,
+   or because the data returned in response to INQUIRY indicates
+   an unsupported logical unit, then the EXTENDED COPY command shall be
+   terminated with CHECK CONDITION status, with the sense key set to
+   COPY ABORTED, and the additional sense code set to COPY TARGET DEVICE
+   NOT REACHABLE."
+
+Tested on v4.1.y with ESX v5.5u2+ with BlockCopy across multiple nodes.
+
+Reported-by: Nixon Vincent <nixon.vincent@calsoftinc.com>
+Tested-by: Nixon Vincent <nixon.vincent@calsoftinc.com>
+Cc: Nixon Vincent <nixon.vincent@calsoftinc.com>
+Tested-by: Dinesh Israni <ddi@datera.io>
+Signed-off-by: Dinesh Israni <ddi@datera.io>
+Cc: Dinesh Israni <ddi@datera.io>
+Cc: stable@vger.kernel.org # 3.14+
+Signed-off-by: Nicholas Bellinger <nab@linux-iscsi.org>
+
+[ddiss@suse.de: rebase against SLE12SP1 with sense switch]
+Acked-by: David Disseldorp <ddiss@suse.de>
+
+---
+ drivers/target/target_core_transport.c | 11 +++++++++++
+ drivers/target/target_core_xcopy.c     | 22 ++++++++++++++++------
+ include/target/target_core_base.h      |  1 +
+ 3 files changed, 28 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/target/target_core_transport.c b/drivers/target/target_core_transport.c
+index aeeea93..2186180 100644
+--- a/drivers/target/target_core_transport.c
++++ b/drivers/target/target_core_transport.c
+@@ -1649,6 +1649,7 @@ void transport_generic_request_failure(struct se_cmd *cmd,
+ 	case TCM_LOGICAL_BLOCK_APP_TAG_CHECK_FAILED:
+ 	case TCM_LOGICAL_BLOCK_REF_TAG_CHECK_FAILED:
+ 	case TCM_MISCOMPARE_VERIFY:
++	case TCM_COPY_TARGET_DEVICE_NOT_REACHABLE:
+ 		break;
+ 	case TCM_OUT_OF_RESOURCES:
+ 		sense_reason = TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
+@@ -2936,6 +2937,16 @@ transport_send_check_condition_and_sense(struct se_cmd *cmd,
+ 		buffer[SPC_ASCQ_KEY_OFFSET] = 0x03;
+ 		transport_err_sector_info(buffer, cmd->bad_sector);
+ 		break;
++	case TCM_COPY_TARGET_DEVICE_NOT_REACHABLE:
++		/* CURRENT ERROR */
++		buffer[0] = 0x70;
++		buffer[SPC_ADD_SENSE_LEN_OFFSET] = 10;
++		/* COPY ABORTED */
++		buffer[SPC_SENSE_KEY_OFFSET] = COPY_ABORTED;
++		/* COPY TARGET DEVICE NOT REACHABLE */
++		buffer[SPC_ASC_KEY_OFFSET] = 0x0d;
++		buffer[SPC_ASCQ_KEY_OFFSET] = 0x02;
++		break;
+ 	case TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE:
+ 	default:
+ 		/* CURRENT ERROR */
+diff --git a/drivers/target/target_core_xcopy.c b/drivers/target/target_core_xcopy.c
+index 669c536..d0da37e 100644
+--- a/drivers/target/target_core_xcopy.c
++++ b/drivers/target/target_core_xcopy.c
+@@ -116,7 +116,7 @@ static int target_xcopy_locate_se_dev_e4(struct se_cmd *se_cmd, struct xcopy_op
+ 	}
+ 	mutex_unlock(&g_device_mutex);
+ 
+-	pr_err("Unable to locate 0xe4 descriptor for EXTENDED_COPY\n");
++	pr_debug_ratelimited("Unable to locate 0xe4 descriptor for EXTENDED_COPY\n");
+ 	return -EINVAL;
+ }
+ 
+@@ -197,7 +197,7 @@ static int target_xcopy_parse_tiddesc_e4(struct se_cmd *se_cmd, struct xcopy_op
+ 
+ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
+ 				struct xcopy_op *xop, unsigned char *p,
+-				unsigned short tdll)
++				unsigned short tdll, sense_reason_t *sense_ret)
+ {
+ 	struct se_device *local_dev = se_cmd->se_dev;
+ 	unsigned char *desc = p;
+@@ -205,6 +205,8 @@ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
+ 	unsigned short start = 0;
+ 	bool src = true;
+ 
++	*sense_ret = TCM_INVALID_PARAMETER_LIST;
++
+ 	if (offset != 0) {
+ 		pr_err("XCOPY target descriptor list length is not"
+ 			" multiple of %d\n", XCOPY_TARGET_DESC_LEN);
+@@ -255,9 +257,16 @@ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
+ 		rc = target_xcopy_locate_se_dev_e4(se_cmd, xop, true);
+ 	else
+ 		rc = target_xcopy_locate_se_dev_e4(se_cmd, xop, false);
+-
+-	if (rc < 0)
++	/*
++	 * If a matching IEEE NAA 0x83 descriptor for the requested device
++	 * is not located on this node, return COPY_ABORTED with ASQ/ASQC
++	 * 0x0d/0x02 - COPY_TARGET_DEVICE_NOT_REACHABLE to request the
++	 * initiator to fall back to normal copy method.
++	 */
++	if (rc < 0) {
++		*sense_ret = TCM_COPY_TARGET_DEVICE_NOT_REACHABLE;
+ 		goto out;
++	}
+ 
+ 	pr_debug("XCOPY TGT desc: Source dev: %p NAA IEEE WWN: 0x%16phN\n",
+ 		 xop->src_dev, &xop->src_tid_wwn[0]);
+@@ -861,7 +870,8 @@ out:
+ 	xcopy_pt_undepend_remotedev(xop);
+ 	kfree(xop);
+ 
+-	pr_warn("target_xcopy_do_work: Setting X-COPY CHECK_CONDITION -> sending response\n");
++	pr_warn_ratelimited("target_xcopy_do_work: rc: %d, Setting X-COPY CHECK_CONDITION"
++			    " -> sending response\n", rc);
+ 	ec_cmd->scsi_status = SAM_STAT_CHECK_CONDITION;
+ 	target_complete_cmd(ec_cmd, SAM_STAT_CHECK_CONDITION);
+ }
+@@ -920,7 +930,7 @@ sense_reason_t target_do_xcopy(struct se_cmd *se_cmd)
+ 		" tdll: %hu sdll: %u inline_dl: %u\n", list_id, list_id_usage,
+ 		tdll, sdll, inline_dl);
+ 
+-	rc = target_xcopy_parse_target_descriptors(se_cmd, xop, &p[16], tdll);
++	rc = target_xcopy_parse_target_descriptors(se_cmd, xop, &p[16], tdll, &ret);
+ 	if (rc <= 0)
+ 		goto out;
+ 
+diff --git a/include/target/target_core_base.h b/include/target/target_core_base.h
+index 3f3e525..9a67ab9 100644
+--- a/include/target/target_core_base.h
++++ b/include/target/target_core_base.h
+@@ -213,6 +213,7 @@ enum tcm_sense_reason_table {
+ 	TCM_LOGICAL_BLOCK_GUARD_CHECK_FAILED	= R(0x15),
+ 	TCM_LOGICAL_BLOCK_APP_TAG_CHECK_FAILED	= R(0x16),
+ 	TCM_LOGICAL_BLOCK_REF_TAG_CHECK_FAILED	= R(0x17),
++	TCM_COPY_TARGET_DEVICE_NOT_REACHABLE	= R(0x18),
+ #undef R
+ };
+ 
+-- 
+2.10.2
+
