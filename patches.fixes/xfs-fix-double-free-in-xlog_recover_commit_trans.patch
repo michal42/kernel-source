@@ -14,13 +14,16 @@ Signed-off-by: Dave Chinner <dchinner@redhat.com>
 Reviewed-by: Christoph Hellwig <hch@lst.de>
 Signed-off-by: Dave Chinner <david@fromorbit.com>
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+Signed-off-by: Luis R. Rodriguez <mcgrof@suse.com>
 ---
  fs/xfs/xfs_log_recover.c | 8 ++++++--
  1 file changed, 6 insertions(+), 2 deletions(-)
 
+diff --git a/fs/xfs/xfs_log_recover.c b/fs/xfs/xfs_log_recover.c
+index 815345b25b4c..c0f25e286802 100644
 --- a/fs/xfs/xfs_log_recover.c
 +++ b/fs/xfs/xfs_log_recover.c
-@@ -3530,8 +3530,6 @@ out:
+@@ -3537,8 +3537,6 @@ out:
  	if (!list_empty(&done_list))
  		list_splice_init(&done_list, &trans->r_itemq);
  
@@ -29,3 +32,26 @@ Signed-off-by: Mark Fasheh <mfasheh@suse.de>
  	error2 = xfs_buf_delwri_submit(&buffer_list);
  	return error ? error : error2;
  }
+@@ -3563,6 +3561,10 @@ xlog_recovery_process_trans(
+ 	if (flags & XLOG_WAS_CONT_TRANS)
+ 		flags &= ~XLOG_CONTINUE_TRANS;
+ 
++	/*
++	 * Callees must not free the trans structure. We'll decide if we need to
++	 * free it or not based on the operation being done and it's result.
++	 */
+ 	switch (flags) {
+ 	/* expected flag values */
+ 	case 0:
+@@ -3574,6 +3576,8 @@ xlog_recovery_process_trans(
+ 		break;
+ 	case XLOG_COMMIT_TRANS:
+ 		error = xlog_recover_commit_trans(log, trans, pass);
++		/* success or fail, we are now done with this transaction. */
++		freeit = true;
+ 		break;
+ 
+ 	/* unexpected flag values */
+-- 
+2.11.0
+

@@ -15,35 +15,82 @@ Signed-off-by: Dave Chinner <dchinner@redhat.com>
 Reviewed-by: Christoph Hellwig <hch@lst.de>
 Signed-off-by: Dave Chinner <david@fromorbit.com>
 Signed-off-by: Mark Fasheh <mfasheh@suse.de>
+[mcgrof: adjust backport more close to upstream]
+Signed-off-by: Luis R. Rodriguez <mcgrof@suse.com>
+---
+ fs/xfs/xfs_log_recover.c | 23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
 
+diff --git a/fs/xfs/xfs_log_recover.c b/fs/xfs/xfs_log_recover.c
+index f85b91b17085..815345b25b4c 100644
 --- a/fs/xfs/xfs_log_recover.c
 +++ b/fs/xfs/xfs_log_recover.c
-@@ -3569,6 +3569,7 @@ xlog_recover_process_data(
- 	int			error;
- 	unsigned long		hash;
- 	uint			flags;
+@@ -3543,6 +3543,9 @@ out:
+ 	return error ? error : error2;
+ }
+ 
++/*
++ * On error or completion, trans is freed.
++ */
+ STATIC int
+ xlog_recovery_process_trans(
+ 	struct xlog		*log,
+@@ -3552,7 +3555,8 @@ xlog_recovery_process_trans(
+ 	unsigned int		flags,
+ 	int			pass)
+ {
+-	int			error = -EIO;
++	int			error = 0;
 +	bool			freeit = false;
  
- 	lp = dp + be32_to_cpu(rhead->h_len);
- 	num_logops = be32_to_cpu(rhead->h_num_logops);
-@@ -3609,9 +3610,11 @@ xlog_recover_process_data(
- 			case XLOG_COMMIT_TRANS:
- 				error = xlog_recover_commit_trans(log,
- 								trans, pass);
-+				freeit = true;
- 				break;
- 			case XLOG_UNMOUNT_TRANS:
- 				error = xlog_recover_unmount_trans(log, trans);
-+				freeit = true;
- 				break;
- 			case XLOG_WAS_CONT_TRANS:
- 				error = xlog_recover_add_to_cont_trans(log,
-@@ -3636,7 +3639,7 @@ xlog_recover_process_data(
- 				error = XFS_ERROR(EIO);
- 				break;
- 			}
--			if (error) {
-+			if (error || freeit) {
- 				xlog_recover_free_trans(trans);
- 				return error;
- 			}
+ 	/* mask off ophdr transaction container flags */
+ 	flags &= ~XLOG_END_TRANS;
+@@ -3574,18 +3578,19 @@ xlog_recovery_process_trans(
+ 
+ 	/* unexpected flag values */
+ 	case XLOG_UNMOUNT_TRANS:
++		/* just skip trans */
+ 		xfs_warn(log->l_mp, "%s: Unmount LR", __func__);
+-		error = 0; /* just skip trans */
++		freeit = true;
+ 		break;
+ 	case XLOG_START_TRANS:
+-		xfs_warn(log->l_mp, "%s: bad transaction", __func__);
+-		ASSERT(0);
+-		break;
+ 	default:
+ 		xfs_warn(log->l_mp, "%s: bad flag 0x%x", __func__, flags);
+ 		ASSERT(0);
++		error = -EIO;
+ 		break;
+ 	}
++	if (error || freeit)
++		xlog_recover_free_trans(trans);
+ 	return error;
+ }
+ 
+@@ -3629,7 +3634,6 @@ xlog_recover_process_ophdr(
+ 	int			pass)
+ {
+ 	struct xlog_recover	*trans;
+-	int			error;
+ 	unsigned int		len;
+ 
+ 	/* Do we understand who wrote this op? */
+@@ -3657,11 +3661,8 @@ xlog_recover_process_ophdr(
+ 		return 0;
+ 	}
+ 
+-	error = xlog_recovery_process_trans(log, trans, dp, len,
+-					    ohead->oh_flags, pass);
+-	if (error)
+-		xlog_recover_free_trans(trans);
+-	return error;
++	return xlog_recovery_process_trans(log, trans, dp, len,
++					   ohead->oh_flags, pass);
+  }
+ 
+ /*
+-- 
+2.11.0
+
