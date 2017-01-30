@@ -1,0 +1,47 @@
+From: Tom Herbert <therbert@google.com>
+Date: Sat, 14 Jun 2014 23:24:28 -0700
+Subject: net: add skb_pop_rcv_encapsulation
+Patch-mainline: v3.16-rc1
+Git-commit: e5eb4e30a51236079fb22bb9f75fcd31915b03c6
+References: bsc#1009682
+
+This function is used by UDP encapsulation protocols in RX when
+crossing encapsulation boundary. If ip_summed is set to
+CHECKSUM_UNNECESSARY and encapsulation is not set, change to
+CHECKSUM_NONE since the checksum has not been validated within the
+encapsulation. Clears csum_valid by the same rationale.
+
+Signed-off-by: Tom Herbert <therbert@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ include/linux/skbuff.h | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 74801f8a0071..3c4de362fccb 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -1845,6 +1845,18 @@ static inline int pskb_network_may_pull(struct sk_buff *skb, unsigned int len)
+ 	return pskb_may_pull(skb, skb_network_offset(skb) + len);
+ }
+ 
++static inline void skb_pop_rcv_encapsulation(struct sk_buff *skb)
++{
++	/* Only continue with checksum unnecessary if device indicated
++	 * it is valid across encapsulation (skb->encapsulation was set).
++	 */
++	if (skb->ip_summed == CHECKSUM_UNNECESSARY && !skb->encapsulation)
++		skb->ip_summed = CHECKSUM_NONE;
++
++	skb->encapsulation = 0;
++	skb->csum_valid = 0;
++}
++
+ /*
+  * CPUs often take a performance hit when accessing unaligned memory
+  * locations. The actual performance hit varies, it can be small if the
+-- 
+2.11.0
+
