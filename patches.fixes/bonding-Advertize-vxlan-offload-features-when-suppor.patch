@@ -1,0 +1,69 @@
+From: Or Gerlitz <ogerlitz@mellanox.com>
+Date: Tue, 17 Jun 2014 16:11:09 +0300
+Subject: bonding: Advertize vxlan offload features when supported
+Patch-mainline: v3.16-rc3
+Git-commit: 5a7baa78851b8e915480aa596de4bd2f13f31ffb
+References: bsc#1009682
+
+When the underlying device supports TCP offloads for VXLAN/UDP
+encapulated traffic, we need to reflect that through the hw_enc_features
+field of the bonding net-device. This will cause the xmit path
+in the core networking stack to provide bonding with encapsulated
+GSO frames to offload into the HW etc.
+
+Signed-off-by: Or Gerlitz <ogerlitz@mellanox.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Acked-by: Michal Kubecek <mkubecek@suse.cz>
+
+---
+ drivers/net/bonding/bond_main.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index c9db47183e2d..1862777928ab 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -1055,10 +1055,14 @@ static netdev_features_t bond_fix_features(struct net_device *dev,
+ 				 NETIF_F_FRAGLIST | NETIF_F_ALL_TSO | \
+ 				 NETIF_F_HIGHDMA | NETIF_F_LRO)
+ 
++#define BOND_ENC_FEATURES	(NETIF_F_ALL_CSUM | NETIF_F_SG | NETIF_F_RXCSUM |\
++				 NETIF_F_TSO | NETIF_F_GSO_UDP_TUNNEL)
++
+ static void bond_compute_features(struct bonding *bond)
+ {
+ 	unsigned int flags, dst_release_flag = IFF_XMIT_DST_RELEASE;
+ 	netdev_features_t vlan_features = BOND_VLAN_FEATURES;
++	netdev_features_t enc_features  = BOND_ENC_FEATURES;
+ 	struct net_device *bond_dev = bond->dev;
+ 	struct list_head *iter;
+ 	struct slave *slave;
+@@ -1074,6 +1078,9 @@ static void bond_compute_features(struct bonding *bond)
+ 		vlan_features = netdev_increment_features(vlan_features,
+ 			slave->dev->vlan_features, BOND_VLAN_FEATURES);
+ 
++		enc_features = netdev_increment_features(enc_features,
++							 slave->dev->hw_enc_features,
++							 BOND_ENC_FEATURES);
+ 		dst_release_flag &= slave->dev->priv_flags;
+ 		if (slave->dev->hard_header_len > max_hard_header_len)
+ 			max_hard_header_len = slave->dev->hard_header_len;
+@@ -1084,6 +1091,7 @@ static void bond_compute_features(struct bonding *bond)
+ 
+ done:
+ 	bond_dev->vlan_features = vlan_features;
++	bond_dev->hw_enc_features = enc_features;
+ 	bond_dev->hard_header_len = max_hard_header_len;
+ 	bond_dev->gso_max_segs = gso_max_segs;
+ 	netif_set_gso_max_size(bond_dev, gso_max_size);
+@@ -3989,6 +3997,7 @@ void bond_setup(struct net_device *bond_dev)
+ 				NETIF_F_HW_VLAN_CTAG_FILTER;
+ 
+ 	bond_dev->hw_features &= ~(NETIF_F_ALL_CSUM & ~NETIF_F_HW_CSUM);
++	bond_dev->hw_features |= NETIF_F_GSO_UDP_TUNNEL;
+ 	bond_dev->features |= bond_dev->hw_features;
+ }
+ 
+-- 
+2.11.0
+
