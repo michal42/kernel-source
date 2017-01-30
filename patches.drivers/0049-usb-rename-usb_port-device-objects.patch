@@ -35,15 +35,15 @@ Signed-off-by: Dan Williams <dan.j.williams@intel.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Signed-off-by: Oliver Neukum <oneukum@suse.de>
 ---
- drivers/usb/core/hub.c      |  273 ++++++++++++++++++--------------------------
+ drivers/usb/core/hub.c      |  263 ++++++++++++++++++--------------------------
  drivers/usb/core/port.c     |   10 +
- drivers/usb/core/usb-acpi.c |   60 +++++----
+ drivers/usb/core/usb-acpi.c |   60 +++++-----
  drivers/usb/core/usb.h      |    4 
- 4 files changed, 158 insertions(+), 189 deletions(-)
+ 4 files changed, 153 insertions(+), 184 deletions(-)
 
 --- a/drivers/usb/core/hub.c
 +++ b/drivers/usb/core/hub.c
-@@ -404,30 +404,35 @@ static int set_port_feature(struct usb_d
+@@ -410,30 +410,35 @@ static int set_port_feature(struct usb_d
  		NULL, 0, 1000);
  }
  
@@ -97,43 +97,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  }
  
  #define	LED_CYCLE_PERIOD	((2*HZ)/3)
-@@ -920,20 +925,20 @@ static int hub_usb3_port_disable(struct
- 		msleep(HUB_DEBOUNCE_STEP);
- 	}
- 	if (total_time >= HUB_DEBOUNCE_TIMEOUT)
--		dev_warn(hub->intfdev, "Could not disable port %d after %d ms\n",
--				port1, total_time);
-+		dev_warn(&hub->ports[port1 - 1]->dev,
-+				"Could not disable after %d ms\n", total_time);
- 
- 	return hub_set_port_link_state(hub, port1, USB_SS_PORT_LS_RX_DETECT);
- }
- 
- static int hub_port_disable(struct usb_hub *hub, int port1, int set_state)
- {
-+	struct usb_port *port_dev = hub->ports[port1 - 1];
- 	struct usb_device *hdev = hub->hdev;
- 	int ret = 0;
- 
--	if (hub->ports[port1 - 1]->child && set_state)
--		usb_set_device_state(hub->ports[port1 - 1]->child,
--				USB_STATE_NOTATTACHED);
-+	if (port_dev->child && set_state)
-+		usb_set_device_state(port_dev->child, USB_STATE_NOTATTACHED);
- 	if (!hub->error) {
- 		if (hub_is_superspeed(hub->hdev))
- 			ret = hub_usb3_port_disable(hub, port1);
-@@ -942,8 +947,7 @@ static int hub_port_disable(struct usb_h
- 					USB_PORT_FEAT_ENABLE);
- 	}
- 	if (ret && ret != -ENODEV)
--		dev_err(hub->intfdev, "cannot disable port %d (err = %d)\n",
--				port1, ret);
-+		dev_err(&port_dev->dev, "cannot disable (err = %d)\n", ret);
- 	return ret;
- }
- 
-@@ -954,7 +958,7 @@ static int hub_port_disable(struct usb_h
+@@ -877,7 +882,7 @@ static int hub_set_port_link_state(struc
   */
  static void hub_port_logical_disconnect(struct usb_hub *hub, int port1)
  {
@@ -142,7 +106,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	hub_port_disable(hub, port1, 1);
  
  	/* FIXME let caller ask to power down the port:
-@@ -1092,21 +1096,23 @@ static void hub_activate(struct usb_hub
+@@ -1025,21 +1030,23 @@ static void hub_activate(struct usb_hub
  	}
   init2:
  
@@ -172,7 +136,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  		 * or any sort of reset), every port should be disabled.
  		 * Unconnected ports should likewise be disabled (paranoia),
  		 * and so should ports for which we have no usb_device.
-@@ -2598,9 +2604,9 @@ static int hub_port_wait_reset(struct us
+@@ -2537,9 +2544,9 @@ static int hub_port_wait_reset(struct us
  		if (delay_time >= 2 * HUB_SHORT_RESET_TIME)
  			delay = HUB_LONG_RESET_TIME;
  
@@ -185,7 +149,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	}
  
  	if ((portstatus & USB_PORT_STAT_RESET))
-@@ -2646,6 +2652,7 @@ static int hub_port_reset(struct usb_hub
+@@ -2585,6 +2592,7 @@ static int hub_port_reset(struct usb_hub
  {
  	int i, status;
  	u16 portchange, portstatus;
@@ -193,7 +157,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  	if (!hub_is_superspeed(hub->hdev)) {
  		if (warm) {
-@@ -2676,9 +2683,9 @@ static int hub_port_reset(struct usb_hub
+@@ -2615,9 +2623,9 @@ static int hub_port_reset(struct usb_hub
  		if (status == -ENODEV) {
  			;	/* The hub is gone */
  		} else if (status) {
@@ -206,7 +170,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  		} else {
  			status = hub_port_wait_reset(hub, port1, udev, delay,
  								warm);
-@@ -2719,21 +2726,19 @@ static int hub_port_reset(struct usb_hub
+@@ -2658,21 +2666,19 @@ static int hub_port_reset(struct usb_hub
  			 * hot or warm reset failed.  Try another warm reset.
  			 */
  			if (!warm) {
@@ -234,7 +198,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  done:
  	if (status == 0) {
-@@ -2804,6 +2809,8 @@ static int check_port_resume_type(struct
+@@ -2743,6 +2749,8 @@ static int check_port_resume_type(struct
  		struct usb_hub *hub, int port1,
  		int status, unsigned portchange, unsigned portstatus)
  {
@@ -243,7 +207,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	/* Is the device still present? */
  	if (status || port_is_suspended(hub, portstatus) ||
  			!port_is_power_on(hub, portstatus) ||
-@@ -2823,9 +2830,8 @@ static int check_port_resume_type(struct
+@@ -2762,9 +2770,8 @@ static int check_port_resume_type(struct
  	}
  
  	if (status) {
@@ -255,7 +219,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	} else if (udev->reset_resume) {
  
  		/* Late port handoff can set status-change bits */
-@@ -3056,8 +3062,7 @@ int usb_port_suspend(struct usb_device *
+@@ -2995,8 +3002,7 @@ int usb_port_suspend(struct usb_device *
  		status = 0;
  	}
  	if (status) {
@@ -265,7 +229,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  		/* Try to enable USB3 LPM and LTM again */
  		usb_unlocked_enable_lpm(udev);
-@@ -3285,8 +3290,6 @@ int usb_port_resume(struct usb_device *u
+@@ -3228,8 +3234,6 @@ int usb_port_resume(struct usb_device *u
  	if (status == 0 && !port_is_suspended(hub, portstatus))
  		goto SuspendCleared;
  
@@ -274,7 +238,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	set_bit(port1, hub->busy_bits);
  
  	/* see 7.1.7.7; affects power usage, but not budgeting */
-@@ -3296,8 +3299,7 @@ int usb_port_resume(struct usb_device *u
+@@ -3239,8 +3243,7 @@ int usb_port_resume(struct usb_device *u
  		status = usb_clear_port_feature(hub->hdev,
  				port1, USB_PORT_FEAT_SUSPEND);
  	if (status) {
@@ -284,7 +248,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	} else {
  		/* drive resume for USB_RESUME_TIMEOUT msec */
  		dev_dbg(&udev->dev, "usb %sresume\n",
-@@ -3402,12 +3404,11 @@ static int hub_suspend(struct usb_interf
+@@ -3345,12 +3348,11 @@ static int hub_suspend(struct usb_interf
  	 */
  	hub->wakeup_enabled_descendants = 0;
  	for (port1 = 1; port1 <= hdev->maxchild; port1++) {
@@ -300,7 +264,17 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  			if (PMSG_IS_AUTO(msg))
  				return -EBUSY;
  		}
-@@ -3947,9 +3948,10 @@ EXPORT_SYMBOL_GPL(usb_enable_ltm);
+@@ -3918,8 +3920,7 @@ static int hub_port_disable(struct usb_h
+ 	if (port_dev->child && set_state)
+ 		usb_set_device_state(port_dev->child, USB_STATE_NOTATTACHED);
+ 	if (ret && ret != -ENODEV)
+-		dev_err(hub->intfdev, "cannot disable port %d (err = %d)\n",
+-				port1, ret);
++		dev_err(&port_dev->dev, "cannot disable (err = %d)\n", ret);
+ 	return ret;
+ }
+ 
+@@ -3942,9 +3943,10 @@ static int hub_port_disable(struct usb_h
  int hub_port_debounce(struct usb_hub *hub, int port1, bool must_be_connected)
  {
  	int ret;
@@ -312,7 +286,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  	for (total_time = 0; ; total_time += HUB_DEBOUNCE_STEP) {
  		ret = hub_port_status(hub, port1, &portstatus, &portchange);
-@@ -3978,9 +3980,8 @@ int hub_port_debounce(struct usb_hub *hu
+@@ -3973,9 +3975,8 @@ int hub_port_debounce(struct usb_hub *hu
  		msleep(HUB_DEBOUNCE_STEP);
  	}
  
@@ -324,7 +298,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  	if (stable_time < HUB_DEBOUNCE_STABLE)
  		return -ETIMEDOUT;
-@@ -4039,13 +4040,14 @@ static int hub_set_address(struct usb_de
+@@ -4034,13 +4035,14 @@ static int hub_set_address(struct usb_de
   */
  static void hub_set_initial_usb2_lpm_policy(struct usb_device *udev)
  {
@@ -342,7 +316,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  	if ((udev->bos->ext_cap->bmAttributes & cpu_to_le32(USB_BESL_SUPPORT)) ||
  			connect_type == USB_PORT_CONNECT_TYPE_HARD_WIRED) {
-@@ -4439,9 +4441,10 @@ hub_power_remaining (struct usb_hub *hub
+@@ -4446,9 +4448,10 @@ hub_power_remaining (struct usb_hub *hub
  
  	remaining = hdev->bus_mA - hub->descriptor->bHubContrCurrent;
  	for (port1 = 1; port1 <= hdev->maxchild; ++port1) {
@@ -356,7 +330,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  		if (!udev)
  			continue;
-@@ -4461,9 +4464,8 @@ hub_power_remaining (struct usb_hub *hub
+@@ -4468,9 +4471,8 @@ hub_power_remaining (struct usb_hub *hub
  		else
  			delta = 8;
  		if (delta > hub->mA_per_port)
@@ -368,7 +342,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  		remaining -= delta;
  	}
  	if (remaining < 0) {
-@@ -4486,15 +4488,14 @@ static void hub_port_connect_change(stru
+@@ -4493,15 +4495,14 @@ static void hub_port_connect_change(stru
  					u16 portstatus, u16 portchange)
  {
  	struct usb_device *hdev = hub->hdev;
@@ -387,7 +361,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  	if (hub->has_indicators) {
  		set_port_led(hub, port1, HUB_LED_AUTO);
-@@ -4509,7 +4510,7 @@ static void hub_port_connect_change(stru
+@@ -4516,7 +4517,7 @@ static void hub_port_connect_change(stru
  #endif
  
  	/* Try to resuscitate an existing device */
@@ -396,7 +370,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	if ((portstatus & USB_PORT_STAT_CONNECTION) && udev &&
  			udev->state != USB_STATE_NOTATTACHED) {
  		usb_lock_device(udev);
-@@ -4541,7 +4542,7 @@ static void hub_port_connect_change(stru
+@@ -4548,7 +4549,7 @@ static void hub_port_connect_change(stru
  		if (hcd->phy && !hdev->parent &&
  				!(portstatus & USB_PORT_STAT_CONNECTION))
  			usb_phy_notify_disconnect(hcd->phy, udev->speed);
@@ -405,7 +379,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	}
  	clear_bit(port1, hub->change_bits);
  
-@@ -4557,8 +4558,8 @@ static void hub_port_connect_change(stru
+@@ -4564,8 +4565,8 @@ static void hub_port_connect_change(stru
  		status = hub_port_debounce_be_stable(hub, port1);
  		if (status < 0) {
  			if (status != -ENODEV && printk_ratelimit())
@@ -416,7 +390,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  			portstatus &= ~USB_PORT_STAT_CONNECTION;
  		} else {
  			portstatus = status;
-@@ -4593,9 +4594,8 @@ static void hub_port_connect_change(stru
+@@ -4600,9 +4601,8 @@ static void hub_port_connect_change(stru
  		 */
  		udev = usb_alloc_dev(hdev, hdev->bus, port1);
  		if (!udev) {
@@ -428,7 +402,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  			goto done;
  		}
  
-@@ -4677,7 +4677,7 @@ static void hub_port_connect_change(stru
+@@ -4683,7 +4683,7 @@ static void hub_port_connect_change(stru
  		if (hdev->state == USB_STATE_NOTATTACHED)
  			status = -ENOTCONN;
  		else
@@ -437,7 +411,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  		spin_unlock_irq(&device_state_lock);
  
  		/* Run it through the hoops (find a driver, etc) */
-@@ -4685,7 +4685,7 @@ static void hub_port_connect_change(stru
+@@ -4691,7 +4691,7 @@ static void hub_port_connect_change(stru
  			status = usb_new_device(udev);
  			if (status) {
  				spin_lock_irq(&device_state_lock);
@@ -446,7 +420,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  				spin_unlock_irq(&device_state_lock);
  			}
  		}
-@@ -4695,7 +4695,7 @@ static void hub_port_connect_change(stru
+@@ -4701,7 +4701,7 @@ static void hub_port_connect_change(stru
  
  		status = hub_power_remaining(hub);
  		if (status)
@@ -455,7 +429,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  		return;
  
-@@ -4713,8 +4713,8 @@ loop:
+@@ -4719,8 +4719,8 @@ loop:
  			!hcd->driver->port_handed_over ||
  			!(hcd->driver->port_handed_over)(hcd, port1)) {
  		if (status != -ENOTCONN && status != -ENODEV)
@@ -466,7 +440,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	}
   
  done:
-@@ -4727,13 +4727,14 @@ done:
+@@ -4733,13 +4733,14 @@ done:
  static int hub_handle_remote_wakeup(struct usb_hub *hub, unsigned int port,
  		u16 portstatus, u16 portchange)
  {
@@ -482,7 +456,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	if (!hub_is_superspeed(hdev)) {
  		if (!(portchange & USB_PORT_STAT_C_SUSPEND))
  			return 0;
-@@ -4758,8 +4759,7 @@ static int hub_handle_remote_wakeup(stru
+@@ -4764,8 +4765,7 @@ static int hub_handle_remote_wakeup(stru
  		ret = -ENODEV;
  		hub_port_disable(hub, port, 1);
  	}
@@ -492,7 +466,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  	return connect_change;
  }
  
-@@ -4850,7 +4850,8 @@ static void hub_events(void)
+@@ -4856,7 +4856,8 @@ static void hub_events(void)
  
  		/* deal with port status changes */
  		for (i = 1; i <= hdev->maxchild; i++) {
@@ -502,7 +476,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  
  			if (test_bit(i, hub->busy_bits))
  				continue;
-@@ -4873,10 +4874,9 @@ static void hub_events(void)
+@@ -4879,10 +4880,9 @@ static void hub_events(void)
  
  			if (portchange & USB_PORT_STAT_C_ENABLE) {
  				if (!connect_change)
@@ -516,7 +490,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  				usb_clear_port_feature(hdev, i,
  					USB_PORT_FEAT_C_ENABLE);
  
-@@ -4887,13 +4887,9 @@ static void hub_events(void)
+@@ -4893,13 +4893,9 @@ static void hub_events(void)
  				 * Works at least with mouse driver. 
  				 */
  				if (!(portstatus & USB_PORT_STAT_ENABLE)
@@ -533,7 +507,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  					connect_change = 1;
  				}
  			}
-@@ -4906,30 +4902,25 @@ static void hub_events(void)
+@@ -4912,30 +4908,25 @@ static void hub_events(void)
  				u16 status = 0;
  				u16 unused;
  
@@ -569,7 +543,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  				usb_clear_port_feature(hdev, i,
  					USB_PORT_FEAT_C_BH_PORT_RESET);
  			}
-@@ -4938,9 +4929,7 @@ static void hub_events(void)
+@@ -4944,9 +4935,7 @@ static void hub_events(void)
  						USB_PORT_FEAT_C_PORT_LINK_STATE);
  			}
  			if (portchange & USB_PORT_STAT_C_CONFIG_ERROR) {
@@ -580,7 +554,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  				usb_clear_port_feature(hub->hdev, i,
  						USB_PORT_FEAT_C_PORT_CONFIG_ERROR);
  			}
-@@ -4951,7 +4940,7 @@ static void hub_events(void)
+@@ -4957,7 +4946,7 @@ static void hub_events(void)
  			if (hub_port_warm_reset_required(hub, portstatus)) {
  				int status;
  
@@ -589,7 +563,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  				if (!udev ||
  				    !(portstatus & USB_PORT_STAT_CONNECTION) ||
  				    udev->state == USB_STATE_NOTATTACHED) {
-@@ -5555,56 +5544,26 @@ struct usb_device *usb_hub_find_child(st
+@@ -5561,56 +5550,26 @@ struct usb_device *usb_hub_find_child(st
  }
  EXPORT_SYMBOL_GPL(usb_hub_find_child);
  
@@ -653,7 +627,7 @@ Signed-off-by: Oliver Neukum <oneukum@suse.de>
  					desc->u.hs.DeviceRemovable[i/8]	|= mask;
  				}
  			}
-@@ -5613,14 +5572,14 @@ void usb_hub_adjust_deviceremovable(stru
+@@ -5619,14 +5578,14 @@ void usb_hub_adjust_deviceremovable(stru
  		u16 port_removable = le16_to_cpu(desc->u.ss.DeviceRemovable);
  
  		for (i = 1; i <= hdev->maxchild; i++) {
