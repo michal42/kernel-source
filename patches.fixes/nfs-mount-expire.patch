@@ -1,0 +1,120 @@
+From: NeilBrown <neilb@suse.com>
+Patch-mainline: Never, fixed completely differently in v3.18
+References: bnc#1025802
+Subject: NFS: Expedite unmount of NFS auto-mounts
+
+When the NFS client discovers a mountpoint on the server
+(because the filesystem-id changes between parent directory
+and a child), it creates an auto-mount-point so that
+applications can see the different filesystem (and won't be
+confused by inode numbers being reused.)
+
+If the server then stops exporting the sub-filesystem
+(e.g. it might have been a Netapp snapshot which was
+deleted), accesses to the mountpoint start returning
+ESTALE.
+
+When that happens to normal directories, the directories can
+be made to quietly disappear.  It is hard to make
+mountpoints disappear though.  In some cases they persist
+indefinitely and cause annoyance.
+
+In Linux 3.18 commit 8ed936b5671b ("vfs: Lazily remove
+mounts on unlinked files and directories.") and related
+patches made it easy for mount points like this to be made
+to disappear, but backporting all of this to 3.12 for
+SLE12-SP1 would be too intrusive.
+
+This patch takes a different, and slightly ugly, approach.
+There is already a mechanism to safely unmount these
+filesystems (doing all the required internal locking), and
+NFS calls this periodically to unmount filesystems which
+haven't been used in a little while. It is
+mark_mounts_for_expiry(), which unmounts anything in the
+list that is not in use and has not been used since the
+previous call.  This sometimes unmounts the STATE
+filesystems, but sometimes doesn't.  I assume an open file
+descriptor is preventing the unmount (though any access on
+this filedescriptor would result in ESTALE).
+
+We really want the auto-unmount to unconditionally unmount
+any stale filesystems, so that is what this patch does.
+It borrows the DCACHE_CANT_MOUNT flag to also mark stale
+mount points.
+If nfs determines a dentry to be stale, it uses dont_mount()
+to set the DCACHE_CANT_MOUNT flag.
+mark_mounts_for_expiry() detects this flag, and proceeds
+with the unmount, even if the filesystem was recently used,
+and even if it is busy (i.e. it acts like a lazy unmount).
+
+The "normal" use of DCACHE_CANT_MOUNT is to set the flag
+when deleting an object, either rmdir or unlink or as the
+target of rename.  It prevents a mount of top of a deleted
+object.
+By setting it on stale directories, we effectly treat them
+like deleted object, which is fairly close to what we want.
+
+The change to expedite the unmount of filesystems marked
+DCACHE_CANT_MOUNT could not affect anything other that NFS,
+as nothing else would ever set DCACHE_CANT_MOUNT on a
+mountpoint, as they cannot be deleted.
+
+Signed-off-by: NeilBrown <neilb@suse.com>
+
+---
+ fs/namespace.c |    6 ++++--
+ fs/nfs/dir.c   |   16 +++++++++++++---
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -2192,8 +2192,10 @@ void mark_mounts_for_expiry(struct list_
+ 	 *   cleared by mntput())
+ 	 */
+ 	list_for_each_entry_safe(mnt, next, mounts, mnt_expire) {
+-		if (!xchg(&mnt->mnt_expiry_mark, 1) ||
+-			propagate_mount_busy(mnt, 1))
++		if ((!xchg(&mnt->mnt_expiry_mark, 1) ||
++		     propagate_mount_busy(mnt, 1)) &&
++		    !cant_mount(mnt->mnt.mnt_root) &&
++		    !cant_mount(mnt->mnt_mountpoint))
+ 			continue;
+ 		list_move(&mnt->mnt_expire, &graveyard);
+ 	}
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -490,8 +490,12 @@ void nfs_prime_dcache(struct dentry *par
+ 				nfs_setsecurity(dentry->d_inode, entry->fattr, entry->label);
+ 			goto out;
+ 		} else {
+-			if (d_invalidate(dentry) != 0)
++			if (d_invalidate(dentry) != 0) {
++				if (!cant_mount(dentry))
++					/* Ensure auto-expiry is expedited */
++					dont_mount(dentry);
+ 				goto out;
++			}
+ 			dput(dentry);
+ 		}
+ 	}
+@@ -1227,12 +1231,18 @@ out_zap_parent:
+ 		 * it from shrink_dcache_for_unmount(), leading to busy
+ 		 * inodes on unmount and further oopses.
+ 		 */
+-		if (IS_ROOT(dentry))
++		if (IS_ROOT(dentry)) {
++			if (!cant_mount(dentry))
++				dont_mount(dentry);
+ 			goto out_valid;
++		}
+ 	}
+ 	/* If we have submounts, don't unhash ! */
+-	if (check_submounts_and_drop(dentry) != 0)
++	if (check_submounts_and_drop(dentry) != 0) {
++		if (inode && S_ISDIR(inode->i_mode) && !cant_mount(dentry))
++			dont_mount(dentry);
+ 		goto out_valid;
++	}
+ 
+ 	dput(parent);
+ 	dfprintk(LOOKUPCACHE, "NFS: %s(%s/%s) is invalid\n",
