@@ -1,0 +1,104 @@
+From: Shilpasri G Bhat <shilpa.bhat@linux.vnet.ibm.com>
+Date: Thu, 18 Jun 2015 16:53:11 +0530
+Subject: cpuidle: powernv/pseries: Auto-promotion of snooze to deeper idle state
+Git-commit: 78eaa10f027cf69f9bd409e64eaff902172b2327
+Patch-mainline: v4.2-rc1
+References: bnc#1023164
+
+The idle cpus which stay in snooze for a long period can degrade the
+perfomance of the sibling cpus. If the cpu stays in snooze for more
+than target residency of the next available idle state, then exit from
+snooze. This gives a chance to the cpuidle governor to re-evaluate the
+last idle state of the cpu to promote it to deeper idle states.
+
+Signed-off-by: Shilpasri G Bhat <shilpa.bhat@linux.vnet.ibm.com>
+Reviewed-by: Preeti U Murthy <preeti@linux.vnet.ibm.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Signed-off-by: Mike Galbraith <mgalbraith@suse.de>
+---
+ drivers/cpuidle/cpuidle-powernv.c |   12 ++++++++++++
+ drivers/cpuidle/cpuidle-pseries.c |   11 +++++++++++
+ 2 files changed, 23 insertions(+)
+
+--- a/drivers/cpuidle/cpuidle-powernv.c
++++ b/drivers/cpuidle/cpuidle-powernv.c
+@@ -31,18 +31,25 @@ struct cpuidle_driver powernv_idle_drive
+ 
+ static int max_idle_state;
+ static struct cpuidle_state *cpuidle_state_table;
++static u64 snooze_timeout;
++static bool snooze_timeout_en;
+ 
+ static int snooze_loop(struct cpuidle_device *dev,
+ 			struct cpuidle_driver *drv,
+ 			int index)
+ {
++	u64 snooze_exit_time;
++
+ 	local_irq_enable();
+ 	set_thread_flag(TIF_POLLING_NRFLAG);
+ 
++	snooze_exit_time = get_tb() + snooze_timeout;
+ 	ppc64_runlatch_off();
+ 	while (!need_resched()) {
+ 		HMT_low();
+ 		HMT_very_low();
++		if (snooze_timeout_en && get_tb() > snooze_exit_time)
++			break;
+ 	}
+ 
+ 	HMT_medium();
+@@ -234,6 +241,11 @@ static int powernv_idle_probe(void)
+ 		cpuidle_state_table = powernv_states;
+ 		/* Device tree can indicate more idle states */
+ 		max_idle_state = powernv_add_idle_states();
++		if (max_idle_state > 1) {
++			snooze_timeout_en = true;
++			snooze_timeout = powernv_states[1].target_residency *
++					 tb_ticks_per_usec;
++		}
+  	} else
+  		return -ENODEV;
+ 
+--- a/drivers/cpuidle/cpuidle-pseries.c
++++ b/drivers/cpuidle/cpuidle-pseries.c
+@@ -26,6 +26,8 @@ struct cpuidle_driver pseries_idle_drive
+ 
+ static int max_idle_state;
+ static struct cpuidle_state *cpuidle_state_table;
++static u64 snooze_timeout;
++static bool snooze_timeout_en;
+ 
+ static inline void idle_loop_prolog(unsigned long *in_purr)
+ {
+@@ -52,14 +54,18 @@ static int snooze_loop(struct cpuidle_de
+ 			int index)
+ {
+ 	unsigned long in_purr;
++	u64 snooze_exit_time;
+ 
+ 	idle_loop_prolog(&in_purr);
+ 	local_irq_enable();
+ 	set_thread_flag(TIF_POLLING_NRFLAG);
++	snooze_exit_time = get_tb() + snooze_timeout;
+ 
+ 	while (!need_resched()) {
+ 		HMT_low();
+ 		HMT_very_low();
++		if (snooze_timeout_en && get_tb() > snooze_exit_time)
++			break;
+ 	}
+ 
+ 	HMT_medium();
+@@ -241,6 +247,11 @@ static int pseries_idle_probe(void)
+ 	} else
+ 		return -ENODEV;
+ 
++	if (max_idle_state > 1) {
++		snooze_timeout_en = true;
++		snooze_timeout = cpuidle_state_table[1].target_residency *
++				 tb_ticks_per_usec;
++	}
+ 	return 0;
+ }
+ 
