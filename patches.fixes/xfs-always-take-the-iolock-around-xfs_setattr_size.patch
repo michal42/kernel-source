@@ -1,0 +1,175 @@
+From 76ca4c238cf5858f8ba5bcd24c94c23717f1e14e Mon Sep 17 00:00:00 2001
+From: Christoph Hellwig <hch@infradead.org>
+Date: Mon, 14 Oct 2013 07:09:35 -0700
+Subject: [PATCH] xfs: always take the iolock around xfs_setattr_size
+Git-commit: 76ca4c238cf5858f8ba5bcd24c94c23717f1e14e
+Patch-mainline: v3.13-rc1
+References: bsc#914939 CVE-2015-1350
+
+There is no reason to conditionally take the iolock inside xfs_setattr_size
+when we can let the caller handle it unconditionally, which just incrases
+the lock hold time for the case where it was previously taken internally
+by a few instructions.
+
+Signed-off-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Dave Chinner <dchinner@redhat.com>
+Signed-off-by: Ben Myers <bpm@sgi.com>
+Acked-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_bmap_util.c |  3 +--
+ fs/xfs/xfs_file.c      |  2 +-
+ fs/xfs/xfs_iops.c      | 39 +++++++++++++++++++++------------------
+ fs/xfs/xfs_iops.h      |  2 +-
+ 4 files changed, 24 insertions(+), 22 deletions(-)
+
+diff --git a/fs/xfs/xfs_bmap_util.c b/fs/xfs/xfs_bmap_util.c
+index 97f952caea74..291e30cedfd3 100644
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -1622,8 +1622,7 @@ xfs_change_file_space(
+ 		iattr.ia_valid = ATTR_SIZE;
+ 		iattr.ia_size = startoffset;
+ 
+-		error = xfs_setattr_size(ip, &iattr,
+-					 attr_flags | XFS_ATTR_NOLOCK);
++		error = xfs_setattr_size(ip, &iattr);
+ 		xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+ 
+ 		if (error)
+diff --git a/fs/xfs/xfs_file.c b/fs/xfs/xfs_file.c
+index 4c749ab543d0..c9179820c01b 100644
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -852,7 +852,7 @@ xfs_file_fallocate(
+ 
+ 		iattr.ia_valid = ATTR_SIZE;
+ 		iattr.ia_size = new_size;
+-		error = -xfs_setattr_size(ip, &iattr, XFS_ATTR_NOLOCK);
++		error = -xfs_setattr_size(ip, &iattr);
+ 	}
+ 
+ out_unlock:
+diff --git a/fs/xfs/xfs_iops.c b/fs/xfs/xfs_iops.c
+index 2b8952d9199b..52ecd1ccec9f 100644
+--- a/fs/xfs/xfs_iops.c
++++ b/fs/xfs/xfs_iops.c
+@@ -709,8 +709,7 @@ xfs_setattr_nonsize(
+ int
+ xfs_setattr_size(
+ 	struct xfs_inode	*ip,
+-	struct iattr		*iattr,
+-	int			flags)
++	struct iattr		*iattr)
+ {
+ 	struct xfs_mount	*mp = ip->i_mount;
+ 	struct inode		*inode = VFS_I(ip);
+@@ -733,15 +732,11 @@ xfs_setattr_size(
+ 	if (error)
+ 		return XFS_ERROR(error);
+ 
++	ASSERT(xfs_isilocked(ip, XFS_IOLOCK_EXCL));
+ 	ASSERT(S_ISREG(ip->i_d.di_mode));
+ 	ASSERT((mask & (ATTR_UID|ATTR_GID|ATTR_ATIME|ATTR_ATIME_SET|
+ 			ATTR_MTIME_SET|ATTR_KILL_PRIV|ATTR_TIMES_SET)) == 0);
+ 
+-	if (!(flags & XFS_ATTR_NOLOCK)) {
+-		lock_flags |= XFS_IOLOCK_EXCL;
+-		xfs_ilock(ip, lock_flags);
+-	}
+-
+ 	oldsize = inode->i_size;
+ 	newsize = iattr->ia_size;
+ 
+@@ -750,12 +745,11 @@ xfs_setattr_size(
+ 	 */
+ 	if (newsize == 0 && oldsize == 0 && ip->i_d.di_nextents == 0) {
+ 		if (!(mask & (ATTR_CTIME|ATTR_MTIME)))
+-			goto out_unlock;
++			return 0;
+ 
+ 		/*
+ 		 * Use the regular setattr path to update the timestamps.
+ 		 */
+-		xfs_iunlock(ip, lock_flags);
+ 		iattr->ia_valid &= ~ATTR_SIZE;
+ 		return xfs_setattr_nonsize(ip, iattr, 0);
+ 	}
+@@ -765,7 +759,7 @@ xfs_setattr_size(
+ 	 */
+ 	error = xfs_qm_dqattach(ip, 0);
+ 	if (error)
+-		goto out_unlock;
++		return error;
+ 
+ 	/*
+ 	 * Now we can make the changes.  Before we join the inode to the
+@@ -783,7 +777,7 @@ xfs_setattr_size(
+ 		 */
+ 		error = xfs_zero_eof(ip, newsize, oldsize);
+ 		if (error)
+-			goto out_unlock;
++			return error;
+ 	}
+ 
+ 	/*
+@@ -802,7 +796,7 @@ xfs_setattr_size(
+ 		error = -filemap_write_and_wait_range(VFS_I(ip)->i_mapping,
+ 						      ip->i_d.di_size, newsize);
+ 		if (error)
+-			goto out_unlock;
++			return error;
+ 	}
+ 
+ 	/*
+@@ -812,7 +806,7 @@ xfs_setattr_size(
+ 
+ 	error = -block_truncate_page(inode->i_mapping, newsize, xfs_get_blocks);
+ 	if (error)
+-		goto out_unlock;
++		return error;
+ 
+ 	tp = xfs_trans_alloc(mp, XFS_TRANS_SETATTR_SIZE);
+ 	error = xfs_trans_reserve(tp, &M_RES(mp)->tr_itruncate, 0, 0);
+@@ -916,12 +910,21 @@ xfs_setattr_size(
+ 
+ STATIC int
+ xfs_vn_setattr(
+-	struct dentry	*dentry,
+-	struct iattr	*iattr)
++	struct dentry		*dentry,
++	struct iattr		*iattr)
+ {
+-	if (iattr->ia_valid & ATTR_SIZE)
+-		return -xfs_setattr_size(XFS_I(dentry->d_inode), iattr, 0);
+-	return -xfs_setattr_nonsize(XFS_I(dentry->d_inode), iattr, 0);
++	struct xfs_inode	*ip = XFS_I(dentry->d_inode);
++	int			error;
++
++	if (iattr->ia_valid & ATTR_SIZE) {
++		xfs_ilock(ip, XFS_IOLOCK_EXCL);
++		error = xfs_setattr_size(ip, iattr);
++		xfs_iunlock(ip, XFS_IOLOCK_EXCL);
++	} else {
++		error = xfs_setattr_nonsize(ip, iattr, 0);
++	}
++
++	return -error;
+ }
+ 
+ STATIC int
+diff --git a/fs/xfs/xfs_iops.h b/fs/xfs/xfs_iops.h
+index d81fb41205ec..3e76dcba7a79 100644
+--- a/fs/xfs/xfs_iops.h
++++ b/fs/xfs/xfs_iops.h
+@@ -38,6 +38,6 @@ extern void xfs_setup_inode(struct xfs_inode *);
+ 
+ extern int xfs_setattr_nonsize(struct xfs_inode *ip, struct iattr *vap,
+ 			       int flags);
+-extern int xfs_setattr_size(struct xfs_inode *ip, struct iattr *vap, int flags);
++extern int xfs_setattr_size(struct xfs_inode *ip, struct iattr *vap);
+ 
+ #endif /* __XFS_IOPS_H__ */
+-- 
+2.6.6
+
