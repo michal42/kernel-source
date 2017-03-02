@@ -19,12 +19,51 @@ Reviewed-by: Christoph Hellwig <hch@lst.de>
 Signed-off-by: Jan Kara <jack@suse.cz>
 
 ---
- fs/xfs/xfs_file.c  |    4 +-
- fs/xfs/xfs_ioctl.c |    3 +
- fs/xfs/xfs_iops.c  |   97 ++++++++++++++++++++++++++++++++++++-----------------
- fs/xfs/xfs_iops.h  |    2 +
- 4 files changed, 73 insertions(+), 33 deletions(-)
+ fs/xfs/xfs_bmap_util.c |    5 +-
+ fs/xfs/xfs_bmap_util.h |    2 -
+ fs/xfs/xfs_file.c      |    4 +-
+ fs/xfs/xfs_ioctl.c     |    3 +
+ fs/xfs/xfs_iops.c      |   97 +++++++++++++++++++++++++++++++++----------------
+ fs/xfs/xfs_iops.h      |    2 +
+ 6 files changed, 77 insertions(+), 36 deletions(-)
 
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -1506,12 +1506,13 @@ out_unlock:
+  */
+ int
+ xfs_change_file_space(
+-	xfs_inode_t	*ip,
++	struct dentry	*dentry,
+ 	int		cmd,
+ 	xfs_flock64_t	*bf,
+ 	xfs_off_t	offset,
+ 	int		attr_flags)
+ {
++	xfs_inode_t	*ip = XFS_I(dentry->d_inode);
+ 	xfs_mount_t	*mp = ip->i_mount;
+ 	int		clrprealloc;
+ 	int		error;
+@@ -1622,7 +1623,7 @@ xfs_change_file_space(
+ 		iattr.ia_valid = ATTR_SIZE;
+ 		iattr.ia_size = startoffset;
+ 
+-		error = xfs_setattr_size(ip, &iattr);
++		error = xfs_vn_setattr_size(dentry, &iattr);
+ 		xfs_iunlock(ip, XFS_IOLOCK_EXCL);
+ 
+ 		if (error)
+--- a/fs/xfs/xfs_bmap_util.h
++++ b/fs/xfs/xfs_bmap_util.h
+@@ -93,7 +93,7 @@ int	xfs_bmap_last_extent(struct xfs_tran
+ 			     int *is_empty);
+ 
+ /* preallocation and hole punch interface */
+-int	xfs_change_file_space(struct xfs_inode *ip, int cmd,
++int	xfs_change_file_space(struct dentry *dentry, int cmd,
+ 			      xfs_flock64_t *bf, xfs_off_t offset,
+ 			      int attr_flags);
+ 
 --- a/fs/xfs/xfs_file.c
 +++ b/fs/xfs/xfs_file.c
 @@ -859,7 +859,7 @@ xfs_file_fallocate(
