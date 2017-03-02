@@ -1,0 +1,33 @@
+From: "J. Bruce Fields" <bfields@redhat.com>
+Date: Tue, 8 Oct 2013 15:33:53 -0400
+Subject: [PATCH] svcrpc: fix gss-proxy NULL dereference in some error cases
+Git-commit: c66080ad0a9295eaf0246a46949619f92c75faaa
+Patch-mainline: v3.13
+References: bsc#1024309
+
+We depend on the xdr decoder to set this pointer, but if we error out
+before we decode this piece it could be left NULL.
+
+I think this is probably tough to hit without a buggy gss-proxy.
+
+Reported-by: Andi Kleen <andi@firstfloor.org>
+Cc: Simo Sorce <simo@redhat.com>
+Signed-off-by: J. Bruce Fields <bfields@redhat.com>
+Acked-by: NeilBrown <neilb@suse.com>
+
+---
+ net/sunrpc/auth_gss/gss_rpc_upcall.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/net/sunrpc/auth_gss/gss_rpc_upcall.c
++++ b/net/sunrpc/auth_gss/gss_rpc_upcall.c
+@@ -296,7 +296,8 @@ int gssp_accept_sec_context_upcall(struc
+ 	if (res.context_handle) {
+ 		data->out_handle = rctxh.exported_context_token;
+ 		data->mech_oid.len = rctxh.mech.len;
+-		memcpy(data->mech_oid.data, rctxh.mech.data,
++		if (rctxh.mech.data)
++			memcpy(data->mech_oid.data, rctxh.mech.data,
+ 						data->mech_oid.len);
+ 		client_name = rctxh.src_name.display_name;
+ 	}
