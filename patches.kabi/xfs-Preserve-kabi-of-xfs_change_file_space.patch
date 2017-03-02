@@ -1,0 +1,116 @@
+From: Jan Kara <jack@suse.cz>
+Subject: xfs: Preserve kabi of xfs_change_file_space()
+Patch-mainline: Never, kabi
+References: bsc#914939 CVE-2015-1350
+
+DMAPI will export xfs_change_file_space() and so changing its prototype will
+change KABI. Furthermore DMAPI does not have dentry to pass to
+xfs_change_file_space(). Provide wrappers to accomodate these DMAPI
+requirements. 
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+
+---
+ fs/xfs/xfs_bmap_util.c |   32 +++++++++++++++++++++++++++++---
+ fs/xfs/xfs_bmap_util.h |    5 ++++-
+ fs/xfs/xfs_file.c      |    2 +-
+ fs/xfs/xfs_ioctl.c     |    2 +-
+ 4 files changed, 35 insertions(+), 6 deletions(-)
+
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -1504,15 +1504,15 @@ out_unlock:
+  *      errno on error
+  *
+  */
+-int
+-xfs_change_file_space(
++STATIC int
++__xfs_change_file_space(
+ 	struct dentry	*dentry,
++	xfs_inode_t	*ip,
+ 	int		cmd,
+ 	xfs_flock64_t	*bf,
+ 	xfs_off_t	offset,
+ 	int		attr_flags)
+ {
+-	xfs_inode_t	*ip = XFS_I(dentry->d_inode);
+ 	xfs_mount_t	*mp = ip->i_mount;
+ 	int		clrprealloc;
+ 	int		error;
+@@ -1599,6 +1599,9 @@ xfs_change_file_space(
+ 	case XFS_IOC_ALLOCSP64:
+ 	case XFS_IOC_FREESP:
+ 	case XFS_IOC_FREESP64:
++		/* NULL dentry is a hack for DMAPI and should not get here! */
++		if (WARN_ON_ONCE(!dentry))
++			return XFS_ERROR(EINVAL);
+ 		/*
+ 		 * These operations actually do IO when extending the file, but
+ 		 * the allocation is done seperately to the zeroing that is
+@@ -1676,6 +1679,29 @@ xfs_change_file_space(
+ 	return xfs_trans_commit(tp, 0);
+ }
+ 
++int
++xfs_vn_change_file_space(
++	struct dentry	*dentry,
++	int		cmd,
++	xfs_flock64_t	*bf,
++	xfs_off_t	offset,
++	int		attr_flags)
++{
++	return __xfs_change_file_space(dentry, XFS_I(dentry->d_inode), cmd, bf,
++				       offset, attr_flags);
++}
++
++int
++xfs_change_file_space(
++	xfs_inode_t	*ip,
++	int		cmd,
++	xfs_flock64_t	*bf,
++	xfs_off_t	offset,
++	int		attr_flags)
++{
++	return __xfs_change_file_space(NULL, ip, cmd, bf, offset, attr_flags);
++}
++
+ /*
+  * We need to check that the format of the data fork in the temporary inode is
+  * valid for the target inode before doing the swap. This is not a problem with
+--- a/fs/xfs/xfs_bmap_util.h
++++ b/fs/xfs/xfs_bmap_util.h
+@@ -93,7 +93,10 @@ int	xfs_bmap_last_extent(struct xfs_tran
+ 			     int *is_empty);
+ 
+ /* preallocation and hole punch interface */
+-int	xfs_change_file_space(struct dentry *dentry, int cmd,
++int	xfs_change_file_space(struct xfs_inode *ip, int cmd,
++			      xfs_flock64_t *bf, xfs_off_t offset,
++			      int attr_flags);
++int	xfs_vn_change_file_space(struct dentry *dentry, int cmd,
+ 			      xfs_flock64_t *bf, xfs_off_t offset,
+ 			      int attr_flags);
+ 
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -859,7 +859,7 @@ xfs_file_fallocate(
+ 	if (file->f_flags & O_DSYNC)
+ 		attr_flags |= XFS_ATTR_SYNC;
+ 
+-	error = -xfs_change_file_space(file->f_dentry, cmd, &bf, 0, attr_flags);
++	error = -xfs_vn_change_file_space(file->f_dentry, cmd, &bf, 0, attr_flags);
+ 	if (error)
+ 		goto out_unlock;
+ 
+--- a/fs/xfs/xfs_ioctl.c
++++ b/fs/xfs/xfs_ioctl.c
+@@ -674,7 +674,7 @@ xfs_ioc_space(
+ 	error = mnt_want_write_file(filp);
+ 	if (error)
+ 		return error;
+-	error = xfs_change_file_space(filp->f_dentry, cmd, bf, filp->f_pos,
++	error = xfs_vn_change_file_space(filp->f_dentry, cmd, bf, filp->f_pos,
+ 				      attr_flags);
+ 	mnt_drop_write_file(filp);
+ 	return -error;
