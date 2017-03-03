@@ -4,6 +4,7 @@ Date: Wed, 7 May 2014 08:05:45 +1000
 Subject: [PATCH] xfs: truncate_setsize should be outside transactions
 Git-commit: 49abc3a8f84146f74daadbaa7cde7d34f2bb40a8
 Patch-mainline: v3.16-rc1
+References: bsc#1011646
 
 truncate_setsize() removes pages from the page cache, and hence
 requires page locks to be held. It is not valid to lock a page cache
@@ -45,13 +46,11 @@ Signed-off-by: Jan Kara <jack@suse.cz>
 
 ---
  fs/xfs/xfs_iops.c |   20 ++++++++++++++++----
- 1 files changed, 16 insertions(+), 4 deletions(-)
+ 1 file changed, 16 insertions(+), 4 deletions(-)
 
-diff --git a/fs/xfs/xfs_iops.c b/fs/xfs/xfs_iops.c
-index 174351e..0f8ab3d 100644
 --- a/fs/xfs/xfs_iops.c
 +++ b/fs/xfs/xfs_iops.c
-@@ -842,22 +842,34 @@ xfs_setattr_size(
+@@ -835,22 +835,34 @@ xfs_setattr_size(
  	 */
  	inode_dio_wait(inode);
  
@@ -72,7 +71,7 @@ index 174351e..0f8ab3d 100644
 +	 */
  	error = -block_truncate_page(inode->i_mapping, newsize, xfs_get_blocks);
  	if (error)
- 		goto out_unlock;
+ 		return error;
 +	truncate_setsize(inode, newsize);
  
  	tp = xfs_trans_alloc(mp, XFS_TRANS_SETATTR_SIZE);
@@ -90,6 +89,3 @@ index 174351e..0f8ab3d 100644
  	xfs_trans_ijoin(tp, ip, 0);
  
  	/*
--- 
-1.6.0.2
-
