@@ -1,0 +1,51 @@
+From: Goldwyn Rodrigues <rgoldwyn@suse.com>
+Subject: [PATCH] aio: mark AIO pseudo-fs noexec
+References: bsc1023992, CVE-2016-10044
+Patch-mainline: never, fixed differently by 22f6b4d
+
+This is a different rendition of
+22f6b4d ("aio: mark AIO pseudo-fs noexec")
+
+Because of unavailability of super block internal only flags such as
+SB_I_NOEXEC flags, we are using fs_flags to mark vfsmounts with MNT_NOEXEC.
+
+Signed-off-by: Goldwyn Rodrigues <rgoldwyn@suse.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index 8ce4f39..f7f9627 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -240,6 +240,7 @@ static int __init aio_setup(void)
+ {
+ 	static struct file_system_type aio_fs = {
+ 		.name		= "aio",
++		.fs_flags	= FS_NOEXEC,
+ 		.mount		= aio_mount,
+ 		.kill_sb	= kill_anon_super,
+ 	};
+diff --git a/fs/namespace.c b/fs/namespace.c
+index 2c619c3..f4a00fd 100644
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -786,6 +786,9 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void
+ 	if (flags & MS_KERNMOUNT)
+ 		mnt->mnt.mnt_flags = MNT_INTERNAL;
+ 
++	if (type->fs_flags & FS_NOEXEC)
++		mnt->mnt.mnt_flags |= MNT_NOEXEC;
++
+ 	root = mount_fs(type, flags, name, data);
+ 	if (IS_ERR(root)) {
+ 		free_vfsmnt(mnt);
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index bd74185..7ff65a7 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1852,6 +1852,7 @@ struct file_system_type {
+ #define FS_USERNS_DEV_MOUNT	16 /* A userns mount does not imply MNT_NODEV */
+ #define FS_RENAME_DOES_D_MOVE	32768	/* FS will handle d_move() during rename() internally. */
+ #define FS_USES_GET_INODE_DEV	65536 /* FS defines sops->get_inode_dev */
++#define FS_NOEXEC		131072 /* Should set NOEXEC flag */
+ 	struct dentry *(*mount) (struct file_system_type *, int,
+ 		       const char *, void *);
+ 	void (*kill_sb) (struct super_block *);
