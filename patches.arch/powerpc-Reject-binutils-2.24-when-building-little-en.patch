@@ -1,0 +1,48 @@
+From 60e065f70bdb0b0e916389024922ad40f3270c96 Mon Sep 17 00:00:00 2001
+From: Michael Ellerman <mpe@ellerman.id.au>
+Date: Thu, 23 Apr 2015 17:27:12 +1000
+Subject: [PATCH] powerpc: Reject binutils 2.24 when building little endian
+
+References: boo#1028895
+Patch-mainline: v4.2-rc1
+Git-commit: 60e065f70bdb0b0e916389024922ad40f3270c96
+
+There is a bug in binutils 2.24 which causes miscompilation if we're
+building little endian and using weak symbols (which the kernel does).
+
+It is fixed in binutils commit 57fa7b8c7e59 "Correct elf_merge_st_other
+arguments for weak symbols", which is in binutils 2.25 and has been
+backported to the binutils 2.24 branch and has been picked up by most
+distros it seems.
+
+However if we're running stock 2.24 (no extra version) then the bug is
+present, so check for that and bail.
+
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Michal Suchanek <msuchanek@suse.de>
+---
+ arch/powerpc/Makefile | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/powerpc/Makefile b/arch/powerpc/Makefile
+index 3609504b0ad2..a314cb024c8b 100644
+--- a/arch/powerpc/Makefile
++++ b/arch/powerpc/Makefile
+@@ -339,6 +339,14 @@ checkbin:
+ 		echo 'disable kernel modules' ; \
+ 		false ; \
+ 	fi
++	@if test "x${CONFIG_CPU_LITTLE_ENDIAN}" = "xy" \
++	    && $(LD) --version | head -1 | grep ' 2\.24$$' >/dev/null ; then \
++		echo -n '*** binutils 2.24 miscompiles weak symbols ' ; \
++		echo 'in some circumstances.' ; \
++		echo -n '*** Please use a different binutils version.' ; \
++		false ; \
++	fi
++
+ 
+ CLEAN_FILES += $(TOUT)
+ 
+-- 
+2.10.2
+
