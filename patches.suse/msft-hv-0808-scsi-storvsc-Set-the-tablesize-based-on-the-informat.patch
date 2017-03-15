@@ -12,14 +12,12 @@ Tested-by: Long Li <longli@microsoft.com>
 Signed-off-by: James Bottomley <JBottomley@Odin.com>
 Acked-by: <ohering@suse.de>
 ---
- drivers/scsi/storvsc_drv.c | 89 +++++++++++++++++++++++++++++++++-------------
+ drivers/scsi/storvsc_drv.c |   89 ++++++++++++++++++++++++++++++++-------------
  1 file changed, 64 insertions(+), 25 deletions(-)
 
-diff --git a/drivers/scsi/storvsc_drv.c b/drivers/scsi/storvsc_drv.c
-index 4156e29..d9dad90 100644
 --- a/drivers/scsi/storvsc_drv.c
 +++ b/drivers/scsi/storvsc_drv.c
-@@ -351,7 +351,10 @@ struct storvsc_cmd_request {
+@@ -365,7 +365,10 @@ struct storvsc_cmd_request {
  	struct completion wait_event;
  
  	unsigned char *sense_buffer;
@@ -31,7 +29,7 @@ index 4156e29..d9dad90 100644
  	struct vstor_packet vstor_packet;
  };
  
-@@ -1103,6 +1106,8 @@ static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
+@@ -1133,6 +1136,8 @@ static void storvsc_command_completion(s
  	struct Scsi_Host *host;
  	struct storvsc_device *stor_dev;
  	struct hv_device *dev = host_dev->dev;
@@ -40,16 +38,16 @@ index 4156e29..d9dad90 100644
  
  	stor_dev = get_in_stor_device(dev);
  	host = stor_dev->host;
-@@ -1136,7 +1141,7 @@ static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
- 					 sense_hdr.ascq);
+@@ -1170,7 +1175,7 @@ static void storvsc_command_completion(s
+ 	}
  
  	scsi_set_resid(scmnd,
--		cmd_request->data_buffer.len -
-+		cmd_request->payload->range.len -
- 		vm_srb->data_transfer_length);
+-		cmd_request->data_buffer.len - data_transfer_length);
++		cmd_request->payload->range.len - data_transfer_length);
  
  	scsi_done_fn = scmnd->scsi_done;
-@@ -1146,6 +1151,10 @@ static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
+ 
+@@ -1179,6 +1184,10 @@ static void storvsc_command_completion(s
  
  	scsi_done_fn(scmnd);
  
@@ -60,7 +58,7 @@ index 4156e29..d9dad90 100644
  	mempool_free(cmd_request, memp->request_mempool);
  }
  
-@@ -1337,7 +1346,7 @@ static int storvsc_dev_remove(struct hv_device *device)
+@@ -1381,7 +1390,7 @@ static int storvsc_dev_remove(struct hv_
  }
  
  static int storvsc_do_io(struct hv_device *device,
@@ -69,7 +67,7 @@ index 4156e29..d9dad90 100644
  {
  	struct storvsc_device *stor_device;
  	struct vstor_packet *vstor_packet;
-@@ -1369,13 +1378,14 @@ static int storvsc_do_io(struct hv_device *device,
+@@ -1413,13 +1422,14 @@ static int storvsc_do_io(struct hv_devic
  
  
  	vstor_packet->vm_srb.data_transfer_length =
@@ -88,7 +86,7 @@ index 4156e29..d9dad90 100644
  				vstor_packet,
  				(sizeof(struct vstor_packet) -
  				vmscsi_size_delta),
-@@ -1549,6 +1559,9 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
+@@ -1644,6 +1654,9 @@ static int storvsc_queuecommand(struct S
  	struct vmscsi_request *vm_srb;
  	struct stor_mem_pools *memp = scmnd->device->hostdata;
  	struct scatterlist *cur_sgl;
@@ -98,7 +96,7 @@ index 4156e29..d9dad90 100644
  
  	if (vmstor_current_major <= VMSTOR_WIN8_MAJOR) {
  		/*
-@@ -1602,50 +1615,73 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
+@@ -1721,16 +1734,19 @@ static int storvsc_queuecommand(struct S
  	cmd_request->sense_buffer = scmnd->sense_buffer;
  
  
@@ -124,7 +122,7 @@ index 4156e29..d9dad90 100644
  						     vm_srb->data_in);
  			if (!cmd_request->bounce_sgl) {
  				ret = SCSI_MLQUEUE_HOST_BUSY;
- 				goto queue_error;
+@@ -1738,33 +1754,53 @@ static int storvsc_queuecommand(struct S
  			}
  
  			cmd_request->bounce_sgl_count =
@@ -186,7 +184,7 @@ index 4156e29..d9dad90 100644
  	/* Invokes the vsc to start an IO */
  	ret = storvsc_do_io(dev, cmd_request);
  
-@@ -1672,10 +1708,7 @@ static struct scsi_host_template scsi_driver = {
+@@ -1799,10 +1835,7 @@ static struct scsi_host_template scsi_dr
  	.slave_configure =	storvsc_device_configure,
  	.cmd_per_lun =		255,
  	.this_id =		-1,
@@ -198,7 +196,7 @@ index 4156e29..d9dad90 100644
  	/* Make sure we dont get a sg segment crosses a page boundary */
  	.dma_boundary =		PAGE_SIZE-1,
  	.no_write_same =	1,
-@@ -1812,6 +1845,12 @@ static int storvsc_probe(struct hv_device *device,
+@@ -1939,6 +1972,12 @@ static int storvsc_probe(struct hv_devic
  	/* max cmd length */
  	host->max_cmd_len = STORVSC_MAX_CMD_LEN;
  
