@@ -1,8 +1,8 @@
 From: Nikolay Borisov <nborisov@suse.com>
 Date: Tue, 14 Mar 2017 22:33:41 +0200
-Subject: [PATCH 2/3] xfs: Make xfs_icdinode->di_dmstate atomic_t
+Subject: [PATCH] xfs: Make xfs_icdinode->di_dmstate atomic_t
 References: bsc#1024788
-Patch-mainline: Never, this is Suse-specific patch
+Patch-mainline: Never, Suse-specific patch
 
 Currently di_dmstate is being used as a counter for the number of holes
 punched into a file. In xfs_dm_send_data_event it is being snapshotted i.e.
@@ -11,18 +11,18 @@ calling xfs_dm_send_data_event without i_iolock held to fix a deadlock
 in file splicing. To allow this and at the same time provide the same
 snapshot semantics convert di_dmstate to atomic_t.
 
-Signed-off-by: Nikolay Borisov <nborisov@suse.com>
+Acked-by: Nikolay Borisov <nborisov@suse.com>
 ---
- fs/xfs/dmapi/xfs_dm.c   | 11 ++++++-----
+ fs/xfs/dmapi/xfs_dm.c   | 15 ++++++++++-----
  fs/xfs/xfs_inode.c      |  2 +-
  fs/xfs/xfs_inode_buf.c  |  4 ++--
  fs/xfs/xfs_ioctl.c      |  2 +-
  fs/xfs/xfs_itable.c     |  2 +-
  fs/xfs/xfs_log_format.h |  2 +-
- 6 files changed, 12 insertions(+), 11 deletions(-)
+ 6 files changed, 16 insertions(+), 11 deletions(-)
 
 diff --git a/fs/xfs/dmapi/xfs_dm.c b/fs/xfs/dmapi/xfs_dm.c
-index c074e070fe22..50dd5b852a97 100644
+index c074e070fe22..1525936e56b7 100644
 --- a/fs/xfs/dmapi/xfs_dm.c
 +++ b/fs/xfs/dmapi/xfs_dm.c
 @@ -148,7 +148,7 @@ xfs_dm_send_data_event(
@@ -52,7 +52,7 @@ index c074e070fe22..50dd5b852a97 100644
  
  	switch (dic->di_format) {
  	case XFS_DINODE_FMT_DEV:
-@@ -2284,10 +2284,11 @@ xfs_dm_punch_hole(
+@@ -2284,10 +2284,15 @@ xfs_dm_punch_hole(
  	if (error)
  		error = -error;
  
@@ -60,8 +60,12 @@ index c074e070fe22..50dd5b852a97 100644
 -	ip->i_d.di_dmstate++;
  	xfs_iunlock(ip, XFS_IOLOCK_EXCL);
  
-+	/* Let threads in send_data_event know we punched the file. */
-+	atomic_inc(&ip->i_d.di_dmstate);
++	/* Let threads in send_data_event know we punched the file.
++	 * Also due to out change from uint16 to effectively uint32, handle
++	 * overflow case manually
++	 */
++	if (!atomic_add_unless(&ip->i_d.di_dmstate, 1, USHRT_MAX)
++			atomic_set(&ip->i_d.di_dmstate, 0); 
 +
  up_and_out:
  	up_rw_sems(inode, DM_SEM_FLAG_WR);
