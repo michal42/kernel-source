@@ -1,0 +1,91 @@
+From 8f507ef522d55a6e2f9e11a1c1163a92756da044 Mon Sep 17 00:00:00 2001
+From: Alan Stern <stern@rowland.harvard.edu>
+Date: Tue, 2 Sep 2014 11:39:15 -0400
+Subject: [PATCH] HID: usbhid: improve handling of Clear-Halt and reset
+References: bsc#1031080
+Git-commit: 8f507ef522d55a6e2f9e11a1c1163a92756da044
+Patch-mainline: v3.18
+
+This patch changes the way usbhid carries out Clear-Halt and reset.
+
+Currently, after a Clear-Halt on the interrupt-IN endpoint, the driver
+immediately restarts the interrupt URB, even if the Clear-Halt failed.
+This doesn't work out well when the reason for the failure was that
+the device was disconnected (when a low- or full-speed device is
+connected through a hub to an EHCI controller, transfer errors caused
+by disconnection are reported as stalls by the hub).  Instead now the
+driver will attempt a reset after a failed Clear-Halt.
+
+The way resets are carried out is also changed.  Now the driver will
+call usb_queue_reset_device() instead of calling usb_reset_device()
+directly.  This avoids a deadlock that would arise when a device is
+unplugged: The hid_reset() routine runs as a workqueue item, a reset
+attempt after the device has been unplugged will fail, failure will
+cause usbhid to be unbound, and the disconnect routine will try to do
+cancel_work_sync().  The usb_queue_reset_device() implementation is
+carefully written to handle scenarios like this one properly.
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Jiri Kosina <jkosina@suse.cz>
+Signed-off-by: Oliver Neukum <oneukum@suse.com>
+---
+ drivers/hid/usbhid/hid-core.c | 34 +++++++++-------------------------
+ 1 file changed, 9 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/hid/usbhid/hid-core.c b/drivers/hid/usbhid/hid-core.c
+index 79cf503..80c5076 100644
+--- a/drivers/hid/usbhid/hid-core.c
++++ b/drivers/hid/usbhid/hid-core.c
+@@ -116,40 +116,24 @@ static void hid_reset(struct work_struct *work)
+ 	struct usbhid_device *usbhid =
+ 		container_of(work, struct usbhid_device, reset_work);
+ 	struct hid_device *hid = usbhid->hid;
+-	int rc = 0;
++	int rc;
+ 
+ 	if (test_bit(HID_CLEAR_HALT, &usbhid->iofl)) {
+ 		dev_dbg(&usbhid->intf->dev, "clear halt\n");
+ 		rc = usb_clear_halt(hid_to_usb_dev(hid), usbhid->urbin->pipe);
+ 		clear_bit(HID_CLEAR_HALT, &usbhid->iofl);
+-		hid_start_in(hid);
+-	}
+-
+-	else if (test_bit(HID_RESET_PENDING, &usbhid->iofl)) {
+-		dev_dbg(&usbhid->intf->dev, "resetting device\n");
+-		rc = usb_lock_device_for_reset(hid_to_usb_dev(hid), usbhid->intf);
+ 		if (rc == 0) {
+-			rc = usb_reset_device(hid_to_usb_dev(hid));
+-			usb_unlock_device(hid_to_usb_dev(hid));
++			hid_start_in(hid);
++		} else {
++			dev_dbg(&usbhid->intf->dev,
++					"clear-halt failed: %d\n", rc);
++			set_bit(HID_RESET_PENDING, &usbhid->iofl);
+ 		}
+-		clear_bit(HID_RESET_PENDING, &usbhid->iofl);
+ 	}
+ 
+-	switch (rc) {
+-	case 0:
+-		if (!test_bit(HID_IN_RUNNING, &usbhid->iofl))
+-			hid_io_error(hid);
+-		break;
+-	default:
+-		hid_err(hid, "can't reset device, %s-%s/input%d, status %d\n",
+-			hid_to_usb_dev(hid)->bus->bus_name,
+-			hid_to_usb_dev(hid)->devpath,
+-			usbhid->ifnum, rc);
+-		/* FALLTHROUGH */
+-	case -EHOSTUNREACH:
+-	case -ENODEV:
+-	case -EINTR:
+-		break;
++	if (test_bit(HID_RESET_PENDING, &usbhid->iofl)) {
++		dev_dbg(&usbhid->intf->dev, "resetting device\n");
++		usb_queue_reset_device(usbhid->intf);
+ 	}
+ }
+ 
+-- 
+2.10.2
+
