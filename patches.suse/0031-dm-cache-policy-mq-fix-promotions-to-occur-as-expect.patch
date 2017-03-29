@@ -1,0 +1,65 @@
+From af95e7a69b54bca48092e3013a92cfa3043c9c73 Mon Sep 17 00:00:00 2001
+From: Joe Thornber <ejt@redhat.com>
+Date: Fri, 15 Nov 2013 10:51:20 +0000
+Subject: [PATCH 136/454] dm cache policy mq: fix promotions to occur as
+ expected
+Git-commit: af95e7a69b54bca48092e3013a92cfa3043c9c73
+Patch-mainline: v3.13-rc4
+References: bsc#1020795
+
+Micro benchmarks that repeatedly issued IO to a single block were
+failing to cause a promotion from the origin device to the cache.  Fix
+this by not updating the stats during map() if -EWOULDBLOCK will be
+returned.
+
+The mq policy will only update stats, consider migration, etc, once per
+tick period (a unit of time established between dm-cache core and the
+policies).
+
+When the IO thread calls the policy's map method, if it would like to
+migrate the associated block it returns -EWOULDBLOCK, the IO then gets
+handed over to a worker thread which handles the migration.  The worker
+thread calls map again, to check the migration is still needed (avoids a
+race among other things).  *BUT*, before this fix, if we were still in
+the same tick period the stats were already updated by the previous map
+call -- so the migration would no longer be requested.
+
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-policy-mq.c | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/md/dm-cache-policy-mq.c b/drivers/md/dm-cache-policy-mq.c
+index 416b7b7..64780ad 100644
+--- a/drivers/md/dm-cache-policy-mq.c
++++ b/drivers/md/dm-cache-policy-mq.c
+@@ -730,15 +730,18 @@ static int pre_cache_entry_found(struct mq_policy *mq, struct entry *e,
+ 	int r = 0;
+ 	bool updated = updated_this_tick(mq, e);
+ 
+-	requeue_and_update_tick(mq, e);
+-
+ 	if ((!discarded_oblock && updated) ||
+-	    !should_promote(mq, e, discarded_oblock, data_dir))
++	    !should_promote(mq, e, discarded_oblock, data_dir)) {
++		requeue_and_update_tick(mq, e);
+ 		result->op = POLICY_MISS;
+-	else if (!can_migrate)
++
++	} else if (!can_migrate)
+ 		r = -EWOULDBLOCK;
+-	else
++
++	else {
++		requeue_and_update_tick(mq, e);
+ 		r = pre_cache_to_cache(mq, e, result);
++	}
+ 
+ 	return r;
+ }
+-- 
+2.10.2
+
