@@ -1,0 +1,110 @@
+From 7f214665124401db3d171fd1f9f1ec6552b38b36 Mon Sep 17 00:00:00 2001
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Tue, 17 Dec 2013 13:43:31 -0500
+Subject: [PATCH 159/454] dm thin: use bool rather than unsigned for flags in
+ structures
+Git-commit: 7f214665124401db3d171fd1f9f1ec6552b38b36
+Patch-mainline: v3.14-rc1
+References: bsc#1020795
+
+Also, move 'err' member in dm_thin_new_mapping structure to eliminate 4
+byte hole (reduces size from 88 bytes to 80).
+
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Acked-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-thin-metadata.h |  2 +-
+ drivers/md/dm-thin.c          | 22 +++++++++++-----------
+ 2 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/md/dm-thin-metadata.h b/drivers/md/dm-thin-metadata.h
+index 2edf5db..9a36856 100644
+--- a/drivers/md/dm-thin-metadata.h
++++ b/drivers/md/dm-thin-metadata.h
+@@ -131,7 +131,7 @@ dm_thin_id dm_thin_dev_id(struct dm_thin_device *td);
+ 
+ struct dm_thin_lookup_result {
+ 	dm_block_t block;
+-	unsigned shared:1;
++	bool shared:1;
+ };
+ 
+ /*
+diff --git a/drivers/md/dm-thin.c b/drivers/md/dm-thin.c
+index 51e656a..5f1b11e 100644
+--- a/drivers/md/dm-thin.c
++++ b/drivers/md/dm-thin.c
+@@ -509,16 +509,16 @@ static void remap_and_issue(struct thin_c *tc, struct bio *bio,
+ struct dm_thin_new_mapping {
+ 	struct list_head list;
+ 
+-	unsigned quiesced:1;
+-	unsigned prepared:1;
+-	unsigned pass_discard:1;
+-	unsigned definitely_not_shared:1;
++	bool quiesced:1;
++	bool prepared:1;
++	bool pass_discard:1;
++	bool definitely_not_shared:1;
+ 
++	int err;
+ 	struct thin_c *tc;
+ 	dm_block_t virt_block;
+ 	dm_block_t data_block;
+ 	struct dm_bio_prison_cell *cell, *cell2;
+-	int err;
+ 
+ 	/*
+ 	 * If the bio covers the whole area of a block then we can avoid
+@@ -549,7 +549,7 @@ static void copy_complete(int read_err, unsigned long write_err, void *context)
+ 	m->err = read_err || write_err ? -EIO : 0;
+ 
+ 	spin_lock_irqsave(&pool->lock, flags);
+-	m->prepared = 1;
++	m->prepared = true;
+ 	__maybe_add_mapping(m);
+ 	spin_unlock_irqrestore(&pool->lock, flags);
+ }
+@@ -564,7 +564,7 @@ static void overwrite_endio(struct bio *bio, int err)
+ 	m->err = err;
+ 
+ 	spin_lock_irqsave(&pool->lock, flags);
+-	m->prepared = 1;
++	m->prepared = true;
+ 	__maybe_add_mapping(m);
+ 	spin_unlock_irqrestore(&pool->lock, flags);
+ }
+@@ -788,7 +788,7 @@ static void schedule_copy(struct thin_c *tc, dm_block_t virt_block,
+ 	m->cell = cell;
+ 
+ 	if (!dm_deferred_set_add_work(pool->shared_read_ds, &m->list))
+-		m->quiesced = 1;
++		m->quiesced = true;
+ 
+ 	/*
+ 	 * IO to pool_dev remaps to the pool target's data_dev.
+@@ -848,8 +848,8 @@ static void schedule_zero(struct thin_c *tc, dm_block_t virt_block,
+ 	struct pool *pool = tc->pool;
+ 	struct dm_thin_new_mapping *m = get_next_mapping(pool);
+ 
+-	m->quiesced = 1;
+-	m->prepared = 0;
++	m->quiesced = true;
++	m->prepared = false;
+ 	m->tc = tc;
+ 	m->virt_block = virt_block;
+ 	m->data_block = data_block;
+@@ -2904,7 +2904,7 @@ static int thin_endio(struct dm_target *ti, struct bio *bio, int err)
+ 		spin_lock_irqsave(&pool->lock, flags);
+ 		list_for_each_entry_safe(m, tmp, &work, list) {
+ 			list_del(&m->list);
+-			m->quiesced = 1;
++			m->quiesced = true;
+ 			__maybe_add_mapping(m);
+ 		}
+ 		spin_unlock_irqrestore(&pool->lock, flags);
+-- 
+2.10.2
+
