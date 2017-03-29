@@ -1,0 +1,73 @@
+From bd8839e03b8e70fbbe08bbff70d8cba95273c823 Mon Sep 17 00:00:00 2001
+From: NeilBrown <neilb@suse.de>
+Date: Wed, 28 May 2014 13:39:21 +1000
+Subject: [PATCH 334/454] md: refuse to change shape of array if it is active
+ but read-only
+Git-commit: bd8839e03b8e70fbbe08bbff70d8cba95273c823
+Patch-mainline: v3.16-rc1
+References: bsc#1020795
+
+read-only arrays should not be changed.  This includes changing
+the level, layout, size, or number of devices.
+
+So reject those changes for readonly arrays.
+
+Signed-off-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/md.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 2382cfc..0ddf389 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -3448,6 +3448,8 @@ level_store(struct mddev *mddev, const char *buf, size_t len)
+ 		mddev->level = LEVEL_NONE;
+ 		return rv;
+ 	}
++	if (mddev->ro)
++		return  -EROFS;
+ 
+ 	/* request to change the personality.  Need to ensure:
+ 	 *  - array is not engaged in resync/recovery/reshape
+@@ -3634,6 +3636,8 @@ layout_store(struct mddev *mddev, const char *buf, size_t len)
+ 		int err;
+ 		if (mddev->pers->check_reshape == NULL)
+ 			return -EBUSY;
++		if (mddev->ro)
++			return -EROFS;
+ 		mddev->new_layout = n;
+ 		err = mddev->pers->check_reshape(mddev);
+ 		if (err) {
+@@ -3723,6 +3727,8 @@ chunk_size_store(struct mddev *mddev, const char *buf, size_t len)
+ 		int err;
+ 		if (mddev->pers->check_reshape == NULL)
+ 			return -EBUSY;
++		if (mddev->ro)
++			return -EROFS;
+ 		mddev->new_chunk_sectors = n >> 9;
+ 		err = mddev->pers->check_reshape(mddev);
+ 		if (err) {
+@@ -6135,6 +6141,8 @@ static int update_size(struct mddev *mddev, sector_t num_sectors)
+ 	 */
+ 	if (mddev->sync_thread)
+ 		return -EBUSY;
++	if (mddev->ro)
++		return -EROFS;
+ 
+ 	rdev_for_each(rdev, mddev) {
+ 		sector_t avail = rdev->sectors;
+@@ -6157,6 +6165,8 @@ static int update_raid_disks(struct mddev *mddev, int raid_disks)
+ 	/* change the number of raid disks */
+ 	if (mddev->pers->check_reshape == NULL)
+ 		return -EINVAL;
++	if (mddev->ro)
++		return -EROFS;
+ 	if (raid_disks <= 0 ||
+ 	    (mddev->max_disks && raid_disks >= mddev->max_disks))
+ 		return -EINVAL;
+-- 
+2.10.2
+
