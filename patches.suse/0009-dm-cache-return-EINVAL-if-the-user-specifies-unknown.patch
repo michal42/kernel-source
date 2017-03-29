@@ -1,0 +1,70 @@
+From 4cb3e1db21a94781bbf05238687c3e8a715ab2f9 Mon Sep 17 00:00:00 2001
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Tue, 1 Oct 2013 18:35:39 -0400
+Subject: [PATCH 015/454] dm cache: return -EINVAL if the user specifies
+ unknown cache policy
+Git-commit: 4cb3e1db21a94781bbf05238687c3e8a715ab2f9
+Patch-mainline: v3.13-rc1
+References: bsc#1020795
+
+Return -EINVAL when the specified cache policy is unknown rather than
+returning -ENOMEM.
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-policy.c |  4 ++--
+ drivers/md/dm-cache-target.c | 13 +++++++------
+ 2 files changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/md/dm-cache-policy.c b/drivers/md/dm-cache-policy.c
+index 21c03c5..d800579 100644
+--- a/drivers/md/dm-cache-policy.c
++++ b/drivers/md/dm-cache-policy.c
+@@ -119,13 +119,13 @@ struct dm_cache_policy *dm_cache_policy_create(const char *name,
+ 	type = get_policy(name);
+ 	if (!type) {
+ 		DMWARN("unknown policy type");
+-		return NULL;
++		return ERR_PTR(-EINVAL);
+ 	}
+ 
+ 	p = type->create(cache_size, origin_size, cache_block_size);
+ 	if (!p) {
+ 		put_policy(type);
+-		return NULL;
++		return ERR_PTR(-ENOMEM);
+ 	}
+ 	p->private = type;
+ 
+diff --git a/drivers/md/dm-cache-target.c b/drivers/md/dm-cache-target.c
+index 50afdf7..81fe857 100644
+--- a/drivers/md/dm-cache-target.c
++++ b/drivers/md/dm-cache-target.c
+@@ -1879,14 +1879,15 @@ static int set_config_values(struct cache *cache, int argc, const char **argv)
+ static int create_cache_policy(struct cache *cache, struct cache_args *ca,
+ 			       char **error)
+ {
+-	cache->policy =	dm_cache_policy_create(ca->policy_name,
+-					       cache->cache_size,
+-					       cache->origin_sectors,
+-					       cache->sectors_per_block);
+-	if (!cache->policy) {
++	struct dm_cache_policy *p = dm_cache_policy_create(ca->policy_name,
++							   cache->cache_size,
++							   cache->origin_sectors,
++							   cache->sectors_per_block);
++	if (IS_ERR(p)) {
+ 		*error = "Error creating cache's policy";
+-		return -ENOMEM;
++		return PTR_ERR(p);
+ 	}
++	cache->policy = p;
+ 
+ 	return 0;
+ }
+-- 
+2.10.2
+
