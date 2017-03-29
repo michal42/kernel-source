@@ -1,0 +1,63 @@
+From 119bc547362e5252074f81f56b8fcdac45cedff4 Mon Sep 17 00:00:00 2001
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Mon, 13 Jan 2014 19:13:36 -0500
+Subject: [PATCH 224/454] dm snapshot: use GFP_KERNEL when initializing
+ exceptions
+Git-commit: 119bc547362e5252074f81f56b8fcdac45cedff4
+Patch-mainline: v3.14-rc1
+References: bsc#1020795
+
+The list of initial exceptions is loaded in the target constructor.  We
+are allowed to allocate memory with GFP_KERNEL at this point.  So,
+change alloc_completed_exception to use GFP_KERNEL when being called
+from the constructor.
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-snap.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/md/dm-snap.c b/drivers/md/dm-snap.c
+index 944690b..7177185 100644
+--- a/drivers/md/dm-snap.c
++++ b/drivers/md/dm-snap.c
+@@ -610,12 +610,12 @@ static struct dm_exception *dm_lookup_exception(struct dm_exception_table *et,
+ 	return NULL;
+ }
+ 
+-static struct dm_exception *alloc_completed_exception(void)
++static struct dm_exception *alloc_completed_exception(gfp_t gfp)
+ {
+ 	struct dm_exception *e;
+ 
+-	e = kmem_cache_alloc(exception_cache, GFP_NOIO);
+-	if (!e)
++	e = kmem_cache_alloc(exception_cache, gfp);
++	if (!e && gfp == GFP_NOIO)
+ 		e = kmem_cache_alloc(exception_cache, GFP_ATOMIC);
+ 
+ 	return e;
+@@ -697,7 +697,7 @@ static int dm_add_exception(void *context, chunk_t old, chunk_t new)
+ 	struct dm_snapshot *s = context;
+ 	struct dm_exception *e;
+ 
+-	e = alloc_completed_exception();
++	e = alloc_completed_exception(GFP_KERNEL);
+ 	if (!e)
+ 		return -ENOMEM;
+ 
+@@ -1405,7 +1405,7 @@ static void pending_complete(struct dm_snap_pending_exception *pe, int success)
+ 		goto out;
+ 	}
+ 
+-	e = alloc_completed_exception();
++	e = alloc_completed_exception(GFP_NOIO);
+ 	if (!e) {
+ 		down_write(&s->lock);
+ 		__invalidate_snapshot(s, -ENOMEM);
+-- 
+2.10.2
+
