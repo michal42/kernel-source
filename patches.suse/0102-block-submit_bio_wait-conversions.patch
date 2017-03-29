@@ -1,0 +1,59 @@
+From 33879d4512c021ae65be9706608dacb36b4687b1 Mon Sep 17 00:00:00 2001
+From: Kent Overstreet <kmo@daterainc.com>
+Date: Sat, 23 Nov 2013 22:33:32 -0800
+Subject: [PATCH 108/454] block: submit_bio_wait() conversions
+Git-commit: 33879d4512c021ae65be9706608dacb36b4687b1
+Patch-mainline: v3.14-rc1
+References: bsc#1020795
+
+It was being open coded in a few places.
+
+Signed-off-by: Kent Overstreet <kmo@daterainc.com>
+Cc: Jens Axboe <axboe@kernel.dk>
+Cc: Joern Engel <joern@logfs.org>
+Cc: Prasad Joshi <prasadjoshi.linux@gmail.com>
+Cc: Neil Brown <neilb@suse.de>
+Cc: Chris Mason <chris.mason@fusionio.com>
+Acked-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/md.c |   14 +-------------
+ 1 file changed, 1 insertion(+), 13 deletions(-)
+
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -842,20 +842,12 @@ int md_super_wait(struct mddev *mddev)
+ 	return 0;
+ }
+ 
+-static void bi_complete(struct bio *bio, int error)
+-{
+-	complete((struct completion*)bio->bi_private);
+-}
+-
+ int sync_page_io(struct md_rdev *rdev, sector_t sector, int size,
+ 		 struct page *page, int rw, bool metadata_op)
+ {
+ 	struct bio *bio = bio_alloc_mddev(GFP_NOIO, 1, rdev->mddev);
+-	struct completion event;
+ 	int ret;
+ 
+-	rw |= REQ_SYNC;
+-
+ 	bio->bi_bdev = (metadata_op && rdev->meta_bdev) ?
+ 		rdev->meta_bdev : rdev->bdev;
+ 	if (metadata_op)
+@@ -867,11 +859,7 @@ int sync_page_io(struct md_rdev *rdev, s
+ 	else
+ 		bio->bi_sector = sector + rdev->data_offset;
+ 	bio_add_page(bio, page, size, 0);
+-	init_completion(&event);
+-	bio->bi_private = &event;
+-	bio->bi_end_io = bi_complete;
+-	submit_bio(rw, bio);
+-	wait_for_completion(&event);
++	submit_bio_wait(rw, bio);
+ 
+ 	ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
+ 	bio_put(bio);
