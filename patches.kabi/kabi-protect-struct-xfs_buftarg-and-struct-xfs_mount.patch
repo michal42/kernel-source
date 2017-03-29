@@ -1,0 +1,55 @@
+From: Nikolay Borisov <nborisov@suse.com>
+Date: Fri, 24 Mar 2017 23:09:24 +0200
+Subject: [PATCH 5/5] kABI: protect struct xfs_buftarg and struct xfs_mount
+Patch-mainline: Never, kabi
+References: bsc#1024508
+
+Commit c891c30a4dd1 ("xfs: exclude never-released buffers from buftarg
+I/O accounting") introduced a per-cpu counter to track buftarg io. This
+changes the size of the struct but since this is an xfs-internal structure
+protect the members by using #ifndef __GENKSYSM__
+
+Commit 78c931b8be75 ("xfs: replace global xfslogd wq with per-mount wq")
+added a new workqueue member to struct xfs_mount. This is an internal xfs
+structure so protect this change the usual way via define guard on GENKSYSM
+
+Signed-off-by: Nikolay Borisov <nborisov@suse.com>
+---
+ fs/xfs/xfs_buf.h   | 3 ++-
+ fs/xfs/xfs_mount.h | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/fs/xfs/xfs_buf.h b/fs/xfs/xfs_buf.h
+index 380a7a6e4d29..9000c04dc625 100644
+--- a/fs/xfs/xfs_buf.h
++++ b/fs/xfs/xfs_buf.h
+@@ -117,8 +117,9 @@ typedef struct xfs_buftarg {
+ 	/* LRU control structures */
+ 	struct shrinker		bt_shrinker;
+ 	struct list_lru		bt_lru;
+-
++#ifndef __GENKSYMS__
+ 	struct percpu_counter	bt_io_count;
++#endif
+ } xfs_buftarg_t;
+ 
+ struct xfs_buf;
+diff --git a/fs/xfs/xfs_mount.h b/fs/xfs/xfs_mount.h
+index f7cddc6ceb28..5a013f13befa 100644
+--- a/fs/xfs/xfs_mount.h
++++ b/fs/xfs/xfs_mount.h
+@@ -172,8 +172,9 @@ typedef struct xfs_mount {
+ 						   on the next remount,rw */
+ 	int64_t			m_low_space[XFS_LOWSP_MAX];
+ 						/* low free space thresholds */
+-
++#ifndef __GENKSYMS__
+ 	struct workqueue_struct *m_buf_workqueue;
++#endif
+ 	struct workqueue_struct	*m_data_workqueue;
+ 	struct workqueue_struct	*m_unwritten_workqueue;
+ 	struct workqueue_struct	*m_cil_workqueue;
+-- 
+2.7.4
+
+
