@@ -1,0 +1,45 @@
+From 99ba2ae4cd876bbcedb01d94c1a7952ce171418e Mon Sep 17 00:00:00 2001
+From: Joe Thornber <ejt@redhat.com>
+Date: Mon, 21 Oct 2013 11:44:57 +0100
+Subject: [PATCH 008/454] dm cache policy mq: protect residency method with
+ existing mutex
+Git-commit: 99ba2ae4cd876bbcedb01d94c1a7952ce171418e
+Patch-mainline: v3.13-rc1
+References: bsc#1020795
+
+It is safe to use a mutex in mq_residency() at this point since it is
+only called from ioctl context.  But future-proof mq_residency() by
+using might_sleep() to catch new contexts that cannot sleep.
+
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-policy-mq.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/md/dm-cache-policy-mq.c b/drivers/md/dm-cache-policy-mq.c
+index 4296155..db490f7 100644
+--- a/drivers/md/dm-cache-policy-mq.c
++++ b/drivers/md/dm-cache-policy-mq.c
+@@ -1001,10 +1001,14 @@ static void mq_force_mapping(struct dm_cache_policy *p,
+ 
+ static dm_cblock_t mq_residency(struct dm_cache_policy *p)
+ {
++	dm_cblock_t r;
+ 	struct mq_policy *mq = to_mq_policy(p);
+ 
+-	/* FIXME: lock mutex, not sure we can block here */
+-	return to_cblock(mq->nr_cblocks_allocated);
++	mutex_lock(&mq->lock);
++	r = to_cblock(mq->nr_cblocks_allocated);
++	mutex_unlock(&mq->lock);
++
++	return r;
+ }
+ 
+ static void mq_tick(struct dm_cache_policy *p)
+-- 
+2.10.2
+
