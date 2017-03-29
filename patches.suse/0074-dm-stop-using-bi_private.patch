@@ -1,0 +1,61 @@
+From bfc6d41cee53b2d02edc469fa459000a448a90ab Mon Sep 17 00:00:00 2001
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Tue, 4 Mar 2014 18:24:49 -0500
+Subject: [PATCH 294/454] dm: stop using bi_private
+Git-commit: bfc6d41cee53b2d02edc469fa459000a448a90ab
+Patch-mainline: v3.15-rc1
+References: bsc#1020795
+
+Device mapper uses the bio structure's bi_private field as a pointer
+to dm_target_io or dm_rq_clone_bio_info.  But a bio structure is
+embedded in the dm_target_io and dm_rq_clone_bio_info structures, so the
+pointer to the structure that contains the bio can be found with the
+container_of() macro.
+
+Remove the use of bi_private and use container_of() instead.
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm.c |    7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -770,7 +770,7 @@ static void dec_pending(struct dm_io *io
+ static void clone_endio(struct bio *bio, int error)
+ {
+ 	int r = 0;
+-	struct dm_target_io *tio = bio->bi_private;
++	struct dm_target_io *tio = container_of(bio, struct dm_target_io, clone);
+ 	struct dm_io *io = tio->io;
+ 	struct mapped_device *md = tio->io->md;
+ 	dm_endio_fn endio = tio->ti->type->end_io;
+@@ -804,7 +804,8 @@ static void clone_endio(struct bio *bio,
+  */
+ static void end_clone_bio(struct bio *clone, int error)
+ {
+-	struct dm_rq_clone_bio_info *info = clone->bi_private;
++	struct dm_rq_clone_bio_info *info =
++		container_of(clone, struct dm_rq_clone_bio_info, clone);
+ 	struct dm_rq_target_io *tio = info->tio;
+ 	struct bio *bio = info->orig;
+ 	unsigned int nr_bytes = info->orig->bi_size;
+@@ -1130,7 +1131,6 @@ static void __map_bio(struct dm_target_i
+ 	struct dm_target *ti = tio->ti;
+ 
+ 	clone->bi_end_io = clone_endio;
+-	clone->bi_private = tio;
+ 
+ 	/*
+ 	 * Map the clone.  If r == 0 we don't need to do
+@@ -1672,7 +1672,6 @@ static int dm_rq_bio_constructor(struct
+ 	info->orig = bio_orig;
+ 	info->tio = tio;
+ 	bio->bi_end_io = end_clone_bio;
+-	bio->bi_private = info;
+ 
+ 	return 0;
+ }
