@@ -1,0 +1,54 @@
+From 80ae49aaed32af72630251eb06161b15cde15ac8 Mon Sep 17 00:00:00 2001
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Fri, 31 Jan 2014 14:30:37 -0500
+Subject: [PATCH 243/454] dm cache: do not add migration to completed list
+ before unhooking bio
+Git-commit: 80ae49aaed32af72630251eb06161b15cde15ac8
+Patch-mainline: v3.14-rc5
+References: bsc#1020795
+
+When completing an overwrite bio, in overwrite_endio(), the associated
+migration should not be added to the 'completed_migrations' until the
+bio's fields are restored with dm_unhook_bio().
+
+Otherwise, do_worker() can race to process 'completed_migrations' before
+dm_unhook_bio() -- so the bio's bi_end_io is incorrect.  This is
+unlikely to cause any problems given the current code but should be
+fixed on the basis of correctness.
+
+Also, the cache's spinlock only needs to be held when manipulating the
+'completed_migrations' list -- other changes don't need protection.
+
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Acked-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-target.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/md/dm-cache-target.c b/drivers/md/dm-cache-target.c
+index 14256b7..db09444 100644
+--- a/drivers/md/dm-cache-target.c
++++ b/drivers/md/dm-cache-target.c
+@@ -1010,13 +1010,15 @@ static void overwrite_endio(struct bio *bio, int err)
+ 	struct per_bio_data *pb = get_per_bio_data(bio, pb_data_size);
+ 	unsigned long flags;
+ 
++	dm_unhook_bio(&pb->hook_info, bio);
++
+ 	if (err)
+ 		mg->err = true;
+ 
++	mg->requeue_holder = false;
++
+ 	spin_lock_irqsave(&cache->lock, flags);
+ 	list_add_tail(&mg->list, &cache->completed_migrations);
+-	dm_unhook_bio(&pb->hook_info, bio);
+-	mg->requeue_holder = false;
+ 	spin_unlock_irqrestore(&cache->lock, flags);
+ 
+ 	wake_worker(cache);
+-- 
+2.10.2
+
