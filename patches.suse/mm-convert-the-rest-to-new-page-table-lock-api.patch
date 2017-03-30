@@ -275,7 +275,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  alloc:
  	if (transparent_hugepage_enabled(vma) &&
  	    !transparent_hugepage_debug_cow())
-@@ -1183,11 +1193,11 @@ alloc:
+@@ -1186,11 +1196,11 @@ alloc:
  	mmun_end   = haddr + HPAGE_PMD_SIZE;
  	mmu_notifier_invalidate_range_start(mm, mmun_start, mmun_end);
  
@@ -289,7 +289,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		mem_cgroup_uncharge_page(new_page);
  		put_page(new_page);
  		goto out_mn;
-@@ -1209,13 +1219,13 @@ alloc:
+@@ -1212,13 +1222,13 @@ alloc:
  		}
  		ret |= VM_FAULT_WRITE;
  	}
@@ -305,16 +305,16 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	return ret;
  }
  
-@@ -1227,7 +1237,7 @@ struct page *follow_trans_huge_pmd(struc
+@@ -1242,7 +1252,7 @@ struct page *follow_trans_huge_pmd(struc
  	struct mm_struct *mm = vma->vm_mm;
  	struct page *page = NULL;
  
 -	assert_spin_locked(&mm->page_table_lock);
 +	assert_spin_locked(pmd_lockptr(mm, pmd));
  
- 	if (flags & FOLL_WRITE && !pmd_write(*pmd))
- 		goto out;
-@@ -1278,6 +1288,7 @@ out:
+ 	/* Avoid dumping huge zero page */
+ 	if ((flags & FOLL_DUMP) && is_huge_zero_pmd(*pmd))
+@@ -1294,6 +1304,7 @@ out:
  int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
  				unsigned long addr, pmd_t pmd, pmd_t *pmdp)
  {
@@ -322,7 +322,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	struct anon_vma *anon_vma = NULL;
  	struct page *page;
  	unsigned long haddr = addr & HPAGE_PMD_MASK;
-@@ -1287,7 +1298,7 @@ int do_huge_pmd_numa_page(struct mm_stru
+@@ -1303,7 +1314,7 @@ int do_huge_pmd_numa_page(struct mm_stru
  	bool migrated = false;
  	int flags = 0;
  
@@ -331,7 +331,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	if (unlikely(!pmd_same(pmd, *pmdp)))
  		goto out_unlock;
  
-@@ -1334,7 +1345,7 @@ int do_huge_pmd_numa_page(struct mm_stru
+@@ -1350,7 +1361,7 @@ int do_huge_pmd_numa_page(struct mm_stru
  
  	/* Migration could have started since the pmd_trans_migrating check */
  	if (!page_locked) {
@@ -340,7 +340,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		wait_on_page_locked(page);
  		page_nid = -1;
  		goto out;
-@@ -1345,11 +1356,11 @@ int do_huge_pmd_numa_page(struct mm_stru
+@@ -1361,11 +1372,11 @@ int do_huge_pmd_numa_page(struct mm_stru
  	 * to serialises splits
  	 */
  	get_page(page);
@@ -354,7 +354,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	if (unlikely(!pmd_same(pmd, *pmdp))) {
  		unlock_page(page);
  		put_page(page);
-@@ -1368,7 +1379,7 @@ int do_huge_pmd_numa_page(struct mm_stru
+@@ -1384,7 +1395,7 @@ int do_huge_pmd_numa_page(struct mm_stru
  	 * Migrate the THP to the requested node, returns with page unlocked
  	 * and pmd_numa cleared.
  	 */
@@ -363,7 +363,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	migrated = migrate_misplaced_transhuge_page(mm, vma,
  				pmdp, pmd, addr, page, target_nid);
  	if (migrated) {
-@@ -1385,7 +1396,7 @@ clear_pmdnuma:
+@@ -1401,7 +1412,7 @@ clear_pmdnuma:
  	update_mmu_cache_pmd(vma, addr, pmdp);
  	unlock_page(page);
  out_unlock:
@@ -372,7 +372,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  out:
  	if (anon_vma)
-@@ -2395,7 +2406,7 @@ static void collapse_huge_page(struct mm
+@@ -2438,7 +2449,7 @@ static void collapse_huge_page(struct mm
  	pte_t *pte;
  	pgtable_t pgtable;
  	struct page *new_page;
@@ -381,7 +381,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	int isolated;
  	unsigned long hstart, hend;
  	unsigned long mmun_start;	/* For mmu_notifiers */
-@@ -2438,12 +2449,12 @@ static void collapse_huge_page(struct mm
+@@ -2479,12 +2490,12 @@ static void collapse_huge_page(struct mm
  	anon_vma_lock_write(vma->anon_vma);
  
  	pte = pte_offset_map(pmd, address);
@@ -396,7 +396,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	/*
  	 * After this gup_fast can't run anymore. This also removes
  	 * any huge TLB entry from the CPU so we won't allow
-@@ -2451,16 +2462,16 @@ static void collapse_huge_page(struct mm
+@@ -2492,16 +2503,16 @@ static void collapse_huge_page(struct mm
  	 * to avoid the risk of CPU bugs in that area.
  	 */
  	_pmd = pmdp_clear_flush(vma, address, pmd);
@@ -417,7 +417,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		BUG_ON(!pmd_none(*pmd));
  		/*
  		 * We can only use set_pmd_at when establishing
-@@ -2468,7 +2479,7 @@ static void collapse_huge_page(struct mm
+@@ -2509,7 +2520,7 @@ static void collapse_huge_page(struct mm
  		 * points to regular pagetables. Use pmd_populate for that
  		 */
  		pmd_populate(mm, pmd, pmd_pgtable(_pmd));
@@ -426,7 +426,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		anon_vma_unlock_write(vma->anon_vma);
  		goto out;
  	}
-@@ -2479,7 +2490,7 @@ static void collapse_huge_page(struct mm
+@@ -2520,7 +2531,7 @@ static void collapse_huge_page(struct mm
  	 */
  	anon_vma_unlock_write(vma->anon_vma);
  
@@ -435,7 +435,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	pte_unmap(pte);
  	__SetPageUptodate(new_page);
  	pgtable = pmd_pgtable(_pmd);
-@@ -2494,13 +2505,13 @@ static void collapse_huge_page(struct mm
+@@ -2535,13 +2546,13 @@ static void collapse_huge_page(struct mm
  	 */
  	smp_wmb();
  
@@ -451,7 +451,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  
  	*hpage = NULL;
  
-@@ -2829,6 +2840,7 @@ static void __split_huge_zero_page_pmd(s
+@@ -2870,6 +2881,7 @@ static void __split_huge_zero_page_pmd(s
  void __split_huge_page_pmd(struct vm_area_struct *vma, unsigned long address,
  		pmd_t *pmd)
  {
@@ -459,7 +459,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	struct page *page;
  	struct mm_struct *mm = vma->vm_mm;
  	unsigned long haddr = address & HPAGE_PMD_MASK;
-@@ -2841,22 +2853,22 @@ void __split_huge_page_pmd(struct vm_are
+@@ -2882,22 +2894,22 @@ void __split_huge_page_pmd(struct vm_are
  	mmun_end   = haddr + HPAGE_PMD_SIZE;
  again:
  	mmu_notifier_invalidate_range_start(mm, mmun_start, mmun_end);
@@ -514,7 +514,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	if (new)
  		pte_free(mm, new);
  	if (wait_split_huge_page)
-@@ -1518,20 +1519,20 @@ struct page *follow_page_mask(struct vm_
+@@ -1517,20 +1518,20 @@ struct page *follow_page_mask(struct vm_
  			split_huge_page_pmd(vma, address, pmd);
  			goto split_fallthrough;
  		}
@@ -541,7 +541,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  split_fallthrough:
 --- a/mm/migrate.c
 +++ b/mm/migrate.c
-@@ -1681,6 +1681,7 @@ int migrate_misplaced_transhuge_page(str
+@@ -1764,6 +1764,7 @@ int migrate_misplaced_transhuge_page(str
  				unsigned long address,
  				struct page *page, int node)
  {
@@ -549,7 +549,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  	pg_data_t *pgdat = NODE_DATA(node);
  	int isolated = 0;
  	struct page *new_page = NULL;
-@@ -1726,10 +1727,10 @@ int migrate_misplaced_transhuge_page(str
+@@ -1809,10 +1810,10 @@ int migrate_misplaced_transhuge_page(str
  
  	/* Recheck the target PMD */
  	mmu_notifier_invalidate_range_start(mm, mmun_start, mmun_end);
@@ -562,7 +562,7 @@ Signed-off-by: Mel Gorman <mgorman@suse.de>
  		mmu_notifier_invalidate_range_end(mm, mmun_start, mmun_end);
  
  		/* Reverse changes made by migrate_page_copy() */
-@@ -1795,7 +1796,7 @@ fail_putback:
+@@ -1878,7 +1879,7 @@ fail_putback:
  	 * before it's fully transferred to the new page.
  	 */
  	mem_cgroup_end_migration(memcg, page, new_page, true);
