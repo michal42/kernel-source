@@ -1,0 +1,60 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Thu, 10 Jul 2014 15:42:35 +0530
+Subject: hwrng: virtio - ensure reads happen after successful probe
+Git-commit: e052dbf554610e2104c5a7518c4d8374bed701bb
+Patch-mainline: v3.16-rc6
+References: bsc#954763 bsc#1032344
+
+The hwrng core asks for random data in the hwrng_register() call itself
+from commit d9e7972619.  This doesn't play well with virtio -- the
+DRIVER_OK bit is only set by virtio core on a successful probe, and
+we're not yet out of our probe routine when this call is made.  This
+causes the host to not acknowledge any requests we put in the virtqueue,
+and the insmod or kernel boot process just waits for data to arrive from
+the host, which never happens.
+
+CC: Kees Cook <keescook@chromium.org>
+CC: Jason Cooper <jason@lakedaemon.net>
+CC: Herbert Xu <herbert@gondor.apana.org.au>
+CC: <stable@vger.kernel.org> # For v3.15+
+Reviewed-by: Jason Cooper <jason@lakedaemon.net>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Miroslav Benes <mbenes@suse.cz>
+---
+ drivers/char/hw_random/virtio-rng.c |   10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/drivers/char/hw_random/virtio-rng.c
++++ b/drivers/char/hw_random/virtio-rng.c
+@@ -30,6 +30,8 @@ static unsigned int data_avail;
+ static DECLARE_COMPLETION(have_data);
+ static bool busy;
+ 
++static bool probe_done;
++
+ static void random_recv_done(struct virtqueue *vq)
+ {
+ 	/* We can get spurious callbacks, e.g. shared IRQs + virtio_pci. */
+@@ -56,6 +58,13 @@ static int virtio_read(struct hwrng *rng
+ {
+ 	int ret;
+ 
++	/*
++	 * Don't ask host for data till we're setup.  This call can
++	 * happen during hwrng_register(), after commit d9e7972619.
++	 */
++	if (unlikely(!probe_done))
++		return 0;
++
+ 	if (!busy) {
+ 		busy = true;
+ 		init_completion(&have_data);
+@@ -111,6 +120,7 @@ static int probe_common(struct virtio_de
+ 		return err;
+ 	}
+ 
++	probe_done = true;
+ 	return 0;
+ }
+ 
