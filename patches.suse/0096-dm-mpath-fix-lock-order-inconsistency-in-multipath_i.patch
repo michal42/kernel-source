@@ -1,0 +1,40 @@
+From 4cdd2ad78098244c1bc9ec4374ea1c225fd1cd6f Mon Sep 17 00:00:00 2001
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Tue, 13 May 2014 13:49:39 -0400
+Subject: [PATCH 328/454] dm mpath: fix lock order inconsistency in
+ multipath_ioctl
+Git-commit: 4cdd2ad78098244c1bc9ec4374ea1c225fd1cd6f
+Patch-mainline: v3.15-rc6
+References: bsc#1020795
+
+Commit 3e9f1be1b40 ("dm mpath: remove process_queued_ios()") did not
+consistently take the multipath device's spinlock (m->lock) before
+calling dm_table_run_md_queue_async() -- which takes the q->queue_lock.
+
+Found with code inspection using hint from reported lockdep warning.
+
+Reported-by: Bart Van Assche <bvanassche@acm.org>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-mpath.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index aa009e8..fa0f6cb 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -1566,8 +1566,8 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
+ 		}
+ 		if (m->pg_init_required)
+ 			__pg_init_all_paths(m);
+-		spin_unlock_irqrestore(&m->lock, flags);
+ 		dm_table_run_md_queue_async(m->ti->table);
++		spin_unlock_irqrestore(&m->lock, flags);
+ 	}
+ 
+ 	return r ? : __blkdev_driver_ioctl(bdev, mode, cmd, arg);
+-- 
+2.10.2
+

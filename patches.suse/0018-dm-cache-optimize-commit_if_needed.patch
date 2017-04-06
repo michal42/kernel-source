@@ -1,0 +1,53 @@
+From ffcbcb6720ab6a4bb6e0a51b3711e8c60872d281 Mon Sep 17 00:00:00 2001
+From: Heinz Mauelshagen <heinzm@redhat.com>
+Date: Mon, 14 Oct 2013 17:24:43 +0200
+Subject: [PATCH 024/454] dm cache: optimize commit_if_needed
+Git-commit: ffcbcb6720ab6a4bb6e0a51b3711e8c60872d281
+Patch-mainline: v3.13-rc1
+References: bsc#1020795
+
+Check commit_requested flag _before_ calling
+dm_cache_changed_this_transaction() superfluously.
+
+Also, be sure to set last_commit_jiffies _after_ dm_cache_commit()
+completes.
+
+Signed-off-by: Heinz Mauelshagen <heinzm@redhat.com>
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-target.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/md/dm-cache-target.c b/drivers/md/dm-cache-target.c
+index 05a10c0..4b56406 100644
+--- a/drivers/md/dm-cache-target.c
++++ b/drivers/md/dm-cache-target.c
+@@ -1234,15 +1234,17 @@ static int need_commit_due_to_time(struct cache *cache)
+ 
+ static int commit_if_needed(struct cache *cache)
+ {
+-	if (dm_cache_changed_this_transaction(cache->cmd) &&
+-	    (cache->commit_requested || need_commit_due_to_time(cache))) {
++	int r = 0;
++
++	if ((cache->commit_requested || need_commit_due_to_time(cache)) &&
++	    dm_cache_changed_this_transaction(cache->cmd)) {
+ 		atomic_inc(&cache->stats.commit_count);
+-		cache->last_commit_jiffies = jiffies;
+ 		cache->commit_requested = false;
+-		return dm_cache_commit(cache->cmd, false);
++		r = dm_cache_commit(cache->cmd, false);
++		cache->last_commit_jiffies = jiffies;
+ 	}
+ 
+-	return 0;
++	return r;
+ }
+ 
+ static void process_deferred_bios(struct cache *cache)
+-- 
+2.10.2
+

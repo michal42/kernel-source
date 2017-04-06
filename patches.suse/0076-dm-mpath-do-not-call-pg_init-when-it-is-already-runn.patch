@@ -1,0 +1,51 @@
+From 17f4ff45b58742e2cb32fce6e406dbdb4b32a1e7 Mon Sep 17 00:00:00 2001
+From: Hannes Reinecke <hare@suse.de>
+Date: Fri, 28 Feb 2014 15:33:42 +0100
+Subject: [PATCH 296/454] dm mpath: do not call pg_init when it is already
+ running
+Git-commit: 17f4ff45b58742e2cb32fce6e406dbdb4b32a1e7
+Patch-mainline: v3.15-rc1
+References: bsc#1020795
+
+This patch moves condition checks as a preparation of following
+patches and has no effect on behaviour.
+process_queued_ios() is the only caller of __pg_init_all_paths()
+and 2 condition checks are moved from outside to inside without
+side effects.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Reviewed-by: Jun'ichi Nomura <j-nomura@ce.jp.nec.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-mpath.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 422a9fd..c78e6a9 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -261,6 +261,9 @@ static void __pg_init_all_paths(struct multipath *m)
+ 	struct pgpath *pgpath;
+ 	unsigned long pg_init_delay = 0;
+ 
++	if (m->pg_init_in_progress || m->pg_init_disabled)
++		return;
++
+ 	m->pg_init_count++;
+ 	m->pg_init_required = 0;
+ 	if (m->pg_init_delay_retry)
+@@ -501,8 +504,7 @@ static void process_queued_ios(struct work_struct *work)
+ 	    (!pgpath && !m->queue_if_no_path))
+ 		must_queue = 0;
+ 
+-	if (m->pg_init_required && !m->pg_init_in_progress && pgpath &&
+-	    !m->pg_init_disabled)
++	if (pgpath && m->pg_init_required)
+ 		__pg_init_all_paths(m);
+ 
+ 	spin_unlock_irqrestore(&m->lock, flags);
+-- 
+2.10.2
+

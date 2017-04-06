@@ -1,0 +1,145 @@
+From 532906aa7f9656209f30f08dfadd328fc1bc6912 Mon Sep 17 00:00:00 2001
+From: Joe Thornber <ejt@redhat.com>
+Date: Fri, 8 Nov 2013 16:36:17 +0000
+Subject: [PATCH 085/454] dm cache: add remove_cblock method to policy
+ interface
+Git-commit: 532906aa7f9656209f30f08dfadd328fc1bc6912
+Patch-mainline: v3.13-rc1
+References: bsc#1020795
+
+Implement policy_remove_cblock() and add remove_cblock method to the mq
+policy.  These methods will be used by the following cache block
+invalidation patch which adds the 'invalidate_cblocks' message to the
+cache core.
+
+Also, update some comments in dm-cache-policy.h
+
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-policy-internal.h |    5 ++++
+ drivers/md/dm-cache-policy-mq.c       |   35 ++++++++++++++++++++++++++++++++++
+ drivers/md/dm-cache-policy.h          |   22 +++++++++++++++++----
+ 3 files changed, 58 insertions(+), 4 deletions(-)
+
+--- a/drivers/md/dm-cache-policy-internal.h
++++ b/drivers/md/dm-cache-policy-internal.h
+@@ -64,6 +64,11 @@ static inline void policy_remove_mapping
+ 	p->remove_mapping(p, oblock);
+ }
+ 
++static inline int policy_remove_cblock(struct dm_cache_policy *p, dm_cblock_t cblock)
++{
++	return p->remove_cblock(p, cblock);
++}
++
+ static inline void policy_force_mapping(struct dm_cache_policy *p,
+ 					dm_oblock_t current_oblock, dm_oblock_t new_oblock)
+ {
+--- a/drivers/md/dm-cache-policy-mq.c
++++ b/drivers/md/dm-cache-policy-mq.c
+@@ -304,6 +304,15 @@ static void free_entry(struct entry_pool
+ 	list_add(&e->list, &ep->free);
+ }
+ 
++/*
++ * Returns NULL if the entry is free.
++ */
++static struct entry *epool_find(struct entry_pool *ep, dm_cblock_t cblock)
++{
++	struct entry *e = ep->entries + from_cblock(cblock);
++	return e->hlist.pprev ? e : NULL;
++}
++
+ static bool epool_empty(struct entry_pool *ep)
+ {
+ 	return list_empty(&ep->free);
+@@ -1020,6 +1029,31 @@ static void mq_remove_mapping(struct dm_
+ 	mutex_unlock(&mq->lock);
+ }
+ 
++static int __remove_cblock(struct mq_policy *mq, dm_cblock_t cblock)
++{
++	struct entry *e = epool_find(&mq->cache_pool, cblock);
++
++	if (!e)
++		return -ENODATA;
++
++	del(mq, e);
++	free_entry(&mq->cache_pool, e);
++
++	return 0;
++}
++
++static int mq_remove_cblock(struct dm_cache_policy *p, dm_cblock_t cblock)
++{
++	int r;
++	struct mq_policy *mq = to_mq_policy(p);
++
++	mutex_lock(&mq->lock);
++	r = __remove_cblock(mq, cblock);
++	mutex_unlock(&mq->lock);
++
++	return r;
++}
++
+ static int __mq_writeback_work(struct mq_policy *mq, dm_oblock_t *oblock,
+ 			      dm_cblock_t *cblock)
+ {
+@@ -1139,6 +1173,7 @@ static void init_policy_functions(struct
+ 	mq->policy.load_mapping = mq_load_mapping;
+ 	mq->policy.walk_mappings = mq_walk_mappings;
+ 	mq->policy.remove_mapping = mq_remove_mapping;
++	mq->policy.remove_cblock = mq_remove_cblock;
+ 	mq->policy.writeback_work = mq_writeback_work;
+ 	mq->policy.force_mapping = mq_force_mapping;
+ 	mq->policy.residency = mq_residency;
+--- a/drivers/md/dm-cache-policy.h
++++ b/drivers/md/dm-cache-policy.h
+@@ -135,9 +135,6 @@ struct dm_cache_policy {
+ 	 */
+ 	int (*lookup)(struct dm_cache_policy *p, dm_oblock_t oblock, dm_cblock_t *cblock);
+ 
+-	/*
+-	 * oblock must be a mapped block.  Must not block.
+-	 */
+ 	void (*set_dirty)(struct dm_cache_policy *p, dm_oblock_t oblock);
+ 	void (*clear_dirty)(struct dm_cache_policy *p, dm_oblock_t oblock);
+ 
+@@ -159,9 +156,17 @@ struct dm_cache_policy {
+ 	void (*force_mapping)(struct dm_cache_policy *p, dm_oblock_t current_oblock,
+ 			      dm_oblock_t new_oblock);
+ 
++	/*
++	 * Provide a dirty block to be written back by the core target.
++	 *
++	 * Returns:
++	 *
++	 * 0 and @cblock,@oblock: block to write back provided
++	 *
++	 * -ENODATA: no dirty blocks available
++	 */
+ 	int (*writeback_work)(struct dm_cache_policy *p, dm_oblock_t *oblock, dm_cblock_t *cblock);
+ 
+-
+ 	/*
+ 	 * How full is the cache?
+ 	 */
+@@ -188,6 +193,15 @@ struct dm_cache_policy {
+ 	 * Book keeping ptr for the policy register, not for general use.
+ 	 */
+ 	void *private;
++#ifndef __GENKSYMS__
++	/*
++	 * This is called via the invalidate_cblocks message.  It is
++	 * possible the particular cblock has already been removed due to a
++	 * write io in passthrough mode.  In which case this should return
++	 * -ENODATA.
++	 */
++	int (*remove_cblock)(struct dm_cache_policy *p, dm_cblock_t cblock);
++#endif
+ };
+ 
+ /*----------------------------------------------------------------*/

@@ -1,0 +1,45 @@
+From 830778a180f268ac106f072b8aad793a79088c87 Mon Sep 17 00:00:00 2001
+From: NeilBrown <neilb@suse.de>
+Date: Tue, 14 Jan 2014 15:17:03 +1100
+Subject: [PATCH 223/454] md: ensure metadata is writen after raid level
+ change.
+Git-commit: 830778a180f268ac106f072b8aad793a79088c87
+Patch-mainline: v3.14-rc1
+References: bsc#1020795
+
+level_store() currently does not make sure the metadata is
+updates to reflect the new raid level.  It simply sets MD_CHANGE_DEVS.
+
+Any level with a ->thread will quickly notice this and update the
+metadata.  However RAID0 and Linear do not have a thread so no
+metadata update happens until the array is stopped.  At that point the
+metadata is written.
+
+This is later that we would like.  While the delay doesn't risk any
+data it can cause confusion.  So if there is no md thread, immediately
+update the metadata after a level change.
+
+Reported-by: Richard Michael <rmichael@edgeofthenet.org>
+Signed-off-by: NeilBrown <neilb@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/md.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 757e388..a20b780 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -3611,6 +3611,8 @@ level_store(struct mddev *mddev, const char *buf, size_t len)
+ 	pers->run(mddev);
+ 	set_bit(MD_CHANGE_DEVS, &mddev->flags);
+ 	mddev_resume(mddev);
++	if (!mddev->thread)
++		md_update_sb(mddev, 1);
+ 	sysfs_notify(&mddev->kobj, NULL, "level");
+ 	md_new_event(mddev);
+ 	return rv;
+-- 
+2.10.2
+

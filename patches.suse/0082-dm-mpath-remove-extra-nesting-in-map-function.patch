@@ -1,0 +1,81 @@
+From 9bf59a611a5eb479f321fae34adc9f948de0a42f Mon Sep 17 00:00:00 2001
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Fri, 28 Feb 2014 15:33:48 +0100
+Subject: [PATCH 302/454] dm mpath: remove extra nesting in map function
+Git-commit: 9bf59a611a5eb479f321fae34adc9f948de0a42f
+Patch-mainline: v3.15-rc1
+References: bsc#1020795
+
+Return early for case when no path exists, and when the
+pathgroup isn't ready. This eliminates the need for
+extra nesting for the the common case.
+
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-mpath.c | 46 ++++++++++++++++++++++++----------------------
+ 1 file changed, 24 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 07ca77f..e7d80ba 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -398,29 +398,31 @@ static int multipath_map(struct dm_target *ti, struct request *clone,
+ 
+ 	pgpath = m->current_pgpath;
+ 
+-	if (pgpath) {
+-		if (pg_ready(m)) {
+-			if (set_mapinfo(m, map_context) < 0)
+-				/* ENOMEM, requeue */
+-				goto out_unlock;
+-
+-			bdev = pgpath->path.dev->bdev;
+-			clone->q = bdev_get_queue(bdev);
+-			clone->rq_disk = bdev->bd_disk;
+-			clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
+-			mpio = map_context->ptr;
+-			mpio->pgpath = pgpath;
+-			mpio->nr_bytes = nr_bytes;
+-			if (pgpath->pg->ps.type->start_io)
+-				pgpath->pg->ps.type->start_io(&pgpath->pg->ps,
+-							      &pgpath->path,
+-							      nr_bytes);
+-			r = DM_MAPIO_REMAPPED;
+-			goto out_unlock;
+-		}
++	if (!pgpath) {
++		if (!__must_push_back(m))
++			r = -EIO;	/* Failed */
++		goto out_unlock;
++	}
++	if (!pg_ready(m)) {
+ 		__pg_init_all_paths(m);
+-	} else if (!__must_push_back(m))
+-		r = -EIO;	/* Failed */
++		goto out_unlock;
++	}
++	if (set_mapinfo(m, map_context) < 0)
++		/* ENOMEM, requeue */
++		goto out_unlock;
++
++	bdev = pgpath->path.dev->bdev;
++	clone->q = bdev_get_queue(bdev);
++	clone->rq_disk = bdev->bd_disk;
++	clone->cmd_flags |= REQ_FAILFAST_TRANSPORT;
++	mpio = map_context->ptr;
++	mpio->pgpath = pgpath;
++	mpio->nr_bytes = nr_bytes;
++	if (pgpath->pg->ps.type->start_io)
++		pgpath->pg->ps.type->start_io(&pgpath->pg->ps,
++					      &pgpath->path,
++					      nr_bytes);
++	r = DM_MAPIO_REMAPPED;
+ 
+ out_unlock:
+ 	spin_unlock_irqrestore(&m->lock, flags);
+-- 
+2.10.2
+

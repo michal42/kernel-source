@@ -1,0 +1,64 @@
+From 18adc57779866ba451237dccca2ebf019be2fa20 Mon Sep 17 00:00:00 2001
+From: Joe Thornber <ejt@redhat.com>
+Date: Mon, 3 Mar 2014 15:46:42 +0000
+Subject: [PATCH 260/454] dm thin: fix deadlock in __requeue_bio_list
+Git-commit: 18adc57779866ba451237dccca2ebf019be2fa20
+Patch-mainline: v3.14-rc6
+References: bsc#1020795
+
+The spin lock in requeue_io() was held for too long, allowing deadlock.
+Don't worry, due to other issues addressed in the following "dm thin:
+fix noflush suspend IO queueing" commit, this code was never called.
+
+Fix this by taking the spin lock for a much shorter period of time.
+
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-thin.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/md/dm-thin.c b/drivers/md/dm-thin.c
+index 38a063f..f39876d 100644
+--- a/drivers/md/dm-thin.c
++++ b/drivers/md/dm-thin.c
+@@ -369,14 +369,18 @@ struct dm_thin_endio_hook {
+ 	struct dm_thin_new_mapping *overwrite_mapping;
+ };
+ 
+-static void __requeue_bio_list(struct thin_c *tc, struct bio_list *master)
++static void requeue_bio_list(struct thin_c *tc, struct bio_list *master)
+ {
+ 	struct bio *bio;
+ 	struct bio_list bios;
++	unsigned long flags;
+ 
+ 	bio_list_init(&bios);
++
++	spin_lock_irqsave(&tc->pool->lock, flags);
+ 	bio_list_merge(&bios, master);
+ 	bio_list_init(master);
++	spin_unlock_irqrestore(&tc->pool->lock, flags);
+ 
+ 	while ((bio = bio_list_pop(&bios))) {
+ 		struct dm_thin_endio_hook *h = dm_per_bio_data(bio, sizeof(struct dm_thin_endio_hook));
+@@ -391,12 +395,9 @@ static void __requeue_bio_list(struct thin_c *tc, struct bio_list *master)
+ static void requeue_io(struct thin_c *tc)
+ {
+ 	struct pool *pool = tc->pool;
+-	unsigned long flags;
+ 
+-	spin_lock_irqsave(&pool->lock, flags);
+-	__requeue_bio_list(tc, &pool->deferred_bios);
+-	__requeue_bio_list(tc, &pool->retry_on_resume_list);
+-	spin_unlock_irqrestore(&pool->lock, flags);
++	requeue_bio_list(tc, &pool->deferred_bios);
++	requeue_bio_list(tc, &pool->retry_on_resume_list);
+ }
+ 
+ static void error_retry_list(struct pool *pool)
+-- 
+2.10.2
+

@@ -1,0 +1,89 @@
+From 2e68c4e6caad9fdadc1cef8b6cb9569192e8a42b Mon Sep 17 00:00:00 2001
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Wed, 15 Jan 2014 21:06:55 -0500
+Subject: [PATCH 232/454] dm cache: add policy name to status output
+Git-commit: 2e68c4e6caad9fdadc1cef8b6cb9569192e8a42b
+Patch-mainline: v3.14-rc1
+References: bsc#1020795
+
+The cache's policy may have been established using the "default" alias,
+which is currently the "mq" policy but the default policy may change in
+the future.  It is useful to know exactly which policy is being used.
+
+Add a 'real' member to the dm_cache_policy_type structure and have the
+"default" dm_cache_policy_type point to the real "mq"
+dm_cache_policy_type.  Update dm_cache_policy_get_name() to check if
+real is set, if so report the name of the real policy (not the alias).
+
+Requested-by: Jonathan Brassow <jbrassow@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-cache-policy-mq.c |    3 ++-
+ drivers/md/dm-cache-policy.c    |    4 ++++
+ drivers/md/dm-cache-policy.h    |    7 +++++++
+ drivers/md/dm-cache-target.c    |    4 +++-
+ 4 files changed, 16 insertions(+), 2 deletions(-)
+
+--- a/drivers/md/dm-cache-policy-mq.c
++++ b/drivers/md/dm-cache-policy-mq.c
+@@ -1276,7 +1276,8 @@ static struct dm_cache_policy_type defau
+ 	.version = {1, 2, 0},
+ 	.hint_size = 4,
+ 	.owner = THIS_MODULE,
+-	.create = mq_create
++	.create = mq_create,
++	.real = &mq_policy_type
+ };
+ 
+ static int __init mq_init(void)
+--- a/drivers/md/dm-cache-policy.c
++++ b/drivers/md/dm-cache-policy.c
+@@ -146,6 +146,10 @@ const char *dm_cache_policy_get_name(str
+ {
+ 	struct dm_cache_policy_type *t = p->private;
+ 
++	/* if t->real is set then an alias was used (e.g. "default") */
++	if (t->real)
++		return t->real->name;
++
+ 	return t->name;
+ }
+ EXPORT_SYMBOL_GPL(dm_cache_policy_get_name);
+--- a/drivers/md/dm-cache-policy.h
++++ b/drivers/md/dm-cache-policy.h
+@@ -234,6 +234,13 @@ struct dm_cache_policy_type {
+ 	struct dm_cache_policy *(*create)(dm_cblock_t cache_size,
+ 					  sector_t origin_size,
+ 					  sector_t block_size);
++#ifndef __GENKSYMS__
++	/*
++	 * For use by an alias dm_cache_policy_type to point to the
++	 * real dm_cache_policy_type.
++	 */
++	struct dm_cache_policy_type *real;
++#endif
+ };
+ 
+ int dm_cache_policy_register(struct dm_cache_policy_type *type);
+--- a/drivers/md/dm-cache-target.c
++++ b/drivers/md/dm-cache-target.c
+@@ -2812,7 +2812,7 @@ static void cache_resume(struct dm_targe
+  * <#demotions> <#promotions> <#dirty>
+  * <#features> <features>*
+  * <#core args> <core args>
+- * <#policy args> <policy args>*
++ * <policy name> <#policy args> <policy args>*
+  */
+ static void cache_status(struct dm_target *ti, status_type_t type,
+ 			 unsigned status_flags, char *result, unsigned maxlen)
+@@ -2880,6 +2880,8 @@ static void cache_status(struct dm_targe
+ 		}
+ 
+ 		DMEMIT("2 migration_threshold %llu ", (unsigned long long) cache->migration_threshold);
++
++		DMEMIT("%s ", dm_cache_policy_get_name(cache->policy));
+ 		if (sz < maxlen) {
+ 			r = policy_emit_config_values(cache->policy, result + sz, maxlen - sz);
+ 			if (r)

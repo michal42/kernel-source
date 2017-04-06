@@ -1,0 +1,79 @@
+From 428e4698642794444cdb26c148a827f22c28d546 Mon Sep 17 00:00:00 2001
+From: Joe Thornber <ejt@redhat.com>
+Date: Mon, 3 Mar 2014 10:37:24 -0500
+Subject: [PATCH 287/454] dm bitset: only flush the current word if it has been
+ dirtied
+Git-commit: 428e4698642794444cdb26c148a827f22c28d546
+Patch-mainline: v3.15-rc1
+References: bsc#1020795
+
+This change offers a big performance boost for dm-era.
+
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/persistent-data/dm-bitset.c |   10 +++++++++-
+ drivers/md/persistent-data/dm-bitset.h |    3 +++
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+--- a/drivers/md/persistent-data/dm-bitset.c
++++ b/drivers/md/persistent-data/dm-bitset.c
+@@ -65,7 +65,7 @@ int dm_bitset_flush(struct dm_disk_bitse
+ 	int r;
+ 	__le64 value;
+ 
+-	if (!info->current_index_set)
++	if (!info->current_index_set || !info->dirty)
+ 		return 0;
+ 
+ 	value = cpu_to_le64(info->current_bits);
+@@ -77,6 +77,8 @@ int dm_bitset_flush(struct dm_disk_bitse
+ 		return r;
+ 
+ 	info->current_index_set = false;
++	info->dirty = false;
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(dm_bitset_flush);
+@@ -94,6 +96,8 @@ static int read_bits(struct dm_disk_bits
+ 	info->current_bits = le64_to_cpu(value);
+ 	info->current_index_set = true;
+ 	info->current_index = array_index;
++	info->dirty = false;
++
+ 	return 0;
+ }
+ 
+@@ -126,6 +130,8 @@ int dm_bitset_set_bit(struct dm_disk_bit
+ 		return r;
+ 
+ 	set_bit(b, (unsigned long *) &info->current_bits);
++	info->dirty = true;
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(dm_bitset_set_bit);
+@@ -141,6 +147,8 @@ int dm_bitset_clear_bit(struct dm_disk_b
+ 		return r;
+ 
+ 	clear_bit(b, (unsigned long *) &info->current_bits);
++	info->dirty = true;
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(dm_bitset_clear_bit);
+--- a/drivers/md/persistent-data/dm-bitset.h
++++ b/drivers/md/persistent-data/dm-bitset.h
+@@ -71,6 +71,9 @@ struct dm_disk_bitset {
+ 	uint64_t current_bits;
+ 
+ 	bool current_index_set:1;
++#ifndef __GENKSYMS__
++	bool dirty:1;
++#endif
+ };
+ 
+ /*

@@ -1,0 +1,155 @@
+From 4e857c58efeb99393cba5a5d0d8ec7117183137c Mon Sep 17 00:00:00 2001
+From: Peter Zijlstra <peterz@infradead.org>
+Date: Mon, 17 Mar 2014 18:06:10 +0100
+Subject: [PATCH 320/454] arch: Mass conversion of smp_mb__*()
+Git-commit: 4e857c58efeb99393cba5a5d0d8ec7117183137c
+Patch-mainline: v3.16-rc1
+References: bsc#1020795
+
+Mostly scripted conversion of the smp_mb__* barriers.
+
+Signed-off-by: Peter Zijlstra <peterz@infradead.org>
+Acked-by: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
+Link: http://lkml.kernel.org/n/tip-55dhyhocezdw1dg7u19hmh1u@git.kernel.org
+Cc: Linus Torvalds <torvalds@linux-foundation.org>
+Cc: linux-arch@vger.kernel.org
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/bcache/bcache.h    |    3 ++-
+ drivers/md/bcache/closure.h   |    3 ++-
+ drivers/md/dm-bufio.c         |    8 ++++----
+ drivers/md/dm-snap.c          |    4 ++--
+ drivers/md/dm.c               |    2 +-
+ drivers/md/md.h               |    1 +
+ drivers/md/raid5.c            |    2 +-
+ include/linux/device-mapper.h |    1 +
+ 8 files changed, 14 insertions(+), 10 deletions(-)
+
+--- a/drivers/md/bcache/bcache.h
++++ b/drivers/md/bcache/bcache.h
+@@ -185,6 +185,7 @@
+ #include <linux/rwsem.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
++#include <asm-generic/barrier.h>
+ 
+ #include "util.h"
+ #include "closure.h"
+@@ -1102,7 +1103,7 @@ static inline bool cached_dev_get(struct
+ 		return false;
+ 
+ 	/* Paired with the mb in cached_dev_attach */
+-	smp_mb__after_atomic_inc();
++	smp_mb__after_atomic();
+ 	return true;
+ }
+ 
+--- a/drivers/md/bcache/closure.h
++++ b/drivers/md/bcache/closure.h
+@@ -4,6 +4,7 @@
+ #include <linux/llist.h>
+ #include <linux/sched.h>
+ #include <linux/workqueue.h>
++#include <asm-generic/barrier.h>
+ 
+ /*
+  * Closure is perhaps the most overused and abused term in computer science, but
+@@ -627,7 +628,7 @@ static inline void set_closure_fn(struct
+ 	cl->fn = fn;
+ 	cl->wq = wq;
+ 	/* between atomic_dec() in closure_put() */
+-	smp_mb__before_atomic_dec();
++	smp_mb__before_atomic();
+ }
+ 
+ #define continue_at(_cl, _fn, _wq)					\
+--- a/drivers/md/dm-bufio.c
++++ b/drivers/md/dm-bufio.c
+@@ -626,9 +626,9 @@ static void write_endio(struct bio *bio,
+ 
+ 	BUG_ON(!test_bit(B_WRITING, &b->state));
+ 
+-	smp_mb__before_clear_bit();
++	smp_mb__before_atomic();
+ 	clear_bit(B_WRITING, &b->state);
+-	smp_mb__after_clear_bit();
++	smp_mb__after_atomic();
+ 
+ 	wake_up_bit(&b->state, B_WRITING);
+ }
+@@ -1016,9 +1016,9 @@ static void read_endio(struct bio *bio,
+ 
+ 	BUG_ON(!test_bit(B_READING, &b->state));
+ 
+-	smp_mb__before_clear_bit();
++	smp_mb__before_atomic();
+ 	clear_bit(B_READING, &b->state);
+-	smp_mb__after_clear_bit();
++	smp_mb__after_atomic();
+ 
+ 	wake_up_bit(&b->state, B_READING);
+ }
+--- a/drivers/md/dm-snap.c
++++ b/drivers/md/dm-snap.c
+@@ -642,7 +642,7 @@ static void free_pending_exception(struc
+ 	struct dm_snapshot *s = pe->snap;
+ 
+ 	mempool_free(pe, s->pending_pool);
+-	smp_mb__before_atomic_dec();
++	smp_mb__before_atomic();
+ 	atomic_dec(&s->pending_exceptions_count);
+ }
+ 
+@@ -783,7 +783,7 @@ static int init_hash_tables(struct dm_sn
+ static void merge_shutdown(struct dm_snapshot *s)
+ {
+ 	clear_bit_unlock(RUNNING_MERGE, &s->state_bits);
+-	smp_mb__after_clear_bit();
++	smp_mb__after_atomic();
+ 	wake_up_bit(&s->state_bits, RUNNING_MERGE);
+ }
+ 
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -2657,7 +2657,7 @@ static void dm_wq_work(struct work_struc
+ static void dm_queue_flush(struct mapped_device *md)
+ {
+ 	clear_bit(DMF_BLOCK_IO_FOR_SUSPEND, &md->flags);
+-	smp_mb__after_clear_bit();
++	smp_mb__after_atomic();
+ 	queue_work(md->wq, &md->work);
+ }
+ 
+--- a/drivers/md/md.h
++++ b/drivers/md/md.h
+@@ -23,6 +23,7 @@
+ #include <linux/timer.h>
+ #include <linux/wait.h>
+ #include <linux/workqueue.h>
++#include <asm-generic/barrier.h>
+ #include "md-cluster.h"
+ 
+ #define MaxSector (~(sector_t)0)
+--- a/drivers/md/raid5.c
++++ b/drivers/md/raid5.c
+@@ -4973,7 +4973,7 @@ static void raid5_unplug(struct blk_plug
+ 			 * STRIPE_ON_UNPLUG_LIST clear but the stripe
+ 			 * is still in our list
+ 			 */
+-			smp_mb__before_clear_bit();
++			smp_mb__before_atomic();
+ 			clear_bit(STRIPE_ON_UNPLUG_LIST, &sh->state);
+ 			/*
+ 			 * STRIPE_ON_RELEASE_LIST could be set here. In that
+--- a/include/linux/device-mapper.h
++++ b/include/linux/device-mapper.h
+@@ -12,6 +12,7 @@
+ #include <linux/blkdev.h>
+ #include <linux/math64.h>
+ #include <linux/ratelimit.h>
++#include <asm-generic/barrier.h>
+ 
+ struct dm_dev;
+ struct dm_target;

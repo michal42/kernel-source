@@ -1,0 +1,159 @@
+From 55494bf2947dccdf2d98b62374fea7365dfead84 Mon Sep 17 00:00:00 2001
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Mon, 13 Jan 2014 19:12:36 -0500
+Subject: [PATCH 226/454] dm snapshot: use dm-bufio
+Git-commit: 55494bf2947dccdf2d98b62374fea7365dfead84
+Patch-mainline: v3.14-rc1
+References: bsc#1020795
+
+Use dm-bufio for initial loading of the exceptions.
+Introduce a new function dm_bufio_forget that frees the given buffer.
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/Kconfig              |  1 +
+ drivers/md/dm-bufio.c           | 22 ++++++++++++++++++++++
+ drivers/md/dm-bufio.h           |  7 +++++++
+ drivers/md/dm-snap-persistent.c | 39 ++++++++++++++++++++++++++++++++-------
+ 4 files changed, 62 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/md/Kconfig b/drivers/md/Kconfig
+index 7441344..39b540a 100644
+--- a/drivers/md/Kconfig
++++ b/drivers/md/Kconfig
+@@ -238,6 +238,7 @@ config DM_CRYPT
+ config DM_SNAPSHOT
+        tristate "Snapshot target"
+        depends on BLK_DEV_DM
++       select DM_BUFIO
+        ---help---
+          Allow volume managers to take writable snapshots of a device.
+ 
+diff --git a/drivers/md/dm-bufio.c b/drivers/md/dm-bufio.c
+index 54bdd923..d865937 100644
+--- a/drivers/md/dm-bufio.c
++++ b/drivers/md/dm-bufio.c
+@@ -1350,6 +1350,28 @@ void dm_bufio_release_move(struct dm_buffer *b, sector_t new_block)
+ }
+ EXPORT_SYMBOL_GPL(dm_bufio_release_move);
+ 
++/*
++ * Free the given buffer.
++ *
++ * This is just a hint, if the buffer is in use or dirty, this function
++ * does nothing.
++ */
++void dm_bufio_forget(struct dm_bufio_client *c, sector_t block)
++{
++	struct dm_buffer *b;
++
++	dm_bufio_lock(c);
++
++	b = __find(c, block);
++	if (b && likely(!b->hold_count) && likely(!b->state)) {
++		__unlink_buffer(b);
++		__free_buffer_wake(b);
++	}
++
++	dm_bufio_unlock(c);
++}
++EXPORT_SYMBOL(dm_bufio_forget);
++
+ unsigned dm_bufio_get_block_size(struct dm_bufio_client *c)
+ {
+ 	return c->block_size;
+diff --git a/drivers/md/dm-bufio.h b/drivers/md/dm-bufio.h
+index b142946..3dac376 100644
+--- a/drivers/md/dm-bufio.h
++++ b/drivers/md/dm-bufio.h
+@@ -108,6 +108,13 @@ int dm_bufio_issue_flush(struct dm_bufio_client *c);
+  */
+ void dm_bufio_release_move(struct dm_buffer *b, sector_t new_block);
+ 
++/*
++ * Free the given buffer.
++ * This is just a hint, if the buffer is in use or dirty, this function
++ * does nothing.
++ */
++void dm_bufio_forget(struct dm_bufio_client *c, sector_t block);
++
+ unsigned dm_bufio_get_block_size(struct dm_bufio_client *c);
+ sector_t dm_bufio_get_device_size(struct dm_bufio_client *c);
+ sector_t dm_bufio_get_block_number(struct dm_buffer *b);
+diff --git a/drivers/md/dm-snap-persistent.c b/drivers/md/dm-snap-persistent.c
+index ba792ae..1692750 100644
+--- a/drivers/md/dm-snap-persistent.c
++++ b/drivers/md/dm-snap-persistent.c
+@@ -13,6 +13,7 @@
+ #include <linux/export.h>
+ #include <linux/slab.h>
+ #include <linux/dm-io.h>
++#include "dm-bufio.h"
+ 
+ #define DM_MSG_PREFIX "persistent snapshot"
+ #define DM_CHUNK_SIZE_DEFAULT_SECTORS 32	/* 16KB */
+@@ -495,27 +496,51 @@ static int read_exceptions(struct pstore *ps,
+ 			   void *callback_context)
+ {
+ 	int r, full = 1;
++	struct dm_bufio_client *client;
++
++	client = dm_bufio_client_create(dm_snap_cow(ps->store->snap)->bdev,
++					ps->store->chunk_size << SECTOR_SHIFT,
++					1, 0, NULL, NULL);
++
++	if (IS_ERR(client))
++		return PTR_ERR(client);
+ 
+ 	/*
+ 	 * Keeping reading chunks and inserting exceptions until
+ 	 * we find a partially full area.
+ 	 */
+ 	for (ps->current_area = 0; full; ps->current_area++) {
+-		r = area_io(ps, READ);
+-		if (r)
+-			return r;
++		struct dm_buffer *bp;
++		void *area;
++		chunk_t chunk = area_location(ps, ps->current_area);
++
++		area = dm_bufio_read(client, chunk, &bp);
++		if (unlikely(IS_ERR(area))) {
++			r = PTR_ERR(area);
++			goto ret_destroy_bufio;
++		}
+ 
+-		r = insert_exceptions(ps, ps->area, callback, callback_context,
++		r = insert_exceptions(ps, area, callback, callback_context,
+ 				      &full);
+-		if (r)
+-			return r;
++
++		dm_bufio_release(bp);
++
++		dm_bufio_forget(client, chunk);
++
++		if (unlikely(r))
++			goto ret_destroy_bufio;
+ 	}
+ 
+ 	ps->current_area--;
+ 
+ 	skip_metadata(ps);
+ 
+-	return 0;
++	r = 0;
++
++ret_destroy_bufio:
++	dm_bufio_client_destroy(client);
++
++	return r;
+ }
+ 
+ static struct pstore *get_info(struct dm_exception_store *store)
+-- 
+2.10.2
+

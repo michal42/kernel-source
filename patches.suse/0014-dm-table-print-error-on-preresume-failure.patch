@@ -1,0 +1,44 @@
+From 7833b08e18241a1c35c09ef38be840cbf6c58acf Mon Sep 17 00:00:00 2001
+From: Mike Snitzer <snitzer@redhat.com>
+Date: Thu, 24 Oct 2013 14:10:29 -0400
+Subject: [PATCH 020/454] dm table: print error on preresume failure
+Git-commit: 7833b08e18241a1c35c09ef38be840cbf6c58acf
+Patch-mainline: v3.13-rc1
+References: bsc#1020795
+
+If preresume fails it is worth logging an error given that a device is
+left suspended due to the failure.
+
+This change was motivated by local preresume error logging that was
+added to the cache target ("preresume failed").  Elevating this
+target-agnostic context for the where the target-specific error occurred
+relative to the DM core's callouts makes sense.
+
+Signed-off-by: Mike Snitzer <snitzer@redhat.com>
+Signed-off-by: Joe Thornber <ejt@redhat.com>
+Signed-off-by: Coly Li <colyli@suse.de>
+
+---
+ drivers/md/dm-table.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/md/dm-table.c b/drivers/md/dm-table.c
+index 41d907b..465f08c 100644
+--- a/drivers/md/dm-table.c
++++ b/drivers/md/dm-table.c
+@@ -1562,8 +1562,11 @@ int dm_table_resume_targets(struct dm_table *t)
+ 			continue;
+ 
+ 		r = ti->type->preresume(ti);
+-		if (r)
++		if (r) {
++			DMERR("%s: %s: preresume failed, error = %d",
++			      dm_device_name(t->md), ti->type->name, r);
+ 			return r;
++		}
+ 	}
+ 
+ 	for (i = 0; i < t->num_targets; i++) {
+-- 
+2.10.2
+
