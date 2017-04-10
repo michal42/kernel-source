@@ -1,0 +1,55 @@
+From: Jiri Slaby <jslaby@suse.cz>
+Date: Mon, 27 Mar 2017 17:34:17 +0200
+Subject: Revert "give up on gcc ilog2() constant optimizations"
+Patch-mainline: never, kabi
+References: kabi
+
+This reverts commit 44fd5d00c835f410ee76880006aad568fdc07246, upstream
+commit 474c90156c8dcc2fa815e6716cc9394d7930cb9c. The kABI chekcer is
+fooled by the change below, particularly in struct kvm_vcpu_arch.
+roundup_pow_of_two there expands to a different string which I think
+matters.
+
+So revert it for now as we do not care about gcc 7 in 12SP1.
+
+Signed-off-by: Jiri Slaby <jslaby@suse.cz>
+---
+ include/linux/log2.h |   13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+--- a/include/linux/log2.h
++++ b/include/linux/log2.h
+@@ -16,6 +16,12 @@
+ #include <linux/bitops.h>
+ 
+ /*
++ * deal with unrepresentable constant logarithms
++ */
++extern __attribute__((const, noreturn))
++int ____ilog2_NaN(void);
++
++/*
+  * non-constant log of base 2 calculators
+  * - the arch may override these in asm/bitops.h if they can be implemented
+  *   more efficiently than using fls() and fls64()
+@@ -79,7 +85,7 @@ unsigned long __rounddown_pow_of_two(uns
+ #define ilog2(n)				\
+ (						\
+ 	__builtin_constant_p(n) ? (		\
+-		(n) < 2 ? 0 :			\
++		(n) < 1 ? ____ilog2_NaN() :	\
+ 		(n) & (1ULL << 63) ? 63 :	\
+ 		(n) & (1ULL << 62) ? 62 :	\
+ 		(n) & (1ULL << 61) ? 61 :	\
+@@ -142,7 +148,10 @@ unsigned long __rounddown_pow_of_two(uns
+ 		(n) & (1ULL <<  4) ?  4 :	\
+ 		(n) & (1ULL <<  3) ?  3 :	\
+ 		(n) & (1ULL <<  2) ?  2 :	\
+-		1 ) :				\
++		(n) & (1ULL <<  1) ?  1 :	\
++		(n) & (1ULL <<  0) ?  0 :	\
++		____ilog2_NaN()			\
++				   ) :		\
+ 	(sizeof(n) <= 4) ?			\
+ 	__ilog2_u32(n) :			\
+ 	__ilog2_u64(n)				\
