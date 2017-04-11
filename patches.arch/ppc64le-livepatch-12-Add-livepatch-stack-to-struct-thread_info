@@ -1,0 +1,146 @@
+From: Michael Ellerman <mpe@ellerman.id.au>
+Subject: powerpc/kgraft: Add kgraft stack to struct thread_info
+Git-commit: 5d31a96e6c0187f2c5d7004e005fd094a1277e9e
+Patch-mainline: v4.7
+References: FATE#322421
+
+ powerpc/kgraft: Add kgraft stack to struct thread_info
+
+In order to support live patching we need to maintain an alternate
+stack of TOC & LR values. We use the base of the stack for this, and
+store the "live patch stack pointer" in struct thread_info.
+
+Unlike the other fields of thread_info, we can not statically initialise
+that value, so it must be done at run time.
+
+This patch just adds the code to support that, it is not enabled until
+the next patch which actually adds live patch support.
+
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Balbir Singh <bsingharora@gmail.com>
+Acked-by: Torsten Duwe <duwe@suse.de>
+Reviewed-by: Petr Mladek <pmladek@suse.com>
+
+--- a/arch/powerpc/include/asm/kgraft.h
++++ b/arch/powerpc/include/asm/kgraft.h
+@@ -49,6 +49,14 @@ static inline unsigned long kgr_get_ftra
+ 	 */
+ 	return ftrace_location_range(faddr, faddr + 16);
+ }
++
++static inline void kgr_init_thread_info(struct thread_info *ti)
++{
++	/* + 1 to account for STACK_END_MAGIC */
++	ti->kgraft_sp = (unsigned long *)(ti + 1) + 1;
++}
++#else
++static void kgr_init_thread_info(struct thread_info *ti) { }
+ #endif /* CONFIG_KGRAFT */
+ 
+ #endif /* _ASM_POWERPC_KGRAFT_H */
+--- a/arch/powerpc/include/asm/thread_info.h
++++ b/arch/powerpc/include/asm/thread_info.h
+@@ -45,7 +45,9 @@ struct thread_info {
+ 						   <0 => BUG */
+ 	struct restart_block restart_block;
+ 	unsigned long	local_flags;		/* private flags for thread */
+-
++#ifdef CONFIG_KGRAFT
++	unsigned long *kgraft_sp;
++#endif
+ 	/* low level flags - has atomic operations done on it */
+ 	unsigned long	flags ____cacheline_aligned_in_smp;
+ };
+--- a/arch/powerpc/kernel/irq.c
++++ b/arch/powerpc/kernel/irq.c
+@@ -67,6 +67,7 @@
+ #include <asm/udbg.h>
+ #include <asm/smp.h>
+ #include <asm/debug.h>
++#include <asm/kgraft.h>
+ 
+ #ifdef CONFIG_PPC64
+ #include <asm/paca.h>
+@@ -593,10 +594,12 @@ void irq_ctx_init(void)
+ 		memset((void *)softirq_ctx[i], 0, THREAD_SIZE);
+ 		tp = softirq_ctx[i];
+ 		tp->cpu = i;
++		kgr_init_thread_info(tp);
+ 
+ 		memset((void *)hardirq_ctx[i], 0, THREAD_SIZE);
+ 		tp = hardirq_ctx[i];
+ 		tp->cpu = i;
++		kgr_init_thread_info(tp);
+ 	}
+ }
+ 
+--- a/arch/powerpc/kernel/process.c
++++ b/arch/powerpc/kernel/process.c
+@@ -55,6 +55,8 @@
+ #include <asm/firmware.h>
+ #endif
+ #include <asm/code-patching.h>
++#include <asm/kgraft.h>
++
+ #include <linux/kprobes.h>
+ #include <linux/kdebug.h>
+ 
+@@ -1121,12 +1123,14 @@ int copy_thread(unsigned long clone_flag
+ 	extern void ret_from_kernel_thread(void);
+ 	void (*f)(void);
+ 	unsigned long sp = (unsigned long)task_stack_page(p) + THREAD_SIZE;
++	struct thread_info *ti = task_thread_info(p);
++
++	kgr_init_thread_info(ti);
+ 
+ 	/* Copy registers */
+ 	sp -= sizeof(struct pt_regs);
+ 	childregs = (struct pt_regs *) sp;
+ 	if (unlikely(p->flags & PF_KTHREAD)) {
+-		struct thread_info *ti = (void *)task_stack_page(p);
+ 		memset(childregs, 0, sizeof(struct pt_regs));
+ 		childregs->gpr[1] = sp + sizeof(struct pt_regs);
+ 		/* function */
+--- a/arch/powerpc/kernel/setup_64.c
++++ b/arch/powerpc/kernel/setup_64.c
+@@ -67,6 +67,7 @@
+ #include <asm/kvm_ppc.h>
+ #include <asm/hugetlb.h>
+ #include <asm/epapr_hcalls.h>
++#include <asm/kgraft.h>
+ 
+ #include "setup.h"
+ 
+@@ -581,16 +582,16 @@ static void __init emergency_stack_init(
+ 	limit = min(safe_stack_limit(), ppc64_rma_size);
+ 
+ 	for_each_possible_cpu(i) {
+-		unsigned long sp;
+-		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
+-		sp += THREAD_SIZE;
+-		paca[i].emergency_sp = __va(sp);
++		struct thread_info *ti;
++		ti = __va(memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit));
++		kgr_init_thread_info(ti);
++		paca[i].emergency_sp = (void *)ti + THREAD_SIZE;
+ 
+ #ifdef CONFIG_PPC_BOOK3S_64
+ 		/* emergency stack for machine check exception handling. */
+-		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
+-		sp += THREAD_SIZE;
+-		paca[i].mc_emergency_sp = __va(sp);
++		ti = __va(memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit));
++		kgr_init_thread_info(ti);
++		paca[i].mc_emergency_sp = (void *)ti + THREAD_SIZE;
+ #endif
+ 	}
+ }
+@@ -619,6 +620,8 @@ void __init setup_arch(char **cmdline_p)
+ 	if (ppc_md.panic)
+ 		setup_panic();
+ 
++	kgr_init_thread_info(&init_thread_info);
++
+ 	init_mm.start_code = (unsigned long)_stext;
+ 	init_mm.end_code = (unsigned long) _etext;
+ 	init_mm.end_data = (unsigned long) _edata;

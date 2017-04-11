@@ -1,0 +1,48 @@
+From: Michael Ellerman <mpe@ellerman.id.au>
+Subject: ftrace: Make ftrace_location_range() global
+Git-commit: 04cf31a759ef575f750a63777cee95500e410994
+Patch-mainline: v4.7
+References: FATE#322421
+
+ ftrace: Make ftrace_location_range() global
+
+In order to support live patching on powerpc we would like to call
+ftrace_location_range(), so make it global.
+
+Signed-off-by: Torsten Duwe <duwe@suse.de>
+Signed-off-by: Balbir Singh <bsingharora@gmail.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+
+--- a/include/linux/ftrace.h
++++ b/include/linux/ftrace.h
+@@ -410,6 +410,7 @@ void ftrace_run_stop_machine(int command
+ unsigned long ftrace_location(unsigned long ip);
+ 
+ extern ftrace_func_t ftrace_trace_function;
++unsigned long ftrace_location_range(unsigned long start, unsigned long end);
+ 
+ int ftrace_regex_open(struct ftrace_ops *ops, int flag,
+ 		  struct inode *inode, struct file *file);
+--- a/kernel/trace/ftrace.c
++++ b/kernel/trace/ftrace.c
+@@ -1525,7 +1525,19 @@ static int ftrace_cmp_recs(const void *a
+ 	return 0;
+ }
+ 
+-static unsigned long ftrace_location_range(unsigned long start, unsigned long end)
++/**
++ * ftrace_location_range - return the first address of a traced location
++ *	if it touches the given ip range
++ * @start: start of range to search.
++ * @end: end of range to search (inclusive). @end points to the last byte
++ *	to check.
++ *
++ * Returns rec->ip if the related ftrace location is a least partly within
++ * the given address range. That is, the first address of the instruction
++ * that is either a NOP or call to the function tracer. It checks the ftrace
++ * internal tables to determine if the address belongs or not.
++ */
++unsigned long ftrace_location_range(unsigned long start, unsigned long end)
+ {
+ 	struct ftrace_page *pg;
+ 	struct dyn_ftrace *rec;
