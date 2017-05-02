@@ -1,0 +1,38 @@
+From: Michal Kubecek <mkubecek@suse.cz>
+Date: Fri, 14 Apr 2017 13:34:53 +0200
+Subject: vxlan: cancel sock_work in vxlan_dellink()
+Patch-mainline: Never, resolved in a different way (see below)
+References: bsc#1031567
+
+If vxlan_init() queues sock_work to setup a socket and insert vxlan
+device into its hashtable, vxlan_dellink() can get to unregister call
+before this work is done. If this happens, vxlan_sock_work() will insert
+a device which is already destined to be destroyed, leaving a pointer to
+slab object about to be freed in the hash table.
+
+In mainline, this is resolved by commit 56ef9c909b40 ("vxlan: Move
+socket initialization to within rtnl scope"). For SLE12-SP1, let's be
+less intrusive and just cancel pending sock_work in vxlan_dellink().
+
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+---
+ drivers/net/vxlan.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index 4e6ccfab7491..b7a37873fd8a 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2749,6 +2749,9 @@ static void vxlan_dellink(struct net_device *dev, struct list_head *head)
+ 	struct vxlan_dev *vxlan = netdev_priv(dev);
+ 	struct vxlan_net *vn = net_generic(vxlan->net, vxlan_net_id);
+ 
++	if (cancel_work_sync(&vxlan->sock_work))
++		dev_put(vxlan->dev);
++
+ 	spin_lock(&vn->sock_lock);
+ 	if (!hlist_unhashed(&vxlan->hlist))
+ 		hlist_del_rcu(&vxlan->hlist);
+-- 
+2.12.2
+
