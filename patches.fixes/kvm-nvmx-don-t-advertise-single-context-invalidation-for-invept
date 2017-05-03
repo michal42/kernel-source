@@ -1,0 +1,66 @@
+From: Bandan Das <bsd@redhat.com>
+Date: Sat, 19 Apr 2014 18:17:44 -0400
+Subject: KVM: nVMX: Don't advertise single context invalidation for invept
+Git-commit: 4b855078601fc422dbac3059f2215e776f49780f
+Patch-mainline: v3.16-rc1
+References: CVE-2017-8106 bsc#1035877
+
+For single context invalidation, we fall through to global
+invalidation in handle_invept() except for one case - when
+the operand supplied by L1 is different from what we have in
+vmcs12. However, typically hypervisors will only call invept
+for the currently loaded eptp, so the condition will
+never be true.
+
+Signed-off-by: Bandan Das <bsd@redhat.com>
+Signed-off-by: Marcelo Tosatti <mtosatti@redhat.com>
+Acked-by: Joerg Roedel <jroedel@suse.de>
+---
+ arch/x86/kvm/vmx.c | 15 +++++----------
+ 1 file changed, 5 insertions(+), 10 deletions(-)
+
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -2346,12 +2346,11 @@ static __init void nested_vmx_setup_ctls
+ 			 VMX_EPT_INVEPT_BIT;
+ 		nested_vmx_ept_caps &= vmx_capability.ept;
+ 		/*
+-		 * Since invept is completely emulated we support both global
+-		 * and context invalidation independent of what host cpu
+-		 * supports
++		 * For nested guests, we don't do anything specific
++		 * for single context invalidation. Hence, only advertise
++		 * support for global context invalidation.
+ 		 */
+-		nested_vmx_ept_caps |= VMX_EPT_EXTENT_GLOBAL_BIT |
+-			VMX_EPT_EXTENT_CONTEXT_BIT;
++		nested_vmx_ept_caps |= VMX_EPT_EXTENT_GLOBAL_BIT;
+ 	} else
+ 		nested_vmx_ept_caps = 0;
+ 
+@@ -6376,7 +6375,6 @@ static int handle_invept(struct kvm_vcpu
+ 	struct {
+ 		u64 eptp, gpa;
+ 	} operand;
+-	u64 eptp_mask = ((1ull << 51) - 1) & PAGE_MASK;
+ 
+ 	if (!(nested_vmx_secondary_ctls_high & SECONDARY_EXEC_ENABLE_EPT) ||
+ 	    !(nested_vmx_ept_caps & VMX_EPT_INVEPT_BIT)) {
+@@ -6417,16 +6415,13 @@ static int handle_invept(struct kvm_vcpu
+ 	}
+ 
+ 	switch (type) {
+-	case VMX_EPT_EXTENT_CONTEXT:
+-		if ((operand.eptp & eptp_mask) !=
+-				(nested_ept_get_cr3(vcpu) & eptp_mask))
+-			break;
+ 	case VMX_EPT_EXTENT_GLOBAL:
+ 		kvm_mmu_sync_roots(vcpu);
+ 		kvm_mmu_flush_tlb(vcpu);
+ 		nested_vmx_succeed(vcpu);
+ 		break;
+ 	default:
++		/* Trap single context invalidation invept calls */
+ 		BUG_ON(1);
+ 		break;
+ 	}
