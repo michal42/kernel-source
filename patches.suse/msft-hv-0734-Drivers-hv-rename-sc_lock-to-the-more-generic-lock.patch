@@ -15,18 +15,16 @@ Acked-by: Jason Wang <jasowang@redhat.com>
 Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
 Acked-by: <ohering@suse.de>
 ---
- drivers/hv/channel.c      |  6 +++---
- drivers/hv/channel_mgmt.c | 10 +++++-----
- include/linux/hyperv.h    |  7 ++++++-
+ drivers/hv/channel.c      |    6 +++---
+ drivers/hv/channel_mgmt.c |   10 +++++-----
+ include/linux/hyperv.h    |    7 ++++++-
  3 files changed, 14 insertions(+), 9 deletions(-)
 
-diff --git a/drivers/hv/channel.c b/drivers/hv/channel.c
-index 18c4f23..2978f5e 100644
 --- a/drivers/hv/channel.c
 +++ b/drivers/hv/channel.c
-@@ -73,14 +73,14 @@ int vmbus_open(struct vmbus_channel *newchannel, u32 send_ringbuffer_size,
+@@ -73,14 +73,14 @@ int vmbus_open(struct vmbus_channel *new
  	unsigned long flags;
- 	int ret, t, err = 0;
+ 	int ret, err = 0;
  
 -	spin_lock_irqsave(&newchannel->sc_lock, flags);
 +	spin_lock_irqsave(&newchannel->lock, flags);
@@ -42,11 +40,9 @@ index 18c4f23..2978f5e 100644
  
  	newchannel->onchannel_callback = onchannelcallback;
  	newchannel->channel_callback_context = context;
-diff --git a/drivers/hv/channel_mgmt.c b/drivers/hv/channel_mgmt.c
-index 704c0e0..1e0b996 100644
 --- a/drivers/hv/channel_mgmt.c
 +++ b/drivers/hv/channel_mgmt.c
-@@ -146,7 +146,7 @@ static struct vmbus_channel *alloc_channel(void)
+@@ -146,7 +146,7 @@ static struct vmbus_channel *alloc_chann
  		return NULL;
  
  	spin_lock_init(&channel->inbound_lock);
@@ -55,7 +51,7 @@ index 704c0e0..1e0b996 100644
  
  	INIT_LIST_HEAD(&channel->sc_list);
  	INIT_LIST_HEAD(&channel->percpu_list);
-@@ -246,9 +246,9 @@ static void vmbus_process_rescind_offer(struct work_struct *work)
+@@ -246,9 +246,9 @@ static void vmbus_process_rescind_offer(
  		spin_unlock_irqrestore(&vmbus_connection.channel_lock, flags);
  	} else {
  		primary_channel = channel->primary_channel;
@@ -67,7 +63,7 @@ index 704c0e0..1e0b996 100644
  	}
  	free_channel(channel);
  }
-@@ -323,9 +323,9 @@ static void vmbus_process_offer(struct work_struct *work)
+@@ -323,9 +323,9 @@ static void vmbus_process_offer(struct w
  			 * Process the sub-channel.
  			 */
  			newchannel->primary_channel = channel;
@@ -79,11 +75,9 @@ index 704c0e0..1e0b996 100644
  
  			if (newchannel->target_cpu != get_cpu()) {
  				put_cpu();
-diff --git a/include/linux/hyperv.h b/include/linux/hyperv.h
-index 259023a..5a2ba67 100644
 --- a/include/linux/hyperv.h
 +++ b/include/linux/hyperv.h
-@@ -734,7 +734,12 @@ struct vmbus_channel {
+@@ -735,7 +735,12 @@ struct vmbus_channel {
  	 */
  	void (*sc_creation_callback)(struct vmbus_channel *new_sc);
  
