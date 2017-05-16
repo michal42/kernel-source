@@ -2088,7 +2088,7 @@ Acked-by: jbeulich@suse.com
  	 * and hence no memory allocations during large page split.
 --- a/drivers/acpi/osl.c
 +++ b/drivers/acpi/osl.c
-@@ -326,8 +326,12 @@ acpi_map_lookup_virt(void __iomem *virt,
+@@ -329,8 +329,12 @@ acpi_map_lookup_virt(void __iomem *virt,
  }
  
  #ifndef CONFIG_IA64
@@ -2233,55 +2233,74 @@ Acked-by: jbeulich@suse.com
  int register_msi_get_owner(int (*func)(struct pci_dev *dev))
  {
  	if (get_owner) {
-@@ -178,26 +202,15 @@ int unregister_msi_get_owner(int (*func)
+@@ -178,39 +202,41 @@ int unregister_msi_get_owner(int (*func)
  	return 0;
  }
  EXPORT_SYMBOL(unregister_msi_get_owner);
 +#endif
  
 -static int msi_get_dev_owner(struct pci_dev *dev)
--{
++static int msi_unmap_pirq(struct pci_dev *dev, int pirq, domid_t owner,
++			  struct kobject *kobj)
+ {
 -	int owner;
--
++	if (is_initial_xendomain()) {
++		struct physdev_unmap_pirq unmap;
++		int rc;
+ 
 -	BUG_ON(!is_initial_xendomain());
 -	if (get_owner && (owner = get_owner(dev)) >= 0) {
 -		dev_info(&dev->dev, "get owner: %x \n", owner);
 -		return owner;
 -	}
--
++		unmap.domid = owner;
++		/* See comments in msi_map_vector, input parameter pirq means
++		 * irq number only if the device belongs to dom0 itself.
++		 */
++		unmap.pirq = (unmap.domid != DOMID_SELF)
++			? pirq : evtchn_get_xen_pirq(pirq);
+ 
 -	return DOMID_SELF;
 -}
--
++		if ((rc = HYPERVISOR_physdev_op(PHYSDEVOP_unmap_pirq, &unmap)))
++			dev_warn(&dev->dev, "unmap irq %d failed\n", pirq);
+ 
 -static int msi_unmap_pirq(struct pci_dev *dev, int pirq)
-+static int msi_unmap_pirq(struct pci_dev *dev, int pirq, domid_t owner,
-+			  struct kobject *kobj)
- {
- 	struct physdev_unmap_pirq unmap;
- 	int rc;
+-{
+-	struct physdev_unmap_pirq unmap;
+-	int rc;
++		if (rc < 0)
++			return rc;
++	} else
++		owner = DOMID_SELF;
  
 -	unmap.domid = msi_get_dev_owner(dev);
-+	unmap.domid = owner;
- 	/* See comments in msi_map_vector, input parameter pirq means
- 	 * irq number only if the device belongs to dom0 itself.
- 	 */
-@@ -210,6 +223,16 @@ static int msi_unmap_pirq(struct pci_dev
- 	if (rc < 0)
- 		return rc;
- 
+-	/* See comments in msi_map_vector, input parameter pirq means
+-	 * irq number only if the device belongs to dom0 itself.
 +	/*
 +	 * Its possible that we get into this path when populate_msi_sysfs()
 +	 * fails, which means the entries were not registered with sysfs.
 +	 * In that case don't unregister them.
-+	 */
+ 	 */
+-	unmap.pirq = (unmap.domid != DOMID_SELF)
+-		? pirq : evtchn_get_xen_pirq(pirq);
+-
+-	if ((rc = HYPERVISOR_physdev_op(PHYSDEVOP_unmap_pirq, &unmap)))
+-		dev_warn(&dev->dev, "unmap irq %d failed\n", pirq);
+-
+-	if (rc < 0)
+-		return rc;
 +	if (kobj->parent) {
 +		kobject_del(kobj);
 +		kobject_put(kobj);
 +	}
-+
- 	if (unmap.domid == DOMID_SELF)
+ 
+-	if (unmap.domid == DOMID_SELF)
++	if (owner == DOMID_SELF)
  		evtchn_map_pirq(pirq, 0);
  
-@@ -237,13 +260,11 @@ static u64 find_table_base(struct pci_de
+ 	return 0;
+@@ -237,13 +263,11 @@ static u64 find_table_base(struct pci_de
  /*
   * Protected by msi_lock
   */
@@ -2297,7 +2316,7 @@ Acked-by: jbeulich@suse.com
  
  	map_irq.domid = domid;
  	map_irq.type = MAP_PIRQ_TYPE_MSI_SEG;
-@@ -351,6 +372,142 @@ void pci_restore_msi_state(struct pci_de
+@@ -351,6 +375,142 @@ void pci_restore_msi_state(struct pci_de
  }
  EXPORT_SYMBOL_GPL(pci_restore_msi_state);
  
@@ -2440,7 +2459,7 @@ Acked-by: jbeulich@suse.com
  /**
   * msi_capability_init - configure device's MSI capability structure
   * @dev: pointer to the pci_dev data structure of MSI device function
-@@ -364,12 +521,13 @@ EXPORT_SYMBOL_GPL(pci_restore_msi_state)
+@@ -364,12 +524,13 @@ EXPORT_SYMBOL_GPL(pci_restore_msi_state)
   */
  static int msi_capability_init(struct pci_dev *dev, int nvec)
  {
@@ -2455,7 +2474,7 @@ Acked-by: jbeulich@suse.com
  	if (pirq < 0)
  		return -EBUSY;
  
-@@ -378,7 +536,8 @@ static int msi_capability_init(struct pc
+@@ -378,7 +539,8 @@ static int msi_capability_init(struct pc
  	msi_set_enable(dev, pos, 1);
  	dev->msi_enabled = 1;
  
@@ -2465,7 +2484,7 @@ Acked-by: jbeulich@suse.com
  	return 0;
  }
  
-@@ -437,7 +596,8 @@ static int msix_capability_init(struct p
+@@ -437,7 +599,8 @@ static int msix_capability_init(struct p
  		}
  		if (mapped)
  			continue;
@@ -2475,7 +2494,7 @@ Acked-by: jbeulich@suse.com
  		if (pirq < 0)
  			break;
  		attach_pirq_entry(pirq, entries[i].entry, msi_dev_entry);
-@@ -447,7 +607,12 @@ static int msix_capability_init(struct p
+@@ -447,7 +610,12 @@ static int msix_capability_init(struct p
  	if (i != nvec) {
  		int avail = i - 1;
  		for (j = --i; j >= 0; j--) {
@@ -2489,7 +2508,7 @@ Acked-by: jbeulich@suse.com
  			detach_pirq_entry(entries[j].entry, msi_dev_entry);
  			entries[j].vector = 0;
  		}
-@@ -462,6 +627,7 @@ static int msix_capability_init(struct p
+@@ -462,6 +630,7 @@ static int msix_capability_init(struct p
  	/* Set MSI-X enabled bits and unmask the function */
  	pci_intx_for_msi(dev, 0);
  	dev->msix_enabled = 1;
@@ -2497,7 +2516,7 @@ Acked-by: jbeulich@suse.com
  
  	control &= ~PCI_MSIX_FLAGS_MASKALL;
  	pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
-@@ -560,7 +726,7 @@ int pci_enable_msi_block(struct pci_dev
+@@ -560,7 +729,7 @@ int pci_enable_msi_block(struct pci_dev
  		dev->irq = evtchn_map_pirq(-1, dev->irq);
  		dev->msi_enabled = 1;
  		msi_dev_entry->default_irq = temp;
@@ -2506,7 +2525,23 @@ Acked-by: jbeulich@suse.com
  		return ret;
  #else
  		return -EOPNOTSUPP;
-@@ -605,7 +771,10 @@ void pci_msi_shutdown(struct pci_dev *de
+@@ -592,31 +761,35 @@ void pci_msi_shutdown(struct pci_dev *de
+ 	if (!pci_msi_enable || !dev || !dev->msi_enabled)
+ 		return;
+ 
+-	if (!is_initial_xendomain()) {
++	if (!is_initial_xendomain())
+ #ifdef CONFIG_XEN_PCIDEV_FRONTEND
+-		evtchn_map_pirq(dev->irq, 0);
+ 		pci_frontend_disable_msi(dev);
+-		dev->irq = msi_dev_entry->default_irq;
+-		dev->msi_enabled = 0;
+-#endif
++#else
+ 		return;
+-	}
++#endif
+ 
  	pirq = dev->irq;
  	/* Restore dev->irq to its default pin-assertion vector */
  	dev->irq = msi_dev_entry->default_irq;
@@ -2517,8 +2552,17 @@ Acked-by: jbeulich@suse.com
 +	memset(&msi_dev_entry->e.kobj, 0, sizeof(msi_dev_entry->e.kobj));
  
  	/* Disable MSI mode */
- 	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
-@@ -617,6 +786,8 @@ void pci_msi_shutdown(struct pci_dev *de
+-	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
+-	msi_set_enable(dev, pos, 0);
+-	pci_intx_for_msi(dev, 1);
++	if (is_initial_xendomain()) {
++		pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
++		msi_set_enable(dev, pos, 0);
++		pci_intx_for_msi(dev, 1);
++	}
+ 	dev->msi_enabled = 0;
+ }
+ 
  void pci_disable_msi(struct pci_dev *dev)
  {
  	pci_msi_shutdown(dev);
@@ -2527,7 +2571,7 @@ Acked-by: jbeulich@suse.com
  }
  EXPORT_SYMBOL(pci_disable_msi);
  
-@@ -694,6 +865,7 @@ int pci_enable_msix(struct pci_dev *dev,
+@@ -694,6 +867,7 @@ int pci_enable_msix(struct pci_dev *dev,
  			attach_pirq_entry(irq, entries[i].entry, msi_dev_entry);
  			entries[i].vector = irq;
  		}
@@ -2535,7 +2579,7 @@ Acked-by: jbeulich@suse.com
  		return 0;
  #else
  		return -EOPNOTSUPP;
-@@ -760,6 +932,8 @@ void pci_msix_shutdown(struct pci_dev *d
+@@ -760,6 +934,8 @@ void pci_msix_shutdown(struct pci_dev *d
  void pci_disable_msix(struct pci_dev *dev)
  {
  	pci_msix_shutdown(dev);
@@ -2544,7 +2588,7 @@ Acked-by: jbeulich@suse.com
  }
  EXPORT_SYMBOL(pci_disable_msix);
  
-@@ -774,25 +948,35 @@ EXPORT_SYMBOL(pci_disable_msix);
+@@ -774,25 +950,32 @@ EXPORT_SYMBOL(pci_disable_msix);
   **/
  void msi_remove_pci_irq_vectors(struct pci_dev *dev)
  {
@@ -2559,6 +2603,11 @@ Acked-by: jbeulich@suse.com
  
 -	spin_lock_irqsave(&msi_dev_entry->pirq_list_lock, flags);
 -	list_for_each_entry_safe(pirq_entry, tmp, &dev->msi_list, list) {
+-		if (is_initial_xendomain())
+-			msi_unmap_pirq(dev, pirq_entry->pirq);
+-		else
+-			evtchn_map_pirq(pirq_entry->pirq, 0);
+-		list_del(&pirq_entry->list);
 +	for (;;) {
 +		struct msi_pirq_entry *pirq_entry;
 +		unsigned long flags;
@@ -2572,14 +2621,9 @@ Acked-by: jbeulich@suse.com
 +		spin_unlock_irqrestore(&msi_dev_entry->pirq_list_lock, flags);
 +		if (!pirq_entry)
 +			break;
- 		if (is_initial_xendomain())
--			msi_unmap_pirq(dev, pirq_entry->pirq);
-+			msi_unmap_pirq(dev, pirq_entry->pirq,
-+				       msi_dev_entry->owner,
-+				       &pirq_entry->kobj);
- 		else
- 			evtchn_map_pirq(pirq_entry->pirq, 0);
--		list_del(&pirq_entry->list);
++		msi_unmap_pirq(dev, pirq_entry->pirq,
++			       msi_dev_entry->owner,
++			       &pirq_entry->kobj);
  		kfree(pirq_entry);
  	}
 -	spin_unlock_irqrestore(&msi_dev_entry->pirq_list_lock, flags);
@@ -2587,7 +2631,7 @@ Acked-by: jbeulich@suse.com
  	dev->irq = msi_dev_entry->default_irq;
  }
  
-@@ -815,5 +999,23 @@ EXPORT_SYMBOL(pci_msi_enabled);
+@@ -815,5 +998,23 @@ EXPORT_SYMBOL(pci_msi_enabled);
  
  void pci_msi_init_pci_dev(struct pci_dev *dev)
  {
@@ -4285,7 +4329,7 @@ Acked-by: jbeulich@suse.com
  int xs_init(void);
  int xb_init_comms(void);
  
-@@ -43,6 +45,8 @@ int xs_input_avail(void);
+@@ -44,6 +46,8 @@ int xs_input_avail(void);
  extern struct xenstore_domain_interface *xen_store_interface;
  extern int xen_store_evtchn;
  
