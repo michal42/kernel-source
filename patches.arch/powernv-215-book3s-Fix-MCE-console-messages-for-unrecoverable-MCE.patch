@@ -1,0 +1,53 @@
+From c74dd88e77d3ecbc9e55c78796d82c9aa21cabad Mon Sep 17 00:00:00 2001
+From: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
+Date: Tue, 9 Aug 2016 10:39:13 +0530
+Subject: [PATCH] powerpc/book3s: Fix MCE console messages for unrecoverable
+ MCE.
+
+References: bnc#878240, FATE#315784, [2017-05-29] Pending SUSE Kernel Fixes
+Patch-mainline: v4.8-rc2
+Git-commit: c74dd88e77d3ecbc9e55c78796d82c9aa21cabad
+
+When machine check occurs with MSR(RI=0), it means MC interrupt is
+unrecoverable and kernel goes down to panic path. But the console
+message still shows it as recovered. This patch fixes the MCE console
+messages.
+
+Fixes: 36df96f8acaf ("powerpc/book3s: Decode and save machine check event.")
+Signed-off-by: Mahesh Salgaonkar <mahesh@linux.vnet.ibm.com>
+Signed-off-by: Michael Ellerman <mpe@ellerman.id.au>
+Acked-by: Michal Suchanek <msuchanek@suse.de>
+---
+ arch/powerpc/kernel/mce.c             | 3 ++-
+ arch/powerpc/platforms/powernv/opal.c | 1 +
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/powerpc/kernel/mce.c b/arch/powerpc/kernel/mce.c
+index ef267fd..5e7ece0 100644
+--- a/arch/powerpc/kernel/mce.c
++++ b/arch/powerpc/kernel/mce.c
+@@ -92,7 +92,8 @@ void save_mce_event(struct pt_regs *regs, long handled,
+ 	mce->in_use = 1;
+ 
+ 	mce->initiator = MCE_INITIATOR_CPU;
+-	if (handled)
++	/* Mark it recovered if we have handled it and MSR(RI=1). */
++	if (handled && (regs->msr & MSR_RI))
+ 		mce->disposition = MCE_DISPOSITION_RECOVERED;
+ 	else
+ 		mce->disposition = MCE_DISPOSITION_NOT_RECOVERED;
+diff --git a/arch/powerpc/platforms/powernv/opal.c b/arch/powerpc/platforms/powernv/opal.c
+index 8b4fc68..6c9a65b 100644
+--- a/arch/powerpc/platforms/powernv/opal.c
++++ b/arch/powerpc/platforms/powernv/opal.c
+@@ -399,6 +399,7 @@ static int opal_recover_mce(struct pt_regs *regs,
+ 
+ 	if (!(regs->msr & MSR_RI)) {
+ 		/* If MSR_RI isn't set, we cannot recover */
++		pr_err("Machine check interrupt unrecoverable: MSR(RI=0)\n");
+ 		recovered = 0;
+ 	} else if (evt->disposition == MCE_DISPOSITION_RECOVERED) {
+ 		/* Platform corrected itself */
+-- 
+2.10.2
+
