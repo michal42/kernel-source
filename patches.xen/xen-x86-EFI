@@ -3,9 +3,25 @@ From: jbeulich@novell.com
 Patch-mainline: Never, SUSE-Xen specific
 References: fate#311376, fate#311529, bnc#578927, bnc#628554
 
+---
+ arch/x86/Kconfig                      |    4 
+ arch/x86/include/mach-xen/asm/setup.h |    6 
+ arch/x86/kernel/rtc.c                 |    7 
+ arch/x86/kernel/setup-xen.c           |    2 
+ arch/x86/kernel/time-xen.c            |    4 
+ arch/x86/platform/efi/Makefile        |    2 
+ arch/x86/platform/efi/efi-xen.c       |  618 ++++++++++++++++++++++++++++++++++
+ drivers/firmware/efi/efi.c            |   31 +
+ drivers/rtc/Kconfig                   |    2 
+ drivers/rtc/rtc-cmos.c                |    6 
+ drivers/rtc/rtc-efi.c                 |    3 
+ drivers/xen/console/console.c         |    5 
+ include/linux/efi.h                   |   10 
+ 13 files changed, 687 insertions(+), 13 deletions(-)
+
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -1645,7 +1645,7 @@ config X86_SMAP
+@@ -1644,7 +1644,7 @@ config X86_SMAP
  
  config EFI
  	bool "EFI runtime service support"
@@ -14,7 +30,7 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	select UCS2_STRING
  	---help---
  	  This enables the kernel to use EFI runtime services that are
-@@ -1660,7 +1660,7 @@ config EFI
+@@ -1659,7 +1659,7 @@ config EFI
  
  config EFI_STUB
         bool "EFI stub support"
@@ -46,9 +62,9 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  #include <linux/pnp.h>
 +#include <linux/efi.h>
  #include <linux/of.h>
+ #include <linux/resume-trace.h>
  
- #include <asm/vsyscall.h>
-@@ -191,6 +192,12 @@ static __init int add_rtc_cmos(void)
+@@ -201,6 +202,12 @@ static __init int add_rtc_cmos(void)
  	if (of_have_populated_dt())
  		return 0;
  
@@ -827,15 +843,15 @@ References: fate#311376, fate#311529, bnc#578927, bnc#628554
  	  Real Time Clock.
 --- a/drivers/rtc/rtc-cmos.c
 +++ b/drivers/rtc/rtc-cmos.c
-@@ -36,6 +36,7 @@
- #include <linux/platform_device.h>
+@@ -37,6 +37,7 @@
+ #include <linux/resume-trace.h>
  #include <linux/log2.h>
  #include <linux/pm.h>
 +#include <linux/efi.h>
  #include <linux/of.h>
  #include <linux/of_platform.h>
  
-@@ -1204,6 +1205,11 @@ static int __init cmos_init(void)
+@@ -1214,6 +1215,11 @@ static int __init cmos_init(void)
  {
  	int retval = 0;
  
