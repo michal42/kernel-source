@@ -1,0 +1,35 @@
+From: Michal Kubecek <mkubecek@suse.cz>
+Date: Mon, 5 Jun 2017 13:52:49 +0200
+Subject: netfilter: prevent unregistering nf_log_all_netns in non-init namespaces
+Patch-mainline: Never, SLE specific regression
+References: bsc#1042292
+
+Version of bsc#970083 patch ("netfilter: allow logging fron non-init
+netns") registers the sysctl only in init_net (so that other namespaces are
+not allowed to enable it) but tries to unregister it with each destroyed
+netns. This can cause a crash as found by openQA.
+
+Only the patch used in SLE12-LTSS and SLE12-SP1 is affected, not mainline
+commit 2851940ffee3 or its backports to SLE/openSUSE kernels >= 4.1.
+
+Signed-off-by: Michal Kubecek <mkubecek@suse.cz>
+---
+ net/netfilter/xt_LOG.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/netfilter/xt_LOG.c b/net/netfilter/xt_LOG.c
+index 00113f2821bb..1e4168fd360c 100644
+--- a/net/netfilter/xt_LOG.c
++++ b/net/netfilter/xt_LOG.c
+@@ -942,7 +942,7 @@ static int __net_init log_net_init(struct net *net)
+ static void __net_exit log_net_exit(struct net *net)
+ {
+ #ifdef CONFIG_SYSCTL
+-	if (nf_log_sysctl_fhdr)
++	if (net_eq(net, &init_net) && nf_log_sysctl_fhdr)
+ 		unregister_sysctl_table(nf_log_sysctl_fhdr);
+ #endif
+ 	nf_log_unset(net, &ipt_log_logger);
+-- 
+2.13.0
+
